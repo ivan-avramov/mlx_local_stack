@@ -1,4 +1,4 @@
-# P426 — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP-ON router-chain re-certification — PLAN v3, 2026-10-21
+# P426 — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP-ON router-chain re-certification — PLAN v4, 2026-10-21
 
 Authority: P369 v13 §3.1 Restore + §6, C177, C203 (settings-level registry matching, bundled here), C204 (ship a predictor that
 speeds up with no or negligible quality / memory downside; operator judgement on ongoing quality / memory / speed signals, no
@@ -10,7 +10,10 @@ S1–S8): one leg wrapper enforces freshness, receipts, pins, argv and engagemen
 invocation (R3); B2 reduced to the existing chain driver run per leg under an outer sequencer + an invalidate policy (R6 R7); a
 P426 pair verifier with per-axis adapters (R8); generation-side artifact persistence before Wave 1 and A3 two-provider-or-pending
 (R10); fork B4 before S (R11); vision ids (S1); smoke sets (S2); A2 panel-only (S4); A4 distinct seeds (S5); block-level power
-validity (S6); pre-registered tests and Holm families (S7).
+validity (S6); pre-registered tests and Holm families (S7). v4 applies round 3 (the last; open R6 R8 S2 S5 S7 S8, new
+T1–T3) without a fourth review round, pending the operator: executable tg1 invocations + overlay validation for one entry +
+reversed s2 order (R6), an M1-specific verifier adapter (R8), M1 smokes both arms (S2), reasoning task / sampler seeds (S5), A4
+out of Holm (S7), fail-closed power rule (S8), the A2 command (T1), the decode-rate estimator (T2), the leg-by-leg estimate (T3).
 
 ## 1. What this decides
 
@@ -47,7 +50,9 @@ present in ON and absent in OFF.
   other MLX worker, process census, load average, uptime, AC / voltage / battery (S8). Exit receipt — the same re-checked, plus
   the engagement gate (S3): every eligible ON request has `draft_kind=mtp`, rounds > 0, proposed > 0, 0 ≤ accepted ≤ proposed;
   every OFF request has no draft activity; rows / log records reconcile exactly (missing, duplicate, zero or contradictory
-  telemetry → leg INVALID). Drift between receipts → the leg's speed block INVALID.
+  telemetry → leg INVALID). Drift between receipts → the leg's speed block INVALID. **Power rule (S8), fail closed:** at entry and at every watcher
+  tick, `pmset -g ac` must read 140 W and 28 V and battery > 20 %; any other or unreadable value, or any on-battery interval in
+  `pmset -g log` overlapping the leg window, marks the leg's speed block INVALID (entry failure: the leg does not start).
 - **Watcher (B5), every leg incl. smokes:** 5-min ticks with item progress, mean-based ETA vs prediction, errors, convergence,
   token distribution, correction-vs-finish note, watts / volts / battery, sticky failure; `pmset -g log` checked against the leg
   window (P418).
@@ -63,7 +68,7 @@ order-balanced". Quality survives a power-invalid leg (labelled) but not a recei
 ## 4. Smokes (S2)
 
 Before each full axis: a smoke per arm on committed seeded-random IDs (B9; same IDs both arms): A1 5, A2 5, A3 5 images, A4 1
-draw (a seed outside the full set), M1 one OFF leg; A7's pilot (§6). Gate to launch the full axis: both smoke legs VALID (B10
+draw (task seed 128000006, outside the full set), M1 one OFF and one ON leg (fresh outputs, full B10 / B7 checks); A7's pilot (§6). Gate to launch the full axis: both smoke legs VALID (B10
 receipts, engagement, zero transport errors), estimate recalibrated from smoke walls. Smoke rows never enter signals.
 
 ## 5. Wave 1 axes (namespaces fresh per leg; tune / tag labels `p426-{off,on}-b{1,2}`, smokes `-smoke`)
@@ -71,21 +76,24 @@ receipts, engagement, zero transport errors), estimate recalibrated from smoke w
 | Id | Axis | Run (frozen worktree, inside B10) | Signals |
 |---|---|---|---|
 | A1 | Math500 100 (M40's ids) | `benchmark/run.py generate --models <entry> --benches math500 --limit math500=0 --ids math500=<block ids, colon-separated> --sampling-profile deployed --tune p426-<arm>-b<k> --order roundrobin --seed 0 --seed-base 0 --samples 1`; timeout derived | `acc_strict@81920`, conv%, nonconv kinds; per-row decode, acceptance (`row.draft`); wall |
-| A2 | cjudge 40 | same, `--benches cjudge` | mechanical quality N/A (grader `acc: null`, S4): panel only; conv%; decode; acceptance |
+| A2 | cjudge 40 | `benchmark/run.py generate --models <entry> --benches cjudge --limit cjudge=0 --ids cjudge=<block ids, colon-separated> --sampling-profile deployed --tune p426-<arm>-b<k> --order roundrobin --seed 0 --seed-base 0 --samples 1` | mechanical quality N/A (grader `acc: null`, S4): panel only; conv%; decode; acceptance |
 | A3 | Vision gate 20 | `benchmark/vision_gate.py --model <entry> --ids <block ids> --out benchmark/results/<entry>/vision_gate.p426-<arm>-b<k>.jsonl` (`--ids` = B11) | self-pass (lenient, labelled); panel (§7); turn-1 latency + decode |
-| A4 | Reasoning depth 128K | `bench.run_reasoning --model <entry> --grid 128000 --samples 3 --chain-len 4 --sampling-profile deployed --out-tag p426-<arm>-b<k>`; block 1 seeds 128000000–002, block 2 128000003–005 (distinct, paired across arms, S5); completion text persisted (B12) | strict draws, budget hits; DESCRIPTIVE (6 unique draws per arm, one synthetic task; no interval); decode; acceptance |
+| A4 | Reasoning depth 128K | `bench.run_reasoning --model <entry> --grid 128000 --samples 3 --chain-len 4 --sampling-profile deployed --out-tag p426-<arm>-b<k> --task-seed-base <b>` (B13); block 1 task seeds 128000000–002, block 2 128000003–005, each draw with an explicit request seed `rowschema.sample_seed` recorded beside the task seed, both paired across arms (S5); completion text persisted (B12) | strict draws, budget hits; DESCRIPTIVE (6 unique draws per arm, one synthetic task; no interval); decode; acceptance |
 | M1 | Memory at 256K | fork `dev/p369_phase2/qualify.py --stack-root <worktree> --fork-root <worktree>/src/mlx-vlm --reviewed-head <S's fork sha> --entry Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --predictor {off,on} --out $STACK_WORKDIR/p426/m1/leg<k>-<arm>` (B7), legs OFF / ON / ON / OFF, four fresh outs; 260,096-token prompt, shipped settings, phase-reset `mx.get_peak_memory` | prefill / decode / retire peaks per leg, ON − OFF; prefill + decode tok/s; acceptance |
 
-Row `peak_mem_gb` is reported only as "arm-lifetime high-water". Historical numbers (R7 MTP-ON 38.25 GB, M40, M42) are context
+Every runner's planned item list is asserted equal to the committed block membership before the first request (B10, T1)
+and again from the rows at exit. Row `peak_mem_gb` is reported only as "arm-lifetime high-water". Historical numbers (R7 MTP-ON 38.25 GB, M40, M42) are context
 with a fingerprint-labelled delta (C199), never a pair.
 
 ## 6. Wave 2 — A7 opencode tg1 (the primary agentic benchmark; R6, R7)
 
 - Corpus tg1 (`benchmark/m62/universe.json`, 43 items: 22 Python + 21 Go), `run_tg1_probe.py` (P311-lite), hermetic v2 env,
   `--sampling-profile deployed`; probe-code sha, skill policy, config hash recorded; never pooled with M63 (C173).
-- **Legs:** the existing `benchmark/chains/c147/run_tg1_chain.py`, ONE invocation per leg (`--sessions <s> --predictor <arm>`,
-  single entry via B2's `--model` filter), sequenced by an outer P426 sequencer: pilot OFF, pilot ON (5 seeded-random items) →
-  s1 OFF, s1 ON (seed 1001) → s2 ON, s2 OFF (seed 2002, opposite item order) → reload ON, reload OFF (the pilot's 5 Python items at
+- **Legs:** the existing `benchmark/chains/c147/run_tg1_chain.py`, ONE invocation per leg (`chain <session>` positional,
+  `--predictor off|mtp`, single entry via B2's `--model` filter; the exact argv per leg is generated by the sequencer and
+  pinned in tests), sequenced by an outer P426 sequencer: pilot OFF, pilot ON (5 seeded-random items) →
+  s1 OFF, s1 ON (seed 1001) → s2 ON, s2 OFF (seed 2002, reversed item order — implemented and tested in B2; today's schedule
+  sorts) → reload ON, reload OFF (the pilot's 5 Python items at
   seed 1001). Each leg a fresh load, own fresh root; k = 2 loaded instances per arm (s1, s2). The sequencer's frozen record holds
   the stack commit, serving pins, registry shas, probe-code sha, pins.json sha, and refuses a leg on any drift.
 - **Fail closed (R7):** a new chain-core policy `invalidate` (B2): the first transport incident (HTTP / connection error,
@@ -93,8 +101,10 @@ with a fingerprint-labelled delta (C199), never a pair.
   decision, labelled. Retries 0.
 - **Reporting:** per session (s1, s2) separately: paired `acc_strict@budget` ON − OFF with its two-stage cluster-bootstrap interval
   and MDE, convergence, runaway tax (budget-hit / turn-cap / exec-timeout + per-session union), session wall; never pooled across
-  sessions; reload diagnostic only; pooled tax rates descriptive. Speed from the B1 log lines, attributed by session id + request
-  window, acceptance within the session only.
+  sessions; reload diagnostic only; pooled tax rates descriptive. Speed (T2): per item and arm, decode rate = total generated tokens ÷ summed decode time over the item's B1 log lines
+  (attributed by session id + request window); the paired per-item ratio is bootstrapped over items within each session;
+  request ordinals are never paired. Acceptance = summed accepted ÷ summed proposed within the session only. A1 / A2 / A4 use the
+  same per-item estimator from their rows.
 
 ## 7. Subjective quality (R10)
 
@@ -115,8 +125,8 @@ Descriptive; no composite.
 
 **Pre-registered tests (S7).** Mechanical family = {A1, A7-s1, A7-s2} (A2 N/A, A4 descriptive): H0 ON − OFF = 0 on per-item
 `acc_strict` differences; paired sign-flip permutation test, 10,000 permutations, seed 426, two-sided; zero differences
-contribute zero; Holm across the family. Subjective family = {A1, A2, A3, A4, A7-s1, A7-s2} (members with < 5 judged items are
-reported, not tested): per item score = mean over 2 judges × 2 orders of (ON win 1, tie 0.5, OFF win 0), length-adjusted per the
+contribute zero; Holm across the family. Subjective family = {A1, A2, A3, A7-s1, A7-s2} (members with < 5 judged items are
+reported, not tested; A4 is reported as its draw distribution only, never tested — S7): per item score = mean over 2 judges × 2 orders of (ON win 1, tie 0.5, OFF win 0), length-adjusted per the
 C161 estimator; H0 mean score = 0.5; same permutation procedure; a missing verdict excludes the item from that member (counted);
 Holm across the family. Intervals: two-stage cluster bootstrap (items within sessions), 95 %, 10,000 resamples, seed 426.
 
@@ -134,26 +144,31 @@ OFF serves the committed registry; refusal tests.
 Before Wave 1 (stack): **B9** `benchmark/results/p426/ids.json` (A1 = the `math500.m40on.jsonl` 100, asserted unique / equal; A2 40;
 A3 20; block split seed 426; smoke sets; A4 seeds; sha256 recorded at commit). **B10** the leg wrapper (§2). **B5** watcher
 (§2). **B11** `vision_gate.py --ids` (refuses unknown / duplicate / missing / wrong-block ids before the first request; exact
-membership in the manifest). **B12** artifact persistence (§7). **B4-stack** the overlay builder on the same rule (a pinned table
+membership in the manifest). **B12** artifact persistence (§7). **B13** `run_reasoning --task-seed-base` + an explicit
+per-draw request seed (`rowschema.sample_seed`), both persisted. **B4-stack** the overlay builder on the same rule (a pinned table
 mirrored from `ENTRY_OFF`, cross-checked against the fork module).
 
 During Wave 1 (stack; tests only in scheduled windows between axes, each followed by ≥ 10 min idle): **B8** the P426 pair
 verifier: per-axis adapters (rows, vision, reasoning, qualify, chain records) that require exactly the three-key registry delta and
 the matching runtime delta (argv incl. `--draft-model`) and equality of everything else (sampling, KV, code, box, budgets, item /
-seed sets, timeouts, M50, serving path, receipts VALID). **B2** tg1: `--model` single-entry filter, the `invalidate` policy,
-the outer sequencer + frozen record; tests for order, fresh roots, drift refusal, no-restart. **B6** signals (§8). **B3** panel
+seed sets, timeouts, M50, serving path, receipts VALID). The M1 adapter (R8): M50 / serving path N/A (in-process); instead
+equality of the reviewed harness head, registry state (OFF bytes / ON overlay sha), worker argv, artifact pins, environment
+(`MLX_*`, `TQ_*`, `KV_*`) and VALID receipts — fail closed on any mismatch. **B2** tg1: `--model` single-entry filter, the `invalidate` policy,
+the outer sequencer + frozen record, the MTP overlay validated for the selected entry only against the exact P426 ON registry
+(today it requires both historical picks MTP-enabled), the reversed s2 item order; tests for argv, order, fresh roots, drift
+refusal, no-restart. **B6** signals (§8). **B3** panel
 (P427).
 
 **DAG:** (1) now, while R5 runs: write B1 / B4 / B7 code + red tests (no test runs during R5). (2) R5 ends → test window: red /
 green, fork suites ×2 + 8 audits; Cursor code review. (3) Fork commit → **fork push (operator approval)** → stack bump = S + B9 /
-B10 / B5 / B11 / B12 / B4-stack, stack suite. (4) Wave 1 smokes → full axes. (5) During Wave 1: B8 / B2 / B6 / B3. (6) Wave 2.
+B10 / B5 / B11 / B12 / B13 / B4-stack, stack suite. (4) Wave 1 smokes → full axes. (5) During Wave 1: B8 / B2 / B6 / B3. (6) Wave 2.
 Panel judging as artifacts land.
 
 ## 10. Estimate
 
-GPU lower bounds (M40 / M42 / M63 / R7 walls) [+30 % allowance]: Wave 1 — smokes ≈ 2.5 h (8 smoke legs + idle), A1 3.4, A2 2.7,
-A3 0.3, A4 1.9, M1 1.0, extra loads 0.3, idle 19 × 10 min = 3.2 → 15.3 h [19.9]. Wave 2 — tg1 ON 3.1 + OFF 7.0, pilots 0.6,
-reloads 0.6, idle 7 × 10 min = 1.2 → 12.5 h [16.3]. Total ≈ 28 h [36 h]. Not GPU: builds + reviews ≈ 1–2 days before Wave 1;
+GPU lower bounds (M40 / M42 / M63 / R7 walls) [+30 % allowance]: Wave 1 — 30 legs (10 smoke: A1 / A2 / A3 / A4 / M1 × 2 arms; 20 full: A1 / A2 / A3 / A4 / M1 × 4) and 29 idle gaps: smokes
+≈ 3.0 h, A1 3.4, A2 2.7, A3 0.3, A4 1.9, M1 1.0, loads 0.3, idle 29 × 10 min = 4.8 → 17.4 h [22.6]. Wave 2 — 8 legs (pilot,
+s1, s2, reload × 2 arms), 7 gaps: tg1 ON 3.1 + OFF 7.0, pilots 0.6, reloads 0.6, idle 1.2 → 12.5 h [16.3]. Total ≈ 30 h [39 h]. Not GPU: builds + reviews ≈ 1–2 days before Wave 1;
 test windows ≈ 0.75 h each; panel judging (tokens).
 
 ## 11. Restore
