@@ -1,49 +1,57 @@
-# Handoff — 2026-10-20 (session 4, evening): R4 done (P404 closed), v13 accepted (C199), Qwen3.6 campaign running, P415 R7 tool in code review round 2
+# Handoff — 2026-10-21 (session 4 END, checkpoint): P369 v13 campaigns ALL PASS, R7 qualified 7 / 7, fork merged + pushed, stack bumped + pushed
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P417, C199, C198, P416, C197, C196, P415,
-P414, P413, P412, P411, P404 closed), then `docs/specs/p369-phase2-run-plan.md` (v13), `docs/specs/p405-kv-scheme-precedence.md` (v4)
-and `docs/specs/p415-r7-qualification.md` (v5 = the build spec; §2.5 wins). Model names: FULL registry names only, always.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C202, P421 closed, P420, P419 → C201, P418, P417,
+C200, C199, C198, P416, C197, C196, P415 → C196, P414 → C199, P413, P412, P411, P409 closed, P404 closed), then the specs:
+`docs/specs/p369-phase2-run-plan.md` (v13), `docs/specs/p405-kv-scheme-precedence.md` (v4), `docs/specs/p415-r7-qualification.md` (v5).
+Model names: FULL registry names only, always.
 
-## State of the world (2026-10-20 ~18:00)
+## State of the world (checkpoint, 2026-10-21)
 
-- **Box `m5max-128`**, AC back (140 W / 28 V). ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"` first.
-- **GPU RUNNING:** the `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` P369 campaign — smoke 17 then full, chain `$S/chain_qwen36b.sh`
-  (session `060ea786…` scratchpad), runs `…/p369/phase2/20261020-a45f369d-{smoke17,full}-qwen36`, `--reviewed-head a45f369d`. No
-  pytest while it runs.
-- **Results today (session 4):** Fable regression smoke 15 PASS on `7207179b` (C188 carries); **R4 done → P404 CLOSED-BY-MEASUREMENT**:
-  on TurboQuant fix A is within bounds and faster (`Qwen3.8-27B-mlx-uniform-4bit` 23.28 → 39.83 tok/s, Fable +0.28 %); panels for
-  Qwen3.6 / Ornith written and committed (`a7c65f48`); smoke 16 found **P417** (drafter gate counted the bound target's 8-bit
-  embedding / head) → fixed `a45f369d`.
-- **Fork branches (LOCAL, unpushed):** `p369-mtp` `3a92943d` (GPU worktree `mlx-vlm-p369`, restored by chains);
-  `p400-tq-width2` `abbbfc84`; `p405-kv-scheme` `64afc7dd`; **`p369-v13-panel` `a45f369d`** (worktree `mlx-vlm-panel`) = reviewed v13
-  `3ae8770e` (C199) + panel data + P417 — THE campaign head; **`p369-v13` `bbe7a8cd`** (worktree `mlx-vlm-p405`) = `a45f369d` + P415
-  (`5ccfe62c` red / `c112b09d` green) + P415 code-round-1 fixes; `p404-arm-a` `e12780d0`.
-- **Registry:** unchanged (four MTP-certified entries MTP-OFF, C177 / C191).
+- **Box `m5max-128`**, AC 140 W / 28 V, GPU IDLE, nothing running. OrbStack OFF. ALWAYS
+  `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"` first.
+- **All repos pushed and consistent:**
+  - fork `mlx-vlm` `main` = `2e66d89d` (origin) — P400 + P401 + P405 + v13 harness + borrowed panel + P417 + P415; production code
+    = `7207179b`. Fork suites ×2 (6753 / 17) + 8 audits green on the P415 heads.
+  - stack `main` (origin) — `src/mlx-vlm` = `2e66d89d`; `src/mlx-serve` = `86921f02` (NOT bumped: origin has an unvalidated upstream
+    v0.3.0 merge `e6a7a5a6`, C202); registry: `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` PROVISIONAL
+    (served TurboQuant from the bump, C189 / C202); MTP still OFF for all four MTP-certified entries (C177 / C191).
+  - mlx-serve: nothing local.
+- **The daily driver is NOT restarted**: the bump takes effect at the next `./runserver.sh` / lean start.
 
-## In flight
+## Results this session
 
-- P415 Cursor CODE review **round 2 of 3** on `bbe7a8cd` (round 1: NOT CLEARED D1–D13, all fixed test-first; D4 partly by design —
-  the stack venv's mlx-vlm is the pre-bump submodule). Then the R7 smoke `--entry Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
-  (needs `--reviewed-head <cleared head>`), then the full R7 (all seven; Qwen3.6 needs its P369 full PASS summary).
+- **P369 phase 2 — all four MTP-certified entries worker-qualified MTP-ON on production `7207179b`:** Fable (C188 carry-over, smoke
+  15), `Qwen3.8-27B-mlx-uniform-4bit` (session 3), `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (full PASS, E1c 5 / 5, E2 PASS),
+  `Ornith-1.0-35B-mlx-uniform-4bit` (full PASS, drafter MoE inventory 77 invocations).
+- **P405 R4 → P404 CLOSED:** on TurboQuant the exact verifier is within bounds and faster (uniform 23.28 → 39.83 tok/s).
+- **P405 R7 (P415) — 256K qualification, 7 / 7 COMPLETED** (shipped config, 260,096-token prompt, real settings): Fable MTP-ON
+  38.25 GB; Qwen3.6 MTP-ON 30.16; uniform MTP-ON 28.27; served 23.48–28.47 GB. README row + campaign-results table.
+- **P409 CLOSED:** stack suite Docker-down 6939 / 27 / 0 failed (session-scoped grader-image fake).
 
-## Next work, in order (convergence path, agreed with the operator 2026-10-20)
+## Next work, in order (Fable → shipping MTP-ON is the critical path)
 
-1. Qwen3.6 campaign result → P369 entry + campaign-results; if PASS, Ornith's campaign (same chain shape on `a45f369d`).
-2. P415 review to clearance (≤ 3 rounds, then operator) → R7 smoke (Fable) → R7 full.
-3. Fork merge P400 → P405 → v13 (+ panel + P417) → P415 into fork main — **needs the operator's push approval**.
-4. Candidate stack bump (own worktree, both suites) → router-chain re-certification of Fable MTP-ON (own plan, review, GPU go) →
-   restore Fable's C177 lines (Fable ships MTP-ON).
-5. Off the critical path: R5 for `Qwen3.8-27B-mlx-uniform-4bit` (then Qwen3.6, P411 / C197), R6 (own plan).
+1. **Regenerate the fork's pinned registry fixture** (`mlx_vlm/tests/fixtures`, the 16-state generator's base) for the new
+   registry bytes (C202 edit) — test-first, fork suites ×2 + audits; needed before any further P369 / R7 run.
+2. **Router-chain re-certification plan for Fable MTP-ON** (P369 v13 §3.1 Restore; own plan, Cursor plan review ≤ 3 rounds,
+   operator GPU go): reproduce the certified predictor (acceptance ≥ certified, decode ≥ 1.3×) on real chains, ON / OFF. Then restore
+   Fable's C177 block (Fable ships MTP-ON). Repeat per entry for uniform / Qwen3.6 / Ornith.
+3. **P405 R6** (matched affine-vs-TurboQuant quality, own plan) — lifts the two PROVISIONAL marks.
+4. **R5** codec ABBA (`Qwen3.8-27B-mlx-uniform-4bit`, then Qwen3.6; C200: fixed lengths, 261,120 long prompt disclosed). Input:
+   TurboQuant prefill at 256K ≈ 130 tok/s vs native16 Fable 370.
+5. mlx-serve upstream v0.3.0 bump (one stack suite on it, then bump). Then P383, P385, tg2, M64; remove stale worktree
+   `mlx-vlm-p369-r2`; `docs/README.md` index additions (P311 v4, P364, P369, P371, P415, review dirs).
 
-## Rules learned (this session)
+## Rules learned (session 4)
 
-- A `run_in_background` shell is not detached: GPU chains go through `nohup … &` + a separate waiter; `chmod +x` first.
-- `SwitchGLU`'s exact fused path is inference-only (`.eval()` in fixtures); a bound drafter carries the target's embedding / head
-  as module children (P413 / P417) — anything that walks `drafter.modules()` must exclude them.
-- The server refuses a request leaving < `MIN_OUTPUT_TOKENS` 2,048 of context: the largest accepted prompt at 262,144 is 260,096.
-- Data-only fixtures for a campaign go on a branch off the reviewed head (code diff provably empty), never onto a branch carrying
-  unreviewed code.
-- isort / black disagree on wrapped-import `# noqa`; black last. Python string replacement of black-formatted code: anchor on
-  unique text or index ranges; re-check after each formatter run.
+- GPU chains: `nohup … &` + separate waiter (a `run_in_background` shell is not detached); `chmod +x` first.
+- Never pytest while a campaign / measurement runs (the orchestrator refuses; Metal tests perturb). Stack suite ≈ 31 min, fork
+  suite ≈ 3 min; never two at once; never edit a tree (incl. docs) while its suite runs.
+- Power: 5-min ticks miss short outages — check `pmset -g log` ("Using Batt") against run windows (P418).
+- A bound drafter carries the target's embedding / head as module children (P413 / P417). The cached path's seed lives in the
+  sampler (P420); session retention runs a second prompt-only `generate_step` (P420); the drafter-free path lands its chunked
+  prefill on a snapshot offset (P421).
+- Data-only fixtures for a campaign go on a branch off the reviewed head; smoke-found fixes need no review round (P394).
+- The server refuses a request leaving < 2,048 tokens: the largest accepted 256K prompt is 260,096.
+- isort / black disagree on wrapped-import `# noqa` — black last; anchor scripted edits on unique text (black reflows).
 
-Next decision id C200; discussion ids continue from P417.
+Next decision id C203; discussion ids continue from P421.
