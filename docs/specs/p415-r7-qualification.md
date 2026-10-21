@@ -1,6 +1,22 @@
-# P415 — R7 256K operational qualification tool (plan v4, 2026-10-20)
+# P415 — R7 256K operational qualification tool (plan v5, 2026-10-20)
 
-Status: v4 = v3 after Cursor plan review round 3 of 3 (`docs/reviews/p415/plan-round3.*`: Q3 Q5 Q6 Q8 Q9 closed; Q1 Q2 Q4 Q7 open +
+Status: **v5 = v4 + the operator's rulings C198 / C199 — the build spec.** Where v5 and §2.1–§2.4 differ, §2.5 wins.
+
+### 2.5 v5 — operator rulings (C198 / C199)
+
+- **Request settings (C198 (1)):** no sampling / length override; the registry defaults apply. The prompt is the largest the
+  server accepts: 262,144 − `MIN_OUTPUT_TOKENS` 2,048 = **260,096** post-template tokens (supersedes 261,120). Asserted: the
+  server's soft-max clamp gives effective `max_tokens` 2,048 and `thinking_budget` ≤ 1,638 (0.8); the request ends `stop` or
+  `length` within 2,048 tokens. The only request field the tool sets besides the messages is the fixed seed (Q10).
+- **Interference (C198 (3), supersedes §2.1 / §2.3 Q4):** power and the process scan once before and once after each entry
+  (a failure in either marks it INVALID); the 5-minute monitor logs power every tick (AGENTS.md); no per-chunk / 15 s checks.
+- **References (C199 (a)):** a delta is printed with every differing fingerprint field as its label; a like-for-like rerun
+  only where a decision hinges on the gap.
+- **Arms (C199 (c), supersedes §2.4):** `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit`
+  MTP-ON only (their exact C177 block restored by `registry_states`, loaded-drafter checks as v13); `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`
+  MTP-ON, run only after its P369 campaign passes; the other four as served (no MTP). Seven entries, seven arms.
+
+Prior status: v4 = v3 after Cursor plan review round 3 of 3 (`docs/reviews/p415/plan-round3.*`: Q3 Q5 Q6 Q8 Q9 closed; Q1 Q2 Q4 Q7 open +
 new Q10 Q11 — applied in §2.3; v3's shrink exception WITHDRAWN) — escalated to the operator (P416), lead rec: accept v4 without
 a fourth round. v3 = v2 after Cursor plan review round 2 of 3 (`docs/reviews/p415/plan-round2.*`: Q5 Q6 Q8 closed; Q1 Q2 Q3 Q4 Q7 open +
 new Q9 — applied in §2.2, one bounded exception in Q2). v2 = v1 after Cursor plan review round 1 of 3 (`docs/reviews/p415/plan-round1.*`: DISAGREE Q1–Q8, all accepted; §2.1
