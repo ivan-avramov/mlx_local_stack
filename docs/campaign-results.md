@@ -2,6 +2,19 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-20 — P405 R4: the P400 verifier fix on TurboQuant KV — within bounds, and faster (P404 closed)
+
+**What:** the pre-registered P400 §5.3 ABBA re-run with P405 in both arms (arm A `e12780d0` old verifier, arm B `64afc7dd` fix A),
+both Qwen3.8-27B picks, every verify block forced to width 2 (the worst case), 140 W, 600 s idle between legs.
+
+**Result:** `Qwen3.8-27B-mlx-uniform-4bit` decode 23.28 → 39.83 tok/s (+71 %), peak −0.04 %; `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+36.89 → 36.99 tok/s (+0.28 %), peak 0 %. Bounds (≤ 3 % slower, ≤ 1 % peak): met for both.
+
+**Mechanism:** on TurboQuant, the old length-2 verifier shortcut is the slow multi-query path (and the non-exact one, P400);
+fix A's per-query singleton path is both exact and faster. The earlier −3.93 % (P404) was measured on affine KV only.
+
+**Implication:** no speed cost to ship the exact verifier; Fable (native KV) is unaffected either way.
+
 ## 2026-10-20 — P369 phase 2: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` regression smoke on production `7207179b` (SMOKE_PASS)
 
 **What:** the C188 carry-over check — the P369 smoke for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on the reviewed P405
