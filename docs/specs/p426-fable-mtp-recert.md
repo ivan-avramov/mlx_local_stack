@@ -50,7 +50,8 @@ present in ON and absent in OFF.
   other MLX worker, process census, load average, uptime, AC / voltage / battery (S8). Exit receipt — the same re-checked, plus
   the engagement gate (S3): every eligible ON request has `draft_kind=mtp`, rounds > 0, proposed > 0, 0 ≤ accepted ≤ proposed;
   every OFF request has no draft activity; rows / log records reconcile exactly (missing, duplicate, zero or contradictory
-  telemetry → leg INVALID). Drift between receipts → the leg's speed block INVALID. **Power rule (S8), fail closed:** at entry and at every watcher
+  telemetry → leg INVALID); the counters are drafter-global diffs (B1 code round 1
+  D1), so any `Request started` line with `in_flight` > 1 in an ON leg makes that leg's acceptance INVALID. Drift between receipts → the leg's speed block INVALID. **Power rule (S8), fail closed:** at entry and at every watcher
   tick, `pmset -g ac` must read 140 W and 28 V and battery > 20 %; any other or unreadable value, or any on-battery interval in
   `pmset -g log` overlapping the leg window, marks the leg's speed block INVALID (entry failure: the leg does not start).
 - **Watcher (B5), every leg incl. smokes:** 5-min ticks with item progress, mean-based ETA vs prediction, errors, convergence,
