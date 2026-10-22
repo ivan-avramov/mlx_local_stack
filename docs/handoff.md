@@ -1,29 +1,22 @@
-# Handoff — 2026-10-21 (session 5, checkpoint 19:05): P422 fixture done, R5 uniform done, R5 Qwen3.6 running, P426 plan v4 accepted, B1 in code review
+# Handoff — 2026-10-21 (session 5, checkpoint 20:55): P426 Wave-1 builds green, B1 reviewed, R5 Qwen3.6 rerun running
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P428, C206, C205, P426, C204, C203, P422,
 C202 …), then `docs/specs/p426-fable-mtp-recert.md` (v4, accepted C205) — the Fable MTP-ON re-certification plan.
 Model names: FULL registry names only, always.
 
-## State of the world
+## State of the world (checkpoint 20:55)
 
 - **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"` first.
-- **GPU: P405 R5 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` RUNNING** (started 18:55, ≈ 4.75 h): chain
-  `$TMPDIR/…/scratchpad/chain_r5_qwen36.sh` (pid in `chain_r5_qwen36.pid`), out `$STACK_WORKDIR/p400/perf/20261021-r5-494aea2c-qwen36`
-  (+ `.monitor.log`), tree = worktree `mlx-vlm-p369` detached at `494aea2c` (restored to `p369-mtp` at exit). No pytest until it ends.
-- **Fork `mlx-vlm` (local only, NOT pushed):**
-  - `p422-registry-fixture` `494aea2c` (= `main` `2e66d89d` + P422 fixture). Suites ×2 6755 / 17, audits green.
-  - `p426-b1-draft-log` `c37a7d5e` (B1 red `1b52d3a8`, green `c37a7d5e`; suites ×2 6775 / 17, audits green). Code review round 1:
-    DISAGREE D1 (counters are drafter-global diffs — exact only with one request in flight) / D2 (tests via a fake generator).
-    Round-2 changes written, UNTESTED, uncommitted in worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p426-b1`: docstring + 5 new
-    end-to-end tests; plan §2 got the `in_flight = 1` rule. Next: run them (verify the byte-exact OFF-line test also passes on
-    `494aea2c`), commit, review round 2.
-  - `p426-b7-qualify-off`: red test stashed (`git stash list`: "p426-b7-red-test"); green patch parked at
-    `scratchpad/p426-b7-green.patch`.
-  - `p426-b4-settings-match` (checked out in `../mlx-vlm`): red test edits UNCOMMITTED in the tree
-    (`test_p369_phase2_registry_states.py`, `test_mtp_verify_scan.py`); green patch `scratchpad/p426-b4-green.patch`.
-  - `../mlx-vlm/.venv` rebuilt this session (box-notes); audits need `--upstream-ref 952d4f6b`.
-- **Stack `main`** ahead of origin by ~15 commits (docs + AGENTS.md C206), NOT pushed. Uncommitted: B9 `benchmark/bench/p426_ids.py`
-  + `tests/test_p426_ids.py`, B13 test `tests/test_p426_reasoning_seeds.py` (green patch `scratchpad/p426-b13-green.patch`).
+- **GPU: P405 R5 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` RERUN running** (started 20:52, ≈ 4.75 h): `scratchpad/chain_r5_qwen36b.sh`,
+  out `$STACK_WORKDIR/p400/perf/20261021-r5-d3feb734-qwen36` (+ `.monitor.log`), tree worktree `mlx-vlm-p369` detached at `d3feb734`
+  (P429 leg-exit fix; restored to `p369-mtp` at exit). The first attempt (`…-494aea2c-qwen36`) aborted at 2 / 8 (P429). No pytest
+  until it ends.
+- **Fork `mlx-vlm` (local only, NOT pushed):** `p426-s` `98106e2e` = the build-S candidate (P422 fixture + B1 + B4 + B7 + P429), fork
+  suite ×2 6813 / 17 + 8 audits green. Branches: `p426-b1-draft-log` `be9424f1` (code review: rounds 1–3 done, all B1 findings
+  CLOSED; G1–G3 were stack-side, fixed), `p426-b4-settings-match` `adba582f` (dev review round 2 RUNNING), `p426-b7-qualify-off`
+  `df5ebb38`, `p429-leg-exit` `d3feb734`. B1 worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p426-b1`.
+- **Stack `main`** (local, NOT pushed): P426 Wave-1 builds B5 / B9 / B10 / B11 / B12 / B13 / B4-stack committed green (74 P426 tests);
+  stack suite on `cb2084a9` 7006 / 27 / 1 xfailed / 0 failed; later B10 fixes (E1, G1–G3) not yet in a full stack suite.
 - Registry unchanged; daily driver not restarted.
 
 ## Results this session
@@ -37,14 +30,14 @@ Model names: FULL registry names only, always.
 
 ## Next work, in order
 
-1. When R5 Qwen3.6 ends: record it (P428 style: README row, campaign-results, open-questions). Then a TEST WINDOW: B1 round-2 tests
-   → commit → Cursor B1 code round 2; B7 red (pop stash) → green (apply patch); B4 red → green; B9 / B13 red → green (`python -m
-   bench.p426_ids` writes `benchmark/results/p426/ids.json`); fork suites ×2 + audits; stack suite (≈ 31 min). Then Cursor code
-   reviews for B4, B7, B9 + B13.
-2. Remaining pre-Wave-1 builds: B10 leg wrapper, B5 watcher (power fail-closed), B11 `vision_gate.py --ids`, B12 (A3 description
-   + image path per row, A7 artifacts), B4-stack overlay builder. Then fork push (ASK the operator) → stack bump = S → frozen worktree
-   → Wave 1 smokes.
-3. GPU filler while builds review: nothing else approved is queued — ask before inventing runs.
+1. Cursor reviews one at a time: fork dev builds round 2 (running) → stack builds round 1 (B5 B9 B10 B11 B12 B13 B4-stack incl.
+   the G1–G3 / E1 fixes). ≤ 3 rounds each, then the operator.
+2. When R5 Qwen3.6 ends: record it (README row, campaign-results, open-questions, as P428). Stack suite on the final stack head.
+3. Fork push of `p426-s` (ASK the operator) → stack submodule bump = S (+ suites) → frozen worktree `$STACK_WORKDIR/worktrees/stack-p426`
+   (`uv sync`, `.env`) → B4-stack overlay → Wave 1 smokes (B10 leg specs per §4–§5) → full axes.
+4. During Wave 1: B8 (pair verifier), B2 (tg1 single-entry + invalidate + sequencer), B6 (signals), B3 = P427 (panel; pick the
+   second judge family among Cursor's models after checking image input).
+5. P429 production side (thread-local MLX compile cache at exit) — own proposal when it matters.
 
 ## Rules learned (session 5)
 
@@ -52,5 +45,10 @@ Model names: FULL registry names only, always.
 - Byte-level registry matching made every comment edit block GPU runs → C203 (settings-level, B4).
 - Cursor's model list is long (131); grep the full `cursor-agent models` output before saying a model is missing.
 - R5 / R7 DryRun 500s in leg logs are the probe's own prompt sizing — benign.
+- cached_session requests run inline on the model-owning daemon thread: drafter counters are exact under HTTP overlap;
+  continuous_batching shares rounds (B1 D1).
+- `pgrep -f <path>` misses a script started as `./x.sh`; wait on the PID.
+- An existing test (`test_completions_endpoint` patched `record_success`) leaks `in_flight` into the shared store; use a fresh
+  `ServerMetricsStore` in tests that read it.
 
-Next decision id C207; discussion ids continue from P428.
+Next decision id C207; discussion ids continue from P430.
