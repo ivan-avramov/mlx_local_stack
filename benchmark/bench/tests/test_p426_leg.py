@@ -53,6 +53,26 @@ def test_any_other_registry_delta_refuses(on, why):
     assert problems and any(why in p for p in problems), problems
 
 
+@pytest.mark.parametrize(
+    "on, why",
+    [
+        (ON.replace(f"draft_model: caslca/{ENTRY}-mtp-drafter", "draft_model: caslca/other-drafter"), "draft_model"),
+        (ON.replace("    draft_kind: mtp", "    draft_kind: suffix"), "draft_kind"),
+        (ON.replace("    kv_bits: 0", "    kv_bits: false"), "kv_bits"),  # type change: 0 == False in Python
+        (ON.replace("    hf_path: x/other\n", ""), "Other"),
+        (ON + "  - name: Other\n    hf_path: x/dupe\n", "duplicate"),
+    ],
+)
+def test_h2_the_delta_check_is_strict_and_pins_the_on_values(on, why):
+    problems = L.registry_delta_problems(on, OFF, ENTRY)
+    assert problems and any(why in p for p in problems), problems
+
+
+def test_h2_only_comment_lines_may_be_removed():
+    on = ON.replace("    kv_bits: 0\n", "    # kv_bits: 0\n    kv_bits: 0\n")
+    assert L.registry_delta_problems(on, OFF, ENTRY)  # an extra added line is not one of the three
+
+
 # ------------------------------------------------------------------ freshness / membership / engagement
 def test_an_existing_destination_refuses(tmp_path):
     (tmp_path / "math500.p426-off-b1.jsonl").write_text("{}\n")

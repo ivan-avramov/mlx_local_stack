@@ -90,3 +90,16 @@ def test_f1_the_cli_reads_the_registry_as_bytes(tmp_path, monkeypatch):
     monkeypatch.setattr(O, "build", build)
     O.main(["--stack-root", str(tmp_path), "--entry", ENTRY, "--out", str(tmp_path / "on.yaml")])
     assert "\r\n" in seen["text"]
+
+
+def test_h1_a_cached_foreign_registry_states_is_never_used(tmp_path, monkeypatch):
+    """B4 code round 2 H1: a process that already imported ``p369_phase2.registry_states`` from another checkout must still
+    load the frozen build's own file."""
+    dev = tmp_path / "src/mlx-vlm/dev/p369_phase2"
+    dev.mkdir(parents=True)
+    (dev / "__init__.py").write_text("")
+    (dev / "registry_states.py").write_text("MARK = 'frozen'\ndef settings(t):\n    return {}\n")
+    monkeypatch.setitem(sys.modules, "p369_phase2.registry_states", types.SimpleNamespace(MARK="foreign", settings=None))
+    rs = O.load_registry_states(tmp_path)
+    assert rs.MARK == "frozen"
+    assert Path(rs.__file__).resolve() == (dev / "registry_states.py").resolve()
