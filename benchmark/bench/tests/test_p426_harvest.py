@@ -149,3 +149,34 @@ def test_run_files_are_copied_once_and_must_match_on_resume(box):
     on.write_text("models: [changed]\n")
     with pytest.raises(H.HarvestError, match="differs"):
         H.harvest_run_files([frozen_json, on], main_root=box["main"], scrub=box["scrub"])
+
+
+def test_a_large_dossier_file_is_published_xz_compressed(box, monkeypatch):
+    """Side-agent note: the M1 / R7 worker logs run ≈ 101 MB (> the 90 MB cap) but compress ≈ 4500× — a large dossier file is
+    published as `<name>.xz` of its SCRUBBED text; the manifest records original, scrubbed and published sha256."""
+    import lzma
+
+    monkeypatch.setattr(H, "COMPRESS_BYTES", 64)
+    _seed_rows_leg(box)
+    big = f"tick on {HOST}.local by {USER}\n" * 50
+    (box["receipts"] / "math500-p426-off-smoke.watch.log").write_text(big)
+    manifest = _harvest(box, log_slice=b"Request completed: x\n" * 20)
+    d = box["main"] / "benchmark" / "results" / "p426" / "wave1" / "math500-p426-off-smoke"
+    assert not (d / "math500-p426-off-smoke.watch.log").exists()
+    text = lzma.decompress((d / "math500-p426-off-smoke.watch.log.xz").read_bytes()).decode()
+    assert text == "tick on localhost by <user>\n" * 50
+    rec = manifest["files"]["benchmark/results/p426/wave1/math500-p426-off-smoke/math500-p426-off-smoke.watch.log.xz"]
+    assert rec["compression"] == "xz" and rec["original_sha256"] == _sha(big.encode())
+    assert rec["scrubbed_sha256"] == _sha(text.encode()) and rec["published_sha256"] == _sha(lzma.compress(text.encode()))
+    assert (d / "server_log_slice.log.xz").exists()
+    rows = box["main"] / "benchmark" / "results" / ENTRY / "math500.p426-off-smoke.manifest.json"
+    assert rows.exists()  # rows / sidecars at their results path are never compressed (graders read them)
+
+
+def test_a_file_still_over_the_cap_after_compression_refuses(box, monkeypatch):
+    monkeypatch.setattr(H, "COMPRESS_BYTES", 64)
+    monkeypatch.setattr(H, "MAX_FILE_BYTES", 32)
+    _seed_rows_leg(box)
+    (box["receipts"] / "math500-p426-off-smoke.watch.log").write_bytes(bytes(range(256)) * 40)  # incompressible-ish
+    with pytest.raises(H.HarvestError, match="bytes"):
+        _harvest(box)
