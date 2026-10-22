@@ -139,6 +139,18 @@ def _alive(pattern: str) -> bool:
                           capture_output=True).returncode == 0
 
 
+def _pid_alive(pid: int) -> bool:
+    """P444: exact liveness for a driver that is this monitor's ANCESTOR (macOS `pgrep` excludes ancestors)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    stat = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True).stdout.strip()
+    return bool(stat) and not stat.startswith("Z")  # an exited, unreaped driver is a zombie: gone
+
+
 def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True, tune=None,
           ticks=0, rows_file=None, flat_escalate=FLAT_TICKS_TO_ESCALATE) -> tuple[str, int, int, list]:
     """Return (report, n, flat_ticks, rate_hist). Pure enough to test with fake rows."""
@@ -234,7 +246,9 @@ def _parse_args(argv=None):
                          "`{bench}.{tune}.jsonl` instead of `{bench}.jsonl`. Omitting this for a "
                          "tuned run silently polls the wrong file -- see SUSPECT WRONG FILE.")
     ap.add_argument("--total", type=int, required=True, help="items expected per model")
-    ap.add_argument("--driver-pattern", required=True, help="pgrep pattern for the driver")
+    drv = ap.add_mutually_exclusive_group(required=True)
+    drv.add_argument("--driver-pattern", help="pgrep pattern for the driver (never an ancestor of this monitor)")
+    drv.add_argument("--driver-pid", type=int, help="P444: the driver's pid (exact; use when the driver is an ancestor)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--interval", type=float, default=300.0)
     ap.add_argument("--rows-file", default=None,
@@ -255,7 +269,7 @@ def main(argv=None) -> int:
     power = PowerState(args.power_receipt)
 
     while True:
-        alive = _alive(args.driver_pattern)
+        alive = _pid_alive(args.driver_pid) if args.driver_pid else _alive(args.driver_pattern)
         at = time.strftime('%H:%M:%S')
         blocks = [f"===== {at}  driver={'ALIVE' if alive else 'GONE'} =====", power.tick(read_power(), at)]
         for m in models:
