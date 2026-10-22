@@ -116,3 +116,14 @@ def test_a_row_carries_each_turns_draft_counters(tmp_path, monkeypatch):
     row = json.loads(out.read_text().splitlines()[0])
     assert row["draft"] == on
     assert row["turn2"]["draft"] == dict.fromkeys(on)
+
+
+def test_k4_a_row_records_both_turn_seeds(tmp_path, monkeypatch):
+    """Stack code round 1 K4: the leg wrapper checks every row's seeds against the plan; vision rows record them."""
+    from bench.rowschema import sample_seed
+
+    corpus, fp = _setup(tmp_path, monkeypatch, 1)
+    out = tmp_path / "r" / "m" / "vision_gate.p426-off-b1.jsonl"
+    assert VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out), "--ids", IDS[0]]) == 0
+    row = json.loads(out.read_text().splitlines()[0])
+    assert row["seed"] == sample_seed(IDS[0], 0) and row["turn2"]["seed"] == sample_seed(IDS[0], 1)

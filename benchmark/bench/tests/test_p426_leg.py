@@ -206,14 +206,23 @@ class FakeOps:
         return []
 
 
+PINS = dict(stack_head="s" * 40, stack_clean=True, mlx_vlm="v" * 40, mlx_serve="m" * 40)
+
+
+def _row(i, arm, pt=None):
+    return {"id": i, "draft": ENGAGED if arm == "on" else PLAIN, "completion_tokens": 5,
+            "prompt_tokens": pt if pt is not None else 100 + ord(i[0]), "sampler_seed": 7, "sample": 0, "seed_base": 0}
+
+
 def _spec(tmp_path, arm="on", rows=None, planned=("a", "b")):
     rows_path = tmp_path / "rows.jsonl"
+    registry = ON if arm == "on" else OFF
     spec = L.LegSpec(
         name=f"a1-{arm}-b1",
         arm=arm,
         kind="rows",
         model=ENTRY,
-        registry_text=ON if arm == "on" else OFF,
+        registry_text=registry,
         off_registry_text=OFF,
         driver_argv=["true"],
         destinations=[rows_path],
@@ -222,33 +231,55 @@ def _spec(tmp_path, arm="on", rows=None, planned=("a", "b")):
         receipt_dir=tmp_path / "receipts",
         server_log=tmp_path / "mlx_vlm.log",
         expected_requests=len(planned),
+        seeds={i: {"sampler_seed": 7, "sample": 0, "seed_base": 0} for i in planned},
+        pins=dict(PINS, registry_off_sha=L.sha256_text(OFF), registry_on_sha=L.sha256_text(ON)),
     )
-    spec._test_rows = rows if rows is not None else [
-        {"id": i, "draft": ENGAGED if arm == "on" else PLAIN, "completion_tokens": 5} for i in planned
-    ]
+    spec._test_rows = rows if rows is not None else [_row(i, arm) for i in planned]
     return spec
 
 
-def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), watch=None, driver_raises=None):
+def _log_for(rows, extra=0):
+    """The worker's started / completed lines for exactly these rows (+ ``extra`` drafter-free requests)."""
+    ts = "2026-10-22 01:00:00,000 - mlx_vlm.server - INFO - "
+    out = []
+    recs = [(r.get("prompt_tokens"), r.get("draft") or {}) for r in rows] + [(9, {})] * extra
+    for pt, d in recs:
+        out.append(f"{ts}Request started: endpoint=/chat/completions model=m stream=True in_flight=1")
+        draft = (f" draft_kind=mtp draft_n={d['draft_n']} draft_n_accepted={d['draft_n_accepted']} draft_rounds={d['draft_rounds']}"
+                 if d.get("draft_n") is not None else "")
+        out.append(f"{ts}Request completed: endpoint=/chat/completions model=m stream=True backend=cached_session session=s "
+                   f"cached_tokens=0 prompt_tokens={pt} generated_tokens=5 elapsed=1.000s prefill=1.0 tok/s decode=1.0 tok/s "
+                   f"finish_reason=stop in_flight=0{draft}")
+    return out
+
+
+def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), battery_problems=(), watch=None,
+         driver_raises=None, state=None, log_lines=None, stop_watch_raises=None):
     watch = watch if watch is not None else dict(power_failure=power_receipt, exited_early=False, ticks=20)
     spec.server_log.write_text("2026-10-21 23:00:00,000 - earlier leg - INFO - Request started: in_flight=1\n")
 
-    def driver(argv, env, timeout):
+    def driver(argv, env, timeout, cwd=None):
         if driver_raises:
             raise driver_raises
         spec.rows_path.write_text("".join(json.dumps(r) + "\n" for r in spec._test_rows))
         with spec.server_log.open("a") as f:  # only this leg's slice (after the pre-leg offset) counts
-            f.write("\n".join(_log(len(spec._test_rows))) + "\n")
+            f.write("\n".join(log_lines if log_lines is not None else _log_for(spec._test_rows, spec.expected_extra)) + "\n")
         return driver_rc
+
+    def stop_watch():
+        if stop_watch_raises:
+            raise stop_watch_raises
+        return watch
 
     return L.run_leg(
         spec,
         ops,
         run_driver=driver,
         pins_check=lambda model, arm: [],
-        watcher=lambda spec: (lambda: watch),
-        battery_intervals=lambda start, end: list(battery),
+        watcher=lambda spec: stop_watch,
+        battery_intervals=lambda start, end: (list(battery), list(battery_problems)),
         clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+        repo_state=lambda: dict(state if state is not None else PINS),
     )
 
 
@@ -305,8 +336,7 @@ def test_a_changed_worker_or_router_is_invalid(tmp_path, kw):
 
 
 def test_an_unengaged_on_row_is_invalid(tmp_path):
-    spec = _spec(tmp_path, rows=[{"id": "a", "draft": ENGAGED, "completion_tokens": 5},
-                                 {"id": "b", "draft": PLAIN, "completion_tokens": 5}])
+    spec = _spec(tmp_path, rows=[_row("a", "on"), dict(_row("b", "on"), draft=PLAIN)])
     receipt = _run(tmp_path, spec, FakeOps())
     assert receipt["verdict"] == "INVALID"
 
@@ -352,3 +382,81 @@ def test_g3_an_unhealthy_watcher_invalidates_speed(tmp_path, watch, why):
     receipt = _run(tmp_path, _spec(tmp_path), FakeOps(), watch=watch)
     assert receipt["verdict"] == "VALID" and receipt["speed_valid"] is False
     assert any(why in p for p in receipt["speed_problems"]), receipt["speed_problems"]
+
+
+# ------------------------------------------------------------------ stack code round 1 K1 K2 K4 K5 K6
+@pytest.mark.parametrize("exc", [OSError("rows unreadable"), ValueError("bad json")])
+def test_k1_any_driver_exception_is_receipted_and_torn_down(tmp_path, exc):
+    ops = FakeOps()
+    spec = _spec(tmp_path)
+    receipt = _run(tmp_path, spec, ops, driver_raises=exc)
+    assert receipt["verdict"] == "INVALID" and "stop_stack" in ops.calls
+    assert (spec.receipt_dir / f"{spec.name}.receipt.json").exists()
+
+
+def test_k1_an_interrupt_is_receipted_then_re_raised(tmp_path):
+    ops = FakeOps()
+    spec = _spec(tmp_path)
+    with pytest.raises(KeyboardInterrupt):
+        _run(tmp_path, spec, ops, driver_raises=KeyboardInterrupt())
+    doc = json.loads((spec.receipt_dir / f"{spec.name}.receipt.json").read_text())
+    assert doc["verdict"] == "INVALID" and "stop_stack" in ops.calls
+
+
+def test_k1_a_failing_watcher_stop_still_tears_down(tmp_path):
+    ops = FakeOps()
+    receipt = _run(tmp_path, _spec(tmp_path), ops, stop_watch_raises=RuntimeError("watcher gone"))
+    assert receipt["verdict"] == "INVALID" and "stop_stack" in ops.calls
+
+
+@pytest.mark.parametrize(
+    "state, why",
+    [
+        (dict(PINS, stack_head="x" * 40), "stack_head"),
+        (dict(PINS, stack_clean=False), "stack_clean"),
+        (dict(PINS, mlx_vlm="w" * 40), "mlx_vlm"),
+        (dict(PINS, mlx_serve="n" * 40), "mlx_serve"),
+    ],
+)
+def test_k2_the_frozen_build_is_pinned_before_anything_starts(tmp_path, state, why):
+    ops = FakeOps()
+    receipt = _run(tmp_path, _spec(tmp_path), ops, state=state)
+    assert receipt["verdict"] == "NOT_STARTED" and "start_router" not in ops.calls
+    assert any(why in p for p in receipt["problems"]), receipt["problems"]
+
+
+def test_k2_the_registry_texts_are_pinned(tmp_path):
+    spec = _spec(tmp_path)
+    spec.pins["registry_on_sha"] = "0" * 64
+    receipt = _run(tmp_path, spec, FakeOps())
+    assert receipt["verdict"] == "NOT_STARTED" and any("registry_on_sha" in p for p in receipt["problems"])
+
+
+def test_k4_a_row_with_unplanned_seeds_is_invalid(tmp_path):
+    spec = _spec(tmp_path, rows=[_row("a", "on"), dict(_row("b", "on"), sampler_seed=8)])
+    receipt = _run(tmp_path, spec, FakeOps())
+    assert receipt["verdict"] == "INVALID" and any("seeds" in p for p in receipt["problems"])
+
+
+def test_k5_a_substituted_log_record_is_caught_even_when_counts_match(tmp_path):
+    spec = _spec(tmp_path)
+    rows = spec._test_rows
+    lines = _log_for([rows[0], dict(rows[1], prompt_tokens=999)])  # same count, one foreign record
+    receipt = _run(tmp_path, spec, FakeOps(), log_lines=lines)
+    assert receipt["verdict"] == "INVALID" and any("no matching log record" in p for p in receipt["problems"])
+
+
+def test_k5_the_planned_extra_requests_are_allowed_exactly(tmp_path):
+    spec = _spec(tmp_path)
+    spec.expected_extra, spec.expected_requests = 1, 3
+    assert _run(tmp_path, spec, FakeOps())["verdict"] == "VALID"
+    spec2 = _spec(tmp_path / "b")
+    spec2.expected_extra, spec2.expected_requests = 1, 3
+    lines = _log_for(spec2._test_rows, extra=2)
+    assert _run(tmp_path / "b", spec2, FakeOps(), log_lines=lines)["verdict"] == "INVALID"
+
+
+def test_k6_an_unreadable_power_history_invalidates_speed(tmp_path):
+    receipt = _run(tmp_path, _spec(tmp_path), FakeOps(), battery_problems=["pmset -g log: no power-source events"])
+    assert receipt["verdict"] == "VALID" and receipt["speed_valid"] is False
+    assert any("pmset" in p for p in receipt["speed_problems"])
