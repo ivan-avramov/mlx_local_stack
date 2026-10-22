@@ -113,3 +113,9 @@ def test_advertised_full_suite_command_carries_nltk_data(doc):
             if "env -u STACK_WORKDIR" in l and "bench/tests/" in l]
     assert cmds, f"no full-suite command in {doc}"
     assert all("NLTK_DATA=" in l for l in cmds), cmds
+
+
+def test_bootstrap_enables_the_repo_hooks():
+    """P435: AGENTS.md keeps the naming / PII hooks enabled; a fresh clone has `core.hooksPath` unset, so the bootstrap sets it."""
+    lines = [l.strip() for l in BOOTSTRAP.read_text().splitlines()]
+    assert 'git -C "$REPO" config core.hooksPath githooks' in lines
