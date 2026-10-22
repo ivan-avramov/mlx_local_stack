@@ -1,4 +1,4 @@
-# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3.1, 2026-10-22 (C214)
+# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3.2, 2026-10-22 (C214, P447)
 
 Authority: C210 (operator: "proceed across the board"). GitHub Actions minutes are exhausted: the stack has no workflows; the
 fork's `tests.yml` / `upstream-parity.yml` and mlx-serve's `ci.yml` cannot run. Nothing remote checks a push.
@@ -44,6 +44,10 @@ the shim, `--no-verify`) is out of scope and equivalent to `--no-verify`; the ag
   Stack only: for each gitlink at `<local sha>`, a PASS receipt for that fork sha, AND the gitlink reachable from the
   fork's `origin/main` after `git fetch origin` in that fork (network failure / not reachable → refuse). Any failure →
   exit 1 naming the `run` command.
+- **The `evidence` branch (P447):** a push to `refs/heads/evidence` of the stack needs no receipt (an orphan data branch
+  has no code to gate); it is refused unless the pushed commit shares NO history with `<remote>/main`, and every
+  introduced commit's added lines get the PII scan (naming is not checked: data, as P437's `wave1/`). Every other ref
+  keeps the full rule.
 - **Hooks (G6 v3, H1):** a machine-local shim directory `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/hooks/`
   (installed by `bootstrap_machine.sh`, never branch-controlled) holds `pre-push`, `pre-commit`, `commit-msg`.
   `pre-push` runs `PYTHONPATH="$STACK_REPO/benchmark" "$STACK_REPO/.venv-bench/bin/python" -m bench.local_gate check
