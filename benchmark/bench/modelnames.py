@@ -105,6 +105,10 @@ _CATEGORY_STANDINS = re.compile(
     rf"\bthe\s+(?:{_ATTR}\b(?![-/\w])(?!\s+{_CLASS})"        # (a) bare category word
     rf"|(?:\w+\s+)?{_ATTR}\s+{_NOUN}\b)", re.IGNORECASE)     # (b) attribute + instance noun
 
+# Vendor-qualified EXTERNAL models (the C206 / C207 judges, Cursor reviewers) are not local registry names, but two of their
+# words are registry segments (`Opus`, `Fable`). Masked only with the vendor word in front, so a bare segment is still flagged.
+_EXTERNAL = re.compile(r"\bClaude\s+(?:Opus|Sonnet|Haiku|Fable)\b(?:\s+\d+(?:\.\d+)*)?", re.IGNORECASE)
+
 # Model-name-shaped token: alphanumeric run, optionally hyphen/dot joined. Deliberately greedy on
 # hyphens so `Ornith-1.0-35B` is ONE token rather than three.
 _TOKEN = re.compile(r"[A-Za-z0-9][\w.]*(?:-[\w.]+)*")
@@ -197,6 +201,7 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
         scan_text = re.sub(
             r'''(^\s*["']?reasoning_effort["']?\s*:\s*)["']?(?:low|medium|high|xhigh)["']?(?=\s*(?:[,}#]|$))''',
             r"\1", text)
+    scan_text = _EXTERNAL.sub(" ", scan_text)
     allowed, prefixes, fragments = _index(root)
     allowed_lower = {n.lower() for n in allowed}
     out: list[Violation] = []

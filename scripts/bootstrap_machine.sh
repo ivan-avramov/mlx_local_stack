@@ -76,6 +76,9 @@ case "$STACK_WORKDIR" in "$REPO"|"$REPO"/*) die "STACK_WORKDIR must be outside t
 # --- 2. submodules (forks pinned by the stack) ----------------------------------------------------
 git -C "$REPO" submodule update --init --force
 say "submodules: $(git -C "$REPO" submodule status | awk '{print $2"@"substr($1,1,8)}' | tr '\n' ' ')"
+# AGENTS.md: the naming / PII hooks stay enabled (P435)
+git -C "$REPO" config core.hooksPath githooks
+say "hooks: core.hooksPath=githooks"
 
 # --- 3. polyglot corpus at the recorded sha ------------------------------------------------------
 PG="$STACK_WORKDIR/polyglot-benchmark"
