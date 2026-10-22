@@ -540,3 +540,86 @@ def test_k1_round2_a_planning_failure_in_the_cli_leaves_a_not_started_receipt(tm
     assert rc == 2
     doc = json.loads((tmp_path / "rc" / "math500-p426-on-b1.receipt.json").read_text())
     assert doc["verdict"] == "NOT_STARTED" and doc["problems"]
+
+
+# ------------------------------------------------------------------ stack code round 3 (K1 K2 K3 K5 L1 M2)
+def test_k1_round3_an_interrupt_during_the_final_power_check_is_receipted_then_re_raised(tmp_path):
+    spec = _spec(tmp_path)
+    ops = FakeOps()
+    ops.router_config_sha = L.sha256_text(spec.registry_text)
+
+    def battery(start, end):
+        raise KeyboardInterrupt()
+
+    with pytest.raises(KeyboardInterrupt):
+        L.run_leg(spec, ops, run_driver=lambda *a: 0, pins_check=lambda m, a: [], watcher=lambda s: (lambda: None),
+                  battery_intervals=battery, clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+                  repo_state=lambda: dict(PINS))
+    assert json.loads((spec.receipt_dir / f"{spec.name}.receipt.json").read_text())["verdict"] == "INVALID"
+
+
+def test_k2_round3_build_drift_during_the_leg_is_invalid(tmp_path):
+    states = iter([dict(PINS), dict(PINS, mlx_vlm="z" * 40)])
+    spec = _spec(tmp_path)
+    ops = FakeOps()
+    ops.router_config_sha = L.sha256_text(spec.registry_text)
+
+    def driver(argv, env, timeout, cwd=None):
+        spec.rows_path.write_text("".join(json.dumps(r) + "\n" for r in spec._test_rows))
+        with spec.server_log.open("a") as f:
+            f.write("\n".join(_log_for(spec._test_rows)) + "\n")
+        return 0
+
+    receipt = L.run_leg(spec, ops, run_driver=driver, pins_check=lambda m, a: [], watcher=lambda s: (lambda: dict(power_failure=None, exited_early=False, ticks=20)),
+                        battery_intervals=lambda s, e: ([], []), clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+                        repo_state=lambda: next(states))
+    assert receipt["verdict"] == "INVALID" and any("drift" in p for p in receipt["problems"])
+
+
+def test_k2_round3_the_workdir_must_be_the_configured_one(tmp_path, monkeypatch):
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "configured"))
+    rc = L.main(["--axis", "math500", "--arm", "on", "--block", "1", "--stack-root", str(tmp_path / "s"),
+                 "--workdir", str(tmp_path / "elsewhere"), "--registry-on", str(tmp_path / "on.yaml"),
+                 "--receipt-dir", str(tmp_path / "rc")])
+    doc = json.loads((tmp_path / "rc" / "math500-p426-on-b1.receipt.json").read_text())
+    assert rc == 2 and any("STACK_WORKDIR" in p for p in doc["problems"])
+
+
+def test_k5_round3_the_extra_request_must_be_the_named_one():
+    rows = [_row("a", "on")]
+    lines = _log_for(rows) + _log_for([dict(_row("z", "off"), session_id="p426-cal-1", draft=PLAIN)])
+    assert L.request_match_problems(rows, lines, ["p426-cal-1"]) == []
+    assert L.request_match_problems(rows, lines, ["p426-cal-OTHER"])
+    assert L.request_match_problems(rows, lines, [])
+
+
+def test_l1_round3_publication_never_replaces_a_receipt_that_appeared_concurrently(tmp_path, monkeypatch):
+    spec = _spec(tmp_path)
+    spec.receipt_dir.mkdir(parents=True)
+    target = spec.receipt_dir / f"{spec.name}.receipt.json"
+    real_exists = type(target).exists
+
+    def racing_exists(self):  # the check sees no receipt; another writer publishes one right after
+        if self == target and not getattr(racing_exists, "done", False):
+            racing_exists.done = True
+            target.write_text('{"verdict": "VALID"}')
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(type(target), "exists", racing_exists)
+    out = L._write(spec, {"verdict": "INVALID"})
+    assert json.loads(target.read_text()) == {"verdict": "VALID"} and out["_path"] != str(target)
+
+
+@pytest.mark.parametrize(
+    "arm, cmd, ok",
+    [
+        ("off", f"1 python -m mlx_vlm.server --model caslca/{ENTRY}", True),
+        ("off", f"1 python -m mlx_vlm.server --model caslca/{ENTRY} --draft-model caslca/{ENTRY}-mtp-drafter", False),
+        ("off", f"1 python -m mlx_vlm.server --model caslca/{ENTRY} --mtp-verify-scan joint_v1", False),
+        ("on", f"1 python -m mlx_vlm.server --model caslca/{ENTRY} --draft-kind mtp --draft-model caslca/{ENTRY}-mtp-drafter --mtp-verify-scan joint_v1", True),
+        ("on", f"1 python -m mlx_vlm.server --model caslca/{ENTRY} --draft-kind mtp --draft-model caslca/{ENTRY}-mtp-drafter", False),
+    ],
+)
+def test_m2_the_worker_argv_carries_exactly_the_arms_predictor_flags(arm, cmd, ok):
+    assert (L.model_argv_problems(cmd, ON if arm == "on" else OFF, ENTRY) == []) is ok

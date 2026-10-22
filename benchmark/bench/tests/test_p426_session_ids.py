@@ -83,3 +83,21 @@ def test_the_driver_passes_the_session_id_through(monkeypatch):
 
     monkeypatch.setattr(C, "probe", lambda *a, **k: dict(_fake_probe_result(), session_id="p426-d-1"))
     assert MlxServeDriver().complete("m", [], {})["session_id"] == "p426-d-1"
+
+
+def test_m1_without_the_prefix_the_private_transport_call_is_unchanged(monkeypatch):
+    """Stack code round 3 M1: existing seams stub ``_post(path, payload, timeout)`` — no new keyword when unset."""
+    monkeypatch.delenv("MLX_BENCH_SESSION_PREFIX", raising=False)
+    monkeypatch.setattr(C, "_post", lambda path, payload, timeout=3600: json.loads(json.dumps(OK_BODY)))
+    assert C.probe("m", [{"role": "user", "content": "x"}], {})["session_id"] is None
+
+
+def test_k5_round3_the_calibration_request_has_its_own_recorded_session_id():
+    from bench import run_reasoning
+
+    class Driver:
+        def complete(self, model, messages, params, timeout=120):
+            return {"prompt_tokens": 400, "session_id": "p426-cal-1"}
+
+    cpt, sid = run_reasoning.calibrate_cpt(Driver(), "m", with_session=True)
+    assert sid == "p426-cal-1" and cpt > 0

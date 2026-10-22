@@ -132,3 +132,16 @@ def test_k3_m1_smokes_exist_for_both_arms(tmp_path):
 )
 def test_k3_the_qualify_evidence_must_be_the_planned_arm_completed(report, arm, ok):
     assert (PL.qualify_problems(report, ENTRY, arm) == []) is ok
+
+
+def test_k3_round3_the_frozen_builds_qualify_accepts_the_planned_argv():
+    """The M1 adapter targets the frozen build's qualify (B7 `--predictor`); until the S submodule bump the pinned fork lacks
+    it, so this skips with the reason rather than passing vacuously."""
+    import subprocess
+    import sys
+
+    script = REPO / "src" / "mlx-vlm" / "dev" / "p369_phase2" / "qualify.py"
+    if "--predictor" not in script.read_text():
+        pytest.skip(f"{script}: the pinned fork predates B7 (`--predictor`); runs after the S submodule bump")
+    out = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=60)
+    assert out.returncode == 0 and "--predictor" in out.stdout and "--reviewed-head" in out.stdout
