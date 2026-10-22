@@ -635,14 +635,15 @@ def _pins_check_for(fork_dev):
     return check
 
 
-def _watcher_for(repo, total, out_dir):
+def _watcher_for(repo, total, out_dir, driver_pattern="p426_leg", interval_s=None, startup_s=0.0):
     def start(spec):
         receipt = Path(out_dir) / f"{spec.name}.power.json"
         proc = subprocess.Popen(
             [str(Path(repo) / ".venv-bench/bin/python"), str(Path(repo) / "benchmark/m1/bench_watch.py"),
              "--models", spec.model, "--bench", spec.kind, "--total", str(total),
-             "--driver-pattern", "p426_leg", "--out", str(Path(out_dir) / f"{spec.name}.watch.log"),
-             "--rows-file", str(spec.rows_path), "--power-receipt", str(receipt), "--flat-escalate", "8"],
+             "--driver-pattern", driver_pattern, "--out", str(Path(out_dir) / f"{spec.name}.watch.log"),
+             "--rows-file", str(spec.rows_path), "--power-receipt", str(receipt), "--flat-escalate", "8",
+             *(["--interval", str(interval_s)] if interval_s else [])],
             stdin=subprocess.DEVNULL, start_new_session=True,
         )
 
