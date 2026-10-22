@@ -1,57 +1,56 @@
-# Handoff — 2026-10-21 (session 4 END, checkpoint): P369 v13 campaigns ALL PASS, R7 qualified 7 / 7, fork merged + pushed, stack bumped + pushed
+# Handoff — 2026-10-21 (session 5, checkpoint 19:05): P422 fixture done, R5 uniform done, R5 Qwen3.6 running, P426 plan v4 accepted, B1 in code review
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C202, P421 closed, P420, P419 → C201, P418, P417,
-C200, C199, C198, P416, C197, C196, P415 → C196, P414 → C199, P413, P412, P411, P409 closed, P404 closed), then the specs:
-`docs/specs/p369-phase2-run-plan.md` (v13), `docs/specs/p405-kv-scheme-precedence.md` (v4), `docs/specs/p415-r7-qualification.md` (v5).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P428, C206, C205, P426, C204, C203, P422,
+C202 …), then `docs/specs/p426-fable-mtp-recert.md` (v4, accepted C205) — the Fable MTP-ON re-certification plan.
 Model names: FULL registry names only, always.
 
-## State of the world (checkpoint, 2026-10-21)
+## State of the world
 
-- **Box `m5max-128`**, AC 140 W / 28 V, GPU IDLE, nothing running. OrbStack OFF. ALWAYS
-  `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"` first.
-- **All repos pushed and consistent:**
-  - fork `mlx-vlm` `main` = `2e66d89d` (origin) — P400 + P401 + P405 + v13 harness + borrowed panel + P417 + P415; production code
-    = `7207179b`. Fork suites ×2 (6753 / 17) + 8 audits green on the P415 heads.
-  - stack `main` (origin) — `src/mlx-vlm` = `2e66d89d`; `src/mlx-serve` = `86921f02` (NOT bumped: origin has an unvalidated upstream
-    v0.3.0 merge `e6a7a5a6`, C202); registry: `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` PROVISIONAL
-    (served TurboQuant from the bump, C189 / C202); MTP still OFF for all four MTP-certified entries (C177 / C191).
-  - mlx-serve: nothing local.
-- **The daily driver is NOT restarted**: the bump takes effect at the next `./runserver.sh` / lean start.
+- **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"` first.
+- **GPU: P405 R5 for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` RUNNING** (started 18:55, ≈ 4.75 h): chain
+  `$TMPDIR/…/scratchpad/chain_r5_qwen36.sh` (pid in `chain_r5_qwen36.pid`), out `$STACK_WORKDIR/p400/perf/20261021-r5-494aea2c-qwen36`
+  (+ `.monitor.log`), tree = worktree `mlx-vlm-p369` detached at `494aea2c` (restored to `p369-mtp` at exit). No pytest until it ends.
+- **Fork `mlx-vlm` (local only, NOT pushed):**
+  - `p422-registry-fixture` `494aea2c` (= `main` `2e66d89d` + P422 fixture). Suites ×2 6755 / 17, audits green.
+  - `p426-b1-draft-log` `c37a7d5e` (B1 red `1b52d3a8`, green `c37a7d5e`; suites ×2 6775 / 17, audits green). Code review round 1:
+    DISAGREE D1 (counters are drafter-global diffs — exact only with one request in flight) / D2 (tests via a fake generator).
+    Round-2 changes written, UNTESTED, uncommitted in worktree `$STACK_WORKDIR/worktrees/mlx-vlm-p426-b1`: docstring + 5 new
+    end-to-end tests; plan §2 got the `in_flight = 1` rule. Next: run them (verify the byte-exact OFF-line test also passes on
+    `494aea2c`), commit, review round 2.
+  - `p426-b7-qualify-off`: red test stashed (`git stash list`: "p426-b7-red-test"); green patch parked at
+    `scratchpad/p426-b7-green.patch`.
+  - `p426-b4-settings-match` (checked out in `../mlx-vlm`): red test edits UNCOMMITTED in the tree
+    (`test_p369_phase2_registry_states.py`, `test_mtp_verify_scan.py`); green patch `scratchpad/p426-b4-green.patch`.
+  - `../mlx-vlm/.venv` rebuilt this session (box-notes); audits need `--upstream-ref 952d4f6b`.
+- **Stack `main`** ahead of origin by ~15 commits (docs + AGENTS.md C206), NOT pushed. Uncommitted: B9 `benchmark/bench/p426_ids.py`
+  + `tests/test_p426_ids.py`, B13 test `tests/test_p426_reasoning_seeds.py` (green patch `scratchpad/p426-b13-green.patch`).
+- Registry unchanged; daily driver not restarted.
 
 ## Results this session
 
-- **P369 phase 2 — all four MTP-certified entries worker-qualified MTP-ON on production `7207179b`:** Fable (C188 carry-over, smoke
-  15), `Qwen3.8-27B-mlx-uniform-4bit` (session 3), `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` (full PASS, E1c 5 / 5, E2 PASS),
-  `Ornith-1.0-35B-mlx-uniform-4bit` (full PASS, drafter MoE inventory 77 invocations).
-- **P405 R4 → P404 CLOSED:** on TurboQuant the exact verifier is within bounds and faster (uniform 23.28 → 39.83 tok/s).
-- **P405 R7 (P415) — 256K qualification, 7 / 7 COMPLETED** (shipped config, 260,096-token prompt, real settings): Fable MTP-ON
-  38.25 GB; Qwen3.6 MTP-ON 30.16; uniform MTP-ON 28.27; served 23.48–28.47 GB. README row + campaign-results table.
-- **P409 CLOSED:** stack suite Docker-down 6939 / 27 / 0 failed (session-scoped grader-image fake).
+- **P422 / C203:** fork pinned registry fixture regenerated (comments-only vs 7021bdbb); operator chose settings-level matching (B4).
+- **P405 R5 `Qwen3.8-27B-mlx-uniform-4bit` (P428):** 261K — TurboQuant decode 9.98 vs affine 6.67 tok/s, single-session prefill peak
+  25.34 vs 31.50 GB, prefill 129 vs 251 tok/s; 8K within ≈ 1 %. A retained 256K session adds ≈ 7.5 GB. README + campaign-results.
+- **C204 / C206:** predictor ships on speed with no / negligible downside, operator judges on signals (AGENTS.md amended); panel =
+  two model FAMILIES via any client (Cursor offers GPT-5.6, Gemini 3.1 Pro, GLM 5.2, Grok, Claude …).
+- **P426 plan v4 accepted (C205)** after 3 Cursor rounds; ≈ 30 h GPU [39 h], 13 builds B1–B13, DAG §9.
 
-## Next work, in order (Fable → shipping MTP-ON is the critical path)
+## Next work, in order
 
-1. **Regenerate the fork's pinned registry fixture** (`mlx_vlm/tests/fixtures`, the 16-state generator's base) for the new
-   registry bytes (C202 edit) — test-first, fork suites ×2 + audits; needed before any further P369 / R7 run.
-2. **Router-chain re-certification plan for Fable MTP-ON** (P369 v13 §3.1 Restore; own plan, Cursor plan review ≤ 3 rounds,
-   operator GPU go): reproduce the certified predictor (acceptance ≥ certified, decode ≥ 1.3×) on real chains, ON / OFF. Then restore
-   Fable's C177 block (Fable ships MTP-ON). Repeat per entry for uniform / Qwen3.6 / Ornith.
-3. **P405 R6** (matched affine-vs-TurboQuant quality, own plan) — lifts the two PROVISIONAL marks.
-4. **R5** codec ABBA (`Qwen3.8-27B-mlx-uniform-4bit`, then Qwen3.6; C200: fixed lengths, 261,120 long prompt disclosed). Input:
-   TurboQuant prefill at 256K ≈ 130 tok/s vs native16 Fable 370.
-5. mlx-serve upstream v0.3.0 bump (one stack suite on it, then bump). Then P383, P385, tg2, M64; remove stale worktree
-   `mlx-vlm-p369-r2`; `docs/README.md` index additions (P311 v4, P364, P369, P371, P415, review dirs).
+1. When R5 Qwen3.6 ends: record it (P428 style: README row, campaign-results, open-questions). Then a TEST WINDOW: B1 round-2 tests
+   → commit → Cursor B1 code round 2; B7 red (pop stash) → green (apply patch); B4 red → green; B9 / B13 red → green (`python -m
+   bench.p426_ids` writes `benchmark/results/p426/ids.json`); fork suites ×2 + audits; stack suite (≈ 31 min). Then Cursor code
+   reviews for B4, B7, B9 + B13.
+2. Remaining pre-Wave-1 builds: B10 leg wrapper, B5 watcher (power fail-closed), B11 `vision_gate.py --ids`, B12 (A3 description
+   + image path per row, A7 artifacts), B4-stack overlay builder. Then fork push (ASK the operator) → stack bump = S → frozen worktree
+   → Wave 1 smokes.
+3. GPU filler while builds review: nothing else approved is queued — ask before inventing runs.
 
-## Rules learned (session 4)
+## Rules learned (session 5)
 
-- GPU chains: `nohup … &` + separate waiter (a `run_in_background` shell is not detached); `chmod +x` first.
-- Never pytest while a campaign / measurement runs (the orchestrator refuses; Metal tests perturb). Stack suite ≈ 31 min, fork
-  suite ≈ 3 min; never two at once; never edit a tree (incl. docs) while its suite runs.
-- Power: 5-min ticks miss short outages — check `pmset -g log` ("Using Batt") against run windows (P418).
-- A bound drafter carries the target's embedding / head as module children (P413 / P417). The cached path's seed lives in the
-  sampler (P420); session retention runs a second prompt-only `generate_step` (P420); the drafter-free path lands its chunked
-  prefill on a snapshot offset (P421).
-- Data-only fixtures for a campaign go on a branch off the reviewed head; smoke-found fixes need no review round (P394).
-- The server refuses a request leaving < 2,048 tokens: the largest accepted 256K prompt is 260,096.
-- isort / black disagree on wrapped-import `# noqa` — black last; anchor scripted edits on unique text (black reflows).
+- `uv run` in a dir without `.venv` creates an EMPTY venv silently; the fork suite needs `../mlx-vlm/.venv` with the test extra.
+- Byte-level registry matching made every comment edit block GPU runs → C203 (settings-level, B4).
+- Cursor's model list is long (131); grep the full `cursor-agent models` output before saying a model is missing.
+- R5 / R7 DryRun 500s in leg logs are the probe's own prompt sizing — benign.
 
-Next decision id C203; discussion ids continue from P421.
+Next decision id C207; discussion ids continue from P428.
