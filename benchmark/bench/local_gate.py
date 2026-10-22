@@ -33,6 +33,7 @@ AUDITS = ("check_upstream_parity.py", "check_upstream_symbols.py", "check_upstre
           "check_dead_helpers.py", "check_body_divergence.py", "check_upstream_registries.py", "check_call_arguments.py")
 GITLINKS = {"src/mlx-vlm": "mlx-vlm", "src/mlx-serve": "mlx-serve"}
 EVIDENCE_REF = "refs/heads/evidence"  # P447
+SEMVER_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")  # P448: stack releases
 FORK_EXTRAS = ("pytest-subtests", "pytest-asyncio", "cryptography>=43.0.0")
 
 
@@ -348,7 +349,20 @@ def gitlink_problems(links, forks, *, gate_dir, digest_for):
     return out
 
 
+def _gitlinks_at(repo_dir, sha):
+    links, out = {}, []
+    for p in GITLINKS:
+        row = _git(repo_dir, "ls-tree", sha, p, check=False).split()
+        if len(row) < 3 or row[1] != "commit":
+            out.append(f"gitlink {p}: absent at {sha[:8]}")
+        else:
+            links[p] = row[2]
+    return links, out
+
+
 def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=None):
+    """P448: a branch push needs only the per-commit scans; a stack TAG must be SemVer `vX.Y.Z` and carries the release rule
+    (PASS receipt for the tagged commit under the current policy + both gitlinks' receipts and reachability); P447 evidence."""
     if subprocess.run(["git", "-C", str(repo_dir), "fetch", "--quiet", "--prune", remote], capture_output=True).returncode:
         return [f"git fetch --prune {remote} failed: cannot tell what is new (refused)"]
     out = []
@@ -356,25 +370,64 @@ def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=No
         parts = line.split()
         if len(parts) != 4:
             continue
-        local_ref, local_sha, _remote_ref, _remote_sha = parts
+        local_ref, local_sha, remote_ref, _remote_sha = parts
         if local_sha == ZERO:
             continue
         sha = _git(repo_dir, "rev-parse", f"{local_sha}^{{commit}}")
-        if repo == "stack" and _remote_ref == EVIDENCE_REF:  # P447: the orphan data branch — no code to gate, PII still scanned
+        if repo == "stack" and remote_ref == EVIDENCE_REF:  # P447: the orphan data branch — no code to gate, PII still scanned
             if subprocess.run(["git", "-C", str(repo_dir), "merge-base", sha, f"{remote}/main"], capture_output=True).returncode == 0:
                 out.append(f"{sha[:8]} pushed to {EVIDENCE_REF} shares history with {remote}/main: not an orphan data commit")
                 continue
             out += _scan(repo_dir, introduced(repo_dir, remote, sha), naming=False)
             continue
-        if not has_pass(gate_dir, repo, sha, digest_for(repo, sha)):
-            out.append(f"{local_ref} {sha[:8]}: no PASS receipt under the current gate policy "
-                       f"(run: bench.local_gate run --repo {repo} --sha {sha})")
         out += _scan(repo_dir, introduced(repo_dir, remote, sha))
-        if repo == "stack":
-            links = {p: _git(repo_dir, "ls-tree", sha, p).split()[2] for p in GITLINKS}
-            out += gitlink_problems(links, forks or {p: Path(repo_dir).parent / r for p, r in GITLINKS.items()},
-                                    gate_dir=gate_dir, digest_for=digest_for)
+        if repo == "stack" and remote_ref.startswith("refs/tags/"):
+            name = remote_ref[len("refs/tags/"):]
+            if not SEMVER_TAG.match(name):
+                out.append(f"tag {name}: a stack tag must be SemVer vMAJOR.MINOR.PATCH (refused)")
+                continue
+            if not has_pass(gate_dir, repo, sha, digest_for(repo, sha)):
+                out.append(f"tag {name} {sha[:8]}: no PASS release receipt under the current gate policy "
+                           f"(run: bench.local_gate release --version {name[1:]})")
+            links, missing = _gitlinks_at(repo_dir, sha)
+            out += missing
+            if links:
+                out += gitlink_problems(links, forks or {p: Path(repo_dir).parent / r for p, r in GITLINKS.items()},
+                                        gate_dir=gate_dir, digest_for=digest_for)
     return out
+
+
+def _semver(text):
+    m = SEMVER_TAG.match(text if text.startswith("v") else "v" + text)
+    return tuple(int(x) for x in m.groups()) if m else None
+
+
+def release(version, pins, *, existing_tags, gate, has_pass, reachable, busy, make_tag):
+    """P448: qualify the stack commit + its exact fork pins, then tag `v<version>` (the push stays the operator's)."""
+    if not re.fullmatch(r"\d+\.\d+\.\d+", version or ""):
+        raise GateError(f"version {version!r} is not MAJOR.MINOR.PATCH")
+    newest = max((v for v in (_semver(t) for t in existing_tags) if v), default=None)
+    if newest and _semver(version) <= newest:
+        raise GateError(f"version {version} is not above the newest tag v{'.'.join(map(str, newest))}")
+    if busy():
+        raise GateError("box busy: " + "; ".join(busy())[:400])
+    receipts = {}
+    for repo in ("stack", "mlx-vlm", "mlx-serve"):
+        sha = pins[repo]
+        if has_pass(repo, sha):
+            receipts[repo] = "existing PASS receipt"
+            continue
+        path, verdict = gate(repo, sha)
+        if verdict != "PASS":
+            raise GateError(f"{repo} {sha[:8]} gate {verdict} ({path}) — no tag")
+        receipts[repo] = str(path)
+    for repo in ("mlx-vlm", "mlx-serve"):
+        if not reachable(repo, pins[repo]):
+            raise GateError(f"{repo} {pins[repo][:8]} is not on its origin/main (push the fork first) — no tag")
+    tag = f"v{version}"
+    msg = "\n".join([f"release {tag}", ""] + [f"{r}: {pins[r]}  receipt: {receipts[r]}" for r in ("stack", "mlx-vlm", "mlx-serve")])
+    make_tag(tag, msg)
+    return dict(verdict="PASS", tag=tag, pins=pins, receipts=receipts)
 
 
 # ------------------------------------------------------------------ shims
@@ -443,6 +496,8 @@ def main(argv=None):
     c.add_argument("remote")
     c.add_argument("url", nargs="?")
     sub.add_parser("install-hooks")
+    rel = sub.add_parser("release")
+    rel.add_argument("--version", required=True, help="MAJOR.MINOR.PATCH (the tag is v<version>, on the stack HEAD)")
     args = ap.parse_args(argv)
     stack = _stack_repo()
     try:
@@ -454,6 +509,28 @@ def main(argv=None):
             return 1
         gate_dir = Path(_workdir()) / "gate"
         live = {"stack": stack, "mlx-vlm": stack.parent / "mlx-vlm", "mlx-serve": stack.parent / "mlx-serve"}
+        if args.cmd == "release":
+            if _git(stack, "status", "--porcelain", "--untracked-files=no"):
+                raise GateError("the stack checkout has uncommitted tracked changes")
+            head = _git(stack, "rev-parse", "HEAD")
+            pins = dict(stack=head, **{repo: _git(stack, "ls-tree", head, p).split()[2] for p, repo in GITLINKS.items()})
+
+            def gate(repo, sha):
+                path = run(repo, sha, live=live[repo], gate_dir=gate_dir, baselines=_baselines())
+                return path, json.loads(Path(path).read_text())["verdict"]
+
+            def reachable(repo, sha):
+                fork = live[repo]
+                return (subprocess.run(["git", "-C", str(fork), "fetch", "--quiet", "--prune", "origin"], capture_output=True)
+                        .returncode == 0 and subprocess.run(["git", "-C", str(fork), "merge-base", "--is-ancestor", sha,
+                                                             "origin/main"], capture_output=True).returncode == 0)
+
+            out = release(args.version, pins, existing_tags=_git(stack, "tag", "-l", "v*").split(), gate=gate,
+                          has_pass=lambda repo, sha: has_pass(gate_dir, repo, sha, digest_for(repo, sha, live[repo], _baselines())),
+                          reachable=reachable, busy=_real_busy,
+                          make_tag=lambda name, msg: _git(stack, "tag", "-a", name, "-m", msg, head))
+            print(json.dumps(out, indent=1))
+            return 0
         if args.cmd == "run":
             path = run(args.repo, args.sha, live=live[args.repo], gate_dir=gate_dir, baselines=_baselines())
             doc = json.loads(path.read_text())
