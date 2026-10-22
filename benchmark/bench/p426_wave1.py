@@ -35,9 +35,13 @@ class LegOverrun(RuntimeError):
     pass
 
 
-def schedule():
-    legs = [(axis, arm, "smoke") for axis in AXES for arm in ARMS]
-    for axis in AXES:
+def schedule(axes=AXES):
+    unknown = [a for a in axes if a not in AXES]
+    if unknown:
+        raise ValueError(f"unknown axis {unknown}")
+    axes = [a for a in AXES if a in axes]  # P452: the plan order, filtered
+    legs = [(axis, arm, "smoke") for axis in axes for arm in ARMS]
+    for axis in axes:
         legs += [(axis, "off", 1), (axis, "on", 1), (axis, "on", 2), (axis, "off", 2)]
     return legs
 
@@ -143,6 +147,7 @@ def main(argv=None):
     ap.add_argument("--registry-on", required=True)
     ap.add_argument("--out", required=True, help="sequence log, leg stdout and receipts/")
     ap.add_argument("--idle-s", type=float, default=IDLE_S)
+    ap.add_argument("--axes", default=",".join(AXES), help="P452: comma list, run in the plan order")
     args = ap.parse_args(argv)
     configured = os.environ.get("STACK_WORKDIR")
     if not configured or Path(configured).resolve() != Path(args.workdir).resolve():
@@ -204,7 +209,13 @@ def main(argv=None):
     except (OSError, HarvestError) as exc:
         log(f"STOP: run files not harvested: {type(exc).__name__}: {exc}")
         return 4
-    return run(schedule(), launch=launch, read_verdict=lambda n: receipt_verdict(receipts, n), sleep=time.sleep,
+    try:
+        legs = schedule(axes=tuple(a for a in args.axes.split(",") if a))
+    except ValueError as exc:
+        log(f"STOP: {exc}")
+        return 2
+    log(f"axes {','.join(a for a in AXES if a in args.axes.split(','))}: {len(legs)} legs")
+    return run(legs, launch=launch, read_verdict=lambda n: receipt_verdict(receipts, n), sleep=time.sleep,
                clock=time.monotonic, paused=lambda: (out / "PAUSE").exists(), log=log, idle_s=args.idle_s,
                harvest=harvest, harvested=lambda n: (main_root / WAVE1 / n / "SCRUB_MANIFEST.json").exists())
 
