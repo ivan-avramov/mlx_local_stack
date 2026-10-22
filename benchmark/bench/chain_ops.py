@@ -492,7 +492,7 @@ class ChainOps:
             raise ChainAbort(f"TRIPWIRE: worker carries a predictor: {w[0][:300]}")
         pid = int(w[0].split()[0])
         self.worker_env_check(pid)
-        ident = {"pid": pid, "create_time": self.create_time(pid), "cmdline": w[0][:400]}
+        ident = {"pid": pid, "create_time": self.create_time(pid), "cmdline": w[0]}  # P449: full — the receipts re-check it
         self.log(f"worker pid={pid} cmdline: {w[0][:400]}")
         self.loaded = model
         self.worker_started = {"pid": pid, "create_time": ident["create_time"], "model": model}
