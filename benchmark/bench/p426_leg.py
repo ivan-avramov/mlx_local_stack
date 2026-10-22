@@ -13,8 +13,10 @@ watcher power receipt or an on-battery interval → the leg's SPEED invalid (qua
 """
 
 import argparse
+import collections
 import dataclasses
 import difflib
+import hashlib
 import json
 import re
 import subprocess
@@ -46,6 +48,10 @@ class LegSpec:
     mtp_keys: tuple = MTP_KEYS
     row_key: str = "id"
     expected_requests: int = 0
+    expected_extra: int = 0  # requests with no row (reasoning's chars-per-token calibration)
+    seeds: dict = None  # K4: {row key: {field: planned seed}}
+    pins: dict = None  # K2: stack_head, stack_clean, mlx_vlm, mlx_serve, registry_off_sha, registry_on_sha
+    cwd: str = None
 
 
 P426_ON = {  # the exact settings the ON arm adds (the C177 lines restored), pinned independently of the fork rule (H2)
@@ -261,6 +267,59 @@ def model_argv_problems(cmdline, registry_text, model):
     return [] if got == [entry.get("hf_path")] else [f"worker --model {got} != registry {entry.get('hf_path')!r}"]
 
 
+def sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+PIN_KEYS = ("stack_head", "stack_clean", "mlx_vlm", "mlx_serve")
+
+
+def pin_problems(state, spec):
+    """K2: the frozen build (stack HEAD + clean tracked tree + both submodules) and both registry texts, before anything
+    starts."""
+    pins = spec.pins or {}
+    problems = [f"{k}: {state.get(k)!r} != pinned {pins.get(k)!r}" for k in PIN_KEYS if state.get(k) != pins.get(k)]
+    if sha256_text(spec.off_registry_text) != pins.get("registry_off_sha"):
+        problems.append("registry_off_sha: the committed registry is not the pinned one")
+    if spec.arm == "on" and sha256_text(spec.registry_text) != pins.get("registry_on_sha"):
+        problems.append("registry_on_sha: the ON overlay is not the pinned one")
+    return problems
+
+
+_COMPLETED = re.compile(r"Request completed: .*?prompt_tokens=(\d+)")
+_DRAFT = re.compile(r"draft_n=(\d+) draft_n_accepted=(\d+)")
+
+
+def _row_records(rows):
+    recs = []
+    for r in rows:
+        for part in (r, r.get("turn2")) if "turn2" in r else (r,):
+            d = (part or {}).get("draft") or {}
+            recs.append((part.get("prompt_tokens"), d.get("draft_n"), d.get("draft_n_accepted")))
+    return recs
+
+
+def request_match_problems(rows, lines, expected_extra):
+    """K5: every row's request(s) match a distinct completed log record by (prompt tokens, draft_n, draft_n_accepted), and
+    exactly ``expected_extra`` records remain (no substitution, no duplicate, no foreign request)."""
+    logged = collections.Counter()
+    for line in lines:
+        m = _COMPLETED.search(line)
+        if not m:
+            continue
+        d = _DRAFT.search(line)
+        logged[(int(m.group(1)), *((int(d.group(1)), int(d.group(2))) if d else (None, None)))] += 1
+    wanted = collections.Counter(_row_records(rows))
+    problems = []
+    missing = wanted - logged
+    if missing:
+        problems.append(f"{sum(missing.values())} row request(s) with no matching log record: {sorted(missing, key=str)[:5]}")
+    leftover = sum((logged - wanted).values())
+    if leftover != expected_extra:
+        problems.append(f"{leftover} log record(s) without a row, expected {expected_extra}")
+    return problems
+
+
 def _write(spec, receipt):
     Path(spec.receipt_dir).mkdir(parents=True, exist_ok=True)
     path = Path(spec.receipt_dir) / f"{spec.name}.receipt.json"
@@ -268,26 +327,32 @@ def _write(spec, receipt):
     return receipt
 
 
-def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, clock):
+def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, clock, repo_state):
+    """One leg, fail closed; the receipt is written on EVERY path (K1) and an interrupt is re-raised after it."""
+    from bench.p426_plan import seed_problems
+
     receipt = dict(name=spec.name, arm=spec.arm, kind=spec.kind, model=spec.model, problems=[], speed_problems=[])
-    pre = destination_problems(spec.destinations)
-    if spec.arm == "on":
-        pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model)
-    elif spec.registry_text != spec.off_registry_text:
-        pre.append("the OFF arm must serve the committed registry verbatim")
-    pre += pins_check(spec.model, spec.arm)
-    if not ops.power_ok():
-        pre.append("power / orphan gate failed at entry")
-    busy = ops.busy_procs()
-    if busy:
-        pre.append("busy processes: " + "; ".join(busy)[:400])
-    receipt["pre_state"] = ops.start_state()
+    try:
+        pre = pin_problems(repo_state(), spec) + destination_problems(spec.destinations)
+        if spec.arm == "on":
+            pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model)
+        elif spec.registry_text != spec.off_registry_text:
+            pre.append("the OFF arm must serve the committed registry verbatim")
+        pre += pins_check(spec.model, spec.arm)
+        if not ops.power_ok():
+            pre.append("power / orphan gate failed at entry")
+        busy = ops.busy_procs()
+        if busy:
+            pre.append("busy processes: " + "; ".join(busy)[:400])
+        receipt["pre_state"] = ops.start_state()
+    except Exception as exc:  # noqa: BLE001 — K1: a failing pre-check is a receipted refusal
+        pre = [f"pre-check failed: {type(exc).__name__}: {exc}"]
     if pre:
         return _write(spec, dict(receipt, verdict="NOT_STARTED", problems=pre, speed_valid=False))
     problems, speed = [], []
     start = clock()
     receipt["started"] = start
-    stop_watch = None
+    stop_watch, interrupted, watch = None, None, None
     try:
         receipt["router_pid"] = ops.start_router()
         ident = ops.load(spec.model)
@@ -297,12 +362,13 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         log = Path(spec.server_log)
         offset = log.stat().st_size if log.exists() else 0  # E1: only this leg's records count
         try:
-            rc = run_driver(spec.driver_argv, ops.env_base(), spec.timeout_s)
+            rc = run_driver(spec.driver_argv, ops.env_base(), spec.timeout_s, spec.cwd)
         except subprocess.TimeoutExpired as exc:  # G1: receipted, and every post-driver check still runs
             rc = None
             problems.append(f"driver timed out after {exc.timeout} s")
         tail = log.read_bytes()[offset:].decode("utf-8", errors="replace") if log.exists() else ""
-        log_found, receipt["log"] = log_problems(tail.splitlines(), spec.arm, spec.expected_requests)
+        lines = tail.splitlines()
+        log_found, receipt["log"] = log_problems(lines, spec.arm, spec.expected_requests)
         problems += log_found
         if rc not in (0, None):
             problems.append(f"driver exit {rc}")
@@ -314,33 +380,60 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         rows = read_rows(spec.rows_path)
         problems += membership_problems(spec.planned, rows, spec.row_key)
         problems += engagement_problems(spec.arm, rows, spec.row_key)
+        problems += seed_problems(spec.seeds or {}, rows, spec.row_key)
+        problems += request_match_problems(rows, lines, spec.expected_extra)
         if not ops.power_ok():
             speed.append("power / orphan gate failed at exit")
-    except ChainAbort as exc:
-        problems.append(str(exc))
+    except BaseException as exc:  # noqa: BLE001 — K1: everything is receipted; interrupts re-raised below
+        problems.append(f"{type(exc).__name__}: {exc}")
+        if not isinstance(exc, Exception):
+            interrupted = exc
     finally:
-        watch = stop_watch() if stop_watch else None
+        if stop_watch:
+            try:
+                watch = stop_watch()
+            except Exception as exc:  # noqa: BLE001
+                problems.append(f"watcher stop failed: {type(exc).__name__}: {exc}")
         try:  # G2: a teardown that fails or leaves :8000 bound invalidates the leg
             torn = ops.stop_stack()
             if torn not in (0, None):
                 problems.append(f"teardown failed: stop_stack rc {torn}")
         except Exception as exc:  # noqa: BLE001
             problems.append(f"teardown failed: {type(exc).__name__}: {exc}")
-    end = clock()
-    receipt["ended"] = end
-    receipt["watch"] = watch
-    speed += watch_problems(watch, start, end)
-    speed += [f"battery interval {a} -> {b}" for a, b in battery_intervals(start, end)]
-    verdict = "INVALID" if problems else "VALID"
-    return _write(
-        spec,
-        dict(receipt, verdict=verdict, problems=problems, speed_problems=speed, speed_valid=verdict == "VALID" and not speed),
-    )
+        end = clock()
+        receipt.update(ended=end, watch=watch)
+        speed += watch_problems(watch, start, end)
+        try:
+            intervals, power_problems = battery_intervals(start, end)
+        except Exception as exc:  # noqa: BLE001 — K6: an unreadable power history is a speed problem
+            intervals, power_problems = [], [f"pmset -g log failed: {type(exc).__name__}: {exc}"]
+        speed += [f"battery interval {a} -> {b}" for a, b in intervals] + list(power_problems)
+        verdict = "INVALID" if problems else "VALID"
+        _write(spec, dict(receipt, verdict=verdict, problems=problems, speed_problems=speed,
+                          speed_valid=verdict == "VALID" and not speed))
+    if interrupted is not None:
+        raise interrupted
+    return json.loads((Path(spec.receipt_dir) / f"{spec.name}.receipt.json").read_text())
 
 
 # ------------------------------------------------------------------ the real effects (CLI)
-def _real_driver(argv, env, timeout):
-    return subprocess.run(argv, env=env, timeout=timeout, stdin=subprocess.DEVNULL).returncode
+def _real_driver(argv, env, timeout, cwd=None):
+    return subprocess.run(argv, env=env, timeout=timeout, stdin=subprocess.DEVNULL, cwd=cwd).returncode
+
+
+def _repo_state_for(repo):
+    def git(*a, cwd=repo):
+        return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, timeout=60).stdout.strip()
+
+    def state():
+        return dict(
+            stack_head=git("rev-parse", "HEAD"),
+            stack_clean=git("status", "--porcelain", "--untracked-files=no") == "",
+            mlx_vlm=git("rev-parse", "HEAD", cwd=Path(repo) / "src" / "mlx-vlm"),
+            mlx_serve=git("rev-parse", "HEAD", cwd=Path(repo) / "src" / "mlx-serve"),
+        )
+
+    return state
 
 
 def _pins_check_for(fork_dev):
@@ -392,46 +485,64 @@ def _watcher_for(repo, total, out_dir):
 
 
 def main(argv=None):
+    """``--axis --arm (--block N | --smoke) --stack-root <frozen worktree> --workdir <STACK_WORKDIR> --pins <pins.json>
+    --registry-on <overlay> --receipt-dir <dir>``: the leg is PLANNED from ids.json (K3), never from a caller spec."""
     import time
 
+    from bench import p426_plan
     from bench.chain_ops import ChainOps
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("--spec", required=True)
+    ap.add_argument("--axis", required=True)
+    ap.add_argument("--arm", required=True, choices=p426_plan.ARMS)
+    sel = ap.add_mutually_exclusive_group(required=True)
+    sel.add_argument("--block", type=int)
+    sel.add_argument("--smoke", action="store_true")
+    ap.add_argument("--stack-root", required=True)
+    ap.add_argument("--workdir", required=True)
+    ap.add_argument("--pins", required=True, help="the frozen build's pins (stack_head, mlx_vlm, mlx_serve, registry shas)")
+    ap.add_argument("--registry-on", required=True, help="the ON overlay written by bench.p426_overlay")
+    ap.add_argument("--receipt-dir", required=True)
+    ap.add_argument("--timeout-s", type=float, default=6 * 3600)
     args = ap.parse_args(argv)
-    doc = json.loads(Path(args.spec).read_text())
-    repo, workdir = Path(doc["repo"]), Path(doc["workdir"])
+    repo = Path(args.stack_root).resolve()
+    plan = p426_plan.plan_leg(repo, args.axis, args.arm, args.block, smoke=args.smoke)
+    name = f"{args.axis}-{plan['tune']}"
+    off_text = (repo / "main_models.yaml").read_bytes().decode("utf-8")
+    on_path = Path(args.registry_on)
     spec = LegSpec(
-        name=doc["name"], arm=doc["arm"], kind=doc["kind"], model=doc["model"],
-        registry_text=Path(doc["registry"]).read_text(), off_registry_text=(repo / "main_models.yaml").read_text(),
-        driver_argv=doc["driver_argv"], destinations=[Path(p) for p in doc["destinations"]],
-        rows_path=Path(doc["rows_path"]), planned=doc["planned"], receipt_dir=Path(doc["receipt_dir"]),
-        server_log=repo / "logs/mlx_vlm.log", timeout_s=float(doc.get("timeout_s", 6 * 3600)),
-        row_key=doc.get("row_key", "id"), expected_requests=int(doc["expected_requests"]),
+        name=name, arm=args.arm, kind=args.axis, model=plan["entry"],
+        registry_text=on_path.read_bytes().decode("utf-8") if args.arm == "on" else off_text, off_registry_text=off_text,
+        driver_argv=plan["driver_argv"], destinations=p426_plan.existing_outputs(plan) + [plan["rows_path"]],
+        rows_path=plan["rows_path"], planned=plan["planned"], receipt_dir=Path(args.receipt_dir),
+        server_log=repo / "logs/mlx_vlm.log", timeout_s=args.timeout_s, row_key=plan["row_key"],
+        expected_requests=plan["expected_requests"], expected_extra=plan["expected_extra"], seeds=plan["seeds"],
+        pins=json.loads(Path(args.pins).read_text()), cwd=plan["cwd"],
     )
-    log_path = Path(doc["receipt_dir"]) / f"{spec.name}.log"
+    log_path = Path(args.receipt_dir) / f"{name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
 
     def log(msg):
         with log_path.open("a") as f:
             f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
 
-    ops = ChainOps(repo, workdir, doc["registry"], log, predictor="mtp" if spec.arm == "on" else "off",
-                   out_root=Path(doc["receipt_dir"]))
-    sys.path.insert(0, str(Path(doc["fork_dev"])))
+    registry = str(on_path) if args.arm == "on" else str(repo / "main_models.yaml")
+    ops = ChainOps(repo, Path(args.workdir), registry, log, predictor="mtp" if args.arm == "on" else "off",
+                   out_root=Path(args.receipt_dir))
+    fork_dev = repo / "src" / "mlx-vlm" / "dev"  # K2: the frozen build's own harness, never a sibling checkout
+    sys.path.insert(0, str(fork_dev))
     from p369_phase2 import qualify
 
     def battery(start, end):
         out = subprocess.run(["pmset", "-g", "log"], capture_output=True, text=True, timeout=120)
-        if out.returncode != 0:
-            return [("pmset -g log unreadable", "")]
+        problems = qualify.power_log_problems(out.returncode, out.stdout)  # K6: unreadable / empty history
         epoch = [time.mktime(time.strptime(x, "%Y-%m-%d %H:%M:%S")) for x in (start, end)]
-        return qualify.battery_intervals(out.stdout, *epoch)
+        return (qualify.battery_intervals(out.stdout, *epoch) if not problems else []), problems
 
     receipt = run_leg(
-        spec, ops, run_driver=_real_driver, pins_check=_pins_check_for(doc["fork_dev"]),
-        watcher=_watcher_for(repo, len(spec.planned), doc["receipt_dir"]), battery_intervals=battery,
-        clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"),
+        spec, ops, run_driver=_real_driver, pins_check=_pins_check_for(fork_dev),
+        watcher=_watcher_for(repo, len(spec.planned), args.receipt_dir), battery_intervals=battery,
+        clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"), repo_state=_repo_state_for(repo),
     )
     print(json.dumps({k: receipt[k] for k in ("name", "verdict", "speed_valid", "problems", "speed_problems")}, indent=1))
     return 0 if receipt["verdict"] == "VALID" else 1

@@ -450,6 +450,7 @@ def test_k5_the_planned_extra_requests_are_allowed_exactly(tmp_path):
     spec = _spec(tmp_path)
     spec.expected_extra, spec.expected_requests = 1, 3
     assert _run(tmp_path, spec, FakeOps())["verdict"] == "VALID"
+    (tmp_path / "b").mkdir()
     spec2 = _spec(tmp_path / "b")
     spec2.expected_extra, spec2.expected_requests = 1, 3
     lines = _log_for(spec2._test_rows, extra=2)
