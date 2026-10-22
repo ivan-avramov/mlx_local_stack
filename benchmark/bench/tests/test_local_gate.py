@@ -387,3 +387,16 @@ def test_an_evidence_push_sharing_history_with_main_refuses(pushed):
     """The exemption is for an ORPHAN data branch only: code history pushed as `evidence` still needs a receipt."""
     out = _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/evidence {ZERO}"], repo="stack")
     assert any("orphan" in o for o in out)
+
+
+def test_the_shim_ignores_the_git_dir_that_git_exports_to_hooks(tmp_path):
+    """git runs hooks with GIT_DIR set to the PUSHING repository (e.g. the `evidence` worktree); the shim's stack checks must
+    not read that repository's HEAD (a real refusal: 'does not contain GATE_MIN_COMMIT' when pushing `evidence`)."""
+    other = tmp_path / "other"
+    _repo(other, origin="git@github.com:someone-else/thing")
+    hooks = _shim_env(tmp_path, _git(REPO, "rev-parse", "HEAD"))
+    env = {k: v for k, v in os.environ.items() if k not in ("GIT_DIR", "GIT_WORK_TREE")}
+    env.update(STACK_REPO=str(REPO), GIT_DIR=str(other / ".git"))
+    r = subprocess.run([str(hooks / "pre-push"), "origin", "x"], cwd=other, input="", capture_output=True, text=True, env=env,
+                       timeout=120)
+    assert "GATE_MIN_COMMIT" not in r.stderr and "unknown origin" in r.stderr
