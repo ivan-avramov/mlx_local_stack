@@ -19,6 +19,7 @@ import json
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from bench.chain_ops import ChainAbort, argv_flag
@@ -175,6 +176,27 @@ def log_problems(lines, arm, expected):
     return problems, stats
 
 
+TICK_S = 300
+
+
+def watch_problems(watch, start, end):
+    """G3: the watcher's own report — absent, exited early, a power failure, or fewer ticks than the leg's span minus 10 min
+    allows — invalidates the leg's speed (a crashed watcher never reads as 'no power failure')."""
+    if not watch:
+        return ["no watcher report"]
+    problems = []
+    if watch.get("power_failure"):
+        problems.append(f"watcher power failure at {watch['power_failure'].get('first_failure_at')}")
+    if watch.get("exited_early"):
+        problems.append("watcher exited early")
+    fmt = "%Y-%m-%d %H:%M:%S"
+    span = (time.mktime(time.strptime(end, fmt)) - time.mktime(time.strptime(start, fmt))) if start and end else 0
+    need = max(0, int((span - 2 * TICK_S) // TICK_S))
+    if (watch.get("ticks") or 0) < need:
+        problems.append(f"watcher ticks {watch.get('ticks')} < {need} for a {span:.0f} s leg")
+    return problems
+
+
 def model_argv_problems(cmdline, registry_text, model):
     entry = _models(registry_text)[0].get(model) or {}
     got = argv_flag((cmdline or "").split(), "--model")
@@ -216,11 +238,15 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         stop_watch = watcher(spec)
         log = Path(spec.server_log)
         offset = log.stat().st_size if log.exists() else 0  # E1: only this leg's records count
-        rc = run_driver(spec.driver_argv, ops.env_base(), spec.timeout_s)
+        try:
+            rc = run_driver(spec.driver_argv, ops.env_base(), spec.timeout_s)
+        except subprocess.TimeoutExpired as exc:  # G1: receipted, and every post-driver check still runs
+            rc = None
+            problems.append(f"driver timed out after {exc.timeout} s")
         tail = log.read_bytes()[offset:].decode("utf-8", errors="replace") if log.exists() else ""
         log_found, receipt["log"] = log_problems(tail.splitlines(), spec.arm, spec.expected_requests)
         problems += log_found
-        if rc != 0:
+        if rc not in (0, None):
             problems.append(f"driver exit {rc}")
         if not ops.router_ok():
             problems.append("router identity / served config changed during the leg")
@@ -235,12 +261,17 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
     except ChainAbort as exc:
         problems.append(str(exc))
     finally:
-        power_receipt = stop_watch() if stop_watch else None
-        if power_receipt:
-            speed.append(f"watcher power failure at {power_receipt.get('first_failure_at')}")
-        ops.stop_stack()
+        watch = stop_watch() if stop_watch else None
+        try:  # G2: a teardown that fails or leaves :8000 bound invalidates the leg
+            torn = ops.stop_stack()
+            if torn not in (0, None):
+                problems.append(f"teardown failed: stop_stack rc {torn}")
+        except Exception as exc:  # noqa: BLE001
+            problems.append(f"teardown failed: {type(exc).__name__}: {exc}")
     end = clock()
     receipt["ended"] = end
+    receipt["watch"] = watch
+    speed += watch_problems(watch, start, end)
     speed += [f"battery interval {a} -> {b}" for a, b in battery_intervals(start, end)]
     verdict = "INVALID" if problems else "VALID"
     return _write(
@@ -283,12 +314,19 @@ def _watcher_for(repo, total, out_dir):
         )
 
         def stop():
+            exited_early = proc.poll() is not None
             proc.terminate()
             try:
                 proc.wait(timeout=30)
             except subprocess.TimeoutExpired:
                 proc.kill()
-            return json.loads(receipt.read_text()) if receipt.exists() else None
+            log = Path(out_dir) / f"{spec.name}.watch.log"
+            ticks = sum(1 for line in log.read_text().splitlines() if line.startswith("===== ") and "driver=" in line) if log.exists() else 0
+            return dict(
+                power_failure=json.loads(receipt.read_text()) if receipt.exists() else None,
+                exited_early=exited_early,
+                ticks=ticks,
+            )
 
         return stop
 
