@@ -531,3 +531,12 @@ def test_k2_round2_the_receipt_records_the_resolved_build(tmp_path):
 def test_k6_round2_the_power_history_grammar_is_strict(text, ok):
     assert (L.power_history_problems(0, text) == []) is ok
     assert L.power_history_problems(1, text)  # a failed read is never clean
+
+
+def test_k1_round2_a_planning_failure_in_the_cli_leaves_a_not_started_receipt(tmp_path):
+    rc = L.main(["--axis", "math500", "--arm", "on", "--block", "1", "--stack-root", str(tmp_path / "nope"),
+                 "--workdir", str(tmp_path / "wd"), "--registry-on", str(tmp_path / "on.yaml"),
+                 "--receipt-dir", str(tmp_path / "rc")])
+    assert rc == 2
+    doc = json.loads((tmp_path / "rc" / "math500-p426-on-b1.receipt.json").read_text())
+    assert doc["verdict"] == "NOT_STARTED" and doc["problems"]

@@ -33,13 +33,26 @@ def _tune(arm, block, smoke):
     return f"p426-{arm}-b{block}"
 
 
-def plan_leg(repo, axis, arm, block, smoke=False, results_root=None):
+def plan_leg(repo, axis, arm, block, smoke=False, results_root=None, workdir=None, reviewed_head=None):
     repo = Path(repo)
     ids = load_ids(repo)
-    if axis not in ids["axes"]:
-        raise ValueError(f"unknown axis {axis!r}")
     entry = ids["entry"]
     tune = _tune(arm, block, smoke)
+    if axis == "m1":  # K3: the in-process qualify leg (no router, directory evidence)
+        if not workdir or not reviewed_head:
+            raise ValueError("an m1 leg needs the workdir and the frozen build's reviewed head")
+        out_dir = Path(workdir) / "p426" / "m1" / tune
+        fork = repo / "src" / "mlx-vlm"
+        return dict(
+            axis=axis, arm=arm, block=block, smoke=smoke, tune=tune, entry=entry, kind="qualify", cwd=str(repo),
+            out_dir=out_dir, rows_path=None, planned=[], row_key=None, expected_requests=0, expected_extra=0, seeds={},
+            stem=None,
+            driver_argv=[str(repo / ".venv" / "bin" / "python"), str(fork / "dev" / "p369_phase2" / "qualify.py"),
+                         "--stack-root", str(repo), "--fork-root", str(fork), "--out", str(out_dir),
+                         "--reviewed-head", reviewed_head, "--entry", entry, "--predictor", arm],
+        )
+    if axis not in ids["axes"]:
+        raise ValueError(f"unknown axis {axis!r}")
     sel = ids["axes"][axis]["smoke" if smoke else f"block{block}"]
     results = Path(results_root) if results_root else repo / "benchmark" / "results"
     out_dir = results / entry
@@ -78,11 +91,15 @@ def plan_leg(repo, axis, arm, block, smoke=False, results_root=None):
     else:
         raise ValueError(f"axis {axis!r} has no Wave-1 leg")
     leg["stem"] = stem
+    leg["kind"] = {"math500": "rows", "cjudge": "rows"}.get(axis, axis)
     return leg
 
 
 def existing_outputs(leg):
-    """Every file of the leg's stem already on disk (rows, manifest, score, summary, journal, provenance …)."""
+    """Every file of the leg's stem already on disk (rows, manifest, score, summary, journal, provenance …); for an M1 leg its
+    output directory."""
+    if leg.get("kind") == "qualify":
+        return [leg["out_dir"]] if Path(leg["out_dir"]).exists() else []
     d = Path(leg["results_dir"])
     return sorted(p for p in d.glob(f"{leg['stem']}.*")) if d.exists() else []
 
@@ -99,4 +116,20 @@ def seed_problems(expected, rows, key):
             got["turn2_seed"] = (row.get("turn2") or {}).get("seed")
         if got != want:
             problems.append(f"{row.get(key)}: seeds {got} != planned {want}")
+    return problems
+
+
+def qualify_problems(report, entry, arm):
+    """K3: the M1 leg's evidence — the planned predictor, the entry COMPLETED in the planned arm."""
+    want_arm = "mtp_on" if arm == "on" else "mtp_off"
+    problems = []
+    if report.get("predictor") != arm:
+        problems.append(f"qualify predictor {report.get('predictor')!r} != {arm!r}")
+    state = (report.get("entries") or {}).get(entry)
+    if not state:
+        return problems + [f"qualify report has no {entry}"]
+    if state.get("status") != "COMPLETED":
+        problems.append(f"qualify status {state.get('status')!r}")
+    if state.get("arm") != want_arm:
+        problems.append(f"qualify arm {state.get('arm')!r} != {want_arm!r}")
     return problems
