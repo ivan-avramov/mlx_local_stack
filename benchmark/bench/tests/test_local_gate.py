@@ -243,18 +243,37 @@ def _check(p, lines, digest="d" * 64, repo="mlx-serve", **kw):
     return G.check_lines(repo, p["work"], "origin", lines, gate_dir=p["gate"], digest_for=lambda repo, sha: digest, **kw)
 
 
-def test_check_accepts_a_PASS_receipt_for_the_pushed_sha(pushed):
-    _receipt(pushed["gate"], "mlx-serve", pushed["head"], "d" * 64)
+def test_a_branch_push_needs_no_receipt_only_the_scans(pushed):
+    """P448: the gate runs at releases; pushing a branch (main, topic) needs no receipt — the per-commit scans still run."""
     assert _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"]) == []
+    assert _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"], repo="stack") == []
 
 
-@pytest.mark.parametrize("verdict, digest, want", [(None, "d" * 64, "no PASS receipt"), ("FAIL", "d" * 64, "no PASS"),
-                                                    ("PASS", "e" * 64, "no PASS")])
-def test_check_refuses_missing_failed_or_stale_policy(pushed, verdict, digest, want):
+def _tag(p, name):
+    _git(p["work"], "tag", "-a", name, "-m", "release")
+    return _git(p["work"], "rev-parse", name)
+
+
+def test_a_stack_tag_must_be_semver(pushed):
+    tag = _tag(pushed, "nightly")
+    out = _check(pushed, [f"refs/tags/nightly {tag} refs/tags/nightly {ZERO}"], repo="stack")
+    assert out and "SemVer" in out[0]
+
+
+@pytest.mark.parametrize("verdict, digest", [(None, "d" * 64), ("FAIL", "d" * 64), ("PASS", "e" * 64)])
+def test_a_release_tag_needs_a_PASS_receipt_under_the_current_policy(pushed, verdict, digest):
+    tag = _tag(pushed, "v1.0.0")
     if verdict:
-        _receipt(pushed["gate"], "mlx-serve", pushed["head"], digest, verdict)
-    out = _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"])
-    assert out and want in out[0]
+        _receipt(pushed["gate"], "stack", pushed["head"], digest, verdict)
+    out = _check(pushed, [f"refs/tags/v1.0.0 {tag} refs/tags/v1.0.0 {ZERO}"], repo="stack")
+    assert any("no PASS release receipt" in o for o in out)
+
+
+def test_a_release_tag_with_a_receipt_still_needs_its_gitlinks(pushed):
+    tag = _tag(pushed, "v1.0.0")
+    _receipt(pushed["gate"], "stack", pushed["head"], "d" * 64)
+    out = _check(pushed, [f"refs/tags/v1.0.0 {tag} refs/tags/v1.0.0 {ZERO}"], repo="stack")
+    assert out and all("gitlink" in o for o in out)  # the fixture commit has no src/ submodules
 
 
 def test_check_ignores_a_delete_line(pushed):
@@ -271,13 +290,11 @@ def test_check_scans_every_introduced_commit_not_just_the_endpoints(pushed):
     (w / "c.txt").write_text("clean\n")
     _git(w, "commit", "-qam", "scrub")
     head = _git(w, "rev-parse", "HEAD")
-    _receipt(pushed["gate"], "mlx-serve", head, "d" * 64)
     out = _check(pushed, [f"refs/heads/main {head} refs/heads/main {pushed['base']}"])
     assert any("PII" in o for o in out)
 
 
 def test_check_scans_a_new_branch_against_the_remote_refs(pushed):
-    _receipt(pushed["gate"], "mlx-serve", pushed["head"], "d" * 64)
     assert _check(pushed, [f"refs/heads/topic {pushed['head']} refs/heads/topic {ZERO}"]) == []
     assert G.introduced(pushed["work"], "origin", pushed["head"]) == [pushed["head"]]
 
@@ -400,3 +417,51 @@ def test_the_shim_ignores_the_git_dir_that_git_exports_to_hooks(tmp_path):
     r = subprocess.run([str(hooks / "pre-push"), "origin", "x"], cwd=other, input="", capture_output=True, text=True, env=env,
                        timeout=120)
     assert "GATE_MIN_COMMIT" not in r.stderr and "unknown origin" in r.stderr
+
+
+# ------------------------------------------------------------------ P448: release
+class Rel:
+    def __init__(self, verdicts=None, have=(), reachable=True, busy=()):
+        self.verdicts, self.have, self.reach, self.busy_list, self.gated, self.tagged = verdicts or {}, set(have), reachable, list(busy), [], None
+
+    def gate(self, repo, sha):
+        self.gated.append(repo)
+        return f"/gate/{repo}-{sha}.json", self.verdicts.get(repo, "PASS")
+
+    def kw(self):
+        return dict(gate=self.gate, has_pass=lambda repo, sha: repo in self.have, reachable=lambda repo, sha: self.reach,
+                    busy=lambda: self.busy_list, make_tag=lambda name, msg: setattr(self, "tagged", (name, msg)))
+
+
+PINS = {"stack": "a" * 40, "mlx-vlm": "b" * 40, "mlx-serve": "c" * 40}
+
+
+def test_release_gates_the_stack_and_both_pins_then_tags():
+    r = Rel()
+    out = G.release("1.0.0", PINS, existing_tags=["v0.9.1"], **r.kw())
+    assert out["verdict"] == "PASS" and sorted(r.gated) == ["mlx-serve", "mlx-vlm", "stack"]
+    name, msg = r.tagged
+    assert name == "v1.0.0" and "b" * 40 in msg and "c" * 40 in msg and "/gate/stack-" in msg
+
+
+def test_release_reuses_a_PASS_receipt_under_the_current_policy():
+    r = Rel(have={"mlx-vlm", "mlx-serve"})
+    G.release("1.0.0", PINS, existing_tags=[], **r.kw())
+    assert r.gated == ["stack"]
+
+
+@pytest.mark.parametrize("kw, want", [(dict(verdicts={"mlx-vlm": "FAIL"}), "mlx-vlm"), (dict(reachable=False), "origin/main"),
+                                      (dict(busy=["2 bench.p426_wave1"]), "busy")])
+def test_release_refuses_and_never_tags(kw, want):
+    r = Rel(**kw)
+    with pytest.raises(G.GateError, match=want):
+        G.release("1.0.0", PINS, existing_tags=[], **r.kw())
+    assert r.tagged is None
+
+
+@pytest.mark.parametrize("version, tags", [("1.0.0", ["v1.0.0"]), ("0.9.0", ["v1.0.0"]), ("1.0", []), ("v1.0.0", [])])
+def test_release_version_must_be_semver_and_above_every_tag(version, tags):
+    r = Rel()
+    with pytest.raises(G.GateError, match="version"):
+        G.release(version, PINS, existing_tags=tags, **r.kw())
+    assert r.gated == [] and r.tagged is None
