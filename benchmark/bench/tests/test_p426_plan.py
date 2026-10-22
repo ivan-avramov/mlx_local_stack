@@ -96,3 +96,39 @@ def test_vision_seed_problems_read_turn_two():
     good = {"id": "v", "seed": 5, "turn2": {"seed": 6}}
     assert PL.seed_problems(expected, [good], "id") == []
     assert PL.seed_problems(expected, [dict(good, turn2={"seed": 7})], "id")
+
+
+# ------------------------------------------------------------------ stack code round 2 K3: the M1 qualify leg
+def test_k3_an_m1_leg_is_planned_as_an_in_process_qualify_run(tmp_path):
+    leg = PL.plan_leg(REPO, "m1", "off", 1, workdir=tmp_path, reviewed_head="v" * 40)
+    argv = leg["driver_argv"]
+    assert leg["kind"] == "qualify" and leg["rows_path"] is None
+    assert argv[1] == str(REPO / "src" / "mlx-vlm" / "dev" / "p369_phase2" / "qualify.py")
+    assert argv[argv.index("--predictor") + 1] == "off" and argv[argv.index("--entry") + 1] == ENTRY
+    assert argv[argv.index("--reviewed-head") + 1] == "v" * 40
+    assert argv[argv.index("--fork-root") + 1] == str(REPO / "src" / "mlx-vlm")
+    out = Path(argv[argv.index("--out") + 1])
+    assert out == tmp_path / "p426" / "m1" / "p426-off-b1" and leg["out_dir"] == out
+    assert PL.existing_outputs(leg) == []
+    out.mkdir(parents=True)
+    assert PL.existing_outputs(leg) == [out]
+
+
+def test_k3_m1_smokes_exist_for_both_arms(tmp_path):
+    for arm in ("off", "on"):
+        leg = PL.plan_leg(REPO, "m1", arm, None, smoke=True, workdir=tmp_path, reviewed_head="v" * 40)
+        assert leg["out_dir"].name == f"p426-{arm}-smoke"
+
+
+@pytest.mark.parametrize(
+    "report, arm, ok",
+    [
+        ({"predictor": "off", "entries": {ENTRY: {"status": "COMPLETED", "arm": "mtp_off"}}}, "off", True),
+        ({"predictor": "on", "entries": {ENTRY: {"status": "COMPLETED", "arm": "mtp_on"}}}, "on", True),
+        ({"predictor": "off", "entries": {ENTRY: {"status": "FAILED", "arm": "mtp_off"}}}, "off", False),
+        ({"predictor": "on", "entries": {ENTRY: {"status": "COMPLETED", "arm": "mtp_on"}}}, "off", False),
+        ({"predictor": "off", "entries": {}}, "off", False),
+    ],
+)
+def test_k3_the_qualify_evidence_must_be_the_planned_arm_completed(report, arm, ok):
+    assert (PL.qualify_problems(report, ENTRY, arm) == []) is ok

@@ -196,6 +196,8 @@ class FakeOps:
     def router_ok(self):
         return self._router_ok
 
+    router_config_sha = None  # set per test: the served file's sha at start (ChainOps records it)
+
     def stop_stack(self):
         self.calls.append("stop_stack")
         if getattr(self, "stop_raises", None):
@@ -210,7 +212,7 @@ PINS = dict(stack_head="s" * 40, stack_clean=True, mlx_vlm="v" * 40, mlx_serve="
 
 
 def _row(i, arm, pt=None):
-    return {"id": i, "draft": ENGAGED if arm == "on" else PLAIN, "completion_tokens": 5,
+    return {"id": i, "draft": ENGAGED if arm == "on" else PLAIN, "completion_tokens": 5, "session_id": f"p426-t-{i}",
             "prompt_tokens": pt if pt is not None else 100 + ord(i[0]), "sampler_seed": 7, "sample": 0, "seed_base": 0}
 
 
@@ -242,12 +244,13 @@ def _log_for(rows, extra=0):
     """The worker's started / completed lines for exactly these rows (+ ``extra`` drafter-free requests)."""
     ts = "2026-10-22 01:00:00,000 - mlx_vlm.server - INFO - "
     out = []
-    recs = [(r.get("prompt_tokens"), r.get("draft") or {}) for r in rows] + [(9, {})] * extra
-    for pt, d in recs:
+    recs = [(r.get("session_id"), r.get("prompt_tokens"), r.get("draft") or {}) for r in rows]
+    recs += [(f"p426-t-extra{k}", 9, {}) for k in range(extra)]
+    for sid, pt, d in recs:
         out.append(f"{ts}Request started: endpoint=/chat/completions model=m stream=True in_flight=1")
         draft = (f" draft_kind=mtp draft_n={d['draft_n']} draft_n_accepted={d['draft_n_accepted']} draft_rounds={d['draft_rounds']}"
                  if d.get("draft_n") is not None else "")
-        out.append(f"{ts}Request completed: endpoint=/chat/completions model=m stream=True backend=cached_session session=s "
+        out.append(f"{ts}Request completed: endpoint=/chat/completions model=m stream=True backend=cached_session session={sid} "
                    f"cached_tokens=0 prompt_tokens={pt} generated_tokens=5 elapsed=1.000s prefill=1.0 tok/s decode=1.0 tok/s "
                    f"finish_reason=stop in_flight=0{draft}")
     return out
@@ -271,6 +274,8 @@ def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), ba
             raise stop_watch_raises
         return watch
 
+    if getattr(ops, "router_config_sha", None) is None:  # ChainOps records the served file's sha at start
+        ops.router_config_sha = L.sha256_text(spec.registry_text)
     return L.run_leg(
         spec,
         ops,
@@ -441,9 +446,23 @@ def test_k4_a_row_with_unplanned_seeds_is_invalid(tmp_path):
 def test_k5_a_substituted_log_record_is_caught_even_when_counts_match(tmp_path):
     spec = _spec(tmp_path)
     rows = spec._test_rows
-    lines = _log_for([rows[0], dict(rows[1], prompt_tokens=999)])  # same count, one foreign record
+    lines = _log_for([rows[0], dict(rows[1], session_id="p426-t-foreign")])  # same count and counters, foreign identity
     receipt = _run(tmp_path, spec, FakeOps(), log_lines=lines)
-    assert receipt["verdict"] == "INVALID" and any("no matching log record" in p for p in receipt["problems"])
+    assert receipt["verdict"] == "INVALID" and any("no log record" in p for p in receipt["problems"])
+
+
+def test_k5_round2_a_record_matching_by_identity_must_match_its_counters(tmp_path):
+    spec = _spec(tmp_path)
+    rows = spec._test_rows
+    lines = _log_for([rows[0], dict(rows[1], prompt_tokens=999)])
+    receipt = _run(tmp_path, spec, FakeOps(), log_lines=lines)
+    assert receipt["verdict"] == "INVALID" and any("differs" in p for p in receipt["problems"])
+
+
+def test_k5_round2_a_row_without_a_session_id_is_invalid(tmp_path):
+    spec = _spec(tmp_path, rows=[_row("a", "on"), dict(_row("b", "on"), session_id=None)])
+    receipt = _run(tmp_path, spec, FakeOps())
+    assert receipt["verdict"] == "INVALID" and any("session id" in p for p in receipt["problems"])
 
 
 def test_k5_the_planned_extra_requests_are_allowed_exactly(tmp_path):
@@ -461,3 +480,54 @@ def test_k6_an_unreadable_power_history_invalidates_speed(tmp_path):
     receipt = _run(tmp_path, _spec(tmp_path), FakeOps(), battery_problems=["pmset -g log: no power-source events"])
     assert receipt["verdict"] == "VALID" and receipt["speed_valid"] is False
     assert any("pmset" in p for p in receipt["speed_problems"])
+
+
+# ------------------------------------------------------------------ stack code round 2 K1 K2 K6 L1 (the leg wrapper)
+def test_k1_round2_an_interrupt_during_the_pre_check_is_receipted_then_re_raised(tmp_path):
+    ops = FakeOps()
+    spec = _spec(tmp_path)
+
+    def boom():
+        raise KeyboardInterrupt()
+
+    ops.busy_procs = boom
+    with pytest.raises(KeyboardInterrupt):
+        _run(tmp_path, spec, ops)
+    assert json.loads((spec.receipt_dir / f"{spec.name}.receipt.json").read_text())["verdict"] == "NOT_STARTED"
+
+
+def test_l1_an_existing_receipt_is_never_overwritten(tmp_path):
+    spec = _spec(tmp_path)
+    spec.receipt_dir.mkdir(parents=True)
+    original = spec.receipt_dir / f"{spec.name}.receipt.json"
+    original.write_text('{"verdict": "VALID"}')
+    receipt = _run(tmp_path, spec, FakeOps())
+    assert receipt["verdict"] == "NOT_STARTED" and any("receipt exists" in p for p in receipt["problems"])
+    assert json.loads(original.read_text()) == {"verdict": "VALID"}
+    assert len(list(spec.receipt_dir.glob(f"{spec.name}.refused-*.receipt.json"))) == 1
+
+
+def test_k2_round2_the_served_config_is_the_pinned_one(tmp_path):
+    ops = FakeOps()
+    ops.router_config_sha = "f" * 64  # the router started on some other file
+    receipt = _run(tmp_path, _spec(tmp_path), ops)
+    assert receipt["verdict"] == "INVALID" and any("served config" in p for p in receipt["problems"])
+
+
+def test_k2_round2_the_receipt_records_the_resolved_build(tmp_path):
+    receipt = _run(tmp_path, _spec(tmp_path), FakeOps())
+    assert receipt["state"] == PINS and receipt["pins"]["registry_on_sha"] == L.sha256_text(ON)
+
+
+@pytest.mark.parametrize(
+    "text, ok",
+    [
+        ("2026-10-22 01:00:00 -0700 Assertions  Summary- [System: x] Using AC(Charge: 80)\n", True),
+        ("", False),
+        ("garbage Using AC here\n", False),
+        ("2026-10-22 01:00:00 -0700 Assertions  Using AC(Charge: 80)\nnot a date Using Batt\n", False),
+    ],
+)
+def test_k6_round2_the_power_history_grammar_is_strict(text, ok):
+    assert (L.power_history_problems(0, text) == []) is ok
+    assert L.power_history_problems(1, text)  # a failed read is never clean
