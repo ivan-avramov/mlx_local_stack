@@ -9,6 +9,7 @@ Claude judge is the Claude Code `blind-judge` agent run by the session on the ex
 import hashlib
 import json
 import math
+import re
 import subprocess
 from pathlib import Path
 
@@ -64,19 +65,155 @@ def pairs(model, off_rows, on_rows, seed=426):
     return jp.build_tune_pairs(model, OFF_TUNE, ON_TUNE, off_rows, on_rows, seed=seed)
 
 
+TEXT_FIELD = {"math500": "content", "cjudge": "content", "reasoning": "content", "vision": "description", "tg1": "content"}
+# K9: anything that could tell a judge which arm a response came from
+LEAK_PATTERNS = (r"p426", r"\bmtp\b", r"drafter", r"draft_kind", r"joint_v1", r"caslca/", r"/Users/", r"/private/", r"/home/")
+
+
+def select(axis, off, on, correct_off=None, correct_on=None):
+    """K10: ``(items, excluded)`` — items ``(id, off_text, on_text)`` both arms hold, by the axis rule: math500 both correct
+    (``correct_*`` sets from the grader), reasoning both strict draws (``score == 1``), cjudge / vision every item."""
+    field = TEXT_FIELD[axis]
+    items, excluded = [], {}
+    for key in sorted(set(off) | set(on), key=str):
+        if key not in off or key not in on:
+            excluded.setdefault("missing in an arm", []).append(key)
+            continue
+        if axis == "math500" and not (key in (correct_off or ()) and key in (correct_on or ())):
+            excluded.setdefault("not both correct", []).append(key)
+            continue
+        if axis == "reasoning" and not (off[key].get("score") == 1.0 and on[key].get("score") == 1.0):
+            excluded.setdefault("not both correct", []).append(str(key))
+            continue
+        items.append((str(key), off[key].get(field) or "", on[key].get(field) or ""))
+    return items, excluded
+
+
+def make_pairs(model, items, seed=426):
+    """K10: one blind pair per selected item, A / B slots balanced (exactly half the items show ON as A), seeded."""
+    key_off, key_on = f"{model}@{OFF_TUNE}", f"{model}@{ON_TUNE}"
+    flags = jp._balanced_flags(len(items), jp._sub_rng(seed, key_off, key_on))
+    out = []
+    for (item_id, off_text, on_text), on_first in zip(items, flags):
+        (ka, ta), (kb, tb) = ((key_on, on_text), (key_off, off_text)) if on_first else ((key_off, off_text), (key_on, on_text))
+        out.append({"pair_id": f"p426-{item_id}", "anchor_type": None, "item_id": item_id, "a_key": f"{ka}::{item_id}",
+                    "b_key": f"{kb}::{item_id}", "a_text": ta, "b_text": tb, "expected": None})
+    return out
+
+
+def _sha(path):
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def leak_problems(out_dir, model_names):
+    patterns = [re.compile(re.escape(m), re.I) for m in model_names] + [re.compile(p, re.I) for p in LEAK_PATTERNS]
+    found = []
+    for packet in sorted(Path(out_dir).glob("*/batch*/p*.md")):
+        text = packet.read_text()
+        for pat in patterns:
+            if pat.search(text):
+                found.append(f"{packet.parent.parent.name}/{packet.name}: {pat.pattern}")
+    return found
+
+
 def export(axis, the_pairs, judge_labels, task_prompts, out_dir, images=None, model_names=None):
+    """Packets in a FRESH directory (K7), the axis rubric, images beside; refused on any identity leak (K9)."""
+    out_dir = Path(out_dir)
+    if out_dir.exists():
+        raise FileExistsError(f"{out_dir} exists: packets are exported once into a fresh directory")
     rubric = AXIS_RUBRIC[axis]
     names = list(model_names or {p["a_key"].split("@", 1)[0] for p in the_pairs})
-    return jp.export_packets(
+    rows = jp.export_packets(
         the_pairs, judge_labels, task_prompts, names, str(out_dir), system=RUBRICS[rubric], attachments=images
     )
+    leaks = leak_problems(out_dir, names)
+    if leaks:
+        raise ValueError(f"packet leak (identity visible to a judge): {leaks[:5]}")
+    return rows
+
+
+def _attachment(packet):
+    others = [p for p in packet.parent.glob(f"{packet.stem}.*") if p.suffix not in (".md", ".json", ".txt")]
+    return _sha(others[0]) if others else None
+
+
+def _seal(packet, choice, rationale, judge, client_version, prompt_sha):
+    return dict(choice=choice, rationale=rationale, judge=judge["label"], family=judge.get("family"),
+                client=judge.get("client"), model=judge.get("model"), client_version=client_version,
+                packet_sha=_sha(packet), attachment_sha=_attachment(packet), prompt_sha=prompt_sha)
+
+
+def seal_verdicts(out_dir, judge, client_version):
+    """K7 / K8: bind each bare verdict the Claude ``blind-judge`` agent wrote to its packet + the judge's provenance."""
+    manifest = {r["pkt"]: r for r in jp.load_manifest(str(out_dir)) if r["judge"] == judge["label"]}
+    sealed = 0
+    for pkt, row in manifest.items():
+        packet = Path(row["path"])
+        verdict = packet.with_name(f"{pkt}.verdict.json")
+        if not verdict.exists():
+            continue
+        doc = json.loads(verdict.read_text())
+        if "packet_sha" in doc:
+            continue
+        parsed = jp.parse_verdict(json.dumps(doc))
+        verdict.write_text(json.dumps(_seal(packet, parsed["choice"], doc.get("rationale"), judge, client_version,
+                                            row["prompt_sha"])) + "\n")
+        sealed += 1
+    return sealed
+
+
+def ingest(out_dir):
+    """K7 / K8: verdict rows carrying their provenance; a verdict not bound to its CURRENT packet (sha / attachment) is
+    ``unbound`` and never admitted."""
+    rows, report = [], {"missing": 0, "unbound": 0, "unparseable": 0}
+    for m in jp.load_manifest(str(out_dir)):
+        packet = Path(m["path"])
+        verdict = packet.with_name(f"{m['pkt']}.verdict.json")
+        if not verdict.exists():
+            report["missing"] += 1
+            continue
+        try:
+            doc = json.loads(verdict.read_text())
+        except json.JSONDecodeError:
+            report["unparseable"] += 1
+            continue
+        if doc.get("packet_sha") != _sha(packet) or doc.get("attachment_sha") != _attachment(packet):
+            report["unbound"] += 1
+            continue
+        rows.append(dict(doc, item_id=m["item_id"], order=m["order"], a_key=m["a_key"], b_key=m["b_key"],
+                         pair_id=m["pair_id"]))
+    return rows, report
+
+
+def admit(rows, judges):
+    """K11: an item is scored only with exactly one valid verdict per (judge, order); incomplete / duplicated items are
+    excluded and counted."""
+    by = {}
+    for r in rows:
+        if r.get("choice") in ("A", "B", "tie"):
+            by.setdefault(r["item_id"], []).append(r)
+    need = {(j, o) for j in judges for o in jp.ORDERS}
+    admitted, excluded = {}, {}
+    for item in sorted(by, key=str):
+        keys = [(r["judge"], r["order"]) for r in by[item]]
+        if len(keys) != len(set(keys)):
+            excluded.setdefault("duplicate", []).append(item)
+        elif set(keys) != need:
+            excluded.setdefault("incomplete", []).append(item)
+        else:
+            admitted[item] = by[item]
+    return admitted, excluded
 
 
 def run_cursor_judge(out_dir, judge, runner=subprocess.run, timeout_s=900):
     """Judge every packet of ``judge`` (a Cursor model) once: retries 0, an unparseable / failed answer writes no verdict
     (ingest counts it missing). Records the client version and model in ``<judge>/provenance.json``."""
     root = Path(out_dir) / judge["label"]
-    version = runner(["cursor-agent", "--version"], capture_output=True, text=True, timeout=60).stdout.strip()
+    pre = runner(["cursor-agent", "--version"], capture_output=True, text=True, timeout=60)
+    version = (pre.stdout or "").strip()
+    if pre.returncode != 0 or not version:  # K8: no verdict without a known client
+        raise RuntimeError(f"cursor-agent version check failed (rc {pre.returncode}): {(pre.stderr or '')[:200]}")
+    prompt_sha = {r["pkt"]: r["prompt_sha"] for r in jp.load_manifest(str(out_dir)) if r["judge"] == judge["label"]}
     written = failed = 0
     for packet in sorted(root.glob("batch*/p*.md")):
         pkt = packet.stem
@@ -94,7 +231,8 @@ def run_cursor_judge(out_dir, judge, runner=subprocess.run, timeout_s=900):
             out, ok = "", False
         parsed = jp.parse_verdict(out)
         if ok and parsed["choice"] is not None:
-            verdict.write_text(json.dumps({"choice": parsed["choice"], "rationale": parsed.get("rationale")}) + "\n")
+            verdict.write_text(json.dumps(_seal(packet, parsed["choice"], parsed.get("rationale"), judge, version,
+                                                prompt_sha.get(pkt))) + "\n")
             written += 1
         else:
             packet.with_name(f"{pkt}.failed.txt").write_text(out)

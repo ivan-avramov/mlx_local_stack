@@ -203,7 +203,12 @@ def test_k8_a_failed_client_version_check_refuses_before_any_judging(tmp_path):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("leak", [MODEL, "p426-on", "the MTP drafter", "/Users/someone/x.py", "caslca/x"])
+def test_k9_model_names_are_stripped_from_packets(tmp_path):
+    rows = P.export("cjudge", P.make_pairs(MODEL, [("q0", "off", f"on {MODEL}")]), ["claude-opus-5-5"], {}, tmp_path / "pk")
+    assert all(MODEL not in Path_(r["path"]).read_text() for r in rows)
+
+
+@pytest.mark.parametrize("leak", ["p426-on", "the MTP drafter", "/Users/someone/x.py", "caslca/x"])
 def test_k9_a_leaking_packet_refuses(tmp_path, leak):
     pairs = P.make_pairs(MODEL, [("q0", "off text", f"on text {leak}")])
     with pytest.raises(ValueError, match="leak"):
