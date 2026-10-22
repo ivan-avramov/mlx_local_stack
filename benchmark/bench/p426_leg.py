@@ -635,17 +635,28 @@ def _pins_check_for(fork_dev):
     return check
 
 
-def _watcher_for(repo, total, out_dir, driver_pattern="p426_leg", interval_s=None, startup_s=0.0):
+def _watcher_for(repo, total, out_dir, driver_pattern="p426_leg", interval_s=None, startup_s=10.0):
+    """P444: the watcher runs as a script from `benchmark/m1/`, so `bench` is importable only via PYTHONPATH; one that exits
+    within `startup_s` raises — the leg is receipted INVALID before the driver runs."""
+    import os
+
     def start(spec):
         receipt = Path(out_dir) / f"{spec.name}.power.json"
+        bench_dir = str(Path(repo) / "benchmark")
+        env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in (bench_dir, os.environ.get("PYTHONPATH")) if p))
         proc = subprocess.Popen(
             [str(Path(repo) / ".venv-bench/bin/python"), str(Path(repo) / "benchmark/m1/bench_watch.py"),
              "--models", spec.model, "--bench", spec.kind, "--total", str(total),
              "--driver-pattern", driver_pattern, "--out", str(Path(out_dir) / f"{spec.name}.watch.log"),
              "--rows-file", str(spec.rows_path), "--power-receipt", str(receipt), "--flat-escalate", "8",
              *(["--interval", str(interval_s)] if interval_s else [])],
-            stdin=subprocess.DEVNULL, start_new_session=True,
+            stdin=subprocess.DEVNULL, start_new_session=True, env=env, cwd=bench_dir,
         )
+        deadline = time.monotonic() + startup_s
+        while time.monotonic() < deadline:
+            if proc.poll() is not None:
+                raise RuntimeError(f"watcher exited at start (rc {proc.returncode})")
+            time.sleep(0.25)
 
         def stop():
             exited_early = proc.poll() is not None
