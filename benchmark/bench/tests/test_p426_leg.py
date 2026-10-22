@@ -100,15 +100,44 @@ def test_reasoning_journal_rows_are_flattened(tmp_path):
     assert len(L.read_rows(p)) == 2
 
 
-def test_in_flight_above_one_on_an_on_leg_invalidates_attribution():
-    lines = [
-        "2026-10-22 01:00:00,000 - mlx_vlm.server - INFO - Request started: endpoint=/chat/completions model=m stream=False in_flight=1",
-        "2026-10-22 01:00:05,000 - mlx_vlm.server - INFO - Request started: endpoint=/chat/completions model=m stream=False in_flight=2",
-        "2026-10-22 03:00:00,000 - mlx_vlm.server - INFO - Request started: endpoint=/chat/completions model=m stream=False in_flight=2",
-    ]
-    window = ("2026-10-22 00:59:00", "2026-10-22 02:00:00")
-    assert L.in_flight_problems(lines, *window) == ["1 overlapping request(s) in the leg window (in_flight > 1)"]
-    assert L.in_flight_problems(lines[:1], *window) == []
+def _log(n, backend="cached_session", in_flight=1, failed=0, started=None, completed=None):
+    ts = "2026-10-22 01:00:00,000 - mlx_vlm.server - INFO - "
+    lines = [f"{ts}Request started: endpoint=/chat/completions model=m stream=True in_flight={in_flight}"
+             for _ in range(n if started is None else started)]
+    lines += [f"{ts}Request completed: endpoint=/chat/completions model=m stream=True backend={backend} session=s "
+              f"cached_tokens=0 prompt_tokens=9 generated_tokens=5 elapsed=1.000s prefill=1.0 tok/s decode=1.0 tok/s "
+              f"finish_reason=stop in_flight=0" for _ in range(n if completed is None else completed)]
+    lines += [f"{ts}Request failed: endpoint=/chat/completions model=m stream=True error=x in_flight=0"] * failed
+    return lines
+
+
+def test_e1_a_reconciled_log_slice_is_clean():
+    problems, stats = L.log_problems(_log(3), "on", expected=3)
+    assert problems == [] and stats == {"started": 3, "completed": 3, "failed": 0, "overlapping": 0}
+
+
+@pytest.mark.parametrize(
+    "lines, why",
+    [
+        ([], "no server log records"),
+        (_log(3, started=2), "started"),
+        (_log(3, completed=2), "completed"),
+        (_log(3, failed=1), "failed"),
+        (_log(2), "expected 3"),
+        (_log(3, backend="continuous_batching"), "cached_session"),
+    ],
+)
+def test_e1_the_log_slice_fails_closed(lines, why):
+    problems, _ = L.log_problems(lines, "on", expected=3)
+    assert problems and any(why in p for p in problems), problems
+
+
+def test_cached_session_requests_are_exact_under_http_overlap():
+    """B1 D1: cached_session requests run serially on the model-owning daemon thread — an HTTP overlap is recorded, not
+    invalidating; the OFF arm has no backend requirement."""
+    problems, stats = L.log_problems(_log(3, in_flight=2), "on", expected=3)
+    assert problems == [] and stats["overlapping"] == 3
+    assert L.log_problems(_log(3, backend="continuous_batching"), "off", expected=3)[0] == []
 
 
 # ------------------------------------------------------------------ the orchestration (ops injected)
@@ -170,6 +199,7 @@ def _spec(tmp_path, arm="on", rows=None, planned=("a", "b")):
         planned=list(planned),
         receipt_dir=tmp_path / "receipts",
         server_log=tmp_path / "mlx_vlm.log",
+        expected_requests=len(planned),
     )
     spec._test_rows = rows if rows is not None else [
         {"id": i, "draft": ENGAGED if arm == "on" else PLAIN, "completion_tokens": 5} for i in planned
@@ -178,8 +208,12 @@ def _spec(tmp_path, arm="on", rows=None, planned=("a", "b")):
 
 
 def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=()):
+    spec.server_log.write_text("2026-10-21 23:00:00,000 - earlier leg - INFO - Request started: in_flight=1\n")
+
     def driver(argv, env, timeout):
         spec.rows_path.write_text("".join(json.dumps(r) + "\n" for r in spec._test_rows))
+        with spec.server_log.open("a") as f:  # only this leg's slice (after the pre-leg offset) counts
+            f.write("\n".join(_log(len(spec._test_rows))) + "\n")
         return driver_rc
 
     return L.run_leg(
@@ -250,3 +284,9 @@ def test_an_unengaged_on_row_is_invalid(tmp_path):
                                  {"id": "b", "draft": PLAIN, "completion_tokens": 5}])
     receipt = _run(tmp_path, spec, FakeOps())
     assert receipt["verdict"] == "INVALID"
+
+
+def test_e1_a_leg_whose_log_slice_does_not_reconcile_is_invalid(tmp_path):
+    spec = _spec(tmp_path)
+    spec.expected_requests = 5
+    assert _run(tmp_path, spec, FakeOps())["verdict"] == "INVALID"

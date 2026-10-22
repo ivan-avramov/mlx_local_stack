@@ -75,3 +75,18 @@ def test_a_byte_level_registry_states_is_refused(tmp_path):
         O.load_registry_states(tmp_path)
     sys.modules.pop("p369_phase2.registry_states", None)
     sys.modules.pop("p369_phase2", None)
+
+
+def test_f1_the_cli_reads_the_registry_as_bytes(tmp_path, monkeypatch):
+    """B4 code round 1 F1: a CRLF registry must reach the fork's raw check, not be normalized by read_text()."""
+    (tmp_path / "main_models.yaml").write_bytes(OFF.replace("\n", "\r\n").encode())
+    seen = {}
+
+    def build(off_text, entry, rs, fixtures, out):
+        seen["text"] = off_text
+        return {}
+
+    monkeypatch.setattr(O, "load_registry_states", lambda root: object())
+    monkeypatch.setattr(O, "build", build)
+    O.main(["--stack-root", str(tmp_path), "--entry", ENTRY, "--out", str(tmp_path / "on.yaml")])
+    assert "\r\n" in seen["text"]
