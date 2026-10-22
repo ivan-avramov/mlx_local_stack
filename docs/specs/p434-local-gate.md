@@ -1,9 +1,20 @@
-# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3.2, 2026-10-22 (C214, P447)
+# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v4, 2026-10-22 (C214, P447, P448 / C215)
 
 Authority: C210 (operator: "proceed across the board"). GitHub Actions minutes are exhausted: the stack has no workflows; the
 fork's `tests.yml` / `upstream-parity.yml` and mlx-serve's `ci.yml` cannot run. Nothing remote checks a push.
 
 Reviews: `docs/reviews/p434/plan-round{1,2}.*` (round 1 G1–G11 accepted in v2; round 2 left G4 G5 G6 + H1, fixed in v3).
+
+## 0. v4 — the gate runs at RELEASES (P448 / C215)
+
+`main` is the workbench: a BRANCH push (any repo) needs only the per-commit PII + naming scans (`evidence`: PII only, orphan
+check). A RELEASE qualifies the stack commit plus its exact fork pins: `bench.local_gate release --version X.Y.Z` (operator's
+discretion; the agent proposes release points + bump levels) gates the stack HEAD and both gitlink shas (reusing PASS receipts
+under the current policy), requires both pins on their fork's `origin/main`, requires the version above every existing tag,
+then creates the annotated stack tag `vX.Y.Z` listing pins + receipts. The forks get no tags (the release records their
+pins). Pushing a stack tag requires SemVer and the PASS release receipt + both gitlinks' receipts / reachability; pushing the
+tag is a separate, operator-approved step. Sections below describe the gate machinery `release` uses; where they say "every
+push", read "every release tag".
 
 ## 1. Threat model (G1)
 
