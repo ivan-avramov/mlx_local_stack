@@ -321,3 +321,12 @@ def test_a_vendor_qualified_external_model_is_not_local_shorthand(text):
 ])
 def test_the_vendor_exemption_does_not_launder_a_bare_segment(text):
     assert len(MN.violations(text)) == 1
+
+
+def test_harvested_wave1_evidence_is_DATA_not_prose():
+    """P437: `benchmark/results/p426/wave1/**` holds verbatim, sha-manifested copies (the served registry, receipts, logs) — a
+    shorthand inside them cannot be reworded without breaking the manifest. Prose next to them stays checked."""
+    diff = ("+++ b/benchmark/results/p426/wave1/run/registry-on.yaml\n@@ -0,0 +1 @@\n+# Distill = strongest single-shot\n"
+            "+++ b/benchmark/results/p426/README.md\n@@ -0,0 +1 @@\n+Distill regressed\n")
+    found = MN.diff_violations(diff)
+    assert [v.path for v in found] == ["benchmark/results/p426/README.md"]
