@@ -178,7 +178,9 @@ class FakeOps:
 
     def stop_stack(self):
         self.calls.append("stop_stack")
-        return 0
+        if getattr(self, "stop_raises", None):
+            raise self.stop_raises
+        return getattr(self, "stop_rc", 0)
 
     def listeners(self, port=8000):
         return []
@@ -207,10 +209,13 @@ def _spec(tmp_path, arm="on", rows=None, planned=("a", "b")):
     return spec
 
 
-def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=()):
+def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), watch=None, driver_raises=None):
+    watch = watch if watch is not None else dict(power_failure=power_receipt, exited_early=False, ticks=20)
     spec.server_log.write_text("2026-10-21 23:00:00,000 - earlier leg - INFO - Request started: in_flight=1\n")
 
     def driver(argv, env, timeout):
+        if driver_raises:
+            raise driver_raises
         spec.rows_path.write_text("".join(json.dumps(r) + "\n" for r in spec._test_rows))
         with spec.server_log.open("a") as f:  # only this leg's slice (after the pre-leg offset) counts
             f.write("\n".join(_log(len(spec._test_rows))) + "\n")
@@ -221,7 +226,7 @@ def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=()):
         ops,
         run_driver=driver,
         pins_check=lambda model, arm: [],
-        watcher=lambda spec: (lambda: power_receipt),
+        watcher=lambda spec: (lambda: watch),
         battery_intervals=lambda start, end: list(battery),
         clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
     )
@@ -290,3 +295,40 @@ def test_e1_a_leg_whose_log_slice_does_not_reconcile_is_invalid(tmp_path):
     spec = _spec(tmp_path)
     spec.expected_requests = 5
     assert _run(tmp_path, spec, FakeOps())["verdict"] == "INVALID"
+
+
+# ------------------------------------------------------------------ B1 code round 3 G1–G3 (the leg wrapper)
+def test_g1_a_driver_timeout_is_an_invalid_receipted_leg(tmp_path):
+    import subprocess
+
+    spec = _spec(tmp_path)
+    receipt = _run(tmp_path, spec, FakeOps(), driver_raises=subprocess.TimeoutExpired(["d"], 21600))
+    assert receipt["verdict"] == "INVALID" and any("timed out" in p for p in receipt["problems"])
+    assert (spec.receipt_dir / f"{spec.name}.receipt.json").exists()
+
+
+@pytest.mark.parametrize("how", ["rc", "raises"])
+def test_g2_a_failed_teardown_is_invalid(tmp_path, how):
+    ops = FakeOps()
+    if how == "rc":
+        ops.stop_rc = 1
+    else:
+        ops.stop_raises = RuntimeError(":8000 still bound")
+    receipt = _run(tmp_path, _spec(tmp_path), ops)
+    assert receipt["verdict"] == "INVALID" and any("teardown" in p for p in receipt["problems"])
+
+
+@pytest.mark.parametrize(
+    "watch, why",
+    [
+        (dict(power_failure=None, exited_early=True, ticks=20), "exited early"),
+        (dict(power_failure=None, exited_early=False, ticks=3), "ticks"),
+        ({}, "no watcher report"),
+    ],
+)
+def test_g3_an_unhealthy_watcher_invalidates_speed(tmp_path, watch, why):
+    """The clock spans one hour (12 five-minute ticks): fewer than 11 ticks, an early exit or no report → speed INVALID
+    (a crashed watcher must never read as 'no power failure')."""
+    receipt = _run(tmp_path, _spec(tmp_path), FakeOps(), watch=watch)
+    assert receipt["verdict"] == "VALID" and receipt["speed_valid"] is False
+    assert any(why in p for p in receipt["speed_problems"]), receipt["speed_problems"]
