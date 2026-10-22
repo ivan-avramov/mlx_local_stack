@@ -299,3 +299,25 @@ def test_result_row_jsonl_content_is_DATA_not_prose():
         '+{"note": "the distill run"}\n'
     )
     assert M.diff_violations(bfcl_score_diff) != []
+
+
+@pytest.mark.parametrize("text", [
+    "judges: Claude Opus 5.5 (blind-judge) + GPT-5.6 Sol High",
+    "family 1: Claude Opus 5.5 via Claude Code",
+    "the model id claude-opus-5-5 is recorded per verdict",
+    "Claude Fable 5.1 and Claude Sonnet 5.5 reviewed it",
+    "model id claude-fable-5-1",
+])
+def test_a_vendor_qualified_external_model_is_not_local_shorthand(text):
+    """P435: the panel / reviewer models (C206 / C207) are named by their vendor's full name; `Opus` and `Fable` are also
+    segments of local registry names, so the vendor-qualified form must pass and the bare word must not."""
+    assert MN.violations(text) == []
+
+
+@pytest.mark.parametrize("text", [
+    "the Opus judge disagreed",
+    "Fable regressed on Math500",
+    "Claude preferred the Opus-Distill output",
+])
+def test_the_vendor_exemption_does_not_launder_a_bare_segment(text):
+    assert len(MN.violations(text)) == 1
