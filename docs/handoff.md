@@ -30,7 +30,8 @@ Model names: FULL registry names only, always.
 
 ## Next work, in order
 
-1. Cursor reviews one at a time: fork dev builds round 2 (running) → stack builds round 1 (B5 B9 B10 B11 B12 B13 B4-stack incl.
+0. **Parked for the next test window (after R5):** dev round 2 left F3 (overlay: YAML-structure spans, inert duplicate markers), H1 (`p426_overlay` loads the frozen file under a unique module name), H2 (B10 strict, type-aware delta check with pinned ON values and exact line identity). Red tests are UNCOMMITTED in the trees (fork branch `p426-b4-settings-match`: `test_p369_phase2_registry_states.py`; stack: `test_p426_leg.py`, `test_p426_overlay.py`); green patches `scratchpad/p426-b4r2-green.patch` (fork) and `scratchpad/p426-h1h2-green.patch` (stack). Run red → commit → apply → green → commit → merge B4 into `p426-s` → fork suites ×2 + audits → dev review round 3 (last) → stack review round 1.
+1. Cursor reviews one at a time: fork dev builds round 3 (after the parked fixes) → stack builds round 1 (B5 B9 B10 B11 B12 B13 B4-stack incl.
    the G1–G3 / E1 fixes). ≤ 3 rounds each, then the operator.
 2. When R5 Qwen3.6 ends: record it (README row, campaign-results, open-questions, as P428). Stack suite on the final stack head.
 3. Fork push of `p426-s` (ASK the operator) → stack submodule bump = S (+ suites) → frozen worktree `$STACK_WORKDIR/worktrees/stack-p426`
