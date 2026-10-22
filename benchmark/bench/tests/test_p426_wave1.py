@@ -182,3 +182,12 @@ def test_main_refuses_a_workdir_that_is_not_stack_workdir(tmp_path, monkeypatch)
     rc = W.main(["--stack-root", str(tmp_path), "--main-root", str(tmp_path / "main"), "--workdir", str(tmp_path), "--registry-on", str(tmp_path / "on.yaml"),
                  "--out", str(tmp_path / "out")])
     assert rc == 2
+
+
+def test_an_axes_filter_keeps_the_order_and_drops_the_rest():
+    """P452: M1 (in-process qualify) cannot run inside the wrapper on S; A1–A4 run on their own (per-axis smoke gate, §4)."""
+    legs = W.schedule(axes=("math500", "cjudge", "vision", "reasoning"))
+    assert len(legs) == 24 and all(a != "m1" for a, _, _ in legs)
+    assert legs == [leg for leg in W.schedule() if leg[0] != "m1"]
+    with pytest.raises(ValueError, match="unknown axis"):
+        W.schedule(axes=("math500", "nope"))
