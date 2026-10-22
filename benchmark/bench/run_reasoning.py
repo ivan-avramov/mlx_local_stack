@@ -19,13 +19,13 @@ RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 _CAL_FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
 
 
-def calibrate_cpt(driver, model: str) -> float:
-    """Calibrate chars-per-token for the model."""
+def calibrate_cpt(driver, model: str, with_session: bool = False):
+    """Calibrate chars-per-token for the model (``with_session``: also its request's session id, P426 K5)."""
     out = driver.complete(model, [{"role": "user", "content": _CAL_FILLER * 200}],
                           {"max_tokens": 1, "temperature": 0.0}, timeout=120)
     chars = len(_CAL_FILLER * 200)
     pt = out.get("prompt_tokens") or 1
-    return chars / pt
+    return (chars / pt, out.get("session_id")) if with_session else chars / pt
 
 
 def build_parser():
@@ -103,14 +103,15 @@ def main(argv=None) -> int:
         return _run(args, grid, router, guard)
 
 
-def _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides):
+def _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides, calibration_session_id=None):
     """What the journal's rows were produced under (C1): router block incl. the served file's
     sha256, the driver registry's sha256, the cheap manifest of the run (`fingerprint` is its
     config fingerprint) and the resolved serving controls."""
     from . import paths
     doc = {"router": router, "router_history": history,
            "registry_sha256": provenance._file_sha256(str(paths.registry_path())),
-           "manifest": None, "fingerprint": None, "serving_controls": serving}
+           "manifest": None, "fingerprint": None, "serving_controls": serving,
+           "calibration_session_id": calibration_session_id}  # P426 K5: the one row-less request
     try:
         lite = provenance.current_manifest_lite(
             args.model, args.sampling_profile, overrides=manifest_overrides,
@@ -186,7 +187,7 @@ def _run(args, grid, router, guard) -> int:
         print("[reasoning] WARNING: model server process not found; "
               "memory sampling disabled", flush=True)
 
-    cpt = calibrate_cpt(driver, args.model)
+    cpt, calibration_session_id = calibrate_cpt(driver, args.model, with_session=True)
     serving = provenance.assert_serving_state(args.model, expect=serving_entry)   # M57/M58: re-resolve once loaded
 
     # Build profile params; apply any CLI overrides
@@ -232,7 +233,8 @@ def _run(args, grid, router, guard) -> int:
     # only against a compatible sidecar (same served config sha256 + compatible manifest).
     sidecar_path = partial_path + ".provenance.json"
     history = []
-    sidecar = _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides)
+    sidecar = _journal_sidecar_doc(args, grid, router, serving, history, manifest_overrides,
+                                   calibration_session_id=calibration_session_id)
     if args.resume and os.path.exists(partial_path):
         history = _check_resume_sidecar(sidecar_path, sidecar)
         sidecar["router_history"] = history

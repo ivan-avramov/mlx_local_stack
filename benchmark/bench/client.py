@@ -112,8 +112,10 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     prefix = os.environ.get("MLX_BENCH_SESSION_PREFIX")
     session_id = f"{prefix}-{uuid.uuid4().hex[:16]}" if prefix else None
     t0 = time.perf_counter()
-    r = _post("/v1/chat/completions", body, timeout=timeout,
-              headers={"x-session-id": session_id} if session_id else None)
+    if session_id:  # M1: the no-prefix call keeps the private transport's old signature
+        r = _post("/v1/chat/completions", body, timeout=timeout, headers={"x-session-id": session_id})
+    else:
+        r = _post("/v1/chat/completions", body, timeout=timeout)
     wall = time.perf_counter() - t0
     if not isinstance(r, dict):
         raise MalformedResponseError(f"{model}: HTTP 200 body is not a JSON object "

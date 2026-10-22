@@ -188,7 +188,8 @@ class FakeOps:
         self.calls.append(f"load {model}")
         if self._load_raises:
             raise self._load_raises
-        return {"pid": 202, "create_time": 1.0, "cmdline": f"202 python -m mlx_vlm.server --model caslca/{ENTRY} --port 8091"}
+        return {"pid": 202, "create_time": 1.0, "cmdline": getattr(self, "cmdline", None)
+                or f"202 python -m mlx_vlm.server --model caslca/{ENTRY} --port 8091"}
 
     def worker_ident(self, model):
         return {"pid": 202, "create_time": 1.0 if self._same else 2.0}
@@ -276,6 +277,9 @@ def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), ba
 
     if getattr(ops, "router_config_sha", None) is None:  # ChainOps records the served file's sha at start
         ops.router_config_sha = L.sha256_text(spec.registry_text)
+    if spec.arm == "on" and not getattr(ops, "cmdline", None):  # the ON worker carries exactly the arm's flags (M2)
+        ops.cmdline = (f"202 python -m mlx_vlm.server --model caslca/{ENTRY} --draft-kind mtp "
+                       f"--draft-model caslca/{ENTRY}-mtp-drafter --mtp-verify-scan joint_v1")
     return L.run_leg(
         spec,
         ops,
@@ -466,12 +470,15 @@ def test_k5_round2_a_row_without_a_session_id_is_invalid(tmp_path):
 
 
 def test_k5_the_planned_extra_requests_are_allowed_exactly(tmp_path):
+    """The one row-less request (reasoning's calibration) is NAMED in the journal sidecar; a second, unnamed one refuses."""
     spec = _spec(tmp_path)
     spec.expected_extra, spec.expected_requests = 1, 3
+    Path(f"{spec.rows_path}.provenance.json").write_text(json.dumps({"calibration_session_id": "p426-t-extra0"}))
     assert _run(tmp_path, spec, FakeOps())["verdict"] == "VALID"
     (tmp_path / "b").mkdir()
     spec2 = _spec(tmp_path / "b")
     spec2.expected_extra, spec2.expected_requests = 1, 3
+    Path(f"{spec2.rows_path}.provenance.json").write_text(json.dumps({"calibration_session_id": "p426-t-extra0"}))
     lines = _log_for(spec2._test_rows, extra=2)
     assert _run(tmp_path / "b", spec2, FakeOps(), log_lines=lines)["verdict"] == "INVALID"
 
@@ -594,21 +601,22 @@ def test_k5_round3_the_extra_request_must_be_the_named_one():
 
 
 def test_l1_round3_publication_never_replaces_a_receipt_that_appeared_concurrently(tmp_path, monkeypatch):
+    """A concurrent writer publishes the receipt between our temp write and our publication: ours must land beside it."""
+    import os
+
     spec = _spec(tmp_path)
-    spec.receipt_dir.mkdir(parents=True)
     target = spec.receipt_dir / f"{spec.name}.receipt.json"
-    real_exists = type(target).exists
+    real_link = os.link
 
-    def racing_exists(self):  # the check sees no receipt; another writer publishes one right after
-        if self == target and not getattr(racing_exists, "done", False):
-            racing_exists.done = True
-            target.write_text('{"verdict": "VALID"}')
-            return False
-        return real_exists(self)
+    def racing_link(src, dst):
+        if Path(dst) == target and not target.exists():
+            target.write_text('{"verdict": "VALID"}')  # the other writer wins
+        return real_link(src, dst)
 
-    monkeypatch.setattr(type(target), "exists", racing_exists)
+    monkeypatch.setattr(os, "link", racing_link)
     out = L._write(spec, {"verdict": "INVALID"})
     assert json.loads(target.read_text()) == {"verdict": "VALID"} and out["_path"] != str(target)
+    assert json.loads(Path(out["_path"]).read_text()) == {"verdict": "INVALID"}
 
 
 @pytest.mark.parametrize(

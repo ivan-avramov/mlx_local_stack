@@ -151,7 +151,8 @@ def probe_result(content="ok", *, reasoning="", tool_calls=None, completion_toke
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "decode_tps": decode_tps, "peak_mem_gb": peak_mem_gb,
             "finish_reason": finish_reason, "wall_s": wall_s,
-            "raw_timings": raw_timings if raw_timings is not None else {}}
+            "raw_timings": raw_timings if raw_timings is not None else {},
+            "session_id": None}  # P426 K5: the request's x-session-id (None unless MLX_BENCH_SESSION_PREFIX)
 
 
 class FakeProbe:
@@ -195,7 +196,7 @@ def complete_result(content="ok", *, reasoning="", tool_calls=None, prompt_token
             "prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
             "decode_tps": decode_tps, "prefill_s": prefill_s, "prefill_tps": prefill_tps,
             "peak_mem_gb": peak_mem_gb, "wall_s": wall_s, "finish_reason": finish_reason,
-            "raw_timings": raw_timings or {}}
+            "raw_timings": raw_timings or {}, "session_id": None}  # P426 K5
 
 
 class FakeDriver:

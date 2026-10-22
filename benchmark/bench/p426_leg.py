@@ -262,16 +262,34 @@ def watch_problems(watch, start, end):
 
 
 def model_argv_problems(cmdline, registry_text, model):
+    """``--model`` is the registry's; M2: the predictor flags are EXACTLY the arm's (ON: --draft-kind mtp, the entry's
+    --draft-model and --mtp-verify-scan; OFF: none of them, --draft-kind at most none / off)."""
     entry = _models(registry_text)[0].get(model) or {}
-    got = argv_flag((cmdline or "").split(), "--model")
-    return [] if got == [entry.get("hf_path")] else [f"worker --model {got} != registry {entry.get('hf_path')!r}"]
+    toks = (cmdline or "").split()
+    problems = []
+    got = argv_flag(toks, "--model")
+    if got != [entry.get("hf_path")]:
+        problems.append(f"worker --model {got} != registry {entry.get('hf_path')!r}")
+    if entry.get("draft_kind") == "mtp":
+        scan = entry.get("mtp_verify_scan") or ""
+        want = {"--draft-kind": ["mtp"], "--draft-model": [entry.get("draft_model")],
+                "--mtp-verify-scan": [] if scan in ("", "per_query") else [scan]}
+    else:
+        want = {"--draft-model": [], "--mtp-verify-scan": []}
+        kinds = argv_flag(toks, "--draft-kind")
+        if kinds not in ([], ["none"], ["off"]):
+            problems.append(f"OFF worker --draft-kind {kinds}")
+    for flag, value in want.items():
+        if argv_flag(toks, flag) != value:
+            problems.append(f"worker {flag} {argv_flag(toks, flag)} != the arm's {value}")
+    return problems
 
 
 def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
 
-PIN_KEYS = ("stack_head", "stack_clean", "mlx_vlm", "mlx_serve")
+PIN_KEYS = ("stack_head", "stack_clean", "mlx_vlm", "mlx_serve", "frozen_sha")
 
 
 def pin_problems(state, spec):
@@ -302,9 +320,10 @@ def _row_records(rows):
 _SESSION = re.compile(r"Request completed: .*? session=(\S+) .*?prompt_tokens=(\d+)")
 
 
-def request_match_problems(rows, lines, expected_extra):
+def request_match_problems(rows, lines, extra_ids):
     """K5: every row's request(s) carry a session id (MLX_BENCH_SESSION_PREFIX) that appears on exactly one completed log
-    record whose prompt tokens and draft counters equal the row's; exactly ``expected_extra`` logged ids have no row."""
+    record whose prompt tokens and draft counters equal the row's; the logged ids without a row are exactly ``extra_ids``
+    (the reasoning calibration request, named in its journal sidecar)."""
     logged, problems = {}, []
     for line in lines:
         m = _SESSION.search(line)
@@ -332,10 +351,24 @@ def request_match_problems(rows, lines, expected_extra):
                 problems.append(f"{sid}: no log record")
             elif logged[sid] != want:
                 problems.append(f"{sid}: log record {logged[sid]} differs from the row {want}")
-    leftover = len(set(logged) - seen)
-    if leftover != expected_extra:
-        problems.append(f"{leftover} logged request(s) without a row, expected {expected_extra}")
+    leftover = set(logged) - seen
+    if leftover != set(extra_ids):
+        problems.append(f"logged request(s) without a row {sorted(leftover)} != the named extras {sorted(extra_ids)}")
     return problems
+
+
+def extra_ids_for(spec):
+    """The named row-less requests of a leg: for reasoning, the calibration request recorded in the journal sidecar."""
+    if not spec.expected_extra:
+        return [], []
+    sidecar = Path(f"{spec.rows_path}.provenance.json")
+    try:
+        sid = json.loads(sidecar.read_text()).get("calibration_session_id")
+    except (OSError, ValueError) as exc:
+        return [], [f"extra requests: {sidecar.name} unreadable ({type(exc).__name__})"]
+    if not sid:
+        return [], [f"extra requests: no calibration_session_id in {sidecar.name}"]
+    return [sid], []
 
 
 _POWER_EVENT = re.compile(r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d [+-]\d{4} .*Using (AC|Batt)\b")
@@ -372,12 +405,18 @@ def _write(spec, receipt):
 
     d = Path(spec.receipt_dir)
     d.mkdir(parents=True, exist_ok=True)
-    path = _receipt_path(spec)
-    if path.exists():
-        path = d / f"{spec.name}.refused-{time.time_ns()}.receipt.json"
-    tmp = path.with_suffix(path.suffix + ".tmp")
+    tmp = d / f".{spec.name}.{os.getpid()}.{time.time_ns()}.tmp"
     tmp.write_text(json.dumps(receipt, indent=1, default=str) + "\n")
-    os.replace(tmp, path)
+    path = _receipt_path(spec)
+    try:
+        while True:
+            try:
+                os.link(tmp, path)  # atomic, and fails if the name exists (never replaces a published receipt)
+                break
+            except FileExistsError:
+                path = d / f"{spec.name}.refused-{time.time_ns()}.receipt.json"
+    finally:
+        tmp.unlink(missing_ok=True)
     return dict(receipt, _path=str(path))
 
 
@@ -466,7 +505,8 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         problems += membership_problems(spec.planned, rows, spec.row_key)
         problems += engagement_problems(spec.arm, rows, spec.row_key)
         problems += seed_problems(spec.seeds or {}, rows, spec.row_key)
-        problems += request_match_problems(rows, lines, spec.expected_extra)
+        extras, extra_problems = extra_ids_for(spec)
+        problems += extra_problems + request_match_problems(rows, lines, extras)
         if not ops.power_ok():
             speed.append("power / orphan gate failed at exit")
     except BaseException as exc:  # noqa: BLE001 — K1: everything is receipted; interrupts re-raised below
@@ -489,7 +529,18 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
             interrupted = interrupted or (exc if not isinstance(exc, Exception) else None)
         end = clock()
         receipt.update(ended=end, watch=watch)
-        speed += watch_problems(watch, start, end) + _speed_from_power(battery_intervals, start, end)
+        try:  # K2: the frozen build must still be the one the leg started on
+            exit_state = repo_state()
+            if exit_state != receipt.get("state"):
+                problems.append(f"build drift during the leg: {receipt.get('state')} -> {exit_state}")
+        except BaseException as exc:  # noqa: BLE001
+            problems.append(f"exit build check failed: {type(exc).__name__}: {exc}")
+            interrupted = interrupted or (exc if not isinstance(exc, Exception) else None)
+        try:  # K1: an interrupt during the power inspection still leads to the receipt
+            speed += watch_problems(watch, start, end) + _speed_from_power(battery_intervals, start, end)
+        except BaseException as exc:  # noqa: BLE001
+            speed.append(f"power inspection failed: {type(exc).__name__}: {exc}")
+            interrupted = interrupted or (exc if not isinstance(exc, Exception) else None)
         verdict = "INVALID" if problems else "VALID"
         final = _write(spec, dict(receipt, verdict=verdict, problems=problems, speed_problems=speed,
                                   speed_valid=verdict == "VALID" and not speed))
@@ -532,7 +583,13 @@ def run_qualify_leg(spec, ops, *, run_driver, pins_check, battery_intervals, clo
             interrupted = exc
     finally:
         end = clock()
-        speed += _speed_from_power(battery_intervals, start, end)
+        try:
+            if repo_state() != receipt.get("state"):
+                problems.append("build drift during the leg")
+            speed += _speed_from_power(battery_intervals, start, end)
+        except BaseException as exc:  # noqa: BLE001
+            problems.append(f"exit checks failed: {type(exc).__name__}: {exc}")
+            interrupted = interrupted or (exc if not isinstance(exc, Exception) else None)
         verdict = "INVALID" if problems else "VALID"
         final = _write(spec, dict(receipt, started=start, ended=end, verdict=verdict, problems=problems,
                                   speed_problems=speed, speed_valid=verdict == "VALID" and not speed))
@@ -616,14 +673,12 @@ def main(argv=None):
     """``--axis --arm (--block N | --smoke) --stack-root <frozen worktree> --workdir <STACK_WORKDIR> --registry-on <overlay>
     --receipt-dir <dir>``: the leg is PLANNED from ids.json (K3) and pinned to ``<workdir>/p426/frozen.json`` (K2); a failure
     before the leg starts still leaves a NOT_STARTED receipt (K1)."""
+    import os
     import time
-
-    from bench import p426_plan
-    from bench.chain_ops import ChainOps
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--axis", required=True)
-    ap.add_argument("--arm", required=True, choices=p426_plan.ARMS)
+    ap.add_argument("--arm", required=True, choices=("off", "on"))
     sel = ap.add_mutually_exclusive_group(required=True)
     sel.add_argument("--block", type=int)
     sel.add_argument("--smoke", action="store_true")
@@ -638,9 +693,16 @@ def main(argv=None):
                    driver_argv=[], destinations=[], rows_path=None, planned=[], receipt_dir=Path(args.receipt_dir),
                    server_log=None)
     try:
+        from bench import p426_plan
+        from bench.chain_ops import ChainOps
+
+        configured = os.environ.get("STACK_WORKDIR")
+        if not configured or Path(configured).resolve() != Path(args.workdir).resolve():
+            raise ValueError(f"--workdir {args.workdir} is not $STACK_WORKDIR ({configured})")
         repo = Path(args.stack_root).resolve()
-        frozen_path = Path(args.workdir) / FROZEN
-        pins = json.loads(frozen_path.read_text())
+        frozen_path = Path(args.workdir).resolve() / FROZEN
+        frozen_bytes = frozen_path.read_bytes()  # K2: ONE snapshot, parsed and hashed
+        pins = dict(json.loads(frozen_bytes), frozen_sha=hashlib.sha256(frozen_bytes).hexdigest())
         plan = p426_plan.plan_leg(repo, args.axis, args.arm, args.block, smoke=args.smoke, workdir=args.workdir,
                                   reviewed_head=pins.get("mlx_vlm"))
         off_text = (repo / "main_models.yaml").read_bytes().decode("utf-8")
@@ -653,7 +715,7 @@ def main(argv=None):
             rows_path=plan["rows_path"], planned=plan["planned"], receipt_dir=Path(args.receipt_dir),
             server_log=repo / "logs/mlx_vlm.log", timeout_s=args.timeout_s, row_key=plan["row_key"],
             expected_requests=plan["expected_requests"], expected_extra=plan["expected_extra"], seeds=plan["seeds"],
-            pins=dict(pins, frozen_sha=sha256_text(frozen_path.read_text())), cwd=plan["cwd"],
+            pins=pins, cwd=plan["cwd"],
         )
         log_path = Path(args.receipt_dir) / f"{name}.log"
         log_path.parent.mkdir(parents=True, exist_ok=True)
@@ -675,8 +737,13 @@ def main(argv=None):
             epoch = [time.mktime(time.strptime(x, "%Y-%m-%d %H:%M:%S")) for x in (start, end)]
             return (qualify.battery_intervals(out.stdout, *epoch) if not problems else []), problems
 
+        base_state = _repo_state_for(repo)
+
+        def repo_state():  # K2: the frozen record's current bytes are part of the build identity, at entry and exit
+            return dict(base_state(), frozen_sha=hashlib.sha256(frozen_path.read_bytes()).hexdigest())
+
         common = dict(run_driver=_real_driver, pins_check=_pins_check_for(fork_dev), battery_intervals=battery,
-                      clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"), repo_state=_repo_state_for(repo))
+                      clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"), repo_state=repo_state)
     except BaseException as exc:  # noqa: BLE001 — K1: planning / loading failures are receipted too
         _refuse(stub, dict(name=name, arm=args.arm, kind=args.axis, problems=[], speed_problems=[]), exc)
         if not isinstance(exc, Exception):
