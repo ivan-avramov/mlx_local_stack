@@ -242,6 +242,18 @@ def test_load_tripwires(ops, tmp_path, ps, env, frag):
         ops.load(PICK1)
 
 
+def test_load_records_the_FULL_worker_cmdline(ops, tmp_path):
+    """P449: the identity cmdline is the record the P426 leg wrapper re-checks the predictor flags on; a real worker argv is
+    > 400 chars, and the flags past the old [:400] cut (Wave-1 smoke 2: --draft-kind / --draft-model / --mtp-verify-scan)
+    were invisible, failing every ON leg (and blinding the OFF re-check past 400 chars)."""
+    _router(ops, tmp_path)
+    pad = " ".join(f"--opt{i} {'v' * 20}" for i in range(20))
+    ops._sh.ps = _worker_ps(PICK1, pad + " --draft-kind off")
+    ident = ops.load(PICK1)
+    line = _worker_ps(PICK1, pad + " --draft-kind off").splitlines()[0].strip()
+    assert len(line) > 400 and ident["cmdline"] == line
+
+
 def test_load_accepts_draft_off(ops, tmp_path):
     _router(ops, tmp_path)
     ops._sh.ps = _worker_ps(PICK1, "--draft-kind off")
