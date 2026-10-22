@@ -127,3 +127,18 @@ def test_k4_a_row_records_both_turn_seeds(tmp_path, monkeypatch):
     assert VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out), "--ids", IDS[0]]) == 0
     row = json.loads(out.read_text().splitlines()[0])
     assert row["seed"] == sample_seed(IDS[0], 0) and row["turn2"]["seed"] == sample_seed(IDS[0], 1)
+
+
+def test_k5_a_row_records_both_turn_session_ids(tmp_path, monkeypatch):
+    corpus = tmp_path / "corpus.jsonl"
+    _write_jsonl(corpus, [_row(id=IDS[0])])
+    monkeypatch.setattr(VG, "resolve_image", lambda row, cache: _tiny_jpeg_path(tmp_path))
+    fp = FakeProbe(script=[dict(probe_result(content="desc"), session_id="s-1"), dict(probe_result(content="PASS"), session_id="s-2")])
+    monkeypatch.setattr(VG.client, "probe", fp)
+    monkeypatch.setattr(VG.model_params, "params_for", lambda model, profile: {"thinking_budget": 1000, "max_tokens": 2000})
+    monkeypatch.setattr(VG.model_params, "registry_context_limit", lambda model: None)
+    monkeypatch.setattr(VG.generate, "rows_for_rate", lambda model, bench: [])
+    out = tmp_path / "r" / "m" / "vision_gate.p426-on-b1.jsonl"
+    assert VG.main(["--model", "m", "--corpus", str(corpus), "--out", str(out), "--ids", IDS[0]]) == 0
+    row = json.loads(out.read_text().splitlines()[0])
+    assert row["session_id"] == "s-1" and row["turn2"]["session_id"] == "s-2"
