@@ -17,6 +17,10 @@ import bench.reasoning as R
 sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 from bench.tests.test_generate_run import _fake_probe_result  # noqa: E402
 
+import pytest  # noqa: E402
+
+pytestmark = pytest.mark.usefixtures("pin_mtp_scan")  # M58: synthetic models
+
 OK_BODY = {
     "choices": [{"message": {"content": "hi"}, "finish_reason": "stop"}],
     "usage": {"prompt_tokens": 3, "completion_tokens": 2},

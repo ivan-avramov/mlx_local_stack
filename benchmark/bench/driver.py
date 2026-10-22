@@ -41,4 +41,5 @@ class MlxServeDriver:
             # draft_rounds / draft_n / draft_n_accepted). Passed through raw so probes can
             # verify a drafter actually engaged — a ratio without them is not a ratio.
             "raw_timings": tm,
+            "session_id": r.get("session_id"),  # P426 K5
         }

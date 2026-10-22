@@ -692,6 +692,7 @@ def run(models, benches, limits, seed=0, chunk_minutes=30.0, chunks="all", overr
                        "completion_tokens": p["completion_tokens"], "prompt_tokens": p["prompt_tokens"],
                        "decode_tps": p["decode_tps"], "peak_mem_gb": p["peak_mem_gb"],
                        "finish_reason": p["finish_reason"], "wall_s": p["wall_s"],
+                       "session_id": p.get("session_id"),  # P426 K5: the request's x-session-id (None when unset)
                        "temperature": params.get("temperature"), "thinking_budget": params.get("thinking_budget")}
                 # Speculative engagement counters (M6b tripwire): the server attaches
                 # per-request draft stats to the response timings (nulls under plain

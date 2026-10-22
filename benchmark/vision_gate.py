@@ -313,6 +313,7 @@ def run_one(model: str, params: dict, context_limit, timeout: float, row: dict, 
         # P426 B12: what the blind panel needs to re-resolve the image — never the local cache path
         "image_ref": row.get("image_ref"),
         "image_sha256": _sha256_file(image_path),
+        "session_id": p1.get("session_id"),  # P426 K5
         "seed": rowschema.sample_seed(row["id"], 0),  # P426 K4: the turns' request seeds, checked by the leg wrapper
         "description": description,
         "prompt_tokens": p1["prompt_tokens"], "completion_tokens": p1["completion_tokens"],
@@ -322,7 +323,8 @@ def run_one(model: str, params: dict, context_limit, timeout: float, row: dict, 
         "verdict": verdict, "verdict_raw": verdict_raw,
         "turn2": {"prompt_tokens": p2["prompt_tokens"], "completion_tokens": p2["completion_tokens"],
                   "wall_s": p2["wall_s"], "finish_reason": p2["finish_reason"],
-                  "converged": converged2, "draft": _draft(p2), "seed": rowschema.sample_seed(row["id"], 1)},
+                  "converged": converged2, "draft": _draft(p2), "seed": rowschema.sample_seed(row["id"], 1),
+                  "session_id": p2.get("session_id")},
     }
 
 

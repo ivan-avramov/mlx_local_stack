@@ -7,6 +7,7 @@ Speed/quality facts baked in (see model_eval_plan.md):
 - max_tokens must be generous or the thinking trace eats the whole budget.
 """
 import json
+import uuid
 import os
 import re
 import time
@@ -48,10 +49,10 @@ def auth_headers() -> dict:
     return {"Authorization": f"Bearer {key}"} if key else {}
 
 
-def _post(path: str, payload: dict, timeout: float = 3600) -> dict:
+def _post(path: str, payload: dict, timeout: float = 3600, headers: dict | None = None) -> dict:
     req = urllib.request.Request(
         BASE + path, data=json.dumps(payload).encode(),
-        headers={"Content-Type": "application/json", **auth_headers()}, method="POST")
+        headers={"Content-Type": "application/json", **auth_headers(), **(headers or {})}, method="POST")
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return json.loads(r.read().decode())
 
@@ -106,8 +107,13 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
     body = {"model": model, "messages": messages, "stream": False, **params}
     if tools:
         body["tools"] = tools
+    # P426 K5: under MLX_BENCH_SESSION_PREFIX each request carries a unique x-session-id (the server's conversation key,
+    # logged as session=), returned and persisted on the row so the leg wrapper reconciles rows with log records exactly.
+    prefix = os.environ.get("MLX_BENCH_SESSION_PREFIX")
+    session_id = f"{prefix}-{uuid.uuid4().hex[:16]}" if prefix else None
     t0 = time.perf_counter()
-    r = _post("/v1/chat/completions", body, timeout=timeout)
+    r = _post("/v1/chat/completions", body, timeout=timeout,
+              headers={"x-session-id": session_id} if session_id else None)
     wall = time.perf_counter() - t0
     if not isinstance(r, dict):
         raise MalformedResponseError(f"{model}: HTTP 200 body is not a JSON object "
@@ -158,4 +164,5 @@ def probe(model: str, messages: list, params: dict, timeout: float = 3600, tools
         "finish_reason": choices[0].get("finish_reason"),
         "wall_s": round(wall, 1),
         "raw_timings": tm,
+        "session_id": session_id,
     }

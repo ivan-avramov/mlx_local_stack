@@ -227,6 +227,7 @@ def run_reasoning_ladder(
                 "trial": trial,
                 "seed": seed,
                 "sampler_seed": sampler_seed,
+                "session_id": result.get("session_id"),  # P426 K5
                 "content": content,  # P426 B12: the draw itself, for the blind panel
                 "score": sc,
                 "completion_tokens": ct,
