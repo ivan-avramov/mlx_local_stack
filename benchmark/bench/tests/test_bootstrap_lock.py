@@ -104,18 +104,18 @@ def test_bench_interpreter_is_not_a_macos_framework_build():
         "rebuild it with scripts/bootstrap_machine.sh")
 
 
-# P269 (C150): `env -u STACK_WORKDIR` drops the workdir, and the IFEval nltk test refuses to look outside
-# $NLTK_DATA, so the advertised full-suite command must carry NLTK_DATA or one test silently skips.
+# P269 (C150): the IFEval nltk test refuses to look outside $NLTK_DATA, so the advertised full-suite command must carry
+# NLTK_DATA or one test silently skips. (P445: the command keeps STACK_WORKDIR set.)
 @pytest.mark.parametrize("doc", ["scripts/bootstrap_machine.sh", "benchmark/README.md"])
 def test_advertised_full_suite_command_carries_nltk_data(doc):
     text = (REPO / doc).read_text().replace("\\\n", " ")      # join shell line continuations
     cmds = [l for l in text.splitlines()
-            if "env -u STACK_WORKDIR" in l and "bench/tests/" in l]
+            if "pytest" in l and "bench/tests/" in l]
     assert cmds, f"no full-suite command in {doc}"
     assert all("NLTK_DATA=" in l for l in cmds), cmds
 
 
 def test_bootstrap_enables_the_repo_hooks():
-    """P435: AGENTS.md keeps the naming / PII hooks enabled; a fresh clone has `core.hooksPath` unset, so the bootstrap sets it."""
-    lines = [l.strip() for l in BOOTSTRAP.read_text().splitlines()]
-    assert 'git -C "$REPO" config core.hooksPath githooks' in lines
+    """P435 / P434: AGENTS.md keeps the naming / PII hooks enabled; a fresh clone has `core.hooksPath` unset, so the bootstrap
+    installs the machine-local shims (which delegate commits to `githooks/` and gate pushes)."""
+    assert "bench.local_gate install-hooks" in BOOTSTRAP.read_text()

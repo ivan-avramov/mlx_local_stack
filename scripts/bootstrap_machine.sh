@@ -76,9 +76,17 @@ case "$STACK_WORKDIR" in "$REPO"|"$REPO"/*) die "STACK_WORKDIR must be outside t
 # --- 2. submodules (forks pinned by the stack) ----------------------------------------------------
 git -C "$REPO" submodule update --init --force
 say "submodules: $(git -C "$REPO" submodule status | awk '{print $2"@"substr($1,1,8)}' | tr '\n' ' ')"
-# AGENTS.md: the naming / PII hooks stay enabled (P435)
-git -C "$REPO" config core.hooksPath githooks
-say "hooks: core.hooksPath=githooks"
+# sibling forks (AGENTS.md: edit ../mlx-vlm and ../mlx-serve, never src/*): clone when absent, verify the origin otherwise
+for fork in mlx-vlm mlx-serve; do
+  dir="$(dirname "$REPO")/$fork"
+  if [ ! -d "$dir/.git" ]; then
+    git clone -q "git@github.com:ivan-avramov/$fork" "$dir" || die "cannot clone $fork into $dir"
+  fi
+  case "$(git -C "$dir" remote get-url origin)" in
+    *ivan-avramov/"$fork"|*ivan-avramov/"$fork".git) ;;
+    *) die "$dir: origin is not ivan-avramov/$fork" ;;
+  esac
+done
 
 # --- 3. polyglot corpus at the recorded sha ------------------------------------------------------
 PG="$STACK_WORKDIR/polyglot-benchmark"
@@ -132,6 +140,9 @@ if [ "$SKIP_VENV" = 0 ]; then
   done
   (cd "$REPO" && uv pip sync --python "$VENV/bin/python" benchmark/requirements-bench.lock >/dev/null)
   "$VENV/bin/python" -c "import mlx.core, mlx_vlm, mlx_serve, pytest" || die ".venv-bench does not import mlx/mlx_vlm/mlx_serve/pytest"
+  # P434 / P435: machine-local hook shims for all three repos (naming / PII on commit, the local gate on push)
+  PYTHONPATH="$REPO/benchmark" "$VENV/bin/python" -m bench.local_gate install-hooks || die "hook install failed"
+  say "hooks: core.hooksPath = the P434 shims (stack + both forks)"
   say ".venv-bench synced from benchmark/requirements-bench.lock (mlx $("$VENV/bin/python" -c 'import mlx.core as m; print(m.__version__)'))"
   if [ "${NLTK_DEFERRED:-0}" = 1 ]; then
     # shellcheck disable=SC2086
@@ -153,7 +164,7 @@ fi
 # --- 8. summary -----------------------------------------------------------------------------------
 say "done. config=$CONFIG"
 say "  STACK_WORKDIR=$STACK_WORKDIR  MLX_BOX=$(sed -n 's/^export MLX_BOX="\{0,1\}\([^"]*\)"\{0,1\}.*/\1/p' "$CONFIG" | head -1)"
-say "  tests: cd benchmark && env -u STACK_WORKDIR NLTK_DATA=$NLTK_DATA ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
+say "  tests: cd benchmark && NLTK_DATA=$NLTK_DATA ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/"
 say "  serving venv is separate: uv sync (uv.lock; pyproject pins uv-managed Python); model weights download from the hub on first load"
 # P201 web auditor is per box and never installed here (C158): codex gpt-6-astra where codex exists, else Cursor
 # gpt-5.6-sol-high. Scoring accepts either by its RECORDED version (P299); this only reports what the box can run.

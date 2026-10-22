@@ -22,14 +22,9 @@ IMG = "sha256:" + "ab" * 32
 
 # P361: OrbStack bind mounts under $TMPDIR serve stale file sizes, and the grader refuses such sources, so every test
 # tree lives under a non-TMPDIR root.
-def _test_root():
-    base = os.environ.get("STACK_WORKDIR")
-    root = Path(base) / "m65/test-tmp" if base else Path(__file__).resolve().parents[3] / ".tg2-test-tmp"
-    root.mkdir(parents=True, exist_ok=True)
-    return root
+from bench.tests.tg2_test_root import tg2_root  # noqa: E402  P445: never inside the repo's git tree
 
-
-TEST_ROOT = _test_root()
+TEST_ROOT = tg2_root()
 
 
 @pytest.fixture

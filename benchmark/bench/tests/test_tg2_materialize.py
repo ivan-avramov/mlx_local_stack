@@ -13,8 +13,9 @@ from bench import tg2_materialize as mat
 
 POLYGLOT = Path(os.environ.get("POLYGLOT_DIR") or Path(os.environ.get("STACK_WORKDIR", "")) / "polyglot-benchmark")
 HAVE_CORPUS = (POLYGLOT / "rust/exercises/practice").is_dir()
-TEST_ROOT = (Path(os.environ["STACK_WORKDIR"]) / "m65/test-tmp") if os.environ.get("STACK_WORKDIR") else (
-    Path(__file__).resolve().parents[3] / ".tg2-test-tmp")
+from bench.tests.tg2_test_root import tg2_root  # noqa: E402  P445: never inside the repo's git tree
+
+TEST_ROOT = tg2_root()
 
 
 @pytest.fixture

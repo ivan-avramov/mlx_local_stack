@@ -13,8 +13,9 @@ from bench import tg2_materialize as mat
 from bench.token_turn_gate import TransportAbort
 
 M65 = Path(__file__).resolve().parents[2] / "m65"
-TEST_ROOT = (Path(os.environ["STACK_WORKDIR"]) / "m65/test-tmp") if os.environ.get("STACK_WORKDIR") else (
-    Path(__file__).resolve().parents[3] / ".tg2-test-tmp")
+from bench.tests.tg2_test_root import tg2_root  # noqa: E402  P445: never inside the repo's git tree
+
+TEST_ROOT = tg2_root()
 
 
 def load(name):

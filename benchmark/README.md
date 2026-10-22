@@ -813,7 +813,7 @@ suite; `mlx`/`mlx-metal` equal `uv.lock`). Idempotent; each step verifies its pi
 
 ```sh
 uv sync                                            # serving venv (.venv) from uv.lock
-cd benchmark && env -u STACK_WORKDIR NLTK_DATA="$(. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh" && echo "$NLTK_DATA")" \
+cd benchmark && NLTK_DATA="$(. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh" && echo "$NLTK_DATA")" \
   ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/   # NLTK_DATA: else the IFEval nltk test skips
 ```
 
