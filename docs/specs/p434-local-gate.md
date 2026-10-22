@@ -1,4 +1,4 @@
-# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3, 2026-10-22
+# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3.1, 2026-10-22 (C214)
 
 Authority: C210 (operator: "proceed across the board"). GitHub Actions minutes are exhausted: the stack has no workflows; the
 fork's `tests.yml` / `upstream-parity.yml` and mlx-serve's `ci.yml` cannot run. Nothing remote checks a push.
@@ -28,13 +28,15 @@ the shim, `--no-verify`) is out of scope and equivalent to `--no-verify`; the ag
   `chain_ops.BUSY` process exists, or :8000 has a listener — re-checked before every step (a change → FAIL receipt).
   During a campaign the gate runs only after the sequencer is STOPPED at a `PAUSE: holding` boundary (no leg running;
   its resume skips VALID + harvested legs) and the sequencer is relaunched after the gate. No lock, no sequencer change.
+  Residual (C214): a benchmark started by hand during a gate step is caught only at the next step; the Wave-2 re-freeze
+  adds `$STACK_WORKDIR/gate/RUNNING` (written by `run`, removed on exit) and the leg wrapper's pre-check refuses on it.
 - **Receipt (G2):** `$STACK_WORKDIR/gate/<repo>-<sha40>-<policy12>.json`, exclusive create, a FAIL kept (a rerun adds
   `-<n>`): `{repo, sha, verdict, steps: [{name, argv, rc, seconds, summary}], python, lock_sha256, skipped_tests,
   policy_digest, started, ended}`. `policy_digest` = sha256 over: `local_gate.py`, the per-repo skip baseline
   (`benchmark/gate/<repo>.skips.txt`, committed), the parsed parity ref + the eight audit argvs, the step argv list, and the
   repo identity (canonical origin URL). PASS = every step rc 0, every cleanliness check empty, skip list == baseline.
 - **check (G5 v3, G7):** git invokes the hook as `pre-push <remote> <url>` with lines `<local ref> <local sha> <remote
-  ref> <remote sha>` on stdin. First `git fetch --quiet <remote>` (failure → refuse), so remote-tracking refs are fresh;
+  ref> <remote sha>` on stdin. First `git fetch --quiet --prune <remote>` (failure → refuse; G5 / C214), so remote-tracking refs are fresh;
   then for each non-delete line the introduced commits = `git rev-list <local sha> --not --remotes=<remote>` (new
   branch, force push and tags included; a missing object → refuse). Require a PASS receipt for `<local sha>` under the
   CURRENT `policy_digest`. Scan every introduced commit's added lines (`git show --format= --unified=0 <c>`) with
