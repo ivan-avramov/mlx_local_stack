@@ -1,9 +1,9 @@
-# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v2, 2026-10-22
+# P434 — local pre-push gate (replaces GitHub Actions) — PLAN v3, 2026-10-22
 
 Authority: C210 (operator: "proceed across the board"). GitHub Actions minutes are exhausted: the stack has no workflows; the
 fork's `tests.yml` / `upstream-parity.yml` and mlx-serve's `ci.yml` cannot run. Nothing remote checks a push.
 
-Reviews: `docs/reviews/p434/plan-round1.*` (G1–G11, all accepted in v2).
+Reviews: `docs/reviews/p434/plan-round{1,2}.*` (round 1 G1–G11 accepted in v2; round 2 left G4 G5 G6 + H1, fixed in v3).
 
 ## 1. Threat model (G1)
 
@@ -24,31 +24,34 @@ the shim, `--no-verify`) is out of scope and equivalent to `--no-verify`; the ag
 - **Environments (G10):** explicit managed Python 3.12 everywhere; locked syncs where a lock is authoritative (mlx-serve `uv
   sync --locked`; the fork `uv sync --locked` if its `uv.lock` is tracked, else recorded as unlocked); after every setup and
   test step, `git status --porcelain --untracked-files=no` in the scratch must be empty (else FAIL naming the step).
-- **Busy box (G4):** `run` refuses unless (a) no `chain_ops.BUSY` process and no listener on :8000, and (b) no
-  `bench.p426_wave1` sequencer is alive, OR one is alive and its `sequence.log` shows `PAUSE: holding` as its last line with
-  the `PAUSE` file present. The hold is re-verified before every step; a lost hold → FAIL receipt. Interim procedure (until
-  the reservation below ships): the agent never removes `PAUSE` while a gate runs. Durable fix, in the NEXT sequencer build
-  (picked up at the next sequencer launch, never mid-run): the sequencer treats any `PAUSE*` file as a hold, and the gate
-  creates and removes its own `PAUSE.gate-<pid>`; both take an `flock` on `$STACK_WORKDIR/gate/box.lock` around the check.
+- **Busy box (G4, v3):** `run` refuses while ANY `bench.p426_wave1` sequencer process is alive (paused or not), any
+  `chain_ops.BUSY` process exists, or :8000 has a listener — re-checked before every step (a change → FAIL receipt).
+  During a campaign the gate runs only after the sequencer is STOPPED at a `PAUSE: holding` boundary (no leg running;
+  its resume skips VALID + harvested legs) and the sequencer is relaunched after the gate. No lock, no sequencer change.
 - **Receipt (G2):** `$STACK_WORKDIR/gate/<repo>-<sha40>-<policy12>.json`, exclusive create, a FAIL kept (a rerun adds
   `-<n>`): `{repo, sha, verdict, steps: [{name, argv, rc, seconds, summary}], python, lock_sha256, skipped_tests,
   policy_digest, started, ended}`. `policy_digest` = sha256 over: `local_gate.py`, the per-repo skip baseline
   (`benchmark/gate/<repo>.skips.txt`, committed), the parsed parity ref + the eight audit argvs, the step argv list, and the
   repo identity (canonical origin URL). PASS = every step rc 0, every cleanliness check empty, skip list == baseline.
-- **check (G5, G7):** stdin = git's pre-push lines. For each non-delete line: the introduced commits = `git rev-list <local>
-  --not --remotes=origin` (covers new branch, force push, tags; a missing object → refuse). Require a PASS receipt for
-  `<local sha>` under the CURRENT `policy_digest`. Scan every introduced commit's added lines (`git show --format=
-  --unified=0 <c>`) with `piicheck.diff_violations` and `modelnames.diff_violations`, and its message with
-  `modelnames.message_violations`. Stack only: for each gitlink at `<local sha>`, a PASS receipt for that fork sha, AND the
-  gitlink reachable from the fork's `origin/main` after `git fetch origin` in that fork (network failure / not reachable →
-  refuse). Any failure → exit 1 naming the `run` command.
-- **Hooks (G6):** a machine-local shim directory `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/hooks/` (installed by
-  `bootstrap_machine.sh`, never branch-controlled) holds `pre-push`, `pre-commit`, `commit-msg`. `pre-push` runs
-  `$STACK_REPO/.venv-bench/bin/python -m bench.local_gate check --repo <identity>` with the repo identity derived from the
-  pushing repo's origin URL (unknown origin → refuse); if `bench.local_gate` is not importable (an old stack branch) →
-  refuse. `pre-commit` / `commit-msg` delegate to the repo's own `githooks/` when present (stack), else exit 0 (forks).
-  `core.hooksPath` = the shim for the stack and both sibling fork clones (`$STACK_REPO/../mlx-vlm`, `../mlx-serve`; bootstrap
-  verifies their origin URLs, warns when a sibling is absent). The agent never uses `--no-verify`.
+- **check (G5 v3, G7):** git invokes the hook as `pre-push <remote> <url>` with lines `<local ref> <local sha> <remote
+  ref> <remote sha>` on stdin. First `git fetch --quiet <remote>` (failure → refuse), so remote-tracking refs are fresh;
+  then for each non-delete line the introduced commits = `git rev-list <local sha> --not --remotes=<remote>` (new
+  branch, force push and tags included; a missing object → refuse). Require a PASS receipt for `<local sha>` under the
+  CURRENT `policy_digest`. Scan every introduced commit's added lines (`git show --format= --unified=0 <c>`) with
+  `piicheck.diff_violations` and `modelnames.diff_violations`, and its message with `modelnames.message_violations`.
+  Stack only: for each gitlink at `<local sha>`, a PASS receipt for that fork sha, AND the gitlink reachable from the
+  fork's `origin/main` after `git fetch origin` in that fork (network failure / not reachable → refuse). Any failure →
+  exit 1 naming the `run` command.
+- **Hooks (G6 v3, H1):** a machine-local shim directory `${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/hooks/`
+  (installed by `bootstrap_machine.sh`, never branch-controlled) holds `pre-push`, `pre-commit`, `commit-msg`.
+  `pre-push` runs `PYTHONPATH="$STACK_REPO/benchmark" "$STACK_REPO/.venv-bench/bin/python" -m bench.local_gate check
+  --repo <identity> "$@"`, the identity derived from the pushing repo's origin URL (unknown → refuse). The shim pins
+  `GATE_MIN_COMMIT` (written by bootstrap = the commit that introduced `local_gate.py`); it refuses unless
+  `git -C $STACK_REPO merge-base --is-ancestor $GATE_MIN_COMMIT HEAD` (an older stack branch → refuse) and
+  `bench.local_gate` imports. `pre-commit` / `commit-msg` delegate to the repo's own `githooks/` when present (stack), else
+  exit 0 (forks). Bootstrap CLONES an absent sibling fork (`$STACK_REPO/../mlx-vlm`, `../mlx-serve`) from its canonical
+  origin, verifies the origin URL of an existing one (mismatch → refuse), and sets `core.hooksPath` = the shim in all
+  three. The agent never uses `--no-verify`.
 - Pushes still need in-turn operator approval; the gate is a precondition, not an authorization.
 
 ## 3. Steps per repo (mirroring the dead CI)
@@ -66,13 +69,15 @@ the shim, `--no-verify`) is out of scope and equivalent to `--no-verify`; the ag
 
 ## 4. Tests (test-first, mocked runner; no real suite in the unit tests)
 
-Receipt exclusive create / FAIL kept / policy digest changes with each input; skip mismatch → FAIL; busy box, live
-sequencer without hold, hold lost mid-run → refuse / FAIL; scratch is a clone (no shared config / refs; a fetch leaves the
+Receipt exclusive create / FAIL kept / policy digest changes with each input; skip mismatch → FAIL; busy box, any live
+sequencer (paused or not), a process appearing mid-run → refuse / FAIL; scratch is a clone (no shared config / refs; a fetch leaves the
 live repo's refs and config untouched), removed on success and failure; stack scratch imports resolve inside it; the parity
 ref parsed from a workflow fixture, missing → refuse; the eight exact argvs incl. `--strict`; cleanliness after a step that
 dirties → FAIL; `check`: PASS / missing / FAIL / stale policy / unreadable / delete line / new branch (zero remote sha) / tag
 / force push / add-then-remove leak across two commits / message violation / gitlink without receipt / gitlink unreachable /
-fetch failure; shim: unknown origin and missing gate module refuse, delegation to repo hooks; bootstrap installs the shim and
+fetch failure; shim (UNMOCKED, executed from the stack root and both sibling roots): unknown origin, a stack HEAD without
+`GATE_MIN_COMMIT`, a missing gate module refuse, `PYTHONPATH` set, delegation to repo hooks; `check` fetch failure and
+stale-tracking-ref cases; bootstrap installs the shim and
 the three `core.hooksPath`.
 
 ## 5. Out of scope
