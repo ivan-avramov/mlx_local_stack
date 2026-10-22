@@ -179,6 +179,6 @@ def test_a_leg_that_overruns_is_not_killed(tmp_path):
 
 def test_main_refuses_a_workdir_that_is_not_stack_workdir(tmp_path, monkeypatch):
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "elsewhere"))
-    rc = W.main(["--stack-root", str(tmp_path), "--workdir", str(tmp_path), "--registry-on", str(tmp_path / "on.yaml"),
+    rc = W.main(["--stack-root", str(tmp_path), "--main-root", str(tmp_path / "main"), "--workdir", str(tmp_path), "--registry-on", str(tmp_path / "on.yaml"),
                  "--out", str(tmp_path / "out")])
     assert rc == 2
