@@ -162,3 +162,81 @@ def test_the_bootstrap_is_seeded_and_clusters_by_item():
     a = P.length_adjusted(data, n_boot=200, seed=426)
     b = P.length_adjusted(data, n_boot=200, seed=426)
     assert a == b and a["n_items"] == 10
+
+
+# ------------------------------------------------------------------ stack code round 1 K7–K11
+def _items(n=3, off="off text", on="on text longer"):
+    return [(f"q{i}", f"{off} {i}", f"{on} {i}") for i in range(n)]
+
+
+def test_k7_export_needs_a_fresh_directory(tmp_path):
+    pairs = P.make_pairs(MODEL, _items())
+    P.export("cjudge", pairs, ["claude-opus-5-5"], {}, tmp_path / "pk")
+    with pytest.raises(FileExistsError):
+        P.export("cjudge", pairs, ["claude-opus-5-5"], {}, tmp_path / "pk")
+
+
+def test_k7_k8_only_sealed_verdicts_bound_to_their_packet_are_admitted(tmp_path):
+    pairs = P.make_pairs(MODEL, _items(1))
+    rows = P.export("cjudge", pairs, ["claude-opus-5-5"], {}, tmp_path / "pk")
+    for r in rows:  # the blind-judge agent writes bare verdicts
+        Path_(r["path"]).with_name(f"{r['pkt']}.verdict.json").write_text('{"choice": "A", "rationale": "x"}')
+    P.seal_verdicts(tmp_path / "pk", JUDGES["text"][0], client_version="claude-code 9.9")
+    got, report = P.ingest(tmp_path / "pk")
+    assert len(got) == 2 and all(v["client_version"] == "claude-code 9.9" and v["packet_sha"] for v in got)
+    first = Path_(rows[0]["path"])
+    first.write_text(first.read_text() + "tampered")  # a packet changed after its verdict
+    got, report = P.ingest(tmp_path / "pk")
+    assert len(got) == 1 and report["unbound"] == 1
+
+
+def test_k8_a_failed_client_version_check_refuses_before_any_judging(tmp_path):
+    P.export("cjudge", P.make_pairs(MODEL, _items(1)), ["cursor:gpt-5.6-sol-high"], {}, tmp_path / "pk")
+    calls = []
+
+    def runner(cmd, **kw):
+        calls.append(cmd)
+        return types.SimpleNamespace(returncode=1, stdout="", stderr="not logged in")
+
+    with pytest.raises(RuntimeError, match="version"):
+        P.run_cursor_judge(tmp_path / "pk", JUDGES["text"][1], runner=runner)
+    assert len(calls) == 1
+
+
+@pytest.mark.parametrize("leak", [MODEL, "p426-on", "the MTP drafter", "/Users/someone/x.py", "caslca/x"])
+def test_k9_a_leaking_packet_refuses(tmp_path, leak):
+    pairs = P.make_pairs(MODEL, [("q0", "off text", f"on text {leak}")])
+    with pytest.raises(ValueError, match="leak"):
+        P.export("cjudge", pairs, ["claude-opus-5-5"], {}, tmp_path / "pk")
+
+
+def test_k10_selectors_apply_each_axis_rule():
+    off = {"a": {"id": "a", "content": "x"}, "b": {"id": "b", "content": "y"}, "c": {"id": "c", "content": "z"}}
+    on = {"a": {"id": "a", "content": "x2"}, "b": {"id": "b", "content": "y2"}}
+    items, excluded = P.select("math500", off, on, correct_off={"a", "b"}, correct_on={"a"})
+    assert [i[0] for i in items] == ["a"] and excluded == {"not both correct": ["b"], "missing in an arm": ["c"]}
+    items, excluded = P.select("cjudge", off, on)
+    assert [i[0] for i in items] == ["a", "b"] and excluded == {"missing in an arm": ["c"]}
+    r_off = {1: {"seed": 1, "content": "p", "score": 1.0}, 2: {"seed": 2, "content": "q", "score": 0.0}}
+    r_on = {1: {"seed": 1, "content": "p2", "score": 1.0}, 2: {"seed": 2, "content": "q2", "score": 1.0}}
+    items, excluded = P.select("reasoning", r_off, r_on)
+    assert [i[0] for i in items] == ["1"] and excluded == {"not both correct": ["2"]}
+    v_off = {"v": {"id": "v", "description": "a dog"}}
+    v_on = {"v": {"id": "v", "description": "a cat"}}
+    assert P.select("vision", v_off, v_on)[0] == [("v", "a dog", "a cat")]
+
+
+def test_k10_make_pairs_balances_slots_and_keeps_every_item():
+    pairs = P.make_pairs(MODEL, _items(10))
+    assert len(pairs) == 10
+    on_first = sum(1 for p in pairs if "@p426-on::" in p["a_key"])
+    assert on_first == 5
+
+
+def test_k11_only_complete_judge_order_lattices_are_admitted():
+    judges = ["j1", "j2"]
+    full = [_verdict("q1", o, j, "A") for o in ("AB", "BA") for j in judges]
+    partial = [_verdict("q2", o, j, "A") for o, j in (("AB", "j1"), ("BA", "j1"), ("AB", "j2"))]
+    duped = [_verdict("q3", o, j, "A") for o in ("AB", "BA") for j in judges] + [_verdict("q3", "AB", "j1", "B")]
+    admitted, excluded = P.admit(full + partial + duped, judges)
+    assert set(admitted) == {"q1"} and excluded == {"incomplete": ["q2"], "duplicate": ["q3"]}
