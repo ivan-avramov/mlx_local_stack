@@ -265,7 +265,8 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # as result/**/*_result.json rather than .jsonl — same rule; so does the
             # EvalPlus grader output *_samples_eval_results.json, which embeds the
             # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
-            is_result_rows = path.startswith("benchmark/results/") and (
+            # P437: harvested Wave-1 evidence is a verbatim, sha-manifested copy (registry, receipts, logs) — data too.
+            is_result_rows = path.startswith("benchmark/results/p426/wave1/") or path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))
