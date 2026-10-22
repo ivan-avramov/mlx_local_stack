@@ -383,11 +383,13 @@ PRE_PUSH = """#!/usr/bin/env bash
 set -uo pipefail
 STACK_REPO="${{STACK_REPO:-{stack}}}"
 GATE_MIN_COMMIT={min_commit}
+TOP="$(git rev-parse --show-toplevel)" || exit 1
+# git exports GIT_DIR & co. to hooks (the PUSHING repo); every later git call names its repo explicitly
+unset $(git rev-parse --local-env-vars)
 if ! git -C "$STACK_REPO" merge-base --is-ancestor "$GATE_MIN_COMMIT" HEAD 2>/dev/null; then
   echo "[pre-push] REFUSED: the stack checkout does not contain GATE_MIN_COMMIT $GATE_MIN_COMMIT (an older gate)" >&2
   exit 1
 fi
-TOP="$(git rev-parse --show-toplevel)" || exit 1
 PYTHONPATH="$STACK_REPO/benchmark" "$STACK_REPO/.venv-bench/bin/python" -m bench.local_gate check --repo-dir "$TOP" "$@"
 """
 DELEGATE = """#!/usr/bin/env bash
