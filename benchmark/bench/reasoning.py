@@ -8,6 +8,7 @@ import random
 import re
 
 from .instrument import MemorySampler
+from .rowschema import sample_seed
 
 FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
 
@@ -157,11 +158,15 @@ def run_reasoning_ladder(
     deep_from: int | None = None,
     deep_samples: int | None = None,
     early_stop_budget_hits: int = 0,
+    task_seed_base: int | None = None,
+    request_seed_base: int | None = None,
 ) -> list[dict]:
     """CLIMB-TO-CLIFF: run the variable-tracking task at increasing context sizes.
 
     For each length L in grid, runs `samples` independent trials (each with a
-    distinct seed = L * 1000 + trial_index). Accuracy = mean of trial scores.
+    distinct seed = L * 1000 + trial_index, or ``task_seed_base`` + trial_index — P426 B13, single-rung grids only).
+    Accuracy = mean of trial scores. ``request_seed_base`` adds an explicit request seed per draw
+    (``rowschema.sample_seed("reasoning:<task seed>", 0, base)``), recorded as the row's ``sampler_seed``.
     Stops (breaks) after the first rung with accuracy < threshold.
 
     `params` is the production generation params dict (temperature, top_p, top_k,
@@ -193,7 +198,12 @@ def run_reasoning_ladder(
         n_samples = deep_samples if (is_deep and deep_samples) else samples
         budget = params.get("thinking_budget")
         for trial in range(n_samples):
-            seed = ctx_len * 1000 + trial
+            seed = (ctx_len * 1000 if task_seed_base is None else task_seed_base) + trial
+            request = dict(params)
+            sampler_seed = None
+            if request_seed_base is not None:  # P426 B13: the draw's sampler is seeded explicitly
+                sampler_seed = sample_seed(f"reasoning:{seed}", 0, request_seed_base)
+                request["seed"] = sampler_seed
             context, answer, question = build_vartrack(
                 ctx_len, chars_per_token, chain_len=chain_len, seed=seed
             )
@@ -203,7 +213,7 @@ def run_reasoning_ladder(
             with sampler_factory(pid=model_pid):
                 # Transport/HTTP failures ESCALATE (O41): a timed-out or refused request is never
                 # graded as a wrong answer -- it aborts the ladder so the operator investigates.
-                result = driver.complete(model, messages, params, timeout=request_timeout)
+                result = driver.complete(model, messages, request, timeout=request_timeout)
                 content = result.get("content", "")
                 sc = score_vartrack(content, answer)
             scores.append(sc)
@@ -216,6 +226,8 @@ def run_reasoning_ladder(
             rows.append({
                 "trial": trial,
                 "seed": seed,
+                "sampler_seed": sampler_seed,
+                "content": content,  # P426 B12: the draw itself, for the blind panel
                 "score": sc,
                 "completion_tokens": ct,
                 "finish_reason": result.get("finish_reason"),

@@ -18,7 +18,7 @@ written for the in-flight item -- a rerun with --resume picks up exactly where i
 
 Usage:
   benchmark/vision_gate.py --model <full-registry-name> [--url http://localhost:8000]
-      [--corpus benchmark/corpora/vision_gate_v1.jsonl] [--out <path>] [--limit N]
+      [--corpus benchmark/corpora/vision_gate_v1.jsonl] [--out <path>] [--limit N | --ids ID:ID:...]
       [--timeout SECONDS] [--resume]
 """
 from __future__ import annotations
@@ -181,6 +181,22 @@ def load_corpus(path: Path, limit=None) -> list:
     return rows[:limit] if limit else rows
 
 
+def select_ids(rows: list, spec: str) -> list:
+    """P426 B11: exactly the corpus rows named by ``spec`` (colon-separated), in corpus order; ValueError on an empty,
+    duplicate or unknown id — before anything is requested."""
+    wanted = [i for i in spec.split(":") if i]
+    if not wanted:
+        raise ValueError("--ids: empty id list")
+    dupes = sorted({i for i in wanted if wanted.count(i) > 1})
+    if dupes:
+        raise ValueError(f"--ids: duplicate ids {dupes}")
+    known = {r["id"] for r in rows}
+    unknown = sorted(set(wanted) - known)
+    if unknown:
+        raise ValueError(f"--ids: unknown ids {unknown}")
+    return [r for r in rows if r["id"] in set(wanted)]
+
+
 def read_rows(out_path: Path) -> list:
     if not out_path.exists():
         return []
@@ -270,6 +286,11 @@ def summarize(rows: list) -> dict:
 
 
 # --------------------------------------------------------------------------- per-item run
+def _draft(probe: dict) -> dict:
+    timings = probe.get("raw_timings") or {}
+    return {k: timings.get(k) for k in ("draft_kind", "draft_rounds", "draft_n", "draft_n_accepted")}
+
+
 def run_one(model: str, params: dict, context_limit, timeout: float, row: dict, ds_cache: dict) -> dict:
     image_path = resolve_image(row, ds_cache)
     msgs1 = turn1_messages(row, image_path)
@@ -289,14 +310,18 @@ def run_one(model: str, params: dict, context_limit, timeout: float, row: dict, 
 
     return {
         "id": row["id"],
+        # P426 B12: what the blind panel needs to re-resolve the image — never the local cache path
+        "image_ref": row.get("image_ref"),
+        "image_sha256": _sha256_file(image_path),
         "description": description,
         "prompt_tokens": p1["prompt_tokens"], "completion_tokens": p1["completion_tokens"],
         "wall_s": p1["wall_s"], "decode_tps": p1["decode_tps"],
         "finish_reason": p1["finish_reason"], "converged": converged1,
+        "draft": _draft(p1),  # P426 B12: per-turn speculative counters (None values under plain decode)
         "verdict": verdict, "verdict_raw": verdict_raw,
         "turn2": {"prompt_tokens": p2["prompt_tokens"], "completion_tokens": p2["completion_tokens"],
                   "wall_s": p2["wall_s"], "finish_reason": p2["finish_reason"],
-                  "converged": converged2},
+                  "converged": converged2, "draft": _draft(p2)},
     }
 
 
@@ -309,7 +334,10 @@ def build_argparser() -> argparse.ArgumentParser:
     ap.add_argument("--corpus", default=str(DEFAULT_CORPUS))
     ap.add_argument("--out", default=None,
                     help="default: <results_root>/<model>/vision_gate.v1.jsonl")
-    ap.add_argument("--limit", type=int, default=None, help="cap on corpus rows (smoke runs)")
+    sel = ap.add_mutually_exclusive_group()
+    sel.add_argument("--limit", type=int, default=None, help="cap on corpus rows (smoke runs)")
+    sel.add_argument("--ids", default=None,
+                     help="P426 B11: exactly these corpus ids (colon-separated); unknown / duplicate ids refuse")
     ap.add_argument("--timeout", type=float, default=None,
                     help="per-turn HTTP timeout, seconds. Default: DERIVED (C28) from the "
                          "model's measured decode rate + its thinking budget, never an SDK "
@@ -350,6 +378,12 @@ def main(argv=None) -> int:
         return 2
 
     corpus_rows = load_corpus(Path(args.corpus), args.limit)
+    if args.ids is not None:
+        try:
+            corpus_rows = select_ids(corpus_rows, args.ids)
+        except ValueError as e:
+            print(f"[vision_gate] REFUSED: {e}", file=sys.stderr, flush=True)
+            return 2
     todo = [r for r in corpus_rows if r["id"] not in done_ids] if args.resume else corpus_rows
 
     params = model_params.params_for(args.model, profile="deployed")
@@ -377,6 +411,7 @@ def main(argv=None) -> int:
                         runtime={"client": "vision_gate", "bench": BENCH_NAME, "tune": TUNE,
                                  "corpus": str(args.corpus), "corpus_sha256": _sha256_file(args.corpus),
                                  "limit": args.limit, "timeout_s": round(timeout, 1),
+                                 "ids": [r["id"] for r in corpus_rows] if args.ids is not None else None,
                                  "n_todo": len(todo), "n_done_before": len(done_ids)},
                         router=router, history=history)
 

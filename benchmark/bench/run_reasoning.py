@@ -28,7 +28,7 @@ def calibrate_cpt(driver, model: str) -> float:
     return chars / pt
 
 
-def main(argv=None) -> int:
+def build_parser():
     ap = argparse.ArgumentParser(
         description="Reasoning ladder (variable-tracking multi-hop probe)."
     )
@@ -64,9 +64,34 @@ def main(argv=None) -> int:
     ap.add_argument("--resume", action="store_true",
                     help="reuse rungs persisted in reasoning.partial.jsonl by an earlier attempt of "
                          "the SAME design (grid/profile/samples/chain/threshold/params key)")
+    ap.add_argument("--task-seed-base", type=int, default=None,
+                    help="P426 B13: task seed = base + trial (single-rung grid only; default ctx * 1000 + trial)")
+    ap.add_argument("--request-seed-base", type=int, default=None,
+                    help="P426 B13: explicit per-draw request seed sample_seed('reasoning:<task seed>', 0, base)")
+    return ap
+
+
+def base_design_of(args, grid, params):
+    """The persistence key's base design; the P426 seed bases enter it only when set (old journals stay valid)."""
+    design = {
+        "grid": list(grid), "profile": args.sampling_profile, "samples": args.samples,
+        "chain_len": args.chain_len, "threshold": args.threshold,
+        "params": {k: params.get(k) for k in ("temperature", "top_p", "top_k", "min_p",
+                                              "max_tokens", "thinking_budget")},
+    }
+    for key in ("task_seed_base", "request_seed_base"):
+        if getattr(args, key, None) is not None:
+            design[key] = getattr(args, key)
+    return design
+
+
+def main(argv=None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     grid = tuple(int(x) for x in args.grid.split(","))
+    if args.task_seed_base is not None and len(grid) != 1:
+        ap.error("--task-seed-base needs a single-rung --grid (seeds would repeat across rungs)")
 
     # M50: the process owning the router port must serve THIS driver's registry; checked before
     # anything is read, written or requested (the serving-state precheck below already reads).
@@ -185,12 +210,7 @@ def _run(args, grid, router, guard) -> int:
     os.makedirs(out_dir, exist_ok=True)
     stem = "reasoning" if not args.out_tag else f"reasoning.{args.out_tag}"
     partial_path = os.path.join(out_dir, f"{stem}.partial.jsonl")
-    base_design = {
-        "grid": list(grid), "profile": args.sampling_profile, "samples": args.samples,
-        "chain_len": args.chain_len, "threshold": args.threshold,
-        "params": {k: params.get(k) for k in ("temperature", "top_p", "top_k", "min_p",
-                                              "max_tokens", "thinking_budget")},
-    }
+    base_design = base_design_of(args, grid, params)
 
     def key_for(ctx: int) -> str:
         # Rungs below --deep-from keep the base key, so shallow rungs persisted before a deep
@@ -252,6 +272,8 @@ def _run(args, grid, router, guard) -> int:
         deep_from=args.deep_from,
         deep_samples=args.deep_samples,
         early_stop_budget_hits=args.early_stop_budget_hits,
+        task_seed_base=args.task_seed_base,
+        request_seed_base=args.request_seed_base,
     )
 
     for r in records:

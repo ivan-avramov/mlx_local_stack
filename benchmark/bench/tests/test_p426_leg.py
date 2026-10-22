@@ -240,9 +240,9 @@ def test_driver_failure_is_invalid_and_power_only_invalidates_speed(tmp_path, kw
         assert any(field in p for p in receipt["speed_problems"])
 
 
-def test_a_changed_worker_or_router_is_invalid(tmp_path):
-    assert _run(tmp_path, _spec(tmp_path), FakeOps(same_worker=False))["verdict"] == "INVALID"
-    assert _run(tmp_path, _spec(tmp_path), FakeOps(router_ok=False))["verdict"] == "INVALID"
+@pytest.mark.parametrize("kw", [dict(same_worker=False), dict(router_ok=False)])
+def test_a_changed_worker_or_router_is_invalid(tmp_path, kw):
+    assert _run(tmp_path, _spec(tmp_path), FakeOps(**kw))["verdict"] == "INVALID"
 
 
 def test_an_unengaged_on_row_is_invalid(tmp_path):

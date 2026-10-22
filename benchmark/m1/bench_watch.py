@@ -46,6 +46,7 @@ import time
 from pathlib import Path
 
 from bench import paths, traces
+from bench.chain_ops import parse_power
 
 FLAT_TICKS_TO_ESCALATE = 3
 
@@ -64,17 +65,62 @@ def _row_path(model: str, bench: str, tune: str = None) -> Path:
     return _results_root() / model / fname
 
 
-def _rows(model: str, bench: str, tune: str = None) -> list:
-    p = _row_path(model, bench, tune)
+def _rows(model: str, bench: str, tune: str = None, rows_file=None) -> list:
+    p = Path(rows_file) if rows_file else _row_path(model, bench, tune)
     if not p.exists():
         return []
     out = []
     for line in p.read_text(errors="replace").splitlines():
         try:
-            out.append(json.loads(line))
+            row = json.loads(line)
         except json.JSONDecodeError:
-            pass
+            continue
+        if isinstance(row, dict) and isinstance(row.get("record"), dict):  # P426 B5: a reasoning journal rung
+            out.extend(row["record"].get("rows") or [])
+        else:
+            out.append(row)
     return out
+
+
+def power_ok(reading) -> bool:
+    """P426 B5 (plan §2 S8): exactly 140 W / 28 V and battery > 20 %; an unreadable reading is NOT ok."""
+    return bool(
+        reading
+        and reading.get("watts") == 140
+        and reading.get("volts") == 28
+        and reading.get("batt") is not None
+        and reading["batt"] > 20
+    )
+
+
+def read_power():
+    try:
+        ac = subprocess.run(["pmset", "-g", "ac"], capture_output=True, text=True, timeout=30).stdout
+        batt = subprocess.run(["pmset", "-g", "batt"], capture_output=True, text=True, timeout=30).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return parse_power(ac, batt)
+
+
+class PowerState:
+    """Sticky power verdict: the first failure is receipted once and named on every later tick."""
+
+    def __init__(self, receipt=None):
+        self.receipt = Path(receipt) if receipt else None
+        self.first_failure = None
+
+    def tick(self, reading, at) -> str:
+        shown = (f"{reading.get('watts')}W {reading.get('volts')}V batt={reading.get('batt')}%"
+                 if reading else "UNREADABLE")
+        if not power_ok(reading) and self.first_failure is None:
+            self.first_failure = at
+            if self.receipt:
+                self.receipt.write_text(json.dumps({"first_failure_at": at, "reading": reading}) + "\n")
+            return (f"  0 POWER FAIL {shown} — ACT: this leg's speed block is INVALID "
+                    "(140 W / 28 V / battery > 20 % required)")
+        if self.first_failure is not None:
+            return f"  0 POWER FAIL (sticky since {self.first_failure}) now {shown}"
+        return f"  0 POWER ok {shown}"
 
 
 def _sibling_jsonls(model: str, exclude: Path) -> list:
@@ -94,10 +140,10 @@ def _alive(pattern: str) -> bool:
 
 
 def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True, tune=None,
-          ticks=0) -> tuple[str, int, int, list]:
+          ticks=0, rows_file=None, flat_escalate=FLAT_TICKS_TO_ESCALATE) -> tuple[str, int, int, list]:
     """Return (report, n, flat_ticks, rate_hist). Pure enough to test with fake rows."""
-    rows = _rows(model, bench, tune)
-    path = _row_path(model, bench, tune)
+    rows = _rows(model, bench, tune, rows_file)
+    path = Path(rows_file) if rows_file else _row_path(model, bench, tune)
     live = [r for r in rows if not r.get("error")]
     n = len(rows)
     lines = []
@@ -171,7 +217,7 @@ def assess(model, bench, total, prev_n, flat_ticks, rate_hist, started=True, tun
     verdict = "none"
     if errs and errs / max(len(rows), 1) > 0.2:
         verdict = f"ACT: {errs}/{len(rows)} rows are harness errors (>20%) — stop and fix"
-    elif flat_ticks >= FLAT_TICKS_TO_ESCALATE:
+    elif flat_ticks >= flat_escalate:
         verdict = (f"INVESTIGATE: flat for {flat_ticks} ticks. Distinguish a long-tail item from a "
                    f"stall — check the router log for a COMPLETED request since the last tick, and "
                    f"the worker's CPU%. Do NOT read 'worker busy' as 'run progressing'.")
@@ -191,6 +237,12 @@ def _parse_args(argv=None):
     ap.add_argument("--driver-pattern", required=True, help="pgrep pattern for the driver")
     ap.add_argument("--out", required=True)
     ap.add_argument("--interval", type=float, default=300.0)
+    ap.add_argument("--rows-file", default=None,
+                    help="P426 B5: watch this exact file (vision outputs, reasoning journals) instead of the tune path")
+    ap.add_argument("--power-receipt", default=None,
+                    help="P426 B5: where the first power failure is receipted (sticky; read by the leg wrapper)")
+    ap.add_argument("--flat-escalate", type=int, default=FLAT_TICKS_TO_ESCALATE,
+                    help="flat ticks before INVESTIGATE (reasoning rungs persist only when complete)")
     return ap.parse_args(argv)
 
 
@@ -200,16 +252,19 @@ def main(argv=None) -> int:
     models = [m for m in args.models.split(",") if m]
     state = {m: {"prev": None, "flat": 0, "rates": [], "started": False, "ticks": 0} for m in models}
     out = Path(args.out)
+    power = PowerState(args.power_receipt)
 
     while True:
         alive = _alive(args.driver_pattern)
-        blocks = [f"===== {time.strftime('%H:%M:%S')}  driver={'ALIVE' if alive else 'GONE'} ====="]
+        at = time.strftime('%H:%M:%S')
+        blocks = [f"===== {at}  driver={'ALIVE' if alive else 'GONE'} =====", power.tick(read_power(), at)]
         for m in models:
             s = state[m]
             ticks = s["ticks"] + 1
             rep, n, flat, rates = assess(m, args.bench, args.total, s["prev"], s["flat"],
                                          s["rates"], started=s["started"], tune=args.tune,
-                                         ticks=ticks)
+                                         ticks=ticks, rows_file=args.rows_file,
+                                         flat_escalate=args.flat_escalate)
             state[m] = {"prev": n, "flat": flat, "rates": rates,
                         "started": s["started"] or n > 0, "ticks": ticks}
             blocks.append(f"{m}")
