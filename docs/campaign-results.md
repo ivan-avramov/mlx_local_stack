@@ -2,6 +2,33 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-21 — P405 R5: codec ABBA for `Qwen3.8-27B-mlx-uniform-4bit` — TurboQuant decodes faster and peaks lower at 256K, prefills ≈ 2× slower
+
+**What:** the codec-only performance probe (P405 plan v4 §5 R5; C197 / C200): arm A = affine 4-bit KV (`kv_quant_scheme: uniform`
+overlay), arm B = TurboQuant 4-bit KV (served since C202), deployed MTP-ON tuple, fork `494aea2c` (production `7207179b` + the P422
+data-only fixture), ABBA per schedule, 600 s idle between all 8 legs, 140 W every leg and no battery interval in `pmset -g log`
+13:59–18:44. Short: 8,192-token prompt + 256 decoded, 3 warmup + 5 measured per leg; long: 261,120-token prompt + 64 decoded, 2
+measured per leg (C200: 1,024 tokens beyond the largest deployed-settings prompt, disclosed). Run
+`$STACK_WORKDIR/p400/perf/20261021-r5-494aea2c-uniform` (`report.json`). Descriptive — an input to the codec decision (R6), not a gate.
+
+| Schedule | Arm | n | Decode tok/s median [range] | Prefill tok/s median [range] | Prefill peak GB | Decode-phase peak GB |
+|---|---|---:|---|---|---|---|
+| 8K | A affine | 10 | 43.63 [41.96, 44.82] | 845 [811, 863] | 30.02 | 30.08 |
+| 8K | B TurboQuant | 10 | 44.16 [43.43, 44.69] | 756 [745, 766] | 30.35 | 31.13 |
+| 256K | A affine | 4 | 6.67 [6.59, 6.82] | 251 [243, 276] | 1st request 31.50 · 2nd 38.77 | 27.62 · 32.61 |
+| 256K | B TurboQuant | 4 | **9.98** [9.52, 10.30] | **129** [127, 132] | 1st request **25.34** · 2nd 32.94 | 29.02 · 34.34 |
+
+**Mechanisms:** at 256K TurboQuant decodes +50 % (attention over a compressed cache reads fewer bytes) and its first-request
+prefill peak is 6.2 GB lower, but its prefill is ≈ 1.9× slower (the quantize-on-write path; the R7 note: ≈ 130 vs native16 Fable's
+370). At 8K the codecs are within ≈ 1 % on decode and TurboQuant prefills 11 % slower. **The second long request in every leg peaks
+≈ 7.3–7.6 GB above the first in BOTH arms** (identical per position across legs): the first request's session cache is still
+resident when the second prefills — so the first-request number is the single-session capacity (TurboQuant 25.34 GB, matching R7's
+25.33 for this entry) and the second shows what one retained 256K session adds (relevant to the daily driver's
+`MLX_VLM_CACHE_SESSION_MAX=2`, C108).
+
+**Implication:** for long-context agentic use (decode-heavy turns) TurboQuant is the faster and smaller codec on this pick; the
+price is time-to-first-token on a cold 256K prompt (≈ 34 min vs ≈ 17 min affine). Quality is R6's question; no registry change.
+
 ## 2026-10-21 — P405 R7 (P415): 256K operational qualification of seven entries — all qualify
 
 **What:** each entry as it ships (C199: the MTP-certified picks MTP-ON via their exact C177 / P406 blocks; the four others as served),
