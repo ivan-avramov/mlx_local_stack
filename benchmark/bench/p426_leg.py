@@ -48,40 +48,98 @@ class LegSpec:
     expected_requests: int = 0
 
 
-def _models(text):
+P426_ON = {  # the exact settings the ON arm adds (the C177 lines restored), pinned independently of the fork rule (H2)
+    "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed": {
+        "mtp_verify_scan": "joint_v1",
+        "draft_kind": "mtp",
+        "draft_model": "caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter",
+    }
+}
+
+
+def _strict(text):
+    """Strict parse (B4 code round 2 H2): CR, duplicate keys and non-YAML raise ValueError."""
     import yaml
 
-    doc = yaml.safe_load(text) or {}
-    return {m.get("name"): m for m in doc.get("models") or []}, {k: v for k, v in doc.items() if k != "models"}
+    if "\r" in text:
+        raise ValueError("CR line ending")
+
+    class Strict(yaml.SafeLoader):
+        pass
+
+    def mapping(loader, node, deep=False):
+        keys = [loader.construct_object(k, deep=deep) for k, _ in node.value if k.tag != "tag:yaml.org,2002:merge"]
+        dupes = sorted({str(k) for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise ValueError(f"duplicate registry keys {dupes}")
+        return yaml.SafeLoader.construct_mapping(loader, node, deep=deep)
+
+    Strict.add_constructor(yaml.resolver.BaseResolver.DEFAULT_MAPPING_TAG, mapping)
+    try:
+        return yaml.load(text, Loader=Strict) or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(f"not YAML: {exc}") from exc
 
 
-def registry_delta_problems(on_text, off_text, entry, keys=MTP_KEYS):
-    """ON == OFF except that ``entry`` gains exactly ``keys`` (and nothing else changes, in settings and in lines)."""
-    on, on_top = _models(on_text)
-    off, off_top = _models(off_text)
+def _same(a, b):
+    if type(a) is not type(b):
+        return False
+    if isinstance(a, dict):
+        return a.keys() == b.keys() and all(_same(a[k], b[k]) for k in a)
+    if isinstance(a, list):
+        return len(a) == len(b) and all(_same(x, y) for x, y in zip(a, b))
+    return a == b
+
+
+def _models(text):
+    doc = _strict(text)
+    models = doc.get("models") or []
+    names = [m.get("name") for m in models]
+    if len(names) != len(set(names)):
+        raise ValueError(f"duplicate model names {sorted({n for n in names if names.count(n) > 1}, key=str)}")
+    return dict(zip(names, models)), names, {k: v for k, v in doc.items() if k != "models"}
+
+
+def registry_delta_problems(on_text, off_text, entry, expected=None):
+    """ON == OFF except that ``entry`` gains exactly its pinned MTP settings (``P426_ON``): strict, type-aware, and the text
+    delta is exactly those lines added with only comment lines removed (B4 code round 2 H2)."""
+    expected = expected if expected is not None else P426_ON.get(entry)
+    if not expected:
+        return [f"{entry}: no pinned ON settings"]
+    try:
+        on, on_names, on_top = _models(on_text)
+        off, off_names, off_top = _models(off_text)
+    except ValueError as exc:
+        return [f"registry: {exc}"]
     problems = []
-    if on_top != off_top:
+    if not _same(on_top, off_top):
         problems.append("top-level registry settings differ")
-    for name in sorted(set(on) | set(off)):
-        if name == entry:
-            continue
-        if on.get(name) != off.get(name):
+    if on_names != off_names:
+        problems.append("the arms list different models")
+    for name in sorted(set(on) | set(off), key=str):
+        if name != entry and not _same(on.get(name), off.get(name)):
             problems.append(f"{name}: settings differ between the arms")
     a, b = on.get(entry), off.get(entry)
     if a is None or b is None:
         return problems + [f"{entry}: missing from an arm's registry"]
-    added = {k for k in a if k not in b}
-    if not added:
+    if not any(k in a for k in expected):
         return problems + [f"{entry}: the ON registry carries no MTP settings"]
-    for key in sorted(set(keys) - added):
-        problems.append(f"{entry}: ON lacks {key}")
-    for key in sorted(added - set(keys)):
-        problems.append(f"{entry}: ON adds non-MTP setting {key}")
-    for key in sorted(k for k in b if a.get(k) != b.get(k)):
-        problems.append(f"{entry}: {key} differs between the arms")
-    changed = [d for d in difflib.ndiff(off_text.splitlines(), on_text.splitlines()) if d[:2] in ("- ", "+ ")]
-    if not problems and len(changed) != 2 * len(keys):
-        problems.append(f"{entry}: {len(changed)} changed lines, expected {2 * len(keys)}")
+    for key, value in expected.items():
+        if not _same(a.get(key), value):
+            problems.append(f"{entry}: ON {key} {a.get(key)!r} != pinned {value!r}")
+        if key in b:
+            problems.append(f"{entry}: OFF carries {key}")
+    rest = {k: v for k, v in a.items() if k not in expected}
+    for key in sorted(set(rest) | set(b)):
+        if not _same(rest.get(key), b.get(key)):
+            problems.append(f"{entry}: {key} differs between the arms")
+    delta = [d for d in difflib.ndiff(off_text.splitlines(), on_text.splitlines()) if d[:2] in ("- ", "+ ")]
+    added = sorted(d[2:].strip() for d in delta if d.startswith("+ "))
+    removed = [d[2:] for d in delta if d.startswith("- ")]
+    if added != sorted(f"{k}: {v}" for k, v in expected.items()):
+        problems.append(f"{entry}: added lines {added} are not exactly the pinned MTP lines")
+    if any(not line.lstrip().startswith("#") for line in removed):
+        problems.append(f"{entry}: the ON text removes a non-comment line")
     return problems
 
 
@@ -214,7 +272,7 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
     receipt = dict(name=spec.name, arm=spec.arm, kind=spec.kind, model=spec.model, problems=[], speed_problems=[])
     pre = destination_problems(spec.destinations)
     if spec.arm == "on":
-        pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model, spec.mtp_keys)
+        pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model)
     elif spec.registry_text != spec.off_registry_text:
         pre.append("the OFF arm must serve the committed registry verbatim")
     pre += pins_check(spec.model, spec.arm)

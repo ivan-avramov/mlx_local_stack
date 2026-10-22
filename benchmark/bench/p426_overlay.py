@@ -6,7 +6,6 @@ frozen build's `src/mlx-vlm/dev`, check it independently (`p426_leg.registry_del
 
 import argparse
 import hashlib
-import importlib
 import json
 import sys
 from pathlib import Path
@@ -19,15 +18,21 @@ def sha256_text(text):
 
 
 def load_registry_states(stack_root):
-    """The frozen build's own module (never the sibling fork checkout); refuses a byte-level (pre-C203) one."""
-    dev = str(Path(stack_root) / "src" / "mlx-vlm" / "dev")
-    sys.path.insert(0, dev)
-    try:
-        rs = importlib.import_module("p369_phase2.registry_states")
-    finally:
-        sys.path.remove(dev)
+    """The frozen build's own module, loaded from its FILE under a unique name (B4 code round 2 H1: never a module already
+    cached from another checkout, never the sibling fork); refuses a byte-level (pre-C203) one."""
+    import importlib.util
+
+    path = (Path(stack_root) / "src" / "mlx-vlm" / "dev" / "p369_phase2" / "registry_states.py").resolve()
+    name = "p426_frozen_registry_states_" + hashlib.sha256(str(path).encode()).hexdigest()[:12]
+    spec = importlib.util.spec_from_file_location(name, path)
+    if spec is None or not path.is_file():
+        raise RuntimeError(f"{path}: no registry_states in the frozen build")
+    rs = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rs)
+    if Path(rs.__file__).resolve() != path:
+        raise RuntimeError(f"loaded {rs.__file__}, wanted {path}")
     if not hasattr(rs, "settings"):
-        raise RuntimeError(f"{dev}: registry_states predates the C203 settings-level matcher")
+        raise RuntimeError(f"{path}: registry_states predates the C203 settings-level matcher")
     return rs
 
 

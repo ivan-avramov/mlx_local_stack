@@ -620,7 +620,7 @@ def _judge_readme_text():
     )
 
 
-def export_packets(pairs, judges, task_prompts, model_names, out_dir, batch_size=10):
+def export_packets(pairs, judges, task_prompts, model_names, out_dir, batch_size=10, system=None, attachments=None):
     """Write one markdown packet per (pair, order, judge) at
     `out_dir/<judge>/batch<NN>/<pkt>.md`, plus `out_dir/manifest.jsonl` (private — never shown
     to a judge) and `out_dir/README_JUDGE.md`. No judge is called.
@@ -631,7 +631,15 @@ def export_packets(pairs, judges, task_prompts, model_names, out_dir, batch_size
     concatenate-then-chunk scheme fails this for small pair counts: with N pairs <= batch_size,
     every AB AND BA entry would land in the single batch 0). Candidate and anchor pairs stay
     mixed within each order's sequence because `pairs` is already seed-shuffled by the caller
-    (`merge_and_shuffle`). Returns the list of manifest rows written."""
+    (`merge_and_shuffle`). Returns the list of manifest rows written.
+
+    P426 B3: ``system`` replaces the default rubric (its sha is recorded as the row's ``prompt_sha``); ``attachments`` maps
+    item_id -> a file copied beside each of that item's packets as ``<pkt><suffix>`` and named in the prompt."""
+    import shutil
+
+    system = RUBRIC_SYSTEM_PROMPT if system is None else system
+    prompt_sha = hashlib.sha256(system.encode()).hexdigest()
+    attachments = attachments or {}
     total = len(judges) * len(pairs) * 2
     width = max(4, len(str(max(total - 1, 0))))
     counter = 0
@@ -650,16 +658,22 @@ def export_packets(pairs, judges, task_prompts, model_names, out_dir, batch_size
                 b_text = strip_model_names(pair["b_text"], model_names)
                 first, second = (a_text, b_text) if order == "AB" else (b_text, a_text)
                 task_prompt = task_prompts.get(pair["item_id"], "")
+                attached = attachments.get(pair["item_id"])
+                if attached:
+                    name = f"{pkt}{os.path.splitext(str(attached))[1]}"
+                    shutil.copyfile(attached, os.path.join(batch_dir, name))
+                    task_prompt = (f"{task_prompt}\n\n## Image\nThe image is the file `{name}` in this "
+                                   "directory; look at it before judging.")
                 user = build_user_prompt(task_prompt, first, second)
                 pkt_path = os.path.join(batch_dir, f"{pkt}.md")
                 with open(pkt_path, "w", encoding="utf-8") as f:
-                    f.write(build_packet_markdown(RUBRIC_SYSTEM_PROMPT, user, pkt))
+                    f.write(build_packet_markdown(system, user, pkt))
                 manifest_rows.append({
                     "pkt": pkt, "judge": judge_name, "pair_id": pair["pair_id"],
                     "order": order, "anchor_type": pair.get("anchor_type"),
                     "expected": pair.get("expected"), "item_id": pair["item_id"],
                     "a_key": pair["a_key"], "b_key": pair["b_key"],
-                    "prompt_sha": PROMPT_SHA, "path": pkt_path,
+                    "prompt_sha": prompt_sha, "path": pkt_path,
                 })
     manifest_path = os.path.join(out_dir, "manifest.jsonl")
     with open(manifest_path, "w", encoding="utf-8") as f:
