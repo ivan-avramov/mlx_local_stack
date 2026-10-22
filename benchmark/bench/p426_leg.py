@@ -6,8 +6,9 @@
 Pre-leg (refuse → NOT_STARTED, nothing started): destinations absent, the ON registry differs from OFF in exactly the entry's MTP
 settings (OFF = the committed registry), target / drafter snapshots match the reviewed pins, power + orphan gate, nothing busy.
 Leg: the arm's lean router + worker argv checks (`ChainOps.start_router` / `load`), the 5-minute watcher, the driver. Exit:
-router / worker identity unchanged, power re-checked, membership == plan, the engagement gate, `in_flight` = 1 on every ON
-`Request started` line (the counters are drafter-global diffs, B1 D1), teardown. Any problem → INVALID; a power failure, a
+router / worker identity unchanged, power re-checked, membership == plan, the engagement gate, the leg's own server-log slice
+reconciled exactly (non-empty, started == completed == expected, no failure; every ON request `backend=cached_session` — the
+serial model-thread path whose drafter counters are exact under any HTTP overlap, B1 D1 / E1), teardown. Any problem → INVALID; a power failure, a
 watcher power receipt or an on-battery interval → the leg's SPEED invalid (quality stands). The receipt is written either way.
 """
 
@@ -23,7 +24,7 @@ from pathlib import Path
 from bench.chain_ops import ChainAbort, argv_flag
 
 MTP_KEYS = ("draft_kind", "draft_model", "mtp_verify_scan")
-_STARTED = re.compile(r"^(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d).*Request started: .* in_flight=(\d+)\s*$")
+_REQUEST = re.compile(r"Request (started|completed|failed): (.*)$")
 
 
 @dataclasses.dataclass
@@ -43,6 +44,7 @@ class LegSpec:
     timeout_s: float = 6 * 3600
     mtp_keys: tuple = MTP_KEYS
     row_key: str = "id"
+    expected_requests: int = 0
 
 
 def _models(text):
@@ -144,13 +146,33 @@ def engagement_problems(arm, rows, key="id"):
     return problems
 
 
-def in_flight_problems(lines, start, end):
-    over = 0
+def log_problems(lines, arm, expected):
+    """B1 code round 2 E1: the leg's own server-log slice, fail closed — ``(problems, stats)``."""
+    stats = dict(started=0, completed=0, failed=0, overlapping=0)
+    not_cached = 0
     for line in lines:
-        m = _STARTED.match(line)
-        if m and start <= m.group(1) <= end and int(m.group(2)) > 1:
-            over += 1
-    return [f"{over} overlapping request(s) in the leg window (in_flight > 1)"] if over else []
+        m = _REQUEST.search(line)
+        if not m:
+            continue
+        kind, rest = m.groups()
+        stats[kind] += 1
+        flight = re.search(r"in_flight=(\d+)", rest)
+        if kind == "started" and flight and int(flight.group(1)) > 1:
+            stats["overlapping"] += 1
+        if kind == "completed" and "backend=cached_session" not in rest:
+            not_cached += 1
+    problems = []
+    if not any(stats.values()):
+        return ["no server log records in the leg window"], stats
+    if stats["started"] != stats["completed"]:
+        problems.append(f"{stats['started']} started != {stats['completed']} completed")
+    if stats["failed"]:
+        problems.append(f"{stats['failed']} failed request(s)")
+    if stats["started"] != expected:
+        problems.append(f"{stats['started']} requests, expected {expected}")
+    if arm == "on" and not_cached:
+        problems.append(f"{not_cached} ON request(s) not backend=cached_session (drafter counters not exact)")
+    return problems, stats
 
 
 def model_argv_problems(cmdline, registry_text, model):
@@ -192,7 +214,12 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         receipt["worker"] = ident
         problems += model_argv_problems(ident.get("cmdline"), spec.registry_text, spec.model)
         stop_watch = watcher(spec)
+        log = Path(spec.server_log)
+        offset = log.stat().st_size if log.exists() else 0  # E1: only this leg's records count
         rc = run_driver(spec.driver_argv, ops.env_base(), spec.timeout_s)
+        tail = log.read_bytes()[offset:].decode("utf-8", errors="replace") if log.exists() else ""
+        log_found, receipt["log"] = log_problems(tail.splitlines(), spec.arm, spec.expected_requests)
+        problems += log_found
         if rc != 0:
             problems.append(f"driver exit {rc}")
         if not ops.router_ok():
@@ -214,9 +241,6 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         ops.stop_stack()
     end = clock()
     receipt["ended"] = end
-    if spec.arm == "on":
-        log = Path(spec.server_log)
-        problems += in_flight_problems(log.read_text(errors="replace").splitlines() if log.exists() else [], start, end)
     speed += [f"battery interval {a} -> {b}" for a, b in battery_intervals(start, end)]
     verdict = "INVALID" if problems else "VALID"
     return _write(
@@ -287,7 +311,7 @@ def main(argv=None):
         driver_argv=doc["driver_argv"], destinations=[Path(p) for p in doc["destinations"]],
         rows_path=Path(doc["rows_path"]), planned=doc["planned"], receipt_dir=Path(doc["receipt_dir"]),
         server_log=repo / "logs/mlx_vlm.log", timeout_s=float(doc.get("timeout_s", 6 * 3600)),
-        row_key=doc.get("row_key", "id"),
+        row_key=doc.get("row_key", "id"), expected_requests=int(doc["expected_requests"]),
     )
     log_path = Path(doc["receipt_dir"]) / f"{spec.name}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)

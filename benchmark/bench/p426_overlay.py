@@ -53,7 +53,8 @@ def main(argv=None):
     args = ap.parse_args(argv)
     root = Path(args.stack_root)
     rs = load_registry_states(root)
-    doc = build((root / "main_models.yaml").read_text(), args.entry, rs, root / "src/mlx-vlm/mlx_vlm/tests/fixtures", args.out)
+    off_text = (root / "main_models.yaml").read_bytes().decode("utf-8")  # F1: never universal-newline normalized
+    doc = build(off_text, args.entry, rs, root / "src/mlx-vlm/mlx_vlm/tests/fixtures", args.out)
     print(json.dumps(doc, indent=1))
     return 0
 
