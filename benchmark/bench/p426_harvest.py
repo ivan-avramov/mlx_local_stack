@@ -9,12 +9,14 @@ carrying PII or an oversized file refuses before anything is written. Commits ar
 import dataclasses
 import hashlib
 import json
+import lzma
 import re
 from pathlib import Path
 
 from bench import piicheck
 
 MAX_FILE_BYTES = 90 * 1024 * 1024  # GitHub refuses files over 100 MB
+COMPRESS_BYTES = 8 * 1024 * 1024  # a larger dossier file is published `<name>.xz` (worker logs compress ≈ 4500×)
 WAVE1 = Path("benchmark") / "results" / "p426" / "wave1"
 
 
@@ -53,18 +55,24 @@ def _sha(b):
     return hashlib.sha256(b).hexdigest()
 
 
-def _publish(src_bytes, rel, scrub):
-    """(published bytes, problems) for one file."""
-    if len(src_bytes) > MAX_FILE_BYTES:
-        return None, [f"{rel}: {len(src_bytes)} bytes > {MAX_FILE_BYTES}"]
+def _publish(src_bytes, rel, scrub, compressible=False):
+    """(published rel, scrubbed bytes, published bytes, problems) for one file; a compressible file over COMPRESS_BYTES is
+    published as `<rel>.xz` of its scrubbed bytes."""
     try:
         text = src_bytes.decode("utf-8")
     except UnicodeDecodeError:
         hits = [m.decode() for m in scrub.raw_markers() if m and m in src_bytes]
-        return src_bytes, ([f"{rel}: binary file carries PII markers {hits}"] if hits else [])
-    out = scrub.text(text)
-    found = piicheck.violations(out, path=rel, line=1)
-    return out.encode("utf-8"), [f"{rel}: PII after scrub: {v}" for v in found]
+        scrubbed, problems = src_bytes, ([f"{rel}: binary file carries PII markers {hits}"] if hits else [])
+    else:
+        out = scrub.text(text)
+        scrubbed = out.encode("utf-8")
+        problems = [f"{rel}: PII after scrub: {v}" for v in piicheck.violations(out, path=rel, line=1)]
+    published = scrubbed
+    if compressible and len(scrubbed) > COMPRESS_BYTES:
+        rel, published = f"{rel}.xz", lzma.compress(scrubbed)
+    if len(published) > MAX_FILE_BYTES:
+        problems.append(f"{rel}: {len(published)} bytes > {MAX_FILE_BYTES}")
+    return rel, scrubbed, published, problems
 
 
 def _sources(name, plan, receipts, stdout, log_slice, dossier):
@@ -97,20 +105,23 @@ def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub):
     if (main_root / dossier).exists():
         problems.append(f"{dossier} exists (a leg is harvested once)")
     for rel, src, data in _sources(name, plan, receipts, stdout, log_slice, dossier):
+        rel, scrubbed, published, found = _publish(data, str(rel), scrub, compressible=Path(rel).is_relative_to(dossier))
         if (main_root / rel).exists():
             problems.append(f"{rel} exists")
-        published, found = _publish(data, str(rel), scrub)
         problems += found
-        staged.append((rel, src, data, published))
+        staged.append((rel, src, data, scrubbed, published))
     if problems:
         raise HarvestError(f"{name}: " + "; ".join(problems)[:2000])
     manifest = dict(leg=name, files={})
-    for rel, src, data, published in staged:
+    for rel, src, data, scrubbed, published in staged:
         dest = main_root / rel
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(published)
-        manifest["files"][str(rel)] = dict(source=scrub.text(str(src)) if src else None, original_sha256=_sha(data),
-                                           published_sha256=_sha(published))
+        rec = dict(source=scrub.text(str(src)) if src else None, original_sha256=_sha(data), scrubbed_sha256=_sha(scrubbed),
+                   published_sha256=_sha(published))
+        if published is not scrubbed:
+            rec["compression"] = "xz"
+        manifest["files"][str(rel)] = rec
     (main_root / dossier / "SCRUB_MANIFEST.json").write_text(json.dumps(manifest, indent=1, sort_keys=True) + "\n")
     for rel, rec in manifest["files"].items():  # read back
         if _sha((main_root / rel).read_bytes()) != rec["published_sha256"]:
@@ -125,7 +136,7 @@ def harvest_run_files(paths, *, main_root, scrub, overwrite=()):
     for p in paths:
         p = Path(p)
         rel = str(WAVE1 / "run" / p.name)
-        published, found = _publish(p.read_bytes(), rel, scrub)
+        _, _, published, found = _publish(p.read_bytes(), rel, scrub)
         problems += found
         dest = run / p.name
         if dest.exists() and p.name not in overwrite and dest.read_bytes() != published:
