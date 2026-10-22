@@ -2,6 +2,28 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-10-22 — P405 R5: codec ABBA for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — same shape as the uniform pick at 256K; TurboQuant ≈ 6 % slower at 8K
+
+**What:** as the 2026-10-21 `Qwen3.8-27B-mlx-uniform-4bit` R5 (C197 / C200 / P411 second pick): arm A affine, arm B TurboQuant 4-bit
+KV, deployed MTP-ON tuple, ABBA per schedule, 600 s idle between all 8 legs, 140 W every leg, no battery interval in `pmset -g log`
+20:52–01:41. Fork `d3feb734` (= `494aea2c` + the P429 leg-exit fix; the first attempt aborted at 2 / 8 on the exit segfault, P429).
+Run `$STACK_WORKDIR/p400/perf/20261021-r5-d3feb734-qwen36`. Descriptive — an input to R6 / the codec call.
+
+| Schedule | Arm | n | Decode tok/s median [range] | Prefill tok/s median [range] | Prefill peak GB | Decode-phase peak GB |
+|---|---|---:|---|---|---|---|
+| 8K | A affine | 10 | 39.75 [38.4, 40.3] | 811 [779, 854] | 30.71 | 30.81 |
+| 8K | B TurboQuant | 10 | 37.27 [37.1, 37.4] | 748 [721, 780] | 31.20 | 31.98 |
+| 256K | A affine | 4 | 7.22 [7.0, 7.4] | 247 [240, 261] | 1st request 34.59 · 2nd 39.58 | 28.45 · 33.44 |
+| 256K | B TurboQuant | 4 | **10.12** [9.7, 10.4] | **128** [125, 129] | 1st request **28.47** · 2nd 33.79 | 29.60 · 34.91 |
+
+**Mechanisms:** at 256K the same pattern as the uniform pick — TurboQuant decodes +40 %, its single-session prefill peak is 6.1 GB
+lower (28.47, matching R7's 28.45 for this entry), and it prefills ≈ 1.9× slower. At 8K, unlike the uniform pick (+1.2 %),
+TurboQuant decodes 6.2 % slower and peaks ≈ 1.2 GB higher (decode phase): at short context the dequantize work is not repaid by
+the smaller cache. A retained second 256K session adds ≈ 5 GB in either codec.
+
+**Implication:** for this pick the codec trade depends on the context regime — TurboQuant for long agentic contexts (decode-heavy,
+memory-bound), affine slightly faster for short chats. Quality is R6's question; no registry change.
+
 ## 2026-10-21 — P405 R5: codec ABBA for `Qwen3.8-27B-mlx-uniform-4bit` — TurboQuant decodes faster and peaks lower at 256K, prefills ≈ 2× slower
 
 **What:** the codec-only performance probe (P405 plan v4 §5 R5; C197 / C200): arm A = affine 4-bit KV (`kv_quant_scheme: uniform`
