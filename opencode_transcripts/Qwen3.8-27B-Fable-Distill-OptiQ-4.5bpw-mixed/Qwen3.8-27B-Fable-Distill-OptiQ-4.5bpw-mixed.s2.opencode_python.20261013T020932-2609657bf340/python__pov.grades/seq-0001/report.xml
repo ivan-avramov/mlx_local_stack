@@ -1,0 +1,266 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="15" skipped="0" tests="15" time="0.050" timestamp="2026-10-13T03:49:23.006113-07:00" hostname="localhost"><testcase classname="pov_test.PovTest" name="test_can_find_path_from_nodes_other_than_x" time="0.001"><failure message="AssertionError: None != ['a', 'parent', 'c']">self = &lt;pov_test.PovTest testMethod=test_can_find_path_from_nodes_other_than_x&gt;
+
+    def test_can_find_path_from_nodes_other_than_x(self):
+        tree = Tree("parent", [Tree("a"), Tree("x"), Tree("b"), Tree("c")])
+        expected = ["a", "parent", "c"]
+&gt;       self.assertEqual(tree.path_to("a", "c"), expected)
+E       AssertionError: None != ['a', 'parent', 'c']
+
+pov_test.py:139: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_find_path_not_involving_root" time="0.001"><failure message="AssertionError: None != ['x', 'parent', 'sibling-1']">self = &lt;pov_test.PovTest testMethod=test_can_find_path_not_involving_root&gt;
+
+    def test_can_find_path_not_involving_root(self):
+        tree = Tree(
+            "grandparent",
+            [Tree("parent", [Tree("x"), Tree("sibling-0"), Tree("sibling-1")])],
+        )
+        expected = ["x", "parent", "sibling-1"]
+&gt;       self.assertEqual(tree.path_to("x", "sibling-1"), expected)
+E       AssertionError: None != ['x', 'parent', 'sibling-1']
+
+pov_test.py:134: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_find_path_to_cousin" time="0.001"><failure message="AssertionError: None != ['x', 'parent', 'grandparent', 'uncle', 'cousin-1']">self = &lt;pov_test.PovTest testMethod=test_can_find_path_to_cousin&gt;
+
+    def test_can_find_path_to_cousin(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = ["x", "parent", "grandparent", "uncle", "cousin-1"]
+&gt;       self.assertEqual(tree.path_to("x", "cousin-1"), expected)
+E       AssertionError: None != ['x', 'parent', 'grandparent', 'uncle', 'cousin-1']
+
+pov_test.py:126: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_find_path_to_parent" time="0.001"><failure message="AssertionError: None != ['x', 'parent']">self = &lt;pov_test.PovTest testMethod=test_can_find_path_to_parent&gt;
+
+    def test_can_find_path_to_parent(self):
+        tree = Tree("parent", [Tree("x"), Tree("sibling")])
+        expected = ["x", "parent"]
+&gt;       self.assertEqual(tree.path_to("x", "parent"), expected)
+E       AssertionError: None != ['x', 'parent']
+
+pov_test.py:103: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_find_path_to_sibling" time="0.001"><failure message="AssertionError: None != ['x', 'parent', 'b']">self = &lt;pov_test.PovTest testMethod=test_can_find_path_to_sibling&gt;
+
+    def test_can_find_path_to_sibling(self):
+        tree = Tree("parent", [Tree("a"), Tree("x"), Tree("b"), Tree("c")])
+        expected = ["x", "parent", "b"]
+&gt;       self.assertEqual(tree.path_to("x", "b"), expected)
+E       AssertionError: None != ['x', 'parent', 'b']
+
+pov_test.py:108: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_complex_tree_with_cousins" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_complex_tree_with_cousins&gt;
+
+    def test_can_reroot_a_complex_tree_with_cousins(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = Tree(
+            "x",
+            [
+                Tree("kid-1"),
+                Tree("kid-0"),
+                Tree(
+                    "parent",
+                    [
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                        Tree(
+                            "grandparent",
+                            [Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")])],
+                        ),
+                    ],
+                ),
+            ],
+        )
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:77: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10afa3680&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_a_parent_and_many_siblings" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_tree_with_a_parent_and_many_siblings&gt;
+
+    def test_can_reroot_a_tree_with_a_parent_and_many_siblings(self):
+        tree = Tree("parent", [Tree("a"), Tree("x"), Tree("b"), Tree("c")])
+        expected = Tree("x", [Tree("parent", [Tree("a"), Tree("b"), Tree("c")])])
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:26: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10afa2d50&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_a_parent_and_one_sibling" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_tree_with_a_parent_and_one_sibling&gt;
+
+    def test_can_reroot_a_tree_with_a_parent_and_one_sibling(self):
+        tree = Tree("parent", [Tree("x"), Tree("sibling")])
+        expected = Tree("x", [Tree("parent", [Tree("sibling")])])
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:21: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10afa3560&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree&gt;
+
+    def test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree(self):
+        tree = Tree(
+            "level-0",
+            [Tree("level-1", [Tree("level-2", [Tree("level-3", [Tree("x")])])])],
+        )
+        expected = Tree(
+            "x",
+            [Tree("level-3", [Tree("level-2", [Tree("level-1", [Tree("level-0")])])])],
+        )
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10afa13d0&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase><testcase classname="pov_test.PovTest" name="test_errors_if_destination_does_not_exist" time="0.001"><failure message="AssertionError: ValueError not raised">self = &lt;pov_test.PovTest testMethod=test_errors_if_destination_does_not_exist&gt;
+
+    def test_errors_if_destination_does_not_exist(self):
+        tree = Tree(
+            "parent",
+            [
+                Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                Tree("sibling-0"),
+                Tree("sibling-1"),
+            ],
+        )
+&gt;       with self.assertRaises(ValueError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: ValueError not raised
+
+pov_test.py:150: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_errors_if_source_does_not_exist" time="0.001"><failure message="AssertionError: ValueError not raised">self = &lt;pov_test.PovTest testMethod=test_errors_if_source_does_not_exist&gt;
+
+    def test_errors_if_source_does_not_exist(self):
+        tree = Tree(
+            "parent",
+            [
+                Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                Tree("sibling-0"),
+                Tree("sibling-1"),
+            ],
+        )
+&gt;       with self.assertRaises(ValueError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: ValueError not raised
+
+pov_test.py:165: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_errors_if_target_does_not_exist_in_a_large_tree" time="0.001"><failure message="AssertionError: ValueError not raised">self = &lt;pov_test.PovTest testMethod=test_errors_if_target_does_not_exist_in_a_large_tree&gt;
+
+    def test_errors_if_target_does_not_exist_in_a_large_tree(self):
+        tree = Tree(
+            "parent",
+            [
+                Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                Tree("sibling-0"),
+                Tree("sibling-1"),
+            ],
+        )
+&gt;       with self.assertRaises(ValueError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: ValueError not raised
+
+pov_test.py:95: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_errors_if_target_does_not_exist_in_a_singleton_tree" time="0.001"><failure message="AssertionError: ValueError not raised">self = &lt;pov_test.PovTest testMethod=test_errors_if_target_does_not_exist_in_a_singleton_tree&gt;
+
+    def test_errors_if_target_does_not_exist_in_a_singleton_tree(self):
+        tree = Tree("x")
+&gt;       with self.assertRaises(ValueError) as err:
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       AssertionError: ValueError not raised
+
+pov_test.py:81: AssertionError</failure></testcase><testcase classname="pov_test.PovTest" name="test_moves_children_of_the_new_root_to_same_level_as_former_parent" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_moves_children_of_the_new_root_to_same_level_as_former_parent&gt;
+
+    def test_moves_children_of_the_new_root_to_same_level_as_former_parent(self):
+        tree = Tree("parent", [Tree("x", [Tree("kid-0"), Tree("kid-1")])])
+        expected = Tree("x", [Tree("kid-0"), Tree("kid-1"), Tree("parent")])
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:42: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10aff68a0&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase><testcase classname="pov_test.PovTest" name="test_results_in_the_same_tree_if_the_input_tree_is_a_singleton" time="0.001"><failure message="AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?">self = &lt;pov_test.PovTest testMethod=test_results_in_the_same_tree_if_the_input_tree_is_a_singleton&gt;
+
+    def test_results_in_the_same_tree_if_the_input_tree_is_a_singleton(self):
+        tree = Tree("x")
+        expected = Tree("x")
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:16: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10afa17f0&gt;, other = None
+
+    def __eq__(self, other):
+&gt;       return self.__dict__() == other.__dict__()
+                                  ^^^^^^^^^^^^^^
+E       AttributeError: 'NoneType' object has no attribute '__dict__'. Did you mean: '__dir__'?
+
+pov.py:19: AttributeError</failure></testcase></testsuite></testsuites>

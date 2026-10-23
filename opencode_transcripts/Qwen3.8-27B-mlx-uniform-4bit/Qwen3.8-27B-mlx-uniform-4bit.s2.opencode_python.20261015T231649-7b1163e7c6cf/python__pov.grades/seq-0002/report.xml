@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="5" skipped="0" tests="15" time="0.046" timestamp="2026-10-16T00:37:09.650780-07:00" hostname="localhost"><testcase classname="pov_test.PovTest" name="test_can_find_path_from_nodes_other_than_x" time="0.001" /><testcase classname="pov_test.PovTest" name="test_can_find_path_not_involving_root" time="0.001" /><testcase classname="pov_test.PovTest" name="test_can_find_path_to_cousin" time="0.001"><failure message="ValueError: No path found">self = &lt;pov_test.PovTest testMethod=test_can_find_path_to_cousin&gt;
+
+    def test_can_find_path_to_cousin(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = ["x", "parent", "grandparent", "uncle", "cousin-1"]
+&gt;       self.assertEqual(tree.path_to("x", "cousin-1"), expected)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pov_test.py:126: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10b618a70&gt;, from_node = 'x', to_node = 'cousin-1'
+
+    def path_to(self, from_node, to_node):
+        reoriented = self.from_pov(from_node)
+        path = []
+    
+        def find(node):
+            path.append(node.label)
+            if node.label == to_node:
+                return True
+            for child in node.children:
+                if find(child):
+                    return True
+            path.pop()
+            return False
+    
+        if not find(reoriented):
+&gt;           raise ValueError("No path found")
+E           ValueError: No path found
+
+pov.py:54: ValueError</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_find_path_to_parent" time="0.001" /><testcase classname="pov_test.PovTest" name="test_can_find_path_to_sibling" time="0.001"><failure message="RecursionError: maximum recursion depth exceeded">self = &lt;pov_test.PovTest testMethod=test_can_find_path_to_sibling&gt;
+
+    def test_can_find_path_to_sibling(self):
+        tree = Tree("parent", [Tree("a"), Tree("x"), Tree("b"), Tree("c")])
+        expected = ["x", "parent", "b"]
+&gt;       self.assertEqual(tree.path_to("x", "b"), expected)
+                         ^^^^^^^^^^^^^^^^^^^^^^
+
+pov_test.py:108: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov.py:40: in path_to
+    reoriented = self.from_pov(from_node)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^
+pov.py:22: in from_pov
+    reoriented = self._reorient(from_node, None)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pov.py:35: in _reorient
+    self.children.remove(child)
+pov.py:19: in __eq__
+    return self.__dict__() == other.__dict__()
+                              ^^^^^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10b5f2870&gt;
+
+    def __dict__(self):
+&gt;       return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                                                   ^^^^^^^^^^^^^^^^^^^^^
+E       RecursionError: maximum recursion depth exceeded
+
+pov.py:10: RecursionError
+!!! Recursion error detected, but an error occurred locating the origin of recursion.
+  The following exception happened when comparing locals in the stack frame:
+    RecursionError: maximum recursion depth exceeded
+  Displaying first and last 10 stack frames out of 969.</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_complex_tree_with_cousins" time="0.001"><failure message="AssertionError: &lt;pov.Tree object at 0x10b6d4a70&gt; != &lt;pov.Tree object at 0x10b6d6870&gt; : {&quot;x&quot;: [{&quot;kid-0&quot;: []}, {&quot;kid-1&quot;: []}, {&quot;parent&quot;: [{&quot;sibling-0&quot;: []}, {&quot;sibling-1&quot;: []}]}]} != {&quot;x&quot;: [{&quot;kid-0&quot;: []}, {&quot;kid-1&quot;: []}, {&quot;parent&quot;: [{&quot;grandparent&quot;: [{&quot;uncle&quot;: [{&quot;cousin-0&quot;: []}, {&quot;cousin-1&quot;: []}]}]}, {&quot;sibling-0&quot;: []}, {&quot;sibling-1&quot;: []}]}]}">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_complex_tree_with_cousins&gt;
+
+    def test_can_reroot_a_complex_tree_with_cousins(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = Tree(
+            "x",
+            [
+                Tree("kid-1"),
+                Tree("kid-0"),
+                Tree(
+                    "parent",
+                    [
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                        Tree(
+                            "grandparent",
+                            [Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")])],
+                        ),
+                    ],
+                ),
+            ],
+        )
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:77: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+E   AssertionError: &lt;pov.Tree object at 0x10b6d4a70&gt; != &lt;pov.Tree object at 0x10b6d6870&gt; : {"x": [{"kid-0": []}, {"kid-1": []}, {"parent": [{"sibling-0": []}, {"sibling-1": []}]}]} != {"x": [{"kid-0": []}, {"kid-1": []}, {"parent": [{"grandparent": [{"uncle": [{"cousin-0": []}, {"cousin-1": []}]}]}, {"sibling-0": []}, {"sibling-1": []}]}]}</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_a_parent_and_many_siblings" time="0.001"><failure message="RecursionError: maximum recursion depth exceeded">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_tree_with_a_parent_and_many_siblings&gt;
+
+    def test_can_reroot_a_tree_with_a_parent_and_many_siblings(self):
+        tree = Tree("parent", [Tree("a"), Tree("x"), Tree("b"), Tree("c")])
+        expected = Tree("x", [Tree("parent", [Tree("a"), Tree("b"), Tree("c")])])
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+                              ^^^^^^^^^^^^^^^^^^
+
+pov_test.py:26: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov.py:22: in from_pov
+    reoriented = self._reorient(from_node, None)
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pov.py:35: in _reorient
+    self.children.remove(child)
+pov.py:19: in __eq__
+    return self.__dict__() == other.__dict__()
+                              ^^^^^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+pov.py:10: in __dict__
+    return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                         ^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;pov.Tree object at 0x10b6d56a0&gt;
+
+    def __dict__(self):
+&gt;       return {self.label: [c.__dict__() for c in sorted(self.children)]}
+                             ^^^^^^^^^^^^
+E       RecursionError: maximum recursion depth exceeded
+
+pov.py:10: RecursionError
+!!! Recursion error detected, but an error occurred locating the origin of recursion.
+  The following exception happened when comparing locals in the stack frame:
+    RecursionError: maximum recursion depth exceeded
+  Displaying first and last 10 stack frames out of 969.</failure></testcase><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_a_parent_and_one_sibling" time="0.001" /><testcase classname="pov_test.PovTest" name="test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree" time="0.001"><failure message="AssertionError: &lt;pov.Tree object at 0x10b762180&gt; != &lt;pov.Tree object at 0x10b762f00&gt; : {&quot;x&quot;: [{&quot;level-3&quot;: []}]} != {&quot;x&quot;: [{&quot;level-3&quot;: [{&quot;level-2&quot;: [{&quot;level-1&quot;: [{&quot;level-0&quot;: []}]}]}]}]}">self = &lt;pov_test.PovTest testMethod=test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree&gt;
+
+    def test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree(self):
+        tree = Tree(
+            "level-0",
+            [Tree("level-1", [Tree("level-2", [Tree("level-3", [Tree("x")])])])],
+        )
+        expected = Tree(
+            "x",
+            [Tree("level-3", [Tree("level-2", [Tree("level-1", [Tree("level-0")])])])],
+        )
+&gt;       self.assertTreeEquals(tree.from_pov("x"), expected)
+
+pov_test.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov_test.py:173: in assertTreeEquals
+    self.assertEqual(result, expected, "{} != {}".format(result, expected))
+E   AssertionError: &lt;pov.Tree object at 0x10b762180&gt; != &lt;pov.Tree object at 0x10b762f00&gt; : {"x": [{"level-3": []}]} != {"x": [{"level-3": [{"level-2": [{"level-1": [{"level-0": []}]}]}]}]}</failure></testcase><testcase classname="pov_test.PovTest" name="test_errors_if_destination_does_not_exist" time="0.001" /><testcase classname="pov_test.PovTest" name="test_errors_if_source_does_not_exist" time="0.001" /><testcase classname="pov_test.PovTest" name="test_errors_if_target_does_not_exist_in_a_large_tree" time="0.001" /><testcase classname="pov_test.PovTest" name="test_errors_if_target_does_not_exist_in_a_singleton_tree" time="0.001" /><testcase classname="pov_test.PovTest" name="test_moves_children_of_the_new_root_to_same_level_as_former_parent" time="0.001" /><testcase classname="pov_test.PovTest" name="test_results_in_the_same_tree_if_the_input_tree_is_a_singleton" time="0.001" /></testsuite></testsuites>

@@ -1,0 +1,47 @@
+.....F........                                                           [100%]
+=================================== FAILURES ===================================
+_ ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change>
+
+    def test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        always_two = ComputeCell(
+            [
+                plus_one,
+                minus_one,
+            ],
+            lambda inputs: inputs[0] - inputs[1],
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        always_two.add_callback(callback1)
+        input.value = 2
+>       self.assertEqual(cb1_observer, [])
+E       AssertionError: Lists differ: [3, 2] != []
+E       
+E       First list contains 2 additional elements.
+E       First extra element 0:
+E       3
+E       
+E       - [3, 2]
+E       + []
+
+react_test.py:258: AssertionError
+=========================== short test summary info ============================
+FAILED react_test.py::ReactTest::test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change
+1 failed, 13 passed in 0.02s

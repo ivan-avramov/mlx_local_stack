@@ -1,0 +1,2144 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="37" skipped="0" tests="37" time="0.126" timestamp="2026-10-12T18:16:55.222589-07:00" hostname="localhost"><testcase classname="poker_test.PokerTest" name="test_a_straight_beats_three_of_a_kind" time="0.001"><failure message="NameError: name 'THREE_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_a_straight_beats_three_of_a_kind&gt;
+
+    def test_a_straight_beats_three_of_a_kind(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 4C 8D 4H", "3S 4D 2S 6D 5C"]), ["3S 4D 2S 6D 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+&gt;           return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^^
+E           NameError: name 'THREE_OF_A_KIND' is not defined
+
+poker.py:62: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_a_tie_has_multiple_winners" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_a_tie_has_multiple_winners&gt;
+
+    def test_a_tie_has_multiple_winners(self):
+        self.assertEqual(
+&gt;           best_hands(
+                [
+                    "4D 5S 6S 8D 3C",
+                    "2S 4C 7S 9H 10H",
+                    "3S 4S 5D 6H JH",
+                    "3H 4H 5C 6C JD",
+                ]
+            ),
+            ["3S 4S 5D 6H JH", "3H 4H 5C 6C JD"],
+        )
+
+poker_test.py:24: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4D 5S 6S 8D 3C'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_can_end_a_straight_10_j_q_k_a" time="0.001"><failure message="NameError: name 'THREE_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_can_end_a_straight_10_j_q_k_a&gt;
+
+    def test_aces_can_end_a_straight_10_j_q_k_a(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 4C 8D 4H", "10D JH QS KD AC"]), ["10D JH QS KD AC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+&gt;           return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^^
+E           NameError: name 'THREE_OF_A_KIND' is not defined
+
+poker.py:62: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_can_end_a_straight_flush_10_j_q_k_a" time="0.001"><failure message="NameError: name 'FOUR_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_can_end_a_straight_flush_10_j_q_k_a&gt;
+
+    def test_aces_can_end_a_straight_flush_10_j_q_k_a(self):
+        self.assertEqual(
+&gt;           best_hands(["KC AH AS AD AC", "10C JC QC KC AC"]), ["10C JC QC KC AC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:200: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = 'KC AH AS AD AC'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+&gt;           return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'FOUR_OF_A_KIND' is not defined
+
+poker.py:58: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_can_start_a_straight_a_2_3_4_5" time="0.001"><failure message="NameError: name 'THREE_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_can_start_a_straight_a_2_3_4_5&gt;
+
+    def test_aces_can_start_a_straight_a_2_3_4_5(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 4C 8D 4H", "4D AH 3S 2D 5C"]), ["4D AH 3S 2D 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:127: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+&gt;           return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^^
+E           NameError: name 'THREE_OF_A_KIND' is not defined
+
+poker.py:62: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_can_start_a_straight_flush_a_2_3_4_5" time="0.001"><failure message="NameError: name 'FOUR_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_can_start_a_straight_flush_a_2_3_4_5&gt;
+
+    def test_aces_can_start_a_straight_flush_a_2_3_4_5(self):
+        self.assertEqual(
+&gt;           best_hands(["KS AH AS AD AC", "4H AH 3H 2H 5H"]), ["4H AH 3H 2H 5H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:205: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = 'KS AH AS AD AC'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+&gt;           return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'FOUR_OF_A_KIND' is not defined
+
+poker.py:58: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_cannot_be_in_the_middle_of_a_straight_flush_q_k_a_2_3" time="0.001"><failure message="NameError: name 'FLUSH' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_cannot_be_in_the_middle_of_a_straight_flush_q_k_a_2_3&gt;
+
+    def test_aces_cannot_be_in_the_middle_of_a_straight_flush_q_k_a_2_3(self):
+        self.assertEqual(
+&gt;           best_hands(["2C AC QC 10C KC", "QH KH AH 2H 3H"]), ["2C AC QC 10C KC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:210: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2C AC QC 10C KC'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+&gt;           return (FLUSH, *sorted(ranks, reverse=True))
+                    ^^^^^
+E           NameError: name 'FLUSH' is not defined
+
+poker.py:53: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3" time="0.001"><failure message="NameError: name 'PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3&gt;
+
+    def test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3(self):
+        self.assertEqual(
+&gt;           best_hands(["2C 3D 7H 5H 2S", "QS KH AC 2D 3S"]), ["2C 3D 7H 5H 2S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2C 3D 7H 5H 2S'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+&gt;           return (PAIR, *[rank for rank, _ in groups])
+                    ^^^^
+E           NameError: name 'PAIR' is not defined
+
+poker.py:66: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_a_flush_tie_goes_to_high_card_down_to_the_last_one_if_necessary" time="0.001"><failure message="NameError: name 'FLUSH' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_a_flush_tie_goes_to_high_card_down_to_the_last_one_if_necessary&gt;
+
+    def test_both_hands_have_a_flush_tie_goes_to_high_card_down_to_the_last_one_if_necessary(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["2H 7H 8H 9H 6H", "3S 5S 6S 7S 8S"]), ["2H 7H 8H 9H 6H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:156: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2H 7H 8H 9H 6H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+&gt;           return (FLUSH, *sorted(ranks, reverse=True))
+                    ^^^^^
+E           NameError: name 'FLUSH' is not defined
+
+poker.py:53: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_a_full_house_tie_goes_to_highest_ranked_triplet" time="0.001"><failure message="NameError: name 'FULL_HOUSE' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_a_full_house_tie_goes_to_highest_ranked_triplet&gt;
+
+    def test_both_hands_have_a_full_house_tie_goes_to_highest_ranked_triplet(self):
+        self.assertEqual(
+&gt;           best_hands(["4H 4S 4D 9S 9D", "5H 5S 5D 8S 8D"]), ["5H 5S 5D 8S 8D"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:166: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4H 4S 4D 9S 9D'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+&gt;               return (FULL_HOUSE, *[rank for rank, _ in groups])
+                        ^^^^^^^^^^
+E               NameError: name 'FULL_HOUSE' is not defined
+
+poker.py:61: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_a_straight_flush_tie_goes_to_highest_ranked_card" time="0.001"><failure message="NameError: name 'STRAIGHT_FLUSH' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_a_straight_flush_tie_goes_to_highest_ranked_card&gt;
+
+    def test_both_hands_have_a_straight_flush_tie_goes_to_highest_ranked_card(self):
+        self.assertEqual(
+&gt;           best_hands(["4H 6H 7H 8H 5H", "5S 7S 8S 9S 6S"]), ["5S 7S 8S 9S 6S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:215: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4H 6H 7H 8H 5H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+&gt;           return (STRAIGHT_FLUSH, straight_high)
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'STRAIGHT_FLUSH' is not defined
+
+poker.py:51: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_four_of_a_kind_tie_goes_to_high_quad" time="0.001"><failure message="NameError: name 'FOUR_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_four_of_a_kind_tie_goes_to_high_quad&gt;
+
+    def test_both_hands_have_four_of_a_kind_tie_goes_to_high_quad(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 2H 2C 8D 2D", "4S 5H 5S 5D 5C"]), ["4S 5H 5S 5D 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:183: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 2H 2C 8D 2D'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+&gt;           return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'FOUR_OF_A_KIND' is not defined
+
+poker.py:58: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_the_same_pair_high_card_wins" time="0.001"><failure message="NameError: name 'PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_the_same_pair_high_card_wins&gt;
+
+    def test_both_hands_have_the_same_pair_high_card_wins(self):
+        self.assertEqual(
+&gt;           best_hands(["4H 4S AH JC 3D", "4C 4D AS 5D 6C"]), ["4H 4S AH JC 3D"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4H 4S AH JC 3D'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+&gt;           return (PAIR, *[rank for rank, _ in groups])
+                    ^^^^
+E           NameError: name 'PAIR' is not defined
+
+poker.py:66: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet" time="0.001"><failure message="NameError: name 'THREE_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet&gt;
+
+    def test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 2H 2C 8D JH", "4S AH AS 8C AD"]), ["4S AH AS 8C AD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:105: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 2H 2C 8D JH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+&gt;           return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^^
+E           NameError: name 'THREE_OF_A_KIND' is not defined
+
+poker.py:62: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_two_identically_ranked_pairs_tie_goes_to_remaining_card_kicker" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_two_identically_ranked_pairs_tie_goes_to_remaining_card_kicker&gt;
+
+    def test_both_hands_have_two_identically_ranked_pairs_tie_goes_to_remaining_card_kicker(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["JD QH JS 8D QC", "JS QS JC 2D QD"]), ["JD QH JS 8D QC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:83: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = 'JD QH JS 8D QC'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_two_pairs_highest_ranked_pair_wins" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_two_pairs_highest_ranked_pair_wins&gt;
+
+    def test_both_hands_have_two_pairs_highest_ranked_pair_wins(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 8H 2D 8D 3H", "4S 5H 4C 8S 5D"]), ["2S 8H 2D 8D 3H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:69: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 8H 2D 8D 3H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_two_pairs_that_add_to_the_same_value_win_goes_to_highest_pair" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_two_pairs_that_add_to_the_same_value_win_goes_to_highest_pair&gt;
+
+    def test_both_hands_have_two_pairs_that_add_to_the_same_value_win_goes_to_highest_pair(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["6S 6H 3S 3H AS", "7H 7S 2H 2S AC"]), ["7H 7S 2H 2S AC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:90: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '6S 6H 3S 3H AS'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair&gt;
+
+    def test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["2S QS 2C QD JH", "JD QH JS 8D QC"]), ["JD QH JS 8D QC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:76: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S QS 2C QD JH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_both_hands_with_a_straight_tie_goes_to_highest_ranked_card" time="0.001"><failure message="NameError: name 'STRAIGHT' is not defined">self = &lt;poker_test.PokerTest testMethod=test_both_hands_with_a_straight_tie_goes_to_highest_ranked_card&gt;
+
+    def test_both_hands_with_a_straight_tie_goes_to_highest_ranked_card(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 6C 7S 8D 5H", "5S 7H 8S 9D 6H"]), ["5S 7H 8S 9D 6H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:137: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 6C 7S 8D 5H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+&gt;           return (STRAIGHT, straight_high)
+                    ^^^^^^^^
+E           NameError: name 'STRAIGHT' is not defined
+
+poker.py:55: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_even_though_an_ace_is_usually_high_a_5_high_straight_flush_is_the_lowest_scoring_straight_flush" time="0.001"><failure message="NameError: name 'STRAIGHT_FLUSH' is not defined">self = &lt;poker_test.PokerTest testMethod=test_even_though_an_ace_is_usually_high_a_5_high_straight_flush_is_the_lowest_scoring_straight_flush&gt;
+
+    def test_even_though_an_ace_is_usually_high_a_5_high_straight_flush_is_the_lowest_scoring_straight_flush(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["2H 3H 4H 5H 6H", "4D AD 3D 2D 5D"]), ["2H 3H 4H 5H 6H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:222: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2H 3H 4H 5H 6H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+&gt;           return (STRAIGHT_FLUSH, straight_high)
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'STRAIGHT_FLUSH' is not defined
+
+poker.py:51: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_even_though_an_ace_is_usually_high_a_5_high_straight_is_the_lowest_scoring_straight" time="0.001"><failure message="NameError: name 'STRAIGHT' is not defined">self = &lt;poker_test.PokerTest testMethod=test_even_though_an_ace_is_usually_high_a_5_high_straight_is_the_lowest_scoring_straight&gt;
+
+    def test_even_though_an_ace_is_usually_high_a_5_high_straight_is_the_lowest_scoring_straight(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["2H 3C 4D 5D 6H", "4S AH 3S 2D 5H"]), ["2H 3C 4D 5D 6H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:144: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2H 3C 4D 5D 6H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+&gt;           return (STRAIGHT, straight_high)
+                    ^^^^^^^^
+E           NameError: name 'STRAIGHT' is not defined
+
+poker.py:55: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_flush_beats_a_straight" time="0.001"><failure message="NameError: name 'STRAIGHT' is not defined">self = &lt;poker_test.PokerTest testMethod=test_flush_beats_a_straight&gt;
+
+    def test_flush_beats_a_straight(self):
+        self.assertEqual(
+&gt;           best_hands(["4C 6H 7D 8D 5H", "2S 4S 5S 6S 7S"]), ["2S 4S 5S 6S 7S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:149: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4C 6H 7D 8D 5H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+&gt;           return (STRAIGHT, straight_high)
+                    ^^^^^^^^
+E           NameError: name 'STRAIGHT' is not defined
+
+poker.py:55: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_four_of_a_kind_beats_a_full_house" time="0.001"><failure message="NameError: name 'FULL_HOUSE' is not defined">self = &lt;poker_test.PokerTest testMethod=test_four_of_a_kind_beats_a_full_house&gt;
+
+    def test_four_of_a_kind_beats_a_full_house(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 4D 5D 4H", "3S 3H 2S 3D 3C"]), ["3S 3H 2S 3D 3C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:178: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4D 5D 4H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+&gt;               return (FULL_HOUSE, *[rank for rank, _ in groups])
+                        ^^^^^^^^^^
+E               NameError: name 'FULL_HOUSE' is not defined
+
+poker.py:61: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_full_house_beats_a_flush" time="0.001"><failure message="NameError: name 'FLUSH' is not defined">self = &lt;poker_test.PokerTest testMethod=test_full_house_beats_a_flush&gt;
+
+    def test_full_house_beats_a_flush(self):
+        self.assertEqual(
+&gt;           best_hands(["3H 6H 7H 8H 5H", "4S 5H 4C 5D 4H"]), ["4S 5H 4C 5D 4H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:161: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '3H 6H 7H 8H 5H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+&gt;           return (FLUSH, *sorted(ranks, reverse=True))
+                    ^^^^^
+E           NameError: name 'FLUSH' is not defined
+
+poker.py:53: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_highest_card_out_of_all_hands_wins" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_highest_card_out_of_all_hands_wins&gt;
+
+    def test_highest_card_out_of_all_hands_wins(self):
+        self.assertEqual(
+&gt;           best_hands(["4D 5S 6S 8D 3C", "2S 4C 7S 9H 10H", "3S 4S 5D 6H JH"]),
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+            ["3S 4S 5D 6H JH"],
+        )
+
+poker_test.py:18: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4D 5S 6S 8D 3C'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_highest_pair_wins" time="0.001"><failure message="NameError: name 'PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_highest_pair_wins&gt;
+
+    def test_highest_pair_wins(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 2H 6S 2D JH", "2S 4H 6C 4D JD"]), ["2S 4H 6C 4D JD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 2H 6S 2D JH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+&gt;           return (PAIR, *[rank for rank, _ in groups])
+                    ^^^^
+E           NameError: name 'PAIR' is not defined
+
+poker.py:66: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_multiple_hands_with_the_same_high_cards_tie_compares_next_highest_ranked_down_to_last_card" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_multiple_hands_with_the_same_high_cards_tie_compares_next_highest_ranked_down_to_last_card&gt;
+
+    def test_multiple_hands_with_the_same_high_cards_tie_compares_next_highest_ranked_down_to_last_card(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["3S 5H 6S 8D 7H", "2S 5D 6D 8C 7S"]), ["3S 5H 6S 8D 7H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:39: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '3S 5H 6S 8D 7H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_one_pair_beats_high_card" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_one_pair_beats_high_card&gt;
+
+    def test_one_pair_beats_high_card(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 6C 8D KH", "2S 4H 6S 4D JH"]), ["2S 4H 6S 4D JH"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 6C 8D KH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_single_hand_always_wins" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_single_hand_always_wins&gt;
+
+    def test_single_hand_always_wins(self):
+&gt;       self.assertEqual(best_hands(["4S 5S 7H 8D JC"]), ["4S 5S 7H 8D JC"])
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+poker_test.py:14: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5S 7H 8D JC'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_straight_flush_beats_four_of_a_kind" time="0.001"><failure message="NameError: name 'FOUR_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_straight_flush_beats_four_of_a_kind&gt;
+
+    def test_straight_flush_beats_four_of_a_kind(self):
+        self.assertEqual(
+&gt;           best_hands(["4S 5H 5S 5D 5C", "7S 8S 9S 6S 10S"]), ["7S 8S 9S 6S 10S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:195: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 5S 5D 5C'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+&gt;           return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'FOUR_OF_A_KIND' is not defined
+
+poker.py:58: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_three_of_a_kind_beats_two_pair" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_three_of_a_kind_beats_two_pair&gt;
+
+    def test_three_of_a_kind_beats_two_pair(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 8H 2H 8D JH", "4S 5H 4C 8S 4H"]), ["4S 5H 4C 8S 4H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:100: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 8H 2H 8D JH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_two_pairs_beats_one_pair" time="0.001"><failure message="NameError: name 'PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_two_pairs_beats_one_pair&gt;
+
+    def test_two_pairs_beats_one_pair(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 8H 6S 8D JH", "4S 5H 4C 8C 5C"]), ["4S 5H 4C 8C 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 8H 6S 8D JH'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+&gt;           return (PAIR, *[rank for rank, _ in groups])
+                    ^^^^
+E           NameError: name 'PAIR' is not defined
+
+poker.py:66: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_two_pairs_first_ranked_by_largest_pair" time="0.001"><failure message="NameError: name 'TWO_PAIR' is not defined">self = &lt;poker_test.PokerTest testMethod=test_two_pairs_first_ranked_by_largest_pair&gt;
+
+    def test_two_pairs_first_ranked_by_largest_pair(self):
+        self.assertEqual(
+&gt;           best_hands(["5C 2S 5S 4H 4C", "6S 2S 6H 7C 2C"]), ["6S 2S 6H 7C 2C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:95: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '5C 2S 5S 4H 4C'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+&gt;               return (TWO_PAIR, *[rank for rank, _ in groups])
+                        ^^^^^^^^
+E               NameError: name 'TWO_PAIR' is not defined
+
+poker.py:65: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_winning_high_card_hand_also_has_the_lowest_card" time="0.001"><failure message="NameError: name 'HIGH_CARD' is not defined">self = &lt;poker_test.PokerTest testMethod=test_winning_high_card_hand_also_has_the_lowest_card&gt;
+
+    def test_winning_high_card_hand_also_has_the_lowest_card(self):
+        self.assertEqual(
+&gt;           best_hands(["2S 5H 6S 8D 7H", "3S 4D 6D 8C 7S"]), ["2S 5H 6S 8D 7H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:44: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 5H 6S 8D 7H'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+            return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 2:
+            if groups[1][1] == 2:
+                return (TWO_PAIR, *[rank for rank, _ in groups])
+            return (PAIR, *[rank for rank, _ in groups])
+&gt;       return (HIGH_CARD, *sorted(ranks, reverse=True))
+                ^^^^^^^^^
+E       NameError: name 'HIGH_CARD' is not defined
+
+poker.py:67: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_with_multiple_decks_both_hands_have_a_full_house_with_the_same_triplet_tie_goes_to_the_pair" time="0.001"><failure message="NameError: name 'FULL_HOUSE' is not defined">self = &lt;poker_test.PokerTest testMethod=test_with_multiple_decks_both_hands_have_a_full_house_with_the_same_triplet_tie_goes_to_the_pair&gt;
+
+    def test_with_multiple_decks_both_hands_have_a_full_house_with_the_same_triplet_tie_goes_to_the_pair(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["5H 5S 5D 9S 9D", "5H 5S 5D 8S 8D"]), ["5H 5S 5D 9S 9D"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:173: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '5H 5S 5D 9S 9D'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+&gt;               return (FULL_HOUSE, *[rank for rank, _ in groups])
+                        ^^^^^^^^^^
+E               NameError: name 'FULL_HOUSE' is not defined
+
+poker.py:61: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_with_multiple_decks_both_hands_with_identical_four_of_a_kind_tie_determined_by_kicker" time="0.001"><failure message="NameError: name 'FOUR_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_with_multiple_decks_both_hands_with_identical_four_of_a_kind_tie_determined_by_kicker&gt;
+
+    def test_with_multiple_decks_both_hands_with_identical_four_of_a_kind_tie_determined_by_kicker(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["3S 3H 2S 3D 3C", "3S 3H 4S 3D 3C"]), ["3S 3H 4S 3D 3C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:190: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '3S 3H 2S 3D 3C'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+&gt;           return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^
+E           NameError: name 'FOUR_OF_A_KIND' is not defined
+
+poker.py:58: NameError</failure></testcase><testcase classname="poker_test.PokerTest" name="test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards" time="0.001"><failure message="NameError: name 'THREE_OF_A_KIND' is not defined">self = &lt;poker_test.PokerTest testMethod=test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards&gt;
+
+    def test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards(
+        self,
+    ):
+        self.assertEqual(
+&gt;           best_hands(["5S AH AS 7C AD", "4S AH AS 8C AD"]), ["4S AH AS 8C AD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:20: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '5S AH AS 7C AD'
+
+    def score_hand(hand):
+        """Return a comparable score tuple for a five-card hand.
+    
+        The first element is the hand category; the remaining elements are
+        tie-breaker ranks, most significant first.
+        """
+        ranks, suits = _parse(hand)
+    
+        is_flush = len(set(suits)) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        # Group by (count, rank), highest first: e.g. a full house of
+        # 5s and 9s yields [(5, 3), (9, 2)].
+        groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    
+        straight_high = None
+        if len(set(ranks)) == 5:
+            if max(ranks) - min(ranks) == 4:
+                straight_high = max(ranks)
+            elif set(ranks) == {2, 3, 4, 5, 14}:
+                # A-2-3-4-5 is a "wheel": the lowest straight.
+                straight_high = 5
+    
+        if is_flush and straight_high is not None:
+            return (STRAIGHT_FLUSH, straight_high)
+        if is_flush:
+            return (FLUSH, *sorted(ranks, reverse=True))
+        if straight_high is not None:
+            return (STRAIGHT, straight_high)
+    
+        if groups[0][1] == 4:
+            return (FOUR_OF_A_KIND, *[rank for rank, _ in groups])
+        if groups[0][1] == 3:
+            if groups[1][1] == 2:
+                return (FULL_HOUSE, *[rank for rank, _ in groups])
+&gt;           return (THREE_OF_A_KIND, *[rank for rank, _ in groups])
+                    ^^^^^^^^^^^^^^^
+E           NameError: name 'THREE_OF_A_KIND' is not defined
+
+poker.py:62: NameError</failure></testcase></testsuite></testsuites>

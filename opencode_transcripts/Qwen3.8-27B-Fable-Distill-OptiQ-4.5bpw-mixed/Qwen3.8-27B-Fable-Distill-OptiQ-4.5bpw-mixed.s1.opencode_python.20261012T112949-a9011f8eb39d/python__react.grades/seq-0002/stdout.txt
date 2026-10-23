@@ -1,0 +1,201 @@
+.F...FFFF.F...                                                           [100%]
+=================================== FAILURES ===================================
+______________ ReactTest.test_callback_cells_only_fire_on_change _______________
+
+self = <react_test.ReactTest testMethod=test_callback_cells_only_fire_on_change>
+
+    def test_callback_cells_only_fire_on_change(self):
+        input = InputCell(1)
+        output = ComputeCell([input], lambda inputs: 111 if inputs[0] < 3 else 222)
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        output.add_callback(callback1)
+        input.value = 2
+>       self.assertEqual(cb1_observer, [])
+E       AssertionError: Lists differ: [111] != []
+E       
+E       First list contains 1 additional elements.
+E       First extra element 0:
+E       111
+E       
+E       - [111]
+E       + []
+
+react_test.py:103: AssertionError
+_ ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change>
+
+    def test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+>       always_two = ComputeCell(
+            [
+                plus_one,
+                minus_one,
+            ],
+            lambda inputs: inputs[0] - inputs[1],
+        )
+
+react_test.py:247: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:23: in __init__
+    self._value = self._recompute()
+                  ^^^^^^^^^^^^^^^^^
+react.py:31: in _recompute
+    self._value = self._compute_function([cell.value for cell in self._inputs])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+inputs = [None, None]
+
+>       lambda inputs: inputs[0] - inputs[1],
+                       ^^^^^^^^^^^^^^^^^^^^^
+    )
+E   TypeError: unsupported operand type(s) for -: 'NoneType' and 'NoneType'
+
+react_test.py:252: TypeError
+_ ReactTest.test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change>
+
+    def test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one1 = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+>       minus_one2 = ComputeCell(
+            [
+                minus_one1,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+
+react_test.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:23: in __init__
+    self._value = self._recompute()
+                  ^^^^^^^^^^^^^^^^^
+react.py:31: in _recompute
+    self._value = self._compute_function([cell.value for cell in self._inputs])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+inputs = [None]
+
+>       lambda inputs: inputs[0] - 1,
+                       ^^^^^^^^^^^^^
+    )
+E   TypeError: unsupported operand type(s) for -: 'NoneType' and 'int'
+
+react_test.py:216: TypeError
+_____________ ReactTest.test_compute_cells_calculate_initial_value _____________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_calculate_initial_value>
+
+    def test_compute_cells_calculate_initial_value(self):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+>       self.assertEqual(output.value, 2)
+E       AssertionError: None != 2
+
+react_test.py:32: AssertionError
+________ ReactTest.test_compute_cells_can_depend_on_other_compute_cells ________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_can_depend_on_other_compute_cells>
+
+    def test_compute_cells_can_depend_on_other_compute_cells(self):
+        input = InputCell(1)
+        times_two = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 2,
+        )
+        times_thirty = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 30,
+        )
+>       output = ComputeCell(
+            [
+                times_two,
+                times_thirty,
+            ],
+            lambda inputs: inputs[0] + inputs[1],
+        )
+
+react_test.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:23: in __init__
+    self._value = self._recompute()
+                  ^^^^^^^^^^^^^^^^^
+react.py:31: in _recompute
+    self._value = self._compute_function([cell.value for cell in self._inputs])
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+inputs = [None, None]
+
+>       lambda inputs: inputs[0] + inputs[1],
+                       ^^^^^^^^^^^^^^^^^^^^^
+    )
+E   TypeError: unsupported operand type(s) for +: 'NoneType' and 'NoneType'
+
+react_test.py:76: TypeError
+_________ ReactTest.test_compute_cells_take_inputs_in_the_right_order __________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_take_inputs_in_the_right_order>
+
+    def test_compute_cells_take_inputs_in_the_right_order(self):
+        one = InputCell(1)
+        two = InputCell(2)
+        output = ComputeCell(
+            [
+                one,
+                two,
+            ],
+            lambda inputs: inputs[0] + inputs[1] * 10,
+        )
+>       self.assertEqual(output.value, 21)
+E       AssertionError: None != 21
+
+react_test.py:44: AssertionError
+=========================== short test summary info ============================
+FAILED react_test.py::ReactTest::test_callback_cells_only_fire_on_change - As...
+FAILED react_test.py::ReactTest::test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change
+FAILED react_test.py::ReactTest::test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change
+FAILED react_test.py::ReactTest::test_compute_cells_calculate_initial_value
+FAILED react_test.py::ReactTest::test_compute_cells_can_depend_on_other_compute_cells
+FAILED react_test.py::ReactTest::test_compute_cells_take_inputs_in_the_right_order
+6 failed, 8 passed in 0.04s

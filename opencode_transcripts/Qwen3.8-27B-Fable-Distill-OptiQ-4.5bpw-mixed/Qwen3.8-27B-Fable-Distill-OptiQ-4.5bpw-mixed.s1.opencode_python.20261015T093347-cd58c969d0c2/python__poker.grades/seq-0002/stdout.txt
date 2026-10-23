@@ -1,0 +1,707 @@
+F.F.F..F....FF...........F.F..FF....F                                    [100%]
+=================================== FAILURES ===================================
+_______________ PokerTest.test_a_straight_beats_three_of_a_kind ________________
+
+self = <poker_test.PokerTest testMethod=test_a_straight_beats_three_of_a_kind>
+
+    def test_a_straight_beats_three_of_a_kind(self):
+        self.assertEqual(
+>           best_hands(["4S 5H 4C 8D 4H", "3S 4D 2S 6D 5C"]), ["3S 4D 2S 6D 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:117: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+______________ PokerTest.test_aces_can_end_a_straight_10_j_q_k_a _______________
+
+self = <poker_test.PokerTest testMethod=test_aces_can_end_a_straight_10_j_q_k_a>
+
+    def test_aces_can_end_a_straight_10_j_q_k_a(self):
+        self.assertEqual(
+>           best_hands(["4S 5H 4C 8D 4H", "10D JH QS KD AC"]), ["10D JH QS KD AC"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:122: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+______________ PokerTest.test_aces_can_start_a_straight_a_2_3_4_5 ______________
+
+self = <poker_test.PokerTest testMethod=test_aces_can_start_a_straight_a_2_3_4_5>
+
+    def test_aces_can_start_a_straight_a_2_3_4_5(self):
+        self.assertEqual(
+>           best_hands(["4S 5H 4C 8D 4H", "4D AH 3S 2D 5C"]), ["4D AH 3S 2D 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:127: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8D 4H'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+_____ PokerTest.test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3 ______
+
+self = <poker_test.PokerTest testMethod=test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3>
+
+    def test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3(self):
+        self.assertEqual(
+>           best_hands(["2C 3D 7H 5H 2S", "QS KH AC 2D 3S"]), ["2C 3D 7H 5H 2S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2C 3D 7H 5H 2S'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+            triple, kickers = by_rank
+            return (3, triple[0], *kickers)
+        if by_rank[0][1] == 2 and by_rank[1][1] == 2:
+            high_pair, low_pair, kicker = by_rank
+            return (2, high_pair[0], low_pair[0], kicker[0])
+        if by_rank[0][1] == 2:
+>           pair, kickers = by_rank
+            ^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:62: ValueError
+_________ PokerTest.test_both_hands_have_the_same_pair_high_card_wins __________
+
+self = <poker_test.PokerTest testMethod=test_both_hands_have_the_same_pair_high_card_wins>
+
+    def test_both_hands_have_the_same_pair_high_card_wins(self):
+        self.assertEqual(
+>           best_hands(["4H 4S AH JC 3D", "4C 4D AS 5D 6C"]), ["4H 4S AH JC 3D"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4H 4S AH JC 3D'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+            triple, kickers = by_rank
+            return (3, triple[0], *kickers)
+        if by_rank[0][1] == 2 and by_rank[1][1] == 2:
+            high_pair, low_pair, kicker = by_rank
+            return (2, high_pair[0], low_pair[0], kicker[0])
+        if by_rank[0][1] == 2:
+>           pair, kickers = by_rank
+            ^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:62: ValueError
+_ PokerTest.test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet _
+
+self = <poker_test.PokerTest testMethod=test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet>
+
+    def test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet(self):
+        self.assertEqual(
+>           best_hands(["2S 2H 2C 8D JH", "4S AH AS 8C AD"]), ["4S AH AS 8C AD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:105: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 2H 2C 8D JH'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+_______________________ PokerTest.test_highest_pair_wins _______________________
+
+self = <poker_test.PokerTest testMethod=test_highest_pair_wins>
+
+    def test_highest_pair_wins(self):
+        self.assertEqual(
+>           best_hands(["4S 2H 6S 2D JH", "2S 4H 6C 4D JD"]), ["2S 4H 6C 4D JD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 2H 6S 2D JH'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+            triple, kickers = by_rank
+            return (3, triple[0], *kickers)
+        if by_rank[0][1] == 2 and by_rank[1][1] == 2:
+            high_pair, low_pair, kicker = by_rank
+            return (2, high_pair[0], low_pair[0], kicker[0])
+        if by_rank[0][1] == 2:
+>           pair, kickers = by_rank
+            ^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:62: ValueError
+___________________ PokerTest.test_one_pair_beats_high_card ____________________
+
+self = <poker_test.PokerTest testMethod=test_one_pair_beats_high_card>
+
+    def test_one_pair_beats_high_card(self):
+        self.assertEqual(
+>           best_hands(["4S 5H 6C 8D KH", "2S 4H 6S 4D JH"]), ["2S 4H 6S 4D JH"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 4H 6S 4D JH'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+            triple, kickers = by_rank
+            return (3, triple[0], *kickers)
+        if by_rank[0][1] == 2 and by_rank[1][1] == 2:
+            high_pair, low_pair, kicker = by_rank
+            return (2, high_pair[0], low_pair[0], kicker[0])
+        if by_rank[0][1] == 2:
+>           pair, kickers = by_rank
+            ^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:62: ValueError
+________________ PokerTest.test_three_of_a_kind_beats_two_pair _________________
+
+self = <poker_test.PokerTest testMethod=test_three_of_a_kind_beats_two_pair>
+
+    def test_three_of_a_kind_beats_two_pair(self):
+        self.assertEqual(
+>           best_hands(["2S 8H 2H 8D JH", "4S 5H 4C 8S 4H"]), ["4S 5H 4C 8S 4H"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:100: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 5H 4C 8S 4H'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+___________________ PokerTest.test_two_pairs_beats_one_pair ____________________
+
+self = <poker_test.PokerTest testMethod=test_two_pairs_beats_one_pair>
+
+    def test_two_pairs_beats_one_pair(self):
+        self.assertEqual(
+>           best_hands(["2S 8H 6S 8D JH", "4S 5H 4C 8C 5C"]), ["4S 5H 4C 8C 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 8H 6S 8D JH'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+            triple, kickers = by_rank
+            return (3, triple[0], *kickers)
+        if by_rank[0][1] == 2 and by_rank[1][1] == 2:
+            high_pair, low_pair, kicker = by_rank
+            return (2, high_pair[0], low_pair[0], kicker[0])
+        if by_rank[0][1] == 2:
+>           pair, kickers = by_rank
+            ^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:62: ValueError
+_ PokerTest.test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards _
+
+self = <poker_test.PokerTest testMethod=test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards>
+
+    def test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards(
+        self,
+    ):
+        self.assertEqual(
+>           best_hands(["5S AH AS 7C AD", "4S AH AS 8C AD"]), ["4S AH AS 8C AD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:112: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:69: in best_hands
+    scores = [(hand, _hand_score(hand)) for hand in hands]
+                     ^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '5S AH AS 7C AD'
+
+    def _hand_score(hand):
+        """Return a comparable score tuple for a five-card hand string."""
+        cards = hand.split()
+        ranks = [_RANKS[card[:-1]] for card in cards]
+        suits = [card[-1] for card in cards]
+    
+        is_flush = len(set(suits)) == 1
+    
+        ordered = sorted(ranks, reverse=True)
+        is_straight = ordered == [ordered[0] - i for i in range(5)]
+        # Ace can start a straight: A 2 3 4 5 is a 5-high straight.
+        if ordered == [14, 5, 4, 3, 2]:
+            is_straight = True
+            straight_high = 5
+        elif is_straight:
+            straight_high = ordered[0]
+    
+        if is_straight and is_flush:
+            return (8, straight_high)
+        if is_straight:
+            return (4, straight_high)
+    
+        # Group ranks by count, highest rank first.
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+        by_rank = sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    
+        if is_flush:
+            return (5, *ordered)
+        if by_rank[0][1] == 4:
+            quad, kicker = by_rank
+            return (7, quad[0], kicker[0])
+        if by_rank[0][1] == 3 and by_rank[1][1] == 2:
+            return (6, by_rank[0][0], by_rank[1][0])
+        if by_rank[0][1] == 3:
+>           triple, kickers = by_rank
+            ^^^^^^^^^^^^^^^
+E           ValueError: too many values to unpack (expected 2)
+
+poker.py:56: ValueError
+=========================== short test summary info ============================
+FAILED poker_test.py::PokerTest::test_a_straight_beats_three_of_a_kind - Valu...
+FAILED poker_test.py::PokerTest::test_aces_can_end_a_straight_10_j_q_k_a - Va...
+FAILED poker_test.py::PokerTest::test_aces_can_start_a_straight_a_2_3_4_5 - V...
+FAILED poker_test.py::PokerTest::test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3
+FAILED poker_test.py::PokerTest::test_both_hands_have_the_same_pair_high_card_wins
+FAILED poker_test.py::PokerTest::test_both_hands_have_three_of_a_kind_tie_goes_to_highest_ranked_triplet
+FAILED poker_test.py::PokerTest::test_highest_pair_wins - ValueError: too man...
+FAILED poker_test.py::PokerTest::test_one_pair_beats_high_card - ValueError: ...
+FAILED poker_test.py::PokerTest::test_three_of_a_kind_beats_two_pair - ValueE...
+FAILED poker_test.py::PokerTest::test_two_pairs_beats_one_pair - ValueError: ...
+FAILED poker_test.py::PokerTest::test_with_multiple_decks_two_players_can_have_same_three_of_a_kind_ties_go_to_highest_remaining_cards
+11 failed, 26 passed in 0.07s

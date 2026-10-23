@@ -31,3 +31,13 @@ scrubbed text; venvs / caches / `tmp/` skipped. `backfill/2026-10-22-p438/BACKFI
 original, scrubbed and published sha256. The 330 `p369/phase2/**/*.npz` arrays (18.9 GB) are NOT here: they are on the public
 Hugging Face dataset `caslca/mlx-local-stack-evidence` at the same paths; `EXTERNAL_MANIFEST.json` pins each one's sha256 and
 size (verified equal to the hub's LFS sha256, 330 / 330).
+
+## 2026-10-22 backfill 2 (P450 v3 / C216)
+
+Only the raw files that committed rows / docs on `main` cite and that were local-only: 6,579 opencode transcript files
+(`opencode_transcripts/…`: events streams, grade reports, stderr — behind the M59 / M61 / M63 / P223 / c144 tg1 rows and their
+web audits), the cited `c144-base.archive/attempt1-guard-residual` directory, and `p441/upload.log` (the HF upload of the
+p369 arrays). Exact cited paths, no renames; scrubbed as above; `backfill/2026-10-22-p450/BACKFILL_MANIFEST.json` lists every
+file's original, scrubbed and published sha256. Process artifacts (session-gate sandboxes, probe DBs / snapshots / logs,
+campaign process logs) were deliberately NOT backed up: they are how the results were produced, not results. 203 cited
+transcript paths were absent from the m5max-128 workdir (likely on m5max).
