@@ -1,0 +1,9 @@
+F1 — HIGH — `benchmark/bench/p426_plan.py:50-52`: The P426 M1 caller never passes `--production-ref`. It therefore retains `7207179b`, so stack S still fails the production diff and the mini-wave remains `NOT_STARTED`. Fix: pin S’s immutable production SHA in the frozen plan, pass it explicitly, and verify the report records that SHA.
+
+F2 — MEDIUM — `dev/p369_phase2/orchestrate.py:1205-1214,1242-1250`: Every ancestor PID is exempted without validating its role. A refused benchmark parent performing concurrent work is consequently hidden; PID reuse between ancestor collection and process enumeration has the same theoretical bypass. A sibling launched from the same shell remains correctly detectable. Fix: exempt only the recognized P426 leg/sequencer chain, matching PID, creation time, and expected argv.
+
+F3 — HIGH — `dev/p369_phase2/orchestrate.py:1218-1236`; `dev/p369_phase2/qualify.py:930-934`: `--production-ref` accepts symbolic or unrelated revisions and records the raw argument rather than the exact commit diffed. `HEAD` makes the check tautological; a moving branch can change after preflight, leaving the report ambiguous or naming a different tree. Resolve once to a full commit SHA, require the approved strict ancestor of the reviewed head, diff that SHA, and propagate that exact resolved SHA from preflight into the report.
+
+F4 — MEDIUM — `mlx_vlm/tests/test_p452_qualify_in_wrapper.py:25-35,64-93`: The tests use synthetic PID sets and never exercise `preflight`, a real sequencer→wrapper→qualify process topology, P426 argv wiring, or report provenance. They would pass if `preflight` stopped supplying ancestors entirely, so they do not catch the Wave-1 regression. Add an unmocked subprocess-topology test plus an integration assertion that the planned production SHA is diffed and recorded.
+
+VERDICT: DISAGREE F1 F2 F3 F4
