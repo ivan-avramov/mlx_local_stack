@@ -1,4 +1,4 @@
-# Handoff — 2026-10-22 (session 6 checkpoint 17:25): Wave 1 A1–A4 full legs RUNNING on frozen v4; gate at releases; evidence backfilled
+# Handoff — 2026-10-23 (session 6 checkpoint 01:50): Wave 1 A1–A4 DONE (24 / 24 VALID); M1 pending the P452 fork push
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P452, C215, P447, C214, P446, P444
 addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p426-fable-mtp-recert.md` and
@@ -7,15 +7,11 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 ## State of the world
 
 - **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
-- **Wave 1 RUNNING (A1–A4 only, P452)** — sequencer PID 55497 from `$STACK_WORKDIR/worktrees/stack-p426-seq` (`25cacd69`), legs
-  from the FROZEN worktree `$STACK_WORKDIR/worktrees/stack-p426` at **v4 `556422b8`** (`src/mlx-vlm` `0b603d03`, `src/mlx-serve`
-  `86921f02`, registry OFF `00a6263e…` / ON overlay `bb7fe3f0…`; `$STACK_WORKDIR/p426/frozen.json`; v1–v3 archived). 8 / 8
-  A1–A4 smokes VALID + speed valid; full leg 1 `math500-p426-off-b1` VALID (50 / 50, 1 h 05); 15 more (≈ 12 h). Log
-  `$STACK_WORKDIR/p426/wave1/sequence.log`. A background task (`scratchpad/commit_harvests.sh <seq pid> <log line>`) commits
-  each harvested leg on `main` and exits on STOP / DONE. NOTE `9dee517e` is labelled `cjudge-p426-off-smoke` but holds
-  `math500-p426-off-b1`'s rows (script fixed).
-- **M1 not run** (P452, OPEN): the fork `qualify.py` preflight refuses its own ancestor leg / sequencer and pins production
-  `7207179b`; proposal = fork dev-only fix + M1 mini-wave. M1 smoke attempt archived.
+- **Wave 1 A1–A4 DONE 2026-10-23 01:42** — 8 smokes + 16 full legs, ALL VALID and speed valid, all harvested and committed
+  (frozen v4 `556422b8`; sequencer worktree `stack-p426-seq`). Rows NOT yet graded; B6 / B8 not built.
+- **M1 not run**: P452 approved (C216); fork branch `p452-qualify-p426` (7 local commits, production identical to S) done after
+  3 Cursor rounds + C216; fork suite ×2 + 8 audits running (`$STACK_WORKDIR/p452/fork_checks.out`); then ASK the fork push →
+  stack bump → M1 freeze (frozen.json + `production_ref` = `0b603d03…`) → 2 M1 smokes + 4 legs.
 - **Test windows:** `touch $STACK_WORKDIR/p426/wave1/PAUSE`; tests only after `PAUSE: holding`; `rm` → 600 s gap restarts.
   Monitors never carry a `chain_ops.BUSY` string in their command line (P443).
 - **Gate (P434 → P448 / C215):** `bench.local_gate`; machine-local shims in `${XDG_CONFIG_HOME}/mlx_local_stack/hooks/` are
@@ -29,14 +25,12 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 
 ## Next work, in order
 
-1. Watch Wave 1 (each leg committed by the background task; on STOP read the receipt, propose). After A1–A4: recalibrate
-   the estimate (the vision OFF smoke wall includes the one-time COCO `load_dataset`).
-2. Operator decisions: P452 (M1 fork fix), P450 (slim second backfill ≈ 35–50 MB), the `main` push.
-3. In PAUSE windows: B8 pair verifier, B6 signals sheet, panel round 1 (P432), the P433 fix, B2 (tg1, Wave 2); a full stack
-   suite on HEAD (last full: `b61a14f6`; later commits covered by targeted suites ×2).
-4. Wave-2 re-freeze adds the G4 `gate/RUNNING` marker refused by the leg wrapper (C214).
-5. Later: P440 fork style fix (first fork release); R6 plan; mlx-serve v0.3.0; stale worktrees (all clean, outputs on remotes:
-   `mlx-vlm-p369*`, `-p400`, `-p404a`, `-p405`, `-p426-b1`, `-panel`, `/private/tmp/mlx-vlm-review-*`, `evidence-p438`).
+1. P452: read the fork checks; ask the fork push; stack bump (`src/mlx-vlm` → the P452 head) + M1 freeze; M1 mini-wave
+   (`--axes m1`; the sequencer's resume skips nothing for M1).
+2. Grade A1–A4 rows (generation done, graders not run); build B8 (pair verifier) + B6 (signals sheet) → SIGNALS.md.
+3. B2 (tg1, Wave 2) as the first four-eyes run (installed 0.6.6; helpers only in PAUSE windows / with no campaign running, P454).
+4. P433 fix; panel (B3 / P432 round 1); a full stack suite on HEAD.
+5. Later: P440 fork style fix (before the first release, v1.0.0 with the P426 ship decision); R6; mlx-serve v0.3.0.
 
 ## Rules learned (session 6)
 
