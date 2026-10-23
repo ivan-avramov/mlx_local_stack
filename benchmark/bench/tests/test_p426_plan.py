@@ -100,7 +100,8 @@ def test_vision_seed_problems_read_turn_two():
 
 # ------------------------------------------------------------------ stack code round 2 K3: the M1 qualify leg
 def test_k3_an_m1_leg_is_planned_as_an_in_process_qualify_run(tmp_path):
-    leg = PL.plan_leg(REPO, "m1", "off", 1, workdir=tmp_path, reviewed_head="v" * 40)
+    leg = PL.plan_leg(REPO, "m1", "off", 1, workdir=tmp_path, reviewed_head="v" * 40,
+                      production_ref="p" * 40)
     argv = leg["driver_argv"]
     assert leg["kind"] == "qualify" and leg["rows_path"] is None
     assert argv[1] == str(REPO / "src" / "mlx-vlm" / "dev" / "p369_phase2" / "qualify.py")
@@ -116,7 +117,8 @@ def test_k3_an_m1_leg_is_planned_as_an_in_process_qualify_run(tmp_path):
 
 def test_k3_m1_smokes_exist_for_both_arms(tmp_path):
     for arm in ("off", "on"):
-        leg = PL.plan_leg(REPO, "m1", arm, None, smoke=True, workdir=tmp_path, reviewed_head="v" * 40)
+        leg = PL.plan_leg(REPO, "m1", arm, None, smoke=True, workdir=tmp_path, reviewed_head="v" * 40,
+                      production_ref="p" * 40)
         assert leg["out_dir"].name == f"p426-{arm}-smoke"
 
 
@@ -145,3 +147,18 @@ def test_k3_round3_the_frozen_builds_qualify_accepts_the_planned_argv():
         pytest.skip(f"{script}: the pinned fork predates B7 (`--predictor`); runs after the S submodule bump")
     out = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and "--predictor" in out.stdout and "--reviewed-head" in out.stdout
+
+
+# ------------------------------------------------------------------ P452 code round 1 F1: the M1 leg attests S's production tree
+def test_p452_the_m1_argv_names_the_production_ref(tmp_path):
+    leg = PL.plan_leg(REPO, "m1", "on", 2, workdir=tmp_path, reviewed_head="v" * 40, production_ref="p" * 40)
+    argv = leg["driver_argv"]
+    assert argv[argv.index("--production-ref") + 1] == "p" * 40
+    with pytest.raises(ValueError, match="production"):
+        PL.plan_leg(REPO, "m1", "on", 2, workdir=tmp_path, reviewed_head="v" * 40)
+
+
+def test_p452_the_qualify_report_must_record_the_planned_production_ref():
+    report = {"predictor": "on", "production": "p" * 40, "entries": {ENTRY: {"status": "COMPLETED", "arm": "mtp_on"}}}
+    assert PL.qualify_problems(report, ENTRY, "on", production_ref="p" * 40) == []
+    assert PL.qualify_problems(dict(report, production="7207179b"), ENTRY, "on", production_ref="p" * 40)
