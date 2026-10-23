@@ -40,11 +40,25 @@ def _walk(root, wd):
     return files, external, skipped
 
 
+def stage_files(workdir, files, stage_dir, scrub):
+    """P450 v3: stage exactly the listed files (paths relative to $STACK_WORKDIR) — the raw files committed rows cite."""
+    wd = Path(workdir).resolve()
+    paths = []
+    for rel in files:
+        p = (wd / rel).resolve()
+        if not p.is_relative_to(wd):
+            raise H.HarvestError(f"{rel}: outside {wd}")
+        if not p.is_file():
+            raise H.HarvestError(f"{rel}: not a file")
+        paths.append(p)
+    return _write_stage(wd, paths, {}, [], stage_dir, scrub)
+
+
 def stage(workdir, dirs, stage_dir, scrub):
     wd, stage_dir = Path(workdir).resolve(), Path(stage_dir)
     if stage_dir.exists():
         raise H.HarvestError(f"{stage_dir} exists")
-    staged, external, skipped, problems = [], {}, [], []
+    files_all, external, skipped = [], {}, []
     for rel_dir in dirs:
         root = (wd / rel_dir).resolve()
         if not root.is_relative_to(wd):
@@ -53,13 +67,22 @@ def stage(workdir, dirs, stage_dir, scrub):
             raise H.HarvestError(f"{rel_dir}: not a directory")
         files, ext, skip = _walk(root, wd)
         skipped += skip
+        files_all += files
         for p in ext:
             external[str(p.relative_to(wd))] = dict(sha256=hashlib.sha256(p.read_bytes()).hexdigest(), bytes=p.stat().st_size)
-        for p in files:
-            data = p.read_bytes()
-            rel, scrubbed, published, found = H._publish(data, str(p.relative_to(wd)), scrub, compressible=True)
-            problems += found
-            staged.append((rel, data, scrubbed, published))
+    return _write_stage(wd, files_all, external, skipped, stage_dir, scrub)
+
+
+def _write_stage(wd, files, external, skipped, stage_dir, scrub):
+    stage_dir = Path(stage_dir)
+    if stage_dir.exists():
+        raise H.HarvestError(f"{stage_dir} exists")
+    staged, problems = [], []
+    for p in files:
+        data = p.read_bytes()
+        rel, scrubbed, published, found = H._publish(data, str(p.relative_to(wd)), scrub, compressible=True)
+        problems += found
+        staged.append((rel, data, scrubbed, published))
     if problems:
         raise H.HarvestError("; ".join(problems)[:2000])
     manifest = dict(files={}, external=external, skipped=sorted(skipped))
@@ -83,7 +106,8 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--stage", required=True)
-    ap.add_argument("dirs", nargs="+", help="paths relative to $STACK_WORKDIR")
+    ap.add_argument("dirs", nargs="*", help="directories relative to $STACK_WORKDIR")
+    ap.add_argument("--files-from", help="P450 v3: a file listing exact paths relative to $STACK_WORKDIR")
     args = ap.parse_args(argv)
     wd = os.environ.get("STACK_WORKDIR")
     if not wd:
@@ -93,7 +117,10 @@ def main(argv=None):
     scrub = H.Scrub(workdir=Path(wd), repo=Path(os.environ.get("STACK_REPO") or Path(__file__).resolve().parents[2]),
                     home=Path.home(), user=getpass.getuser(), hosts=tuple({host, host.split(".")[0]}))
     try:
-        m = stage(wd, args.dirs, args.stage, scrub)
+        if args.files_from:
+            m = stage_files(wd, [l.strip() for l in Path(args.files_from).read_text().splitlines() if l.strip()], args.stage, scrub)
+        else:
+            m = stage(wd, args.dirs, args.stage, scrub)
     except H.HarvestError as exc:
         print(f"[evidence_backfill] REFUSED: {exc}", file=sys.stderr)
         return 1
