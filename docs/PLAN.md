@@ -25,6 +25,10 @@ machine, not a dedicated benchmarker. All out-of-repo artifacts live in the dedi
 
 ## The ordered work queue
 
+### Current campaign goal (C218, 2026-10-23)
+
+Re-certify MTP across the board: every MTP-certified entry is re-qualified ON vs OFF on the shipped stack (arms = stack commits, C218) and shipped or left OFF by the operator's call (C204). Order (P475, pending): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (P426: Wave 1 done, B2 → Wave 2 → ship call) → R6 codec quality (plan owed) → `Qwen3.8-27B-mlx-uniform-4bit` on R6's codec; ladder ranks 3–4 (`Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`) by operator call. Quality over wall-clock.
+
 ### Active execution order — approved 2026-09-09 (hygiene pass 2026-09-12: every row below is closed or tagged; NO authorized GPU work is queued — next work is an operator choice, see handoff)
 
 Desktop same-chat supervision is ACTIVE: `keep-local-stack-campaign-progressing`, every five minutes, starting2026-09-10 00:00 PDT. First automatic execution VERIFIED2026-09-10 00:03:55 PDT (later than initial midnight display); next readback00:08:55. Reviews operate in the existing checkout and keep authorized work progressing, with no automatic promotions or git pushes.
