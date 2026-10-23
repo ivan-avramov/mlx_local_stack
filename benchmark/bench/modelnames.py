@@ -109,6 +109,9 @@ _CATEGORY_STANDINS = re.compile(
 # words are registry segments (`Opus`, `Fable`). Masked only with the vendor word in front, so a bare segment is still flagged.
 _EXTERNAL = re.compile(r"\bClaude\s+(?:Opus|Sonnet|Haiku|Fable)\b(?:\s+\d+(?:\.\d+)*)?", re.IGNORECASE)
 
+# A git sha (7–40 lowercase hex) is never a model size: a sha ending in `b` reads like `27B` but names a commit.
+_GIT_SHA = re.compile(r"\b[0-9a-f]{7,40}\b")
+
 # Model-name-shaped token: alphanumeric run, optionally hyphen/dot joined. Deliberately greedy on
 # hyphens so `Ornith-1.0-35B` is ONE token rather than three.
 _TOKEN = re.compile(r"[A-Za-z0-9][\w.]*(?:-[\w.]+)*")
@@ -207,8 +210,9 @@ def violations(text: str, *, path: str = "<text>", line: int = 0,
     out: list[Violation] = []
     seen: set[str] = set()
 
-    if _CATEGORY_STANDINS.search(text):
-        m = _CATEGORY_STANDINS.search(text)
+    unsha = _GIT_SHA.sub(" ", text)
+    if _CATEGORY_STANDINS.search(unsha):
+        m = _CATEGORY_STANDINS.search(unsha)
         out.append(Violation(path, line, f"category stand-in {m.group(0)!r} used for a model", text))
 
     for m in _TOKEN.finditer(scan_text):
