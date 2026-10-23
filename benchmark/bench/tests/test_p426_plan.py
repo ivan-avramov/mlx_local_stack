@@ -147,6 +147,7 @@ def test_k3_round3_the_frozen_builds_qualify_accepts_the_planned_argv():
         pytest.skip(f"{script}: the pinned fork predates B7 (`--predictor`); runs after the S submodule bump")
     out = subprocess.run([sys.executable, str(script), "--help"], capture_output=True, text=True, timeout=60)
     assert out.returncode == 0 and "--predictor" in out.stdout and "--reviewed-head" in out.stdout
+    assert "--production-ref" in out.stdout  # P452 F1: the M1 argv carries it; run via the real script entry point
 
 
 # ------------------------------------------------------------------ P452 code round 1 F1: the M1 leg attests S's production tree
