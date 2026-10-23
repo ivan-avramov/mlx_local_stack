@@ -46,7 +46,6 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 - Unmocked integration tests must use the PRODUCTION topology (parent / child, real argv lengths, real env).
 - `ChainOps.load` identity keeps the FULL worker cmdline (P449); receipts re-check flags on it.
 - Run the stack suite WITH `STACK_WORKDIR` set (P445); without it the tg2 modules skip with the reason.
-- Deliberate a design with the operator BEFORE Cursor review (memory `deliberate-before-review`).
 - Everything citable lives in the repo (AGENTS.md, C211): rows / receipts on `main`, raw logs / transcripts on `evidence`.
 
 Next decision id C216; discussion ids continue from P452.
