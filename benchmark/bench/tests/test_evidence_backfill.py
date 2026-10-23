@@ -82,3 +82,19 @@ def test_a_missing_or_escaping_directory_refuses(box):
         B.stage(box["wd"], ["p999/none"], box["stage"], box["scrub"])
     with pytest.raises(H.HarvestError, match="outside"):
         B.stage(box["wd"], ["../escape"], box["stage"], box["scrub"])
+
+
+def test_stage_files_publishes_exactly_the_listed_files(box):
+    """P450 v3: only the files committed rows cite (paths relative to $STACK_WORKDIR), nothing beside them."""
+    run = box["wd"] / "p400" / "perf" / "run1"
+    (run / "cited.jsonl").write_text('{"x": 1}\n')
+    (run / "not-cited.log").write_text("process noise\n")
+    m = B.stage_files(box["wd"], ["p400/perf/run1/cited.jsonl"], box["stage"], box["scrub"])
+    assert set(m["files"]) == {"p400/perf/run1/cited.jsonl"}
+    assert not (box["stage"] / "p400/perf/run1/not-cited.log").exists()
+
+
+@pytest.mark.parametrize("rel, want", [("p400/perf/run1/missing.txt", "not a file"), ("../x.txt", "outside")])
+def test_stage_files_refuses_missing_or_escaping_paths(box, rel, want):
+    with pytest.raises(H.HarvestError, match=want):
+        B.stage_files(box["wd"], [rel], box["stage"], box["scrub"])
