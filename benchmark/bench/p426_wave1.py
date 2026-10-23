@@ -190,9 +190,9 @@ def main(argv=None):
     def harvest(leg):
         name = leg_name(*leg)
         axis, arm, sel = leg
-        reviewed = json.loads(frozen_json.read_text()).get("mlx_vlm")
+        frozen = json.loads(frozen_json.read_text())
         plan = p426_plan.plan_leg(root, axis, arm, None if sel == "smoke" else sel, smoke=sel == "smoke", workdir=workdir,
-                                  reviewed_head=reviewed)
+                                  reviewed_head=frozen.get("mlx_vlm"), production_ref=frozen.get("production_ref"))
         data = server_log.read_bytes() if server_log.exists() else b""
         start = offsets.get(name, 0)
         if len(data) < start:

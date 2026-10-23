@@ -573,8 +573,9 @@ def run_qualify_leg(spec, ops, *, run_driver, pins_check, battery_intervals, clo
             problems.append(f"qualify exit {rc}")
         report_path = Path(out_dir) / "report.json"
         report = json.loads(report_path.read_text()) if report_path.exists() else {}
-        receipt["report"] = {k: report.get(k) for k in ("predictor", "entries", "reviewed_head", "registry_sha256")}
-        problems += qualify_problems(report, spec.model, spec.arm)
+        receipt["report"] = {k: report.get(k) for k in ("predictor", "entries", "reviewed_head", "registry_sha256",
+                                                        "production")}
+        problems += qualify_problems(report, spec.model, spec.arm, (spec.pins or {}).get("production_ref"))
         if ops.busy_procs():
             speed.append("busy processes at exit")
     except BaseException as exc:  # noqa: BLE001
@@ -717,7 +718,7 @@ def main(argv=None):
         frozen_bytes = frozen_path.read_bytes()  # K2: ONE snapshot, parsed and hashed
         pins = dict(json.loads(frozen_bytes), frozen_sha=hashlib.sha256(frozen_bytes).hexdigest())
         plan = p426_plan.plan_leg(repo, args.axis, args.arm, args.block, smoke=args.smoke, workdir=args.workdir,
-                                  reviewed_head=pins.get("mlx_vlm"))
+                                  reviewed_head=pins.get("mlx_vlm"), production_ref=pins.get("production_ref"))
         off_text = (repo / "main_models.yaml").read_bytes().decode("utf-8")
         on_path = Path(args.registry_on)
         spec = LegSpec(

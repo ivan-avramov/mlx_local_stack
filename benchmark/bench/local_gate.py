@@ -34,7 +34,7 @@ AUDITS = ("check_upstream_parity.py", "check_upstream_symbols.py", "check_upstre
 GITLINKS = {"src/mlx-vlm": "mlx-vlm", "src/mlx-serve": "mlx-serve"}
 EVIDENCE_REF = "refs/heads/evidence"  # P447
 SEMVER_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")  # P448: stack releases
-FORK_EXTRAS = ("pytest-subtests", "pytest-asyncio", "cryptography>=43.0.0")
+FORK_EXTRAS = ("pytest-subtests", "pytest-asyncio", "cryptography>=43.0.0", "psutil")  # psutil: P452 topology tests
 
 
 class GateError(RuntimeError):

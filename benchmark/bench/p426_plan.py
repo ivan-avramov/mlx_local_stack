@@ -33,7 +33,7 @@ def _tune(arm, block, smoke):
     return f"p426-{arm}-b{block}"
 
 
-def plan_leg(repo, axis, arm, block, smoke=False, results_root=None, workdir=None, reviewed_head=None):
+def plan_leg(repo, axis, arm, block, smoke=False, results_root=None, workdir=None, reviewed_head=None, production_ref=None):
     repo = Path(repo)
     ids = load_ids(repo)
     entry = ids["entry"]
@@ -41,6 +41,8 @@ def plan_leg(repo, axis, arm, block, smoke=False, results_root=None, workdir=Non
     if axis == "m1":  # K3: the in-process qualify leg (no router, directory evidence)
         if not workdir or not reviewed_head:
             raise ValueError("an m1 leg needs the workdir and the frozen build's reviewed head")
+        if not production_ref:  # P452 F1: S's production tree, attested by qualify (B1's log-only counters)
+            raise ValueError("an m1 leg needs the production ref (frozen.json production_ref)")
         out_dir = Path(workdir) / "p426" / "m1" / tune
         fork = repo / "src" / "mlx-vlm"
         return dict(
@@ -49,7 +51,8 @@ def plan_leg(repo, axis, arm, block, smoke=False, results_root=None, workdir=Non
             stem=None,
             driver_argv=[str(repo / ".venv" / "bin" / "python"), str(fork / "dev" / "p369_phase2" / "qualify.py"),
                          "--stack-root", str(repo), "--fork-root", str(fork), "--out", str(out_dir),
-                         "--reviewed-head", reviewed_head, "--entry", entry, "--predictor", arm],
+                         "--reviewed-head", reviewed_head, "--entry", entry, "--predictor", arm,
+                         "--production-ref", production_ref],
         )
     if axis not in ids["axes"]:
         raise ValueError(f"unknown axis {axis!r}")
@@ -119,10 +122,13 @@ def seed_problems(expected, rows, key):
     return problems
 
 
-def qualify_problems(report, entry, arm):
-    """K3: the M1 leg's evidence — the planned predictor, the entry COMPLETED in the planned arm."""
+def qualify_problems(report, entry, arm, production_ref=None):
+    """K3: the M1 leg's evidence — the planned predictor, the entry COMPLETED in the planned arm; P452: the report records
+    exactly the planned production ref."""
     want_arm = "mtp_on" if arm == "on" else "mtp_off"
     problems = []
+    if production_ref and report.get("production") != production_ref:
+        problems.append(f"qualify production {report.get('production')!r} != planned {production_ref!r}")
     if report.get("predictor") != arm:
         problems.append(f"qualify predictor {report.get('predictor')!r} != {arm!r}")
     state = (report.get("entries") or {}).get(entry)
