@@ -40,6 +40,7 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 
 ## Rules learned (session 6)
 
+- four-eyes / review-panel (installed in `~/.claude/skills`): dispatch helpers and panels ONLY inside a PAUSE window during a GPU campaign (P454).
 - GitHub Actions are dead (minutes); the local gate is the only gate, at releases (P448).
 - Hooks run with `GIT_DIR` set to the PUSHING repo — every hook git call must name its repo (shim unsets local env vars).
 - macOS `pgrep` excludes the caller's ancestors — track a parent by pid (`bench_watch --driver-pid`).
