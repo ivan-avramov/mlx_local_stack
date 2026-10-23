@@ -330,3 +330,17 @@ def test_harvested_wave1_evidence_is_DATA_not_prose():
             "+++ b/benchmark/results/p426/README.md\n@@ -0,0 +1 @@\n+Distill regressed\n")
     found = MN.diff_violations(diff)
     assert [v.path for v in found] == ["benchmark/results/p426/README.md"]
+
+
+@pytest.mark.parametrize("text", [
+    "--production-ref (default the 7207179b pin) names the production tree",
+    "the 0b603d03 head carries B1",
+    "rebased onto the 952d4f6b sync",
+])
+def test_a_git_sha_is_not_a_model_size(text):
+    """A short / full git sha ending in `b` (`7207179b`) read as a size like `27B` and blocked a fork push (2026-10-23)."""
+    assert MN.violations(text) == []
+
+
+def test_a_real_size_stand_in_is_still_flagged():
+    assert len(MN.violations("the 27B model regressed")) == 1
