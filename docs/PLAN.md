@@ -27,7 +27,7 @@ machine, not a dedicated benchmarker. All out-of-repo artifacts live in the dedi
 
 ### Current campaign goal (C218, 2026-10-23)
 
-Re-certify MTP across the board: every MTP-certified entry is re-qualified ON vs OFF on the shipped stack (arms = stack commits, C218) and shipped or left OFF by the operator's call (C204). Order (P475, pending): `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (P426: Wave 1 done, B2 → Wave 2 → ship call) → R6 codec quality (plan owed) → `Qwen3.8-27B-mlx-uniform-4bit` on R6's codec; ladder ranks 3–4 (`Ornith-1.0-35B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`) by operator call. Quality over wall-clock.
+Certify the top two picks of each category in their ideal config (MTP state + KV format), ON vs OFF on the shipped stack (arms = stack commits, C218); B and C share them: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (P426: Wave 1 done, B2 → Wave 2 → ship call), then `Qwen3.8-27B-mlx-uniform-4bit` (KV choice: native16 first, R6 only if needed; then its MTP re-certification). Other published entries later (P475); registry pruning after P426 (P476). Quality over wall-clock.
 
 ### Active execution order — approved 2026-09-09 (hygiene pass 2026-09-12: every row below is closed or tagged; NO authorized GPU work is queued — next work is an operator choice, see handoff)
 
