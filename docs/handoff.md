@@ -1,4 +1,4 @@
-# Handoff — 2026-10-23 (session 6 checkpoint 01:50): Wave 1 A1–A4 DONE (24 / 24 VALID); M1 pending the P452 fork push
+# Handoff — 2026-10-23 (session 6 checkpoint 11:30): Wave 1 COMPLETE — 30 / 30 legs VALID (A1–A4 + M1); next B8 / B6 and B2
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P452, C215, P447, C214, P446, P444
 addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p426-fable-mtp-recert.md` and
@@ -7,11 +7,12 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 ## State of the world
 
 - **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`.
-- **Wave 1 A1–A4 DONE 2026-10-23 01:42** — 8 smokes + 16 full legs, ALL VALID and speed valid, all harvested and committed
-  (frozen v4 `556422b8`; sequencer worktree `stack-p426-seq`). Rows NOT yet graded; B6 / B8 not built.
-- **M1 not run**: P452 approved (C216); fork branch `p452-qualify-p426` (7 local commits, production identical to S) done after
-  3 Cursor rounds + C216; fork suite ×2 + 8 audits running (`$STACK_WORKDIR/p452/fork_checks.out`); then ASK the fork push →
-  stack bump → M1 freeze (frozen.json + `production_ref` = `0b603d03…`) → 2 M1 smokes + 4 legs.
+- **Wave 1 COMPLETE 2026-10-23 11:26** — A1–A4 (frozen v4 `556422b8`) 8 smokes + 16 legs; M1 (frozen v7 `968ea082`, mlx-vlm
+  `0f30522c`, production_ref `0b603d03`) 2 smokes + 4 legs: ALL VALID and speed valid, all harvested and committed.
+  Descriptive: ON outputs byte-identical to OFF on 166 / 166 A1–A4 pairs (Math500 acc_strict 0.98 both arms; reasoning
+  strict 1.0); M1 at 256K: peaks OFF 37.65 / 37.68 / 37.94 GB vs ON 37.97 / 38.00 / 38.25 GB (+0.31 GB; ON = R7's
+  reference exactly), decode 13.4 → 17.0 tok/s (1.26×), prefill ≈ 395 tok/s both. Panel on 0 pairs (C217 / P455).
+  M1 needed four fixes / setup steps (P452 + fork venv in the freeze; see C216 / C217 and the archived attempts).
 - **Test windows:** `touch $STACK_WORKDIR/p426/wave1/PAUSE`; tests only after `PAUSE: holding`; `rm` → 600 s gap restarts.
   Monitors never carry a `chain_ops.BUSY` string in their command line (P443).
 - **Gate (P434 → P448 / C215):** `bench.local_gate`; machine-local shims in `${XDG_CONFIG_HOME}/mlx_local_stack/hooks/` are
@@ -25,15 +26,17 @@ addendum, C213, P445, C212, P443, P442, C211, P440 … C210), then `docs/specs/p
 
 ## Next work, in order
 
-1. P452: read the fork checks; ask the fork push; stack bump (`src/mlx-vlm` → the P452 head) + M1 freeze; M1 mini-wave
-   (`--axes m1`; the sequencer's resume skips nothing for M1).
-2. Grade A1–A4 rows (generation done, graders not run); build B8 (pair verifier) + B6 (signals sheet) → SIGNALS.md.
-3. B2 (tg1, Wave 2) as the first four-eyes run (installed 0.6.6; helpers only in PAUSE windows / with no campaign running, P454).
-4. P433 fix; panel (B3 / P432 round 1); a full stack suite on HEAD.
-5. Later: P440 fork style fix (before the first release, v1.0.0 with the P426 ship decision); R6; mlx-serve v0.3.0.
+1. B8 pair verifier (with the P455 byte-identity gate) + B6 signals sheet → `benchmark/results/p426/SIGNALS.md` for the
+   operator's ship call (C204); four-eyes applies (new components).
+2. B2 (tg1 for Wave 2, the primary agentic axis) — four-eyes; then Wave 2 (8 legs, ≈ 12.5 h).
+3. Stack `main`: 46 local commits since `02f1154e` — ask the push.
+4. P433 fix; full stack suite on HEAD; P440 fork style fix before the first release (v1.0.0 with the P426 ship decision).
 
 ## Rules learned (session 6)
 
+- A freeze for an in-process fork harness (M1 `qualify`) needs the FORK's own `.venv` in the frozen submodule; the freeze
+  record is written only after the frozen harness's real entry point runs (`--help`) and its venv answers.
+- After any submodule bump, run the stack's K3 real-entry-point test before launching.
 - four-eyes / review-panel (installed in `~/.claude/skills`): dispatch helpers and panels ONLY inside a PAUSE window during a GPU campaign (P454).
 - GitHub Actions are dead (minutes); the local gate is the only gate, at releases (P448).
 - Hooks run with `GIT_DIR` set to the PUSHING repo — every hook git call must name its repo (shim unsets local env vars).
