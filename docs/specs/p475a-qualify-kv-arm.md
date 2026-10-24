@@ -1,4 +1,4 @@
-# P475a — fork `qualify` accepts a KV-format arm — SPEC v1, 2026-10-24 (four-eyes light; C230)
+# P475a — fork `qualify` accepts a KV-format arm — SPEC v2, 2026-10-24 (four-eyes light; C230; v2 = design review round 1 of 1, `docs/reviews/p475a/`)
 
 ## Goal
 
@@ -21,13 +21,18 @@ golden fixture and the 16-state design (C203) unchanged; full registry names.
   (values valid for `kvmanifest.expected_manifest`; `quantized_kv_start` must stay 0); `kv_delta` = `{key: (fixture value, arm value)}`
   for the keys that differ (may be empty → identical to `classify`). Any other difference, a second entry differing, an unknown entry →
   `None`.
-- `qualify.py --kv-arm`: requires exactly one `--entry`; replaces the `classify` gate with `classify_kv_arm(registry, fixture, entry)`;
+- `qualify.py --kv-arm`: requires exactly one `--entry` and `--predictor off` (refuses `on`); replaces EVERY `classify` use with `classify_kv_arm(registry, fixture, entry)` — the gate AND the `off_entries` the
+  `mtp_off` check reads (no separate `classify` call remains under `--kv-arm`);
   refuses on `None`; records `kv_arm: {entry, delta}` in the report; the entry's expected per-layer manifest is derived from the ARM
-  registry (as today, from the live entry); a reference-peak comparison for that entry is reported labelled
-  `non-comparable: KV arm` (C199), never a refusal. Without `--kv-arm`: byte-for-byte today's behaviour (tests pin it).
+  registry (as today, from the live entry); the attention assertion follows the arm's EXPECTED manifest: under `attention_policy: fused_v1`, `sdpa_forced > 0`
+  is required iff the expected manifest has a native-KV attention leaf (N16; TurboQuant's retained native layer), and `sdpa_forced == 0`
+  otherwise (affine arms take the quantized-attention path) — the same rule applied without `--kv-arm`, where it reduces to today's;
+  the report's reference block gains `label: "non-comparable: KV arm"` and `comparable: false` (C199), never a refusal. Without `--kv-arm`: byte-for-byte today's behaviour (tests pin it).
 
 ## Acceptance criteria
 
+0. The attention rule: AF8 / AF4 for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (`fused_v1`) pass the full `request_problems` path with
+   `sdpa_forced == 0`; N16 / TQ8 / TQ4 still require forced calls; today's no-flag behaviour unchanged for the committed registries.
 1. `classify_kv_arm` unit tests (red first): each of N16 / AF8 / TQ8 / AF4 / TQ4 for each of the two picks accepted with the right
    delta; a second entry changed, a non-KV key changed, `quantized_kv_start != 0`, an MTP-key + KV change outside the 16 states, an
    unknown entry → `None`; empty delta == `classify`.
@@ -37,4 +42,7 @@ golden fixture and the 16-state design (C203) unchanged; full registry names.
 
 ## Non-goals
 
-Changing `classify`, the fixture or the 16-state rule; split key / value widths; non-zero `quantized_kv_start`; other entries.
+Changing `classify`, the fixture or the 16-state rule; split key / value widths; non-zero `quantized_kv_start`; other entries. `kv_quant_mode` (TurboQuant mode) and `kv_group_size` stay at the fixture / CLI defaults; `--kv-arm` with `--predictor on`.
+
+Declined: the claim that `guard_problems` refuses arm worktrees — it checks the FORK head (unchanged: P475 arms are stack commits on the same
+fork commit) and an unmoved stack head. Changes after the round are not re-reviewed (light).

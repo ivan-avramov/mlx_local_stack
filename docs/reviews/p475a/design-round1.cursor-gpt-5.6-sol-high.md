@@ -1,0 +1,5 @@
+1. Location: `p475a-qualify-kv-arm.md:25-27` (“then runs unchanged”) and acceptance criteria 2–3  
+   Severity: blocker  
+   Problem: `qualify.request_problems()` requires `sdpa_forced > 0` whenever `attention_policy == "fused_v1"`. However, affine KV takes the quantized-attention branch before the fused-v1 policy is consulted.  
+   Concrete failure scenario: For `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` AF8 and AF4, the manifest correctly proves affine caches, but `sdpa_forced == 0`; `qualify.py:402-408` therefore marks both runs FAILED. The proposed mocked manifest tests can still pass, so acceptance can succeed while two required cells remain unqualifiable.   <!-- allow-shorthand: verbatim reviewer output -->
+   Proposed change: Amend the design so the attention assertion follows the expected arm manifest: require forced calls only when `fused_v1` has an expected native attention leaf; require zero otherwise. Add AF8/AF4 Fable tests exercising the complete `request_problems()` path, while retaining positive forced-call tests for native16 and TurboQuant’s retained native layer. <!-- allow-shorthand: verbatim reviewer output -->
