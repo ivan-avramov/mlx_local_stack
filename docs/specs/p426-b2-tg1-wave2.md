@@ -2,7 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P466–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226, P465 → C227).
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). All decision points settled: P457 A+ (C219), P459 (C220), P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226, P465 → C227, P466–P469 → C228.
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -111,8 +111,10 @@ detail, informational; on disagreement the independent receipt decides. Quality 
   identities across arms (`--print-identity`), pins.json sha, grader image id, a REQUIRED frozen prompt date; it runs the preconditions itself
   (venvs synced against their locks, real entry points, K3, a stack suite receipt) and exclusive-creates a self-hashed record that the
   sequencer and every leg re-verify with the live state.
-- **Timeouts:** sequencer leg timeout 10 h for s1 / s2 legs, 2 h for pilot / reload; never killed on overrun.
-- **Harvest** (`p426_harvest`, P437 rules, scrubbed): `benchmark/results/p426/wave2/<leg>/` on `main` — receipt, `chain.json`,
+- **Timeouts (C228):** never killed on overrun (the run stops for the operator); each leg's timeout is derived from the pilot legs' measured
+  walls with a heavy-tail allowance.
+- **Harvest (C228)** (`p426_harvest`, P437 rules, scrubbed), completeness-checked — every file a row / manifest cites lands on `main` or the
+  `evidence` stage with its sha256, else the leg's harvest fails; per-item code diff + grader report on `main`: `benchmark/results/p426/wave2/<leg>/` on `main` — receipt, `chain.json`,
   `RUNLOG.md`, `schedule.json`, rows + manifests + sidecars, grader reports, A4 receipts / logs, the per-item log slices,
   stdout; transcripts / events / stderr → the `evidence` stage (xz > 8 MB), pushed separately with approval.
 
