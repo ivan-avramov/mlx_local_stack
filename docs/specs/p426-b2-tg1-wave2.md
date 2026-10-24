@@ -2,7 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P464–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225).
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P465–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226).
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -104,10 +104,11 @@ detail, informational; on disagreement the independent receipt decides. Quality 
 
 ## 9. Frozen record v8, timeouts, harvest (P464, P466, P467)
 
-- **v8** (after B2 + P476 land): the two arm commits and worktrees, serving pins (fork / mlx-serve gitlinks) identical in both,
-  `probe_code_sha256` / `scaffold_policy_sha256` / `generation_identity_sha256` from `--print-identity` in each worktree (equal
-  across arms), pins.json sha, both registry shas, ONE frozen prompt date for all 8 legs, the grader image id. Written only
-  after: venvs synced in both worktrees, the frozen entry points run, K3 passes. Every leg refuses on drift.
+- **v8 via `bench.p426_freeze` (C226)**, after B2 + P476 land: the tool derives and verifies the two arm commits / worktrees (diff == the §11
+  restore; parsed registries differ in exactly the entry's three keys), identical serving gitlinks and production tree == S, equal probe
+  identities across arms (`--print-identity`), pins.json sha, grader image id, a REQUIRED frozen prompt date; it runs the preconditions itself
+  (venvs synced against their locks, real entry points, K3, a stack suite receipt) and exclusive-creates a self-hashed record that the
+  sequencer and every leg re-verify with the live state.
 - **Timeouts:** sequencer leg timeout 10 h for s1 / s2 legs, 2 h for pilot / reload; never killed on overrun.
 - **Harvest** (`p426_harvest`, P437 rules, scrubbed): `benchmark/results/p426/wave2/<leg>/` on `main` — receipt, `chain.json`,
   `RUNLOG.md`, `schedule.json`, rows + manifests + sidecars, grader reports, A4 receipts / logs, the per-item log slices,
