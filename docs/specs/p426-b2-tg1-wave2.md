@@ -1,9 +1,9 @@
-# P426 B2 — tg1 legs for Wave 2 (A7) — DRAFT v1, 2026-10-23 (deliberation with the operator; not reviewed)
+# P426 B2 — tg1 legs for Wave 2 (A7) — SPEC v1, 2026-10-24 (four-eyes STRICT, C228; pre-review)
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
 §4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). All decision points settled: P457 A+ (C219), P459 (C220), P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226, P465 → C227, P466–P469 → C228.
-Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
+Ordering: Wave 2 runs on the shipped native16 config of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, independent of the P475 KV matrix (C232); the v8 freeze includes the P476 pruned registry.
 
 ## 1. Scope
 
