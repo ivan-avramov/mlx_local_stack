@@ -55,7 +55,8 @@ arm equal to the committed registry uses the base commit. Attention differs by p
     rung is INVALID; decode tok/s from the backend's `predicted_per_second`;
   - memory reported as the worker's cumulative high-water (`peak_memory_gb`, process-lifetime, incl. the full-cap preallocation of the
     first request and the calibration) at each rung — never as a per-rung peak.
-- **Order:** per pick two blocks, block 1 N16 → AF8 → TQ8 → AF4 → TQ4, block 2 the reverse; picks sequential; each leg a fresh lean router
+- **Order:** per pick two blocks, block 1 N16 → AF8 → TQ8 → AF4 → TQ4, block 2 the reverse; picks sequential, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+  first, its table delivered as soon as its legs are harvested (P479); each leg a fresh lean router
   + load from the arm worktree; ≥ 600 s idle before every leg; 20 legs.
 - **Validity:** every reported arm needs TWO speed-valid legs (power receipt, C224); a speed-invalid or INVALID leg is kept as evidence and
   REPLACED by a rerun. Instability rule: per arm and rung the two blocks' ratios vs N16 are reported side by side; a direction reversal or a
@@ -69,7 +70,8 @@ arm equal to the committed registry uses the base commit. Attention differs by p
 
 ## Stage 2 — quality (its own spec, after stage 1)
 
-The generated table goes to the operator, who keeps a set of formats in contention (its memory / speed Pareto front, by default). N16 and
+Each pick's generated table goes to the operator as soon as it exists; the operator keeps only the formats worth a quality study (none by
+default — P479); native16 needs none. N16 and
 every lossy format kept get a matched predictor-OFF quality comparison on each pick's supporting axes (the R6 design: per-axis paired
 `acc_strict@budget` + the two-judge panel over passing pairs), written as its own spec and reviewed before it runs. Selection happens only
 after stage 2; native16 is the lossless reference, measured, not assumed. A format that is dominated in stage 1 needs no quality run.
