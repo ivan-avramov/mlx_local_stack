@@ -2,7 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P465–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226).
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P466–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226, P465 → C227).
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -95,12 +95,14 @@ validity with Wave 1's power receipt and rule (every tick 140 W / 28 V / battery
 window); it reads progress from the chain's `chain.json` progress inventory. The chain's own WATCH lines (P469 fixed) stay as in-process
 detail, informational; on disagreement the independent receipt decides. Quality survives a speed-invalid leg (labelled).
 
-## 8. G4 marker and P433
+## 8. Gate / campaign exclusion and P433 (P465 → C227)
 
-- `bench.local_gate run` creates `$STACK_WORKDIR/gate/RUNNING` exclusively (pid, repo, sha, started; refuses if present) and
-  removes it in `finally`. The P426 entry checks (Wave 1 leg wrapper and the Wave-2 chain) refuse while it exists; a stale
-  marker is the operator's to remove.
-- P433 (C209): the v2 pre-check's plugin-load proof comes from the activation call for every scaffold that requires the plugin.
+- `bench.local_gate run` holds an exclusive `flock` on `$STACK_WORKDIR/gate/RUNNING` for its lifetime; every P426 leg pre-check
+  (Wave-1 wrapper, Wave-2 chain) tries it non-blocking and refuses when held. The Wave-2 sequencer holds `$STACK_WORKDIR/p426/SEQUENCER.lock`
+  for its lifetime; the gate and a second sequencer refuse. Files carry holder pid / repo / sha / start for diagnosis only; liveness is the
+  kernel lock. The gate's busy-process census remains.
+- P433 (C209): the plugin-load proof comes only from the activation call for every scaffold that requires the plugin; the config-call
+  proof path is removed.
 
 ## 9. Frozen record v8, timeouts, harvest (P464, P466, P467)
 
