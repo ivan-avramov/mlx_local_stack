@@ -191,9 +191,9 @@ the leg in order on the same loaded instance (no reload, retries 0). `abort_rest
 Slot, item, session, language, seed, arm, the abort stamp (cause, evidence files with sha256), owned identities at the incident and after,
 the settle result, the item record. Not a row; never graded; never labelled a model failure.
 
-### 5.4 Scoring of DNF slots — ruled by the operator at Go, then pinned in §12
+### 5.4 Scoring of DNF slots — RULED C235 (G1)
 B2 records every planned slot as a row or a DNF. AGENTS.md ranks by `acc_strict@budget` "DNF included"; C220 says a transport DNF is
-"never graded, never a strict fail". Designer's recommendation: `acc_strict@budget` over ALL planned slots with a DNF counted as
+"never graded, never a strict fail". Ruling: `acc_strict@budget` over ALL planned slots with a DNF counted as
 a non-success (AGENTS.md; no denominator shrink), labelled `transport_dnf` (not a model failure, C220's intent), DNF counts and causes per
 arm and session beside it with an attention flag when they differ between arms [r3], the make-up result reported as a sensitivity line.
 
@@ -259,7 +259,7 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes.
   exit it finalizes the `pmset -g log` battery intervals over the leg window and writes `exit_state`.
 - Speed-valid iff every tick 140 W / 28 V / battery > 20 %, no tick gap > 2 × interval, no on-battery interval in the window, the receipt
   finalized. Watcher death or a missing receipt → speed-invalid. Power at entry is an entry check (NOT_STARTED); in-run power never stops a
-  leg (designer's reading of C220's "power gate" with C224 and plan §3; operator confirms at Go).
+  leg (C235 G2).
 - Pair rule: if either leg of an s1 (or s2) ON / OFF pair is speed-invalid, that session's speed comparison leaves inference; with one
   valid session the ratio is descriptive, "not order-balanced". Quality is unaffected.
 - Decode-rate estimator (B6 / B8 input, plan §6 T2): per item, `Σ max(generated_tokens_i − 1, 0) / ΔD` over its completed requests [r3]
@@ -351,8 +351,8 @@ None automatic. `main` and `evidence` pushes each need the operator's in-turn ap
 
 Per leg via `HARVEST.json`: the leg record (state, class, reason), the realized ledger, rows, `p426_dnf` records, ready / item records
 (§4.5), the arm-equality receipt, the watcher receipt (§8), the record ids; per pair the immutable pair dossier (§6.5) [r3]. Pair keys:
-(session, language, item, seed). Decode rate per §8; acceptance = Σ accepted ÷ Σ proposed within a session. DNF scoring: as ruled at Go
-(§5.4), stated here once ruled [r3].
+(session, language, item, seed). Decode rate per §8; acceptance = Σ accepted ÷ Σ proposed within a session. DNF scoring (C235 G1): `acc_strict@budget`
+over ALL planned slots, a DNF counted as a non-success labelled `transport_dnf`; per-arm DNF counts and causes; make-up as sensitivity.
 
 ## 13. Tests (test-first) and review
 
