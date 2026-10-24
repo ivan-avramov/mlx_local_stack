@@ -2,8 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — pending
-confirmation), §6 (rehearsal facts), §7 (P469). Still open for the operator: P459 (revised), P460–P469 as recommended below.
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P460–P469 as recommended below.
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -39,7 +38,7 @@ existing checkpoints, as a P426 configuration of the chain (no outer wrapper aro
 - Chain modes P426 does not use (two-pick schedules, archive / restart, `incident_retry` retries, smoke) are refused in P426
   mode. The hook lives outside the probe closure (the probe identity is unchanged).
 
-## 3. Failure policy (P459, revised — pending the operator's confirmation)
+## 3. Failure policy (P459, revised — RULED C220)
 
 Operator guidance: fail early when the remaining work would be thrown away; when one item out of many fails, keep testing the
 rest and come back for the outliers.
