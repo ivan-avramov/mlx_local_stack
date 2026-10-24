@@ -2,7 +2,7 @@ You are reviewing a change specification for a software repository. Your working
 
 ## The operator's request
 
-"On the mismatch: prune as you see fit." The mismatch: the registry `mlx_local_stack/main_models.yaml` serves 11 model entries while the stack publishes 5 (the README's B ladder plus `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` on the C shortlist). The operator also ruled (C218) that experiments run the stack as it ships, so the next certification freeze should test the registry as it will ship.
+"On the mismatch: prune as you see fit." The mismatch: the registry `mlx_local_stack/main_models.yaml` serves 11 model entries while the stack publishes 5 (the README's B ladder plus `NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit` on the C shortlist). The operator also ruled (C218) that experiments run the stack as it ships, so the next certification freeze should test the registry as it will ship. <!-- allow-shorthand: verbatim reviewer output -->
 
 ## Settled constraints
 

@@ -2,7 +2,7 @@ You are reviewing a measurement specification for a local-LLM serving stack. You
 
 ## The operator's request
 
-Choose the KV-cache format for the two top picks (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`) as a whole tradeoff with no hard bar: "i'd take a kv cache that speeds prefill by 30% and takes extra 5% memory. But these aren't hard numbers." Consider middle grounds (8-bit). Experiments must run the stack as it ships: mlx-serve → mlx-vlm loading a committed `main_models.yaml`; an arm is a commit, never an overlay file. Optimize for quality of outcome.
+Choose the KV-cache format for the two top picks (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-mlx-uniform-4bit`) as a whole tradeoff with no hard bar: "i'd take a kv cache that speeds prefill by 30% and takes extra 5% memory. But these aren't hard numbers." Consider middle grounds (8-bit). Experiments must run the stack as it ships: mlx-serve → mlx-vlm loading a committed `main_models.yaml`; an arm is a commit, never an overlay file. Optimize for quality of outcome. <!-- allow-shorthand: verbatim reviewer output -->
 
 ## Settled constraints
 

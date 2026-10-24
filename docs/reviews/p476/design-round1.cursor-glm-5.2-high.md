@@ -16,9 +16,9 @@ def load_references(path, *, table=None, blob_exists=None):
             raise ValueError(f"reference for an unknown entry {name!r}")
 ```
 
-The peaks file has 7 keys; 4 are pruned entries (`Qwen3.8-27B-static-mixed-4bit`, `Qwen3.8-27B-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`, `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`). S4 drops those four from `ENTRIES` but Q2 keeps their peaks rows. The real qualify run calls `load_references(REFERENCES, blob_exists=…)` (`qualify.py:946`) with no `table=` override, so it reads the real file and raises for the four kept rows.
+The peaks file has 7 keys; 4 are pruned entries (`Qwen3.8-27B-static-mixed-4bit`, `Qwen3.8-27B-OptiQ-4.5bpw-mixed`, `Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit`, `Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit`). S4 drops those four from `ENTRIES` but Q2 keeps their peaks rows. The real qualify run calls `load_references(REFERENCES, blob_exists=…)` (`qualify.py:946`) with no `table=` override, so it reads the real file and raises for the four kept rows. <!-- allow-shorthand: verbatim reviewer output -->
 
-**Failure scenario:** After implementing S4+Q2 as written, `python -m p369_phase2.qualify …` aborts at reference load with `ValueError: reference for an unknown entry 'Qwen3.8-27B-static-mixed-4bit'`. The P415 R7 dev harness — which reads the registry — no longer works, violating the Goal's "every harness that reads the registry keeps working." Worse, acceptance criterion 5 still passes: every `test_p415_qualify.py` call to `load_references` passes a synthetic `table=` (lines 478, 485, 892, 1037, 1042) or monkeypatches it (557, 954); none loads the real file. So the suite is green while the harness is broken — exactly the "criterion passes while the goal fails" case.
+**Failure scenario:** After implementing S4+Q2 as written, `python -m p369_phase2.qualify …` aborts at reference load with `ValueError: reference for an unknown entry 'Qwen3.8-27B-static-mixed-4bit'`. The P415 R7 dev harness — which reads the registry — no longer works, violating the Goal's "every harness that reads the registry keeps working." Worse, acceptance criterion 5 still passes: every `test_p415_qualify.py` call to `load_references` passes a synthetic `table=` (lines 478, 485, 892, 1037, 1042) or monkeypatches it (557, 954); none loads the real file. So the suite is green while the harness is broken — exactly the "criterion passes while the goal fails" case. <!-- allow-shorthand: verbatim reviewer output -->
 
 **Proposed change:** Reconcile S4 and Q2. Either drop the four rows from `p415_reference_peaks.json` (and move Q2's "keep" to a non-goal note that they stay in git history), or relax `load_references` to ignore keys absent from `ENTRIES` (treating them as historical). Add a fork test that loads the real `REFERENCES` file against the pruned `ENTRIES` so criterion 5 can detect this regression.
 
@@ -64,7 +64,7 @@ The peaks file has 7 keys; 4 are pruned entries (`Qwen3.8-27B-static-mixed-4bit`
 
 **Location:** spec S1 ("delete the six entry blocks, each with the comment lines that belong only to it … No other byte changes"), against `mlx_local_stack/main_models.yaml:420-424` (the `# RETIRED 2026-08-26 (C33 …) the M23 reference entry Qwen3.8-27B-4bit …` block).
 
-**Problem:** That comment sits between two pruned entries (`Qwen3.8-27B-static-mixed-4bit` above, `Qwen3.8-27B-OptiQ-4.5bpw-mixed` below) but belongs to neither — it documents an already-removed third entry. S1's rule "comment lines that belong only to it" does not say whether to keep or delete a comment that belongs to no adjacent entry. After pruning, it would lie between two kept entries (`Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`).
+**Problem:** That comment sits between two pruned entries (`Qwen3.8-27B-static-mixed-4bit` above, `Qwen3.8-27B-OptiQ-4.5bpw-mixed` below) but belongs to neither — it documents an already-removed third entry. S1's rule "comment lines that belong only to it" does not say whether to keep or delete a comment that belongs to no adjacent entry. After pruning, it would lie between two kept entries (`Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`). <!-- allow-shorthand: verbatim reviewer output -->
 
 **Failure scenario:** Two implementers, both following S1, produce different `main_models.yaml` (one keeps the comment, one deletes it). Both pass criterion 1 ("diff consists only of deleted lines"), but the registry text diverges, making the "byte-identical" guarantee across arms ambiguous.
 
@@ -88,11 +88,11 @@ The peaks file has 7 keys; 4 are pruned entries (`Qwen3.8-27B-static-mixed-4bit`
 
 **Location:** spec S3 ("retargeted to a remaining entry or to a fixture registry, keeping what each test asserts"), against `mlx_local_stack/benchmark/bench/tests/test_deployed_profile.py:92-97`.
 
-**Problem:** That test asserts gemma-specific deployed values (`temp 0.7, top_k 64, repetition_penalty 1.08, thinking_budget 16384, max_tokens 32768`). No remaining entry has those values, so retargeting to a remaining entry requires changing the literals, which "keeping what each test asserts" forbids.
+**Problem:** That test asserts gemma-specific deployed values (`temp 0.7, top_k 64, repetition_penalty 1.08, thinking_budget 16384, max_tokens 32768`). No remaining entry has those values, so retargeting to a remaining entry requires changing the literals, which "keeping what each test asserts" forbids. <!-- allow-shorthand: verbatim reviewer output -->
 
 **Failure scenario:** The implementer retargets to Ornith (kept) but must change the asserted values, then is unsure whether that violates "keeping what each test asserts." <!-- allow-shorthand: verbatim reviewer output -->
 
-**Proposed change:** Say explicitly that this test must retarget to a fixture registry containing a gemma-like entry (to preserve the literal assertions), or that "keeping what it asserts" means the *property* (deployed == registry block, and differs from coding), allowing the literals to be updated to the remaining entry's block.
+**Proposed change:** Say explicitly that this test must retarget to a fixture registry containing a gemma-like entry (to preserve the literal assertions), or that "keeping what it asserts" means the *property* (deployed == registry block, and differs from coding), allowing the literals to be updated to the remaining entry's block. <!-- allow-shorthand: verbatim reviewer output -->
 
 ---
 
