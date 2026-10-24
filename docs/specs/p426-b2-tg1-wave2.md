@@ -2,7 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P462–P469 as recommended below (P460 → C221, P461 → C223).
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P463–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224).
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -87,11 +87,12 @@ the completed requests == `gate.requests_completed` == `requests_observed`; each
   `generated_tokens ≥ 2` (confirm 1-token behaviour in the pilot); OFF: no draft fields on any request.
 - B2 persists the per-item slice; B6 computes decode rate (plan §6 T2) and acceptance from it.
 
-## 7. Speed / power validity (P462)
+## 7. Monitoring and speed validity (P462 → C224)
 
-The chain's own 5-minute `WATCH` lines are the AGENTS.md daemon; P469 (progress undercount) is fixed test-first in B2. Any
-tick not 140 W / 28 V / battery > 20 %, an unparsable tick, or a gap > 2 × 300 s while an invocation runs → speed INVALID;
-plus `pmset -g log` battery intervals over the leg window. Quality survives a speed-invalid leg (labelled).
+An independent `bench_watch` process bound to the chain's pid (`--driver-pid`) is the AGENTS.md daemon and decides speed
+validity with Wave 1's power receipt and rule (every tick 140 W / 28 V / battery > 20 %, `pmset -g log` battery intervals over the leg
+window); it reads progress from the chain's `chain.json` progress inventory. The chain's own WATCH lines (P469 fixed) stay as in-process
+detail, informational; on disagreement the independent receipt decides. Quality survives a speed-invalid leg (labelled).
 
 ## 8. G4 marker and P433
 
