@@ -1,4 +1,4 @@
-# P476 — prune the unpublished registry entries — SPEC v3, 2026-10-24 (four-eyes light; v2 = design review round 1 of 1 applied; v3 = change-review fixes + the operator-approved OWUI tombstones, C222; `docs/reviews/p476/`)
+# P476 — prune the unpublished registry entries — SPEC v3.1, 2026-10-24 (four-eyes light; v2 = design review round 1 of 1 applied; v3 = change-review fixes + the operator-approved OWUI tombstones, C222; `docs/reviews/p476/`)
 
 ## Goal
 
@@ -82,8 +82,9 @@ code path stays tested (also in `mlx_vlm/tests/test_p426_qualify_predictor.py`);
 
 1. Registry entry names == {the five}; parsed settings of every remaining entry and all top-level keys identical to the baseline
    except the added `openwebui.retired_model_ids`; the textual diff of `main_models.yaml` is deletions plus that one list.
-2. `configgen check` rc 0 after `generate`; no generated file names a pruned entry; every generated-file diff is the removal of
-   pruned entries only (no other line changes).
+2. `configgen check` rc 0 after `generate`; no generated file names a pruned entry except the OWUI policy's `excluded_model_ids`
+   (S2b tombstones); every generated-file diff is the removal of pruned entries only, except that `excluded_model_ids` becomes the
+   surviving non-menu ids followed by the retired ids in `retired_model_ids` order (a deterministic reorder; consumed as a set) (v3.1, C229).
 3. Untouched: `benchmark/results/`, `docs/` (except this spec and the decision record), README, `benchmark/bench/model_params.py`,
    scripts, `configgen/` code except the S2b emitter change and its tests.
 4. Stack suite with `STACK_WORKDIR` set: 0 failed, skip list unchanged except tests removed / retargeted, listed.
