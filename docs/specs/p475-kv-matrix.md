@@ -1,4 +1,4 @@
-# P475 — KV-cache format matrix for the two top picks — SPEC v2, 2026-10-24 (four-eyes light)
+# P475 — KV-cache format matrix for the two top picks — SPEC v3, 2026-10-24 (four-eyes light; v3 = C233: measured in the shipped MTP-ON state)
 
 v2 applies design review round 1 of 1 (`docs/reviews/p475/design-round1.*`; Cursor `gpt-5.6-sol-high` + `glm-5.2-high`): quality is part
 of the decision (stage 2); TQ4s dropped (the server converts the WHOLE cache on crossing `quantized_kv_start` — a between-context switch,
@@ -20,7 +20,8 @@ the formats the operator keeps in contention, matched quality evidence — indep
 - C218 / AGENTS.md: arms are stack commits served as shipped; lean benchmark router (`MLX_VLM_CACHE_SESSION_MAX=1`, no OWUI, `APC_ENABLED`
   absent); one resident model; ≥ 10 min idle between legs; arms order-balanced; 140 W / 28 V / battery > 20 % every tick; an independent
   5-minute daemon (C224); transport errors abort; full registry names; anything citable committed.
-- Selection uses predictor-OFF (AGENTS.md); the chosen format then gets its ON vs OFF certification (P426 process).
+- C233: measured in the SHIPPED state, MTP ON (AGENTS.md "optimize in shipped state"; the predictor-OFF selection rule concerns choosing
+  models, P480); the chosen format then gets its full ON vs OFF certification (P426 process).
 - No server code change (one serving build: fork `0f30522c`, mlx-serve `86921f02`).
 
 ## Arms (per pick)
@@ -34,7 +35,8 @@ the formats the operator keeps in contention, matched quality evidence — indep
 | TQ4 | `kv_bits: 4`, `kv_quant_scheme: turboquant` (today's `Qwen3.8-27B-mlx-uniform-4bit`) |
 
 `quantized_kv_start` stays 0 in every arm. Each arm is a commit on a local branch `p475-<pick-short>-<arm>` off the P476 commit, changing
-only that entry's KV keys (+ a `PROVISIONAL P475 arm` comment); a temporary worktree per arm, removed after its legs are harvested. The
+only that entry's KV keys AND restoring its MTP lines exactly as the P426 §11 restore (+ a `PROVISIONAL P475 arm` comment); plus one
+reference arm per pick, `N16-OFF` = native16 with MTP OFF (the committed state of the first pick); a temporary worktree per arm, removed after its legs are harvested. The
 arm equal to the committed registry uses the base commit. Attention differs by pick and is kept as deployed (the first pick ships
 `attention_policy: fused_v1`, the second the default): absolute numbers are not compared across picks.
 
@@ -44,17 +46,19 @@ arm equal to the committed registry uses the base commit. Attention differs by p
   fork's per-layer cache-manifest validator (`dev/p369_phase2/kvmanifest`: the exact leaf classes and key / value widths per layer); a
   mismatch refuses the arm. On every router leg the worker argv must carry exactly the arm's KV flags and the worker log's `KV cache
   resolved` line must agree (secondary record).
-- **Predictor-OFF proof (every leg):** no `--draft-kind` / `--draft-model` in the worker argv, the manifest's `runtime.draft_kind` null,
-  and no draft fields on any request record; otherwise the leg is INVALID.
+- **Predictor-state proof (every leg):** ON arms — the worker argv carries exactly the entry's restored MTP flags, every measured request
+  carries B1 drafter counters (`draft_kind=mtp`, 0 ≤ accepted ≤ proposed, rounds > 0), and acceptance (accepted ÷ proposed) is recorded per
+  rung; the `N16-OFF` reference — no draft flags, no draft fields; otherwise INVALID.
 - **Instrument:** `bench.run_capacity` (M42 / C82, M50-checked) with `--grid 8192,131072,196608,260096` (260,096 = 262,144 − the
   server's 2,048 minimum output), `--sampling-profile deployed`, `--seed 0`, fresh `--out-tag`, extended test-first to:
   - persist and use the backend's own `prompt_ms`, `prompt_per_second`, `prompt_n` and `cache_n` (prefill from the backend, not wall −
     decode); every measured request `cache_n == 0` with a unique session id;
-  - a fixed decode carrier per rung that runs to the token cap: exactly 256 completion tokens and `finish_reason == "length"`, else the
+  - a fixed, committed, code-like decode carrier per rung (MTP speed depends on acceptance, which depends on content) that runs to the
+    token cap: exactly 256 completion tokens and `finish_reason == "length"`, else the
     rung is INVALID; decode tok/s from the backend's `predicted_per_second`;
   - memory reported as the worker's cumulative high-water (`peak_memory_gb`, process-lifetime, incl. the full-cap preallocation of the
     first request and the calibration) at each rung — never as a per-rung peak.
-- **Order:** per pick two blocks, block 1 N16 → AF8 → TQ8 → AF4 → TQ4, block 2 the reverse; picks sequential, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+- **Order:** per pick two blocks, block 1 N16 → AF8 → TQ8 → AF4 → TQ4 → N16-OFF, block 2 the reverse; picks sequential, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
   first, its table delivered as soon as its legs are harvested (P479); each leg a fresh lean router
   + load from the arm worktree; ≥ 600 s idle before every leg; 20 legs.
 - **Validity:** every reported arm needs TWO speed-valid legs (power receipt, C224); a speed-invalid or INVALID leg is kept as evidence and
@@ -91,7 +95,7 @@ flags; labelled descriptive (two order-balanced speed-valid legs per arm, no int
 
 ## Non-goals
 
-Stage 2 runs (own spec), MTP ON measurements, a fused quantized-KV kernel (P477), `quantized_kv_start` thresholds, other entries.
+Stage 2 runs (own spec), MTP-ON exactness of the affine / TurboQuant 8 formats (uncertified; the full ON / OFF certification follows for a format to ship), a fused quantized-KV kernel (P477), `quantized_kv_start` thresholds, other entries.
 
 ## Residuals (named, not built against)
 
