@@ -13,8 +13,7 @@ the choice as a whole tradeoff (memory, prefill speed, decode speed, quality), w
 native16 KV and the second TurboQuant 4-bit (PROVISIONAL, C202); their numbers come from different dates, code and instruments. Solving
 it means: a matched, order-balanced measurement of each candidate format for each pick, taken through the shipped stack (mlx-serve →
 mlx-vlm loading a committed `main_models.yaml`, C218), with the format proven engaged, reported as a generated tradeoff table — and, for
-the formats the operator keeps in contention, matched quality evidence — before the P426 Wave 2 spends its GPU hours on a format that
-might change.
+the formats the operator keeps in contention, matched quality evidence — independently of the P426 Wave 2 (C232).
 
 ## Settled constraints
 
