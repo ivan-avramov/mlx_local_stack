@@ -2,7 +2,7 @@
 
 Authority: P426 plan v4 §2 / §3 / §6 / §9 (B2), C205, C214 (G4 marker), C209 (P433), C217 (P455), **C218** (arms are stack
 commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pruned before v8). v1 changes from v0: §2 (A+),
-§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P463–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224).
+§4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). Still open for the operator: P464–P469 as recommended below (P460 → C221, P461 → C223, P462 → C224, P463 → C225).
 Ordering: the P475 KV matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` runs before Wave 2 (a KV change would void it).
 
 ## 1. Scope
@@ -76,16 +76,17 @@ Both sessions run each language's items in a seeded random order, `random.Random
 len(pool))` (s1 1001, s2 2002); the in-load pilot = the first 5 of that order; s2 runs Go before Python; reload = s1's first 5 Python
 items at seed 1001. Recorded in `schedule.json` / `chain.json`; tests assert both orders reach the probe's `--items` exactly.
 
-## 6. Server-log reconciliation and engagement (P463)
+## 6. Per-item reconciliation and engagement (P463 → C225)
 
-From the P456 rehearsal (17 items, 152 requests): opencode requests carry `session=ses_*` == the row `session_id`; per item
-the completed requests == `gate.requests_completed` == `requests_observed`; each A4 gate adds 3 `anon:*` requests AND one
-4-request `ses_*` session of its own; every request `backend=cached_session`.
-- Per item (at `done`): its `ses_*` records started == completed == `gate.requests_completed`, zero `Request failed`.
-- Per load: the A4 window's 3 `anon:*` + its one `ses_*` session match the A4 receipt.
-- ON: every item request carries B1 counters `draft_kind=mtp`, 0 ≤ accepted ≤ proposed, rounds > 0 when
-  `generated_tokens ≥ 2` (confirm 1-token behaviour in the pilot); OFF: no draft fields on any request.
-- B2 persists the per-item slice; B6 computes decode rate (plan §6 T2) and acceptance from it.
+At each item's `done` barrier (the P426 hook), against two independent sources:
+- the item's server-log `Request completed` records (`session=` == the row `session_id`; the log is a plain append file, no rotation)
+  equal its client-side `request_usage` request for request (completion / prompt tokens, count) — 17 / 17 exact in the P456 rehearsal;
+- zero `Request failed`; every request `backend=cached_session`; per load, the A4 window's 3 `anon:*` requests + its own 4-request
+  session match the A4 receipt;
+- ON: every item request carries B1 counters `draft_kind=mtp`, 0 ≤ accepted ≤ proposed; the rounds > 0 condition is derived from the
+  fork's MTP decode loop (code-read) and confirmed on the pilot as a known positive; OFF: no draft fields on any request;
+- an unparseable worker request line is systemic; any mismatch stops the leg after that item (C220).
+B2 persists the per-item slice; B6 computes decode rate (plan §6 T2) and acceptance from it.
 
 ## 7. Monitoring and speed validity (P462 → C224)
 
