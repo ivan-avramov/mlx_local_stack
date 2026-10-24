@@ -251,6 +251,40 @@ def test_prune_backs_up_and_removes_only_stale_managed_model(tmp_path):
         m.write_backup(backup, {})
 
 
+def test_unmanaged_saved_registration_of_a_retired_id_is_flagged_stale():
+    # P476 S2b: the generated policy carries the pruned ids in excluded_model_ids, so a saved
+    # registration WITHOUT the managed flag is still reported (dry-run) and refused on --apply.
+    m = module()
+    api = API()
+    models, settings = desired()
+    settings["excluded_model_ids"] = ["Bench-A", "Pruned-A"]
+    api.models.append({"id": "Pruned-A", "meta": {}})
+    changed = m.reconcile(
+        api, models, settings, "http://main/v1", "http://task/v1", apply=False
+    )
+    assert "Pruned-A" in changed["stale"]
+    assert not api.writes
+    with pytest.raises(ValueError, match="stale.*Pruned-A"):
+        m.reconcile(
+            api, models, settings, "http://main/v1", "http://task/v1", apply=True
+        )
+    assert api.writes == []
+
+
+def test_shipped_policy_flags_every_retired_id_when_saved_unmanaged():
+    from configgen.source import load_source
+
+    m = module()
+    root = Path(__file__).resolve().parents[2]
+    models, settings = m.load_desired(root / "openwebui-init")
+    retired = load_source(str(root / "main_models.yaml")).retired_model_ids
+    assert len(retired) == 6
+    api = API()
+    api.models = [dict(id=r) for r in retired]
+    changed = m.reconcile(api, models, settings, "http://main/v1", "http://task/v1")
+    assert set(retired) <= set(changed["stale"])
+
+
 def test_hidden_task_flag_must_reach_combined_model_list():
     m = module()
     api = API()

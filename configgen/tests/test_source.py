@@ -147,3 +147,24 @@ def test_candidate_role_is_accepted_and_never_emitted_to_clients(tmp_path):
             assert "under-test" not in text, f"candidate leaked into {name}"
             checked += 1
     assert checked >= len(targets.TARGETS), "expected to inspect at least one file per target"
+
+
+TASK = """
+task_model:
+  name: Task-T
+  hf_path: ns/Task-T
+  presentation: {role: task, display_name: "Task T", context: 8192, output: 1024}
+"""
+
+
+def test_retired_ids_naming_only_pruned_models_are_accepted(tmp_path):
+    s = load_source(_write(tmp_path, VALID + TASK + "openwebui:\n  retired_model_ids: [Gone-1, Gone-2]\n"))
+    assert s.retired_model_ids == ("Gone-1", "Gone-2")
+
+
+@pytest.mark.parametrize("live", ["Qwen-A", "Task-T", "Router-Only"])
+def test_retired_id_that_is_a_live_model_is_refused(tmp_path, live):
+    body = (VALID + "  - name: Router-Only\n    hf_path: ns/R\n" + TASK
+            + "openwebui:\n  retired_model_ids: [Gone-1, %s]\n" % live)
+    with pytest.raises(ValueError, match="retired_model_ids.*%s" % live):
+        load_source(_write(tmp_path, body))

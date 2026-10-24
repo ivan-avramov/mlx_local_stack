@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import copy
 import getpass
+import hashlib
 import json
 import os
 import re
@@ -35,6 +36,9 @@ CHAIN = ["chain_shape_a_pilot", "chain_shape_a_reload", "chain_shape_bc_s1", "ch
          "chain_barrier_mismatch", "chain_block_restart", "chain_stop", "chain_idle_escalation"]
 NO_HISTORY = os.environ.get("P371_NO_GIT_HISTORY") == "1"
 _RUNS = {}
+TRACKED_CARRIERS = ["benchmark/opencode_bench.json", "benchmark/opencode_bench_v2.json", "benchmark/opencode_bench_v2_web.json",
+                    "benchmark/opencode_bench_v2_web_tg1.json", "benchmark/aider_bench.model.settings.yml"]
+_CARRIERS_AT_IMPORT = {rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest() for rel in TRACKED_CARRIERS}
 
 
 @pytest.fixture(scope="session")
@@ -67,6 +71,46 @@ def test_bundle_contents_and_exclusions(bundle):
     assert (bundle / "benchmark/opencode_plugins/noretry.js").is_file()
     assert not (bundle / "benchmark/results").exists() and not (bundle / "docs").exists()
     assert not (bundle / ".venv-bench").exists() and not (bundle / "benchmark/bench/host.py").exists()
+
+
+OVERLAID = ["benchmark/opencode_bench_v2_web.json", "benchmark/opencode_bench_v2_web_tg1.json"]
+
+
+def test_bundle_overlays_only_the_pinned_carriers_the_scenarios_read_and_records_them(bundle):
+    import hashlib
+    # P476: only the carriers the scenarios read are overlaid, from committed pins (sha asserted), recorded in the manifest.
+    assert sorted(bundle_mod.OVERLAY_SOURCES) == OVERLAID == sorted(bundle_mod.OVERLAY_SHA256)
+    want = {}
+    for rel in OVERLAID:
+        pin = Path(bundle_mod.OVERLAY_SOURCES[rel])
+        assert pin.parent == Path(bundle_mod.__file__).resolve().parent
+        want[rel] = hashlib.sha256(pin.read_bytes()).hexdigest()
+        assert want[rel] == bundle_mod.OVERLAY_SHA256[rel]
+        assert (bundle / rel).read_bytes() == pin.read_bytes()
+    man = json.loads((bundle / "BUNDLE_MANIFEST.json").read_text())
+    assert man["overlaid_files"] == want
+    assert all(man["files"][rel] == sha for rel, sha in want.items())
+
+
+def test_a_mutated_live_carrier_is_not_absorbed_into_the_bundle(bundle, tmp_path):
+    # hermetic: the mutation goes into the working tree of a throwaway clone, never into a tracked file of this repository
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", "--no-checkout", "--shared", str(REPO), str(clone)], check=True,
+                   capture_output=True, timeout=300)
+    for rel in OVERLAID:
+        (clone / rel).parent.mkdir(parents=True, exist_ok=True)
+        (clone / rel).write_bytes((REPO / rel).read_bytes() + b"\n")
+    again = bundle_mod.make_bundle(tmp_path / "mutated", root=clone)
+    assert again == json.loads((bundle / "BUNDLE_MANIFEST.json").read_text())
+    for rel in OVERLAID:
+        assert (tmp_path / "mutated" / rel).read_bytes() == Path(bundle_mod.OVERLAY_SOURCES[rel]).read_bytes()
+
+
+@pytest.mark.parametrize("rel", OVERLAID)
+def test_a_pinned_overlay_whose_sha_differs_is_refused(rel, tmp_path, monkeypatch):
+    monkeypatch.setitem(bundle_mod.OVERLAY_SHA256, rel, "0" * 64)
+    with pytest.raises(bundle_mod.BundleError, match="pinned overlay"):
+        bundle_mod.make_bundle(tmp_path / "refused")
 
 
 def test_bundle_manifest_is_complete_and_stable(bundle, tmp_path):
@@ -538,6 +582,32 @@ def test_item_differential(name):
     assert res.ok, res.failures
 
 
+def _tree_copy(dest):
+    """A throwaway copy of the code the new side runs (no results / docs / src / venvs / git), so a test may mutate it."""
+    import shutil
+    skip = shutil.ignore_patterns(".git", ".venv*", "__pycache__", "results", "docs", "src", "node_modules")
+    shutil.copytree(REPO, dest, ignore=skip, symlinks=True)
+    return dest
+
+
+def test_a_later_carrier_change_fails_the_item_differential_on_purpose(tmp_path, monkeypatch):
+    # the pinned bundle does not follow the live carrier, so a changed carrier shows up as an unlisted difference in the
+    # carrier-derived fields until the pin and the goldens are refreshed deliberately (the tg1 file also moves
+    # probe_code_sha256, which the table lets the new side re-derive; the web carrier is the unabsorbed one).
+    # Hermetic: the new side runs on a temporary copy of the tree; no tracked file is written.
+    from bench.tests.p371_baseline import new_side
+    copy = _tree_copy(tmp_path / "tree")
+    monkeypatch.setattr(new_side, "REPO", copy)
+    carrier = copy / "benchmark/opencode_bench_v2_web.json"
+    scenario = run_mod.load_scenario("item_normal_pass")
+    doc = json.loads(carrier.read_bytes())
+    doc["_p476_mutation"] = 1
+    carrier.write_bytes(json.dumps(doc, sort_keys=True, indent=2).encode() + b"\n")
+    new = run_mod.run_new_side(scenario)
+    res = cmp_mod.compare(run_mod.load_golden("item_normal_pass"), new, cmp_mod.TABLE, rederive=new_side.rederive(new))
+    assert not res.ok and any("carrier_source_sha256" in f for f in res.failures)
+
+
 @pytest.mark.parametrize("name", CHAIN)
 def test_chain_differential(name):
     from bench.tests.p371_baseline import new_side
@@ -568,3 +638,10 @@ def test_the_new_side_rederivation_rejects_a_wrong_value():
     assert not hook("/runs/0/manifest/runtime/probe_code_sha256", "x", "f" * 64)
     assert hook("/runs/0/rows/0/generation_identity_sha256", "x", "c" * 64)
     assert not hook("/runs/0/manifest/runtime/policy/gate", "x", "c" * 64)
+
+
+# ------------------------------------------------------------------------------------------------ hermeticity guard
+def test_the_tracked_carriers_are_unchanged_after_the_p371_tests_run():
+    """Last in this module: the carriers hold the bytes they had when the module was imported (no test wrote them)."""
+    now = {rel: hashlib.sha256((REPO / rel).read_bytes()).hexdigest() for rel in TRACKED_CARRIERS}
+    assert now == _CARRIERS_AT_IMPORT

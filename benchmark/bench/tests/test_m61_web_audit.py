@@ -18,7 +18,12 @@ FIELDS = ('scaffold', 'carrier_source', 'carrier_source_sha256', 'agent_system_f
 
 
 def test_m59_identity_recipe_and_carrier_bytes(probe, tmp_path):
-    fixture = json.loads((FIXTURES / 'm59_policy.json').read_text())
+    # P476 S3b: fixtures/m59_policy.json was recomputed from the regenerated opencode_bench_v2.json (six pruned entries removed):
+    #   policy.opencode_bench_config_sha256
+    #     d1a21f1562d0679388eac6f2094c98083771d902adafe90589594e87d77a8bc4 -> 757121d7781aa2146f4674e19004ab81d6813fcdbf7030abb3ef10ea1fd01476
+    #   scaffold_policy_sha256
+    #     9735e24f986942dd107be29f6f9dd9a26a6690cc64c80ae7bee82808a4f1a689 -> 89c6ee4cc4c8d43176db552f0895391933d1944c536aa94d409ca56155d5062a
+    fixture =json.loads((FIXTURES / 'm59_policy.json').read_text())
     binary = tmp_path / 'binary'
     binary.write_bytes(b'M59 fixed executable fixture\n')
     selection = probe._carrier_selection('opencode-v2', None)
@@ -33,6 +38,16 @@ def test_m59_identity_recipe_and_carrier_bytes(probe, tmp_path):
     identity = probe._identity(a, '2.0.20', binary, run, 'fixture-polyglot')
     assert {k: identity[k] for k in fixture['policy']} == fixture['policy']
     assert identity['scaffold_policy_sha256'] == fixture['scaffold_policy_sha256']
+
+
+def test_m59_fixture_carrier_pin_equals_the_live_carrier_and_records_its_source():
+    fixture = json.loads((FIXTURES / 'm59_policy.json').read_text())
+    live = Path(__file__).resolve().parents[3] / fixture['carrier_source_file']
+    assert hashlib.sha256(live.read_bytes()).hexdigest() == fixture['policy']['opencode_bench_config_sha256']
+    # the carrier's source (the P476 change) is recorded apart from the commit whose identity code computed the recipe
+    assert 'baseline_commit' not in fixture
+    assert fixture['identity_code_commit'] == '22288fc'
+    assert fixture['carrier_source_commit'] != fixture['identity_code_commit']
 
 
 @pytest.mark.parametrize('scaffold', ['opencode-v2', 'opencode-v2-web'])

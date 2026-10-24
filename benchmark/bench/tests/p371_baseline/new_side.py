@@ -190,7 +190,7 @@ def run_in_pytest(tmp_path, monkeypatch, scenario):
 def run_item_new_side(scenario, timeout=170):
     """Execute `scenario` on the current tree in a fresh pytest subprocess (cwd = benchmark/) and return its result."""
     import subprocess
-    driver = Path(__file__).resolve().parent / "new_side_driver.py"
+    driver = REPO / "benchmark/bench/tests/p371_baseline/new_side_driver.py"
     with tempfile.TemporaryDirectory(prefix="p371-new-") as scratch:
         sfile, rfile = Path(scratch) / "scenario.json", Path(scratch) / "result.json"
         sfile.write_text(json.dumps(scenario))

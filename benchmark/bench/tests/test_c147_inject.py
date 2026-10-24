@@ -12,7 +12,10 @@ from bench.tests.test_opencode_v2_probe import probe as std_probe, tg1_probe as 
 from bench.tests.test_tg1_integration import tg_fixture, fake_receipts
 from bench.tests.test_token_turn_gate import event, usage
 
-OLD_CAMPAIGN_HASH = "ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c"      # the campaign policy before P311-lite added the toolchain block
+# the campaign policy before P311-lite added the toolchain block.  P476 (S3b) refreshed it from the regenerated tg1 carrier
+# (the six pruned registry entries left opencode_bench_v2_web_tg1.json, so carrier_sha256 moved):
+# old ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c (the C144 / M63 epoch) -> new below.
+OLD_CAMPAIGN_HASH = "d1b2817e2185d26ca0902744ec047a2310d6f90202e4effd370cf46f48f60e91"
 ADDENDUM_SHA256 = {
     "stall": hashlib.sha256(
         b"Before anything else, run the shell command `ls` four separate times, one tool call per message, "

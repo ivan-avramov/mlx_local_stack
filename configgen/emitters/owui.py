@@ -84,14 +84,17 @@ def emit_owui_settings(source: Source) -> str:
     if default and default not in main:
         raise ValueError("OpenWebUI default must have role=main")
     order = ([default] if default else []) + [m for m in main if m != default] + tasks
+    excluded = [m.name for m in source.models if m.role != "task" and m.name not in main]
+    excluded += list(source.router_only_models)
+    # Tombstones (P476 S2b): pruned ids stay excluded so an unmanaged saved registration is still flagged stale.
+    excluded += [n for n in source.retired_model_ids if n not in excluded]
     return json.dumps({
         "schema": 1,
         "models_sha256": hashlib.sha256(emit_owui(source).encode()).hexdigest(),
         "main_model_ids": main,
         "task_model_id": tasks[0] if tasks else None,
         "hidden_model_ids": tasks,
-        "excluded_model_ids": [m.name for m in source.models if m.role != "task" and m.name not in main]
-                              + list(source.router_only_models),
+        "excluded_model_ids": excluded,
         "defaults": {"DEFAULT_MODELS": default, "DEFAULT_PINNED_MODELS": default,
                      "MODEL_ORDER_LIST": order},
     }, indent=2) + "\n"

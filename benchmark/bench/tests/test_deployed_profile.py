@@ -32,6 +32,29 @@ import bench.model_params as MP
 # file-not-found. (The production default stays "main_models.yaml", matching provenance.py's
 # existing convention that the harness runs from the repo root.)
 REGISTRY = str(Path(__file__).resolve().parents[3] / "main_models.yaml")
+# gemma-4-31B-it-qat-6bit left the live registry (P476); its baseline block lives in a fixture registry.
+GEMMA_FIXTURE = str(Path(__file__).resolve().parent / "fixtures" / "gemma_31b_qat_registry.yaml")
+
+
+def test_gemma_fixture_is_the_verbatim_baseline_block():
+    import subprocess
+
+    repo = Path(__file__).resolve().parents[3]
+    try:
+        got = subprocess.run(["git", "show", "c4faf574:main_models.yaml"], cwd=str(repo),
+                             capture_output=True, text=True, timeout=60)
+    except (OSError, subprocess.SubprocessError) as exc:
+        pytest.skip(f"git unavailable: {exc}")
+    if got.returncode:
+        pytest.skip("baseline commit c4faf574 is unavailable in this checkout (shallow clone?)")
+    lines = got.stdout.splitlines()
+    start = lines.index("  - name: gemma-4-31B-it-qat-6bit")
+    end = next(i for i in range(start + 1, len(lines)) if lines[i].strip() == "")
+    fixture = Path(GEMMA_FIXTURE).read_text().splitlines()
+    body = fixture[fixture.index("models:") + 1:]
+    while body and not body[-1].strip():
+        body.pop()
+    assert body == lines[start:end]
 
 
 def _registry_names(path=REGISTRY):
@@ -74,10 +97,12 @@ def test_registry_context_limit_unknown_model_returns_none():
 
 # --------------------------------------------------------------- the profile
 def test_deployed_profile_is_the_registry_block():
-    for name in ("Ornith-1.0-35B-mlx-uniform-4bit", "Qwen3.6-27B-Opus-Distill-OptiQ-4bit",
-                 "gemma-4-31B-it-qat-6bit"):
-        assert MP.params_for(name, "deployed", registry_path=REGISTRY) == \
-            MP.registry_generation_defaults(name, REGISTRY)
+    for name, reg in (("Ornith-1.0-35B-mlx-uniform-4bit", REGISTRY),
+                      ("Qwen3.6-27B-Opus-Distill-OptiQ-4bit", REGISTRY),
+                      ("Qwen3.8-27B-mlx-uniform-4bit", REGISTRY),
+                      ("gemma-4-31B-it-qat-6bit", GEMMA_FIXTURE)):
+        assert MP.params_for(name, "deployed", registry_path=reg) == \
+            MP.registry_generation_defaults(name, reg)
 
 
 def test_deployed_differs_from_production_for_both_winners():
@@ -90,7 +115,7 @@ def test_deployed_differs_from_production_for_both_winners():
 
 
 def test_deployed_gemma_is_the_daily_driver_not_the_coding_profile():
-    dep = MP.params_for("gemma-4-31B-it-qat-6bit", "deployed", registry_path=REGISTRY)
+    dep = MP.params_for("gemma-4-31B-it-qat-6bit", "deployed", registry_path=GEMMA_FIXTURE)
     assert (dep["temperature"], dep["top_k"], dep["repetition_penalty"]) == (0.7, 64, 1.08)
     assert dep["thinking_budget"] == 16384          # coding profile lifts this to 32768
     assert dep["max_tokens"] == 32768

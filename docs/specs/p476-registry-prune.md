@@ -1,4 +1,4 @@
-# P476 — prune the unpublished registry entries — SPEC v3.1, 2026-10-24 (four-eyes light; v2 = design review round 1 of 1 applied; v3 = change-review fixes + the operator-approved OWUI tombstones, C222; `docs/reviews/p476/`)
+# P476 — prune the unpublished registry entries — SPEC v3.2, 2026-10-24 (four-eyes light; v2 = design review round 1 of 1 applied; v3 = change-review fixes + the operator-approved OWUI tombstones, C222; `docs/reviews/p476/`)
 
 ## Goal
 
@@ -41,7 +41,11 @@ retired id (dry-run lists it; `--apply` without `--prune` refuses).
 (`test_c147_inject.py`), the v2 carrier fixture (`test_m61_web_audit.py` / `fixtures/m59_policy.json`) and the P371 goldens
 (`test_p371_baseline.py`, `test_p371_hermetic_scan.py`). Each is refreshed by its own procedure (P371: `P371_REGEN_GOLDEN=1`), never
 loosened; the old → new values are recorded in the test / fixture comments (the old tg1 campaign hash = the C144 / M63 epoch); only
-carrier-derived fields may move (verified by diffing the regenerated goldens).
+carrier-derived fields may move (verified by diffing the regenerated goldens). P371's procedure (C229 (1), v3.2): the baseline
+bundle (`p371_baseline/bundle.py`) overlays ONLY the carriers its scenarios read (`opencode_bench_v2_web.json`,
+`opencode_bench_v2_web_tg1.json`) from committed pinned copies with asserted sha256 (`OVERLAY_SHA256`, recorded as `overlaid_files`
+in the manifest) — a standing mechanism: a later carrier change fails the differential on purpose and is refreshed by copying the
+carrier, updating the pin and regenerating the goldens (old → new recorded).
 
 **S3 — stack tests**: tests that assume a pruned entry is in the LIVE registry (e.g. `test_deployed_profile.py`'s
 `params_for("gemma-4-31B-it-qat-6bit", "deployed", registry_path=REGISTRY)`) keep the PROPERTY they test: a test whose literals are

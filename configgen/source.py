@@ -33,6 +33,7 @@ class Source:
     agent_defaults: dict[str, str]
     router_only_models: tuple[str, ...] = ()
     openwebui_models: tuple[str, ...] | None = None
+    retired_model_ids: tuple[str, ...] = ()
 
 def _parse_model_entry(entry: dict, seen: set[str]) -> ModelSpec | None:
     """Parse one `models:`-shaped entry (name / hf_path / presentation / optional
@@ -94,5 +95,15 @@ def load_source(path: str) -> Source:
     menu = doc.get("openwebui", {}).get("models")
     if menu is not None and (not isinstance(menu, list) or not all(isinstance(x, str) for x in menu)):
         raise ValueError("openwebui.models must be a list of model names")
+    retired = doc.get("openwebui", {}).get("retired_model_ids")
+    if retired is not None and (not isinstance(retired, list) or not all(isinstance(x, str) for x in retired)):
+        raise ValueError("openwebui.retired_model_ids must be a list of model names")
+    # a tombstone for a name that is still served would exclude a live model from OWUI: refuse it (router-only entries and
+    # the task model count as live, whether or not they have a presentation block)
+    live = {e["name"] for e in doc.get("models", [])} | ({task_model["name"]} if task_model else set())
+    clash = sorted(set(retired or ()) & live)
+    if clash:
+        raise ValueError(f"openwebui.retired_model_ids names live model(s): {', '.join(clash)}")
     return Source(models=models, agent_defaults=agent_defaults, router_only_models=router_only,
-                  openwebui_models=tuple(menu) if menu is not None else None)
+                  openwebui_models=tuple(menu) if menu is not None else None,
+                  retired_model_ids=tuple(retired or ()))
