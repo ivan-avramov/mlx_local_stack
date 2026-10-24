@@ -5,6 +5,16 @@ commits served as shipped), P457 = A+ (operator, 2026-10-23), P476 (registry pru
 §4 (arm commits replace the served-registry flags), §3 (P459 revised per the operator's fail-early guidance — C220), §6 (rehearsal facts), §7 (P469). All decision points settled: P457 A+ (C219), P459 (C220), P460 → C221, P461 → C223, P462 → C224, P463 → C225, P464 → C226, P465 → C227, P466–P469 → C228.
 Ordering: Wave 2 runs on the shipped native16 config of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, independent of the P475 KV matrix (C232); the v8 freeze includes the P476 pruned registry.
 
+## Goal
+
+Run the P426 Wave 2 — the tg1 agentic coding benchmark (opencode solving 43 Python / Go tasks), MTP ON vs OFF, for
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — through the shipped stack (C218: each arm a stack commit served as committed), so that every
+leg provably differs from its pair only in the entry's MTP state, every item's requests are reconciled against two independent sources and its
+engagement proven, systemic problems stop the run at once while an isolated item incident is recorded and the run continues, and every
+citable byte is harvested — producing the per-session paired evidence the pair verifier (B8) and the signals sheet (B6) need for the
+operator's ship call (C204). The chain is the proven tg1 runner; B2 adds what P426 needs and changes nothing an earlier chain relied on
+except where a ruling says so (C221: the hard-coded pick pair and overlay generation are retired).
+
 ## 1. Scope
 
 One P426 Wave-2 leg = ONE `run_tg1_chain.py` invocation for ONE entry and ONE session, from the arm's frozen worktree,
