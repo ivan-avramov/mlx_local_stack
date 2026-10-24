@@ -1,66 +1,55 @@
-# Handoff — 2026-10-23 (session 6 END): Wave 1 COMPLETE (30 / 30 VALID); next B2 → Wave 2, B8 → B6 meanwhile
+# Handoff — 2026-10-24 (session 7 END): MTP blessing first (C234); P476 at its last check; B2 strict design review round 1 running
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C217, P455, P454, C216, P453, P452,
-C215, P448, P447, C214, P446, P445, P444, C213, C212, P443, P442, C211, P438, P439, P440, P437, C210), then
-`docs/specs/p426-fable-mtp-recert.md` (§6 Wave 2, §8 signals, §9 B2 / B6 / B8) and `docs/specs/p434-local-gate.md` (v4).
-Model names: FULL registry names only, always.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C234, C233, C232, P479, C231, C230, P477
+addendum, C229 … C218, P478, P476, P475, P474), then `docs/specs/p426-b2-tg1-wave2.md` (B2 spec v1 + Goal), `docs/specs/p476-registry-prune.md`
+(v3.1), `docs/specs/p426-fable-mtp-recert.md` (plan v4). Model names: FULL registry names only, always (chat included).
+
+## Goal and path (C218, C232, C234)
+
+Certify the top two picks per category (both categories share `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` and `Qwen3.8-27B-mlx-uniform-4bit`)
+in their shipped config. MTP blessing FIRST for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: P476 Accept → B2 (four-eyes STRICT) → v8 freeze
+(`bench.p426_freeze`, C226) → Wave 2 (pilot OFF/ON → s1 OFF/ON → s2 ON/OFF → reload ON/OFF; ≈ 12.5 h GPU) → B8 / B6 → operator ship call.
+The KV-format work (P475 / P475a) is PARKED (C234); `Qwen3.8-27B-mlx-uniform-4bit` keeps KV-first.
 
 ## State of the world
 
-- **Box `m5max-128`**, AC 140 W / 28 V. ALWAYS `. "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"`. GPU IDLE
-  since 11:26; no sequencer, router or worker running.
-- **Wave 1 COMPLETE 2026-10-23 11:26, ALL VALID + speed valid, harvested and committed**
-  (`benchmark/results/p426/wave1/<leg>/`, rows under `benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/`):
-  - A1–A4 on frozen v4 (`556422b8`): 8 smokes + 16 legs. ON outputs BYTE-IDENTICAL to OFF on 166 / 166 pairs; Math500
-    acc_strict 0.98 / 0.98 (graded, `math500.p426-*-b[12].score.json`); reasoning strict 1.0; walls ≈ 1.5–1.7× faster ON;
-    acceptance 0.75–0.89. cjudge / vision / reasoning NOT graded beyond that (cjudge = panel-only; P455 → identical = tie).
-  - M1 on frozen v7 (`968ea082`, mlx-vlm `0f30522c`, production_ref `0b603d03`): 2 smokes + 4 legs. Peaks at 256K OFF
-    37.65 / 37.68 / 37.94 GB vs ON 37.97 / 38.00 / 38.25 GB (+0.31 GB; ON = R7 exactly; stable to 0.01 GB); decode
-    13.4 → 17.0 tok/s (1.26×); prefill ≈ 395 tok/s both.
-  - All descriptive until B8 / B6 exist. Registry still has MTP OFF for the entry (no ship decision yet).
-- **Pushed:** stack `main` `c974e4ae`; fork `main` `0f30522c` (P452: qualify inside the P426 wrapper; production identical
-  to S); `evidence` `aad18f8d` (P438 + P450 backfills); HF dataset `caslca/mlx-local-stack-evidence` (330 p369 `.npz`).
-- **Worktrees:** `$STACK_WORKDIR/worktrees/stack-p426` (frozen, v7 at `968ea082`; has `.venv`, `.venv-bench` and the fork's
-  own `src/mlx-vlm/.venv`) and `stack-p426-seq` (the sequencer's code). `frozen.json` v7 at `$STACK_WORKDIR/p426/`; v1–v6
-  archived there and under `benchmark/results/p426/wave1/run/archive/`. Wave 2 re-freezes (it carries B2 / the G4 marker).
-- **Skills:** four-eyes 0.6.6 + review-panel 0.4.1 in `~/.claude/skills` (sources `~/ws/four-eyes`, `~/ws/review-panel`);
-  `~/.claude/CLAUDE.md` has the four-eyes trigger; `~/.config/review-panel/panel.toml` = sol / glm (cursor-agent), sonnet.
-- **Gate (P448 / C215):** branch pushes = PII + naming scans (shims in `${XDG_CONFIG_HOME}/mlx_local_stack/hooks/`, all three
-  repos); releases via `bench.local_gate release --version X.Y.Z` (operator's call). No release yet (v1.0.0 with the P426
-  ship decision, after the P440 fork style fix).
-- Daily driver not running. Last full stack suite: `b61a14f6` (later changes covered by targeted suites ×2).
+- Box `m5max-128`, AC 140 W. GPU IDLE (nothing since the 2026-10-23 P456 rehearsal). OrbStack running (docker grader), no compose services.
+- Stack `main` = `6d7fc7cd` + this handoff commit, NOT pushed (≈ 60 commits since `3982b7db`; archive refs `archive/c152-alloc-tool-scope-wip`,
+  `archive/p297-uncertain-gone` pushed). Fork `main` `0f30522c`, mlx-serve `86921f02` (unchanged). No worktrees; local branches: stack `main` +
+  `evidence`, fork `main`.
+- Helper outputs of this session are harvested by a detached script into `$STACK_WORKDIR/parked/session7/` (`DONE` appears when every in-flight
+  helper exited): P476 test-writer round 3 + change review round 4, P475 change review round 3, P475a test-writer + change review round 2,
+  B2 design review round 1 (sol / glm / sonnet), all frozen tests with `SHA256`, and each test-writer's Cursor chat id (`*.test-writer.chat_id`, for
+  `cursor-agent --resume`).
 
-## Next work, in order (recommended)
+## Work items
 
-1. **B2 — tg1 for Wave 2** (plan §6 / §9; four-eyes, light unless it touches a data boundary): `run_tg1_chain.py`
-   `--model` single-entry filter, the `invalidate` policy, the P426 outer sequencer + frozen record, the MTP overlay
-   validated for this entry only, the reversed s2 item order; ALSO the C214 G4 marker (`$STACK_WORKDIR/gate/RUNNING`
-   refused by the leg wrapper) and the P433 fix (v2 pre-check plugin proof from the activation call). Deliberate the spec
-   with the operator first; then four-eyes (cast shown at Go). Then re-freeze (v8: stack + fork venv + entry-point checks,
-   see Rules) and **run Wave 2**: pilot OFF / ON → s1 OFF / ON → s2 ON / OFF (reversed order) → reload ON / OFF, 600 s
-   idle, ≈ 12.5 h GPU. Why first: it is the only GPU work left and the plan's primary agentic axis.
-2. **B8 — pair verifier** (per-axis adapters: rows, vision, reasoning, qualify, chain records; exact three-key registry delta
-   + runtime delta; equality of everything else; P455 byte-identity gate → identical pairs = tie, labelled). Build while
-   Wave 2 runs; four-eyes helpers ONLY inside PAUSE windows (P454).
-3. **B6 — signals sheet** `benchmark/results/p426/SIGNALS.md`, generated (never hand-copied) from receipts / rows / logs for
-   B8-accepted pairs: per-axis quality, panel (P455), memory, speed (paired ratio + two-stage bootstrap, seed 426),
-   acceptance, coverage, attention flags (§1); pre-registered tests + Holm (§8). Wave 1 first, Wave 2 rows as they land.
-4. **Operator ship call** (C204) from SIGNALS.md → P426 §11 restore (or not) → README / campaign-results → release v1.0.0
-   (P440 fork style fix first).
-5. Later: R6 (codec quality), mlx-serve v0.3.0 bump, P383 / P385 / tg2 / M64, remaining entries per §11.
+1. **P476 (registry prune; four-eyes light; fix round 3 done):** candidate = `$STACK_WORKDIR/parked/p476/candidate4.{stack,fork}.diff` against stack
+   `c4faf574` / fork `0f30522c`. Verified so far: full stack suite 7317 passed / 0 failed (round 3), fork suite ×2 identical skips + 8 audits green
+   (on the unchanged fork diff), production diff empty. Pending: read `parked/session7/p476-test-writer-round3.md` + `p476-change-round4.*`; if clean,
+   **ask the operator to Accept**; then apply both diffs, substitute `P476-STACK-COMMIT` (fork fixture header + `test_mtp_verify_scan.FIXTURE_SOURCE` +
+   `m59_policy.json` / answer-key README) with the stack commit, commit stack (S1–S3) → fork commit (S4) → ASK for the fork push → submodule bump +
+   K3 + stack suite. Frozen tests: `parked/session7/p476-frozen/`. Records: `docs/reviews/p476/`.
+2. **B2 (tg1 legs; four-eyes STRICT, ≤ 3 design rounds):** spec `docs/specs/p426-b2-tg1-wave2.md` v1 (all decisions C219–C228, C232). Round 1 of 3
+   dispatched to `gpt-5.6-sol-high`, `glm-5.2-high` (cursor-agent, checkout) and Claude Sonnet (`claude -p`); brief `parked/session7/b2-design-round1.prompt.md`.
+   Next: judge round 1 (adopt for the problem, never the mechanism), revise, round 2 if criteria changed; then Go with the cast; build (implementer
+   Sonnet, test-writer `glm-5.2-high` via `cursor-agent create-chat` / `--resume`, change review sol + glm).
+3. **P475 (KV matrix harness) — PARKED:** candidate after fix round 2 `$STACK_WORKDIR/parked/p475/candidate-after-fix2.stack.diff` (vs `abc15aa8`),
+   test-writer PASS (full stack suite 7685 passed). Frozen test `parked/p475/frozen_test_p475_frozen.py`. On resume: one fix round = C233 (MTP-ON
+   arms, MTP engagement proof, code-like carrier, native16 OFF reference) + its change-review round-3 findings + **replace the short pick keys
+   (the two short `PICKS` keys) with full registry names** (the naming hook refuses them). <!-- allow-shorthand: names the defect --> Spec v3 `docs/specs/p475-kv-matrix.md`.
+4. **P475a (fork `qualify --kv-arm`) — PARKED:** candidate `parked/p475a/candidate-after-fix1.fork.diff` on top of `parked/p475a/base-p476-fork.diff`
+   (the P476 fork change); spec v3 adds `--predictor on` for arm commits already MTP-ON (C233). Resume after P476's fork commit.
+5. **Later:** B8 / B6 (during Wave 2), P477 fused quantized-KV kernel (Phase 2, NAX tensor path for multi-query; ANE not a fit), P478 historical
+   tools, R6 / `Qwen3.8-27B-mlx-uniform-4bit` KV + MTP.
 
-## Rules learned (session 6)
+## Rules learned (session 7)
 
-- GitHub Actions are dead; the local gate (P434 / P448) is the only gate, at releases.
-- A freeze is written only after: stack + fork venvs synced; the frozen harness's real entry points run (`qualify --help`,
-  `fork_versions`); the stack's K3 test passes against the bumped submodule. After ANY submodule bump, run K3 first.
-- An in-process fork harness (M1 `qualify`) needs the FORK's own `.venv` inside the frozen submodule.
-- Before fixing one instance of a check, sweep for every other site of the same check (P452: two process censuses).
-- Unmocked integration tests must use the PRODUCTION topology (real entry points, parent / child, real argv lengths, env).
-- During a GPU campaign: tests, four-eyes helpers and review panels only inside PAUSE windows (P454); monitors never carry
-  a `chain_ops.BUSY` string in their command line (P443); waiters read only log lines after the current launch.
-- Hooks run with `GIT_DIR` set to the pushing repo; every hook git call names its repo. macOS `pgrep` excludes ancestors.
-- Run the stack suite WITH `STACK_WORKDIR` set (P445). Everything citable is committed (AGENTS.md, C211).
-- Reviewer suggestions beyond the agreed scope go to the operator before they are built (C216).
+- Rank options by quality of outcome; "smallest change" only as a tie-breaker (memory `quality-over-smallest-change`).
+- Arms are stack commits served as shipped (C218); a pick's configuration is tuned and certified in its shipped state (AGENTS.md, P480).
+- Never two full stack suites at once (shared `$STACK_WORKDIR` test dirs); helpers in scratch copies need `.venv-bench` / `.venv` symlinks.
+- Tests never write tracked files (C231). Frozen tests that assume names are re-pointed by the test-writer, never weakened.
+- Helper outputs that matter go to `$STACK_WORKDIR/parked/` or the repo before a session ends — the scratchpad is session-local.
+- Ask only at four-eyes Go / Accept, pushes and scope changes (C228); keep turns short.
 
-Next decision id C218; discussion ids continue from P455.
+Next decision id C235; discussion ids continue from P480.
