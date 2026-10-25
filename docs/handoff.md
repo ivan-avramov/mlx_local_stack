@@ -1,79 +1,87 @@
-# Handoff — 2026-10-24 (session 8 CHECKPOINT, mid-run): P476 done; B2 build in progress (four-eyes STRICT, Go C235); GPU OFF rehearsal running (P486)
+# Handoff — 2026-10-25 (session 8 END): P476 done; B2 build mid-way (s1–s2 references, s3 unscored); asks first: P488, P487
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P486, C235, P481, C234, C233 …), then
-`docs/specs/p426-b2-tg1-wave2.md` (v3.1, round-3 changes not re-reviewed, C235 rulings folded in), `docs/reviews/p426-b2/` (design
-rounds 1–3 + dispositions). Model names: FULL registry names only, always (chat included).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P487, P486, C235, P481, C234 …), then
+`docs/specs/p426-b2-tg1-wave2.md` (v3.1; round-3 changes not re-reviewed; C235 rulings folded in) and `docs/reviews/p426-b2/`
+(design rounds 1–3 + dispositions). Model names: FULL registry names only, always (chat included).
 
 ## Goal and path (C218, C232, C234, C235)
 
-MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first: B2 build (in progress) → pre-freeze rehearsal R1–R3 → v8 base
+MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first: finish the B2 build → pre-freeze rehearsal R1–R3 → v8 base
 (`bench.p426_freeze`) → pilots → timeout amendment → Wave 2 → B8 / B6 → operator ship call. P475 / P475a stay PARKED.
 
-## State of the world (checkpoint time ≈ 2026-10-25T00:35Z)
+## First asks of the next session
 
-- Box `m5max-128`, AC 140 W. **GPU BUSY: P486 OFF rehearsal** — `run_tg1_chain.py chain s1` (both historical picks, predictor OFF,
-  pruned registry), chain pid 56610 (router 56637, worker 56721), out-root `$STACK_WORKDIR/p426/tg1-rehearsal-20261024`, stdout
-  `….chain.out`, 5-min monitor `….monitor.log` (my session-local tick loop dies with the session; the chain's own WATCH lines in
-  `RUNLOG.md` continue). Stop cooperatively: `touch $STACK_WORKDIR/p426/tg1-rehearsal-20261024/STOP`; afterwards verify `:8000`
-  free / no worker (`scripts/stack_stop.sh` if anything survives). Rows are never graded / paired (P279); harvest the per-item walls
-  for the B2 §10.2 Go deadline and the Wave-2 estimate (label: concurrent CPU load from B2 helpers).
-- Stack `main` = `77ed5853` (47 commits not pushed, incl. P476 `2e258b99` / `45dd68d2`, bump `f1e47df9`). **Fork pushed**
-  (`08cdd08e..282fb009`, merge of origin's 7 production commits from 2026-10-22/23 with P476 `c9543fc4`); the stack pins `c9543fc4`
-  (serving production unchanged — the merge's other production commits are NOT in the stack).
-- **P476 DONE** (four-eyes light, accepted): stack suite after the bump 7340 passed / 0 failed (incl. K3); fork suite 6911 / 0 failed +
-  8 audits green on the merge. Records `docs/reviews/p476/` (change round 4, test-writer round 3, frozen tests under `run/`).
+1. **P488 (new, operator): stack `main` and `origin/main` have diverged** — local ≈ 53 commits unpushed; origin has 4 from the other box
+   (`da94479e` m5max close-up docs, `d5508b32` bump `src/mlx-serve` to v0.3.0, `d7451d8f` C182 docs, `fd5ef108` bump `src/mlx-vlm` to
+   `08cdd08e`). Both bumps change the serving build (mlx-vlm `08cdd08e` carries production commits — tokenizer serialization, mistral3
+   embedding load, reranker / modernbert fixes; mlx-serve v0.3.0), and the gitlinks conflict with ours (mlx-vlm `c9543fc4`, mlx-serve
+   `86921f02`). Options: (a) merge and take the fork merge `282fb009` + mlx-serve v0.3.0 as the new serving build — Wave 2 then runs on a
+   build Wave 1 did not (both arms equal; cross-wave comparisons need a note; v8 records it); (b) merge keeping our two gitlinks for the
+   P426 campaign and re-apply the other box's bumps after the ship call; (c) hold the push. Lead rec: (a) if the other box's production
+   fixes are wanted in the shipped stack (C218: certify what ships), with a smoke on the new build before v8; counterpoint: "one serving
+   build across waves" (plan v4 §2) is broken. No push without the operator's in-turn approval.
+2. **P487: replace the B2 test-writer before Accept** (below).
 
-**P486 rehearsal FINISHED 2026-10-25T08:26Z** (≈ 9.5 h): `ALL LEGS DONE`, every invocation rc 0, conv 100 %, 140 W throughout,
-own router stopped, `:8000` free. The pruned registry served both picks end to end. GPU now IDLE. To do: harvest the per-item walls
-(both picks, both languages; never graded / paired) into the B2 §10.2 Go-deadline input and the Wave-2 estimate.
+## State of the world
 
-## B2 build (four-eyes STRICT; cast per C235 Go)
+- Box `m5max-128`, AC 140 W. **GPU IDLE** since 2026-10-25T08:26Z; no router / worker; `:8000` free. OrbStack running (docker grader).
+- **Fork pushed** (`08cdd08e..282fb009`: a merge of origin's 7 production commits of 2026-10-22/23 with P476 `c9543fc4`); the stack
+  pins `c9543fc4` (serving production unchanged vs Wave 1).
+- **P476 DONE** (four-eyes light, accepted): stack suite after the bump 7340 passed / 0 failed (incl. K3); fork suite 6911 / 0 + 8 audits
+  green on the merge. Records `docs/reviews/p476/`.
+- **P486 rehearsal DONE** (2026-10-24T22:59Z → 2026-10-25T08:26Z): OFF `chain s1`, both picks, pruned registry; 86 rows, every
+  invocation rc 0, conv 100 %, 140 W throughout; box torn down. Out-root `$STACK_WORKDIR/p426/tg1-rehearsal-20261024` (+ `.chain.out`,
+  `.monitor.log`). Never graded / paired (P279). TODO: extract per-item walls (both picks, both languages) for the B2 §10.2 Go deadline
+  and the Wave-2 estimate (label: taken under concurrent CPU load from B2 helpers).
 
-Everything lives under `$STACK_WORKDIR/b2/` (scratch; NOT in the repo). Slices `SLICES.md` (s1 cli … s9 harvest), briefs `briefs/`,
-run outputs `runs/`. Operator-approved cast: implementer arm A = a low-tier worker (session-local evaluation the operator is running;
-notes `b2/sous-agent-observations.md`, do not turn into rules), control arm B = Claude Sonnet (`claude -p`), test-writer `glm-5.2-high`
-(cursor chat id in `b2/tw.chat_id`), change review `gpt-5.6-sol-high` + `glm-5.2-high`. Arms run in LOCKSTEP (P485): each slice starts
-both arms from the chosen reference of the previous slices.
+## B2 build (four-eyes STRICT; Go C235)
 
-- **References so far: s1 = Sonnet (`runs/s1.sonnet.diff`), s2 = Sonnet (`runs/s2.sonnet.diff`)**, committed locally in
-  `arm-sonnet/mlx_local_stack` as "scratch: s1 / s2 reference". Every frozen-test failure on them was triaged as a frozen-test defect.
-- **s3 finished after the checkpoint:** arm B (Sonnet) complete with stated gaps (entry wiring in `run_tg1_chain.py` outside its file list; settle / ready record / DNF row deferred to s4) — `runs/s3.sonnet.diff`; arm A timed out at 5400 s but made its first production edits (partial, no report) — `runs/s3.sous.diff`. Next: score both (functional + 1–5 non-functional + blind judges), pick the s3 reference, decide whether the entry wiring joins s4's scope.
-- **In flight at checkpoint (now finished):** s3 (core) both arms — `arm-sous-s3` and `arm-sonnet` (results `runs/s3.*.json`, rc files); side
-  experiment s2b (pre-digested plan) in `arm-sous-s2b` (`runs/s2b.*`). Arm-A runs so far: 7 runs, zero edits (see the notes file).
-- **Frozen tests: v6** in `b2/frozen/` (190 tests, SHA256, `FROZEN_AT`, `POST_REVEAL_TAGS.json`). v1 had 75 placeholder skips; v2–v6
-  amendments were designer rulings from baseline code (the test-writer saw no candidate) — still contains test defects (fixture misuse,
-  invented interfaces such as `OpencodeArm(p426=…)` / `abort_manifest`, a C221-incompatible self-test, `p1` vs `p01`). Decision: frozen
-  at v6; every failure triaged by hand for both arms; list the defects in the four-eyes report; the test-writer's second delivery is on
-  the final candidate.
-- **OPEN for the operator: P487** — replace the test-writer before Accept (lead rec: `gpt-5.6-sol-high` as a fresh blind test-writer, change review `glm-5.2-high` + a third family); ask at the start of the next session.
-- Clean evaluation copy: `b2/eval/mlx_local_stack` (baseline + s1 + s2 Sonnet + frozen v6).
-- Next: score s3 (functional + 1–5 non-functional per arm; blind judges `blind-judge` agent + `gpt-5.6-sol-high` on anonymized X/Y
-  diffs, per the operator's evaluation request), pick the s3 reference, continue s4 … s9 in lockstep, then the full stack suite on the
-  final candidate, test-writer second delivery (cursor `--resume`), strict change review (sensitive hunks: harvest / scrub / secret gate,
-  pair gate, chain-core policy / ledger / dispositions, locks, probe edits), Accept. While a GPU run is active, cursor-agent helpers get
-  a one-line argv pointing at a brief file (P454 / P486).
+All build state is scratch under `$STACK_WORKDIR/b2/` (not in the repo): `SLICES.md` (s1 cli … s9 harvest), `briefs/`, `runs/`
+(per-run JSON, rc, start / end, diffs). Arms run in LOCKSTEP (P485): each slice starts both arms from the chosen reference.
+Cast (C235 Go): arm A = the low-tier worker under the operator's session-local evaluation (notes `b2/sous-agent-observations.md`;
+not a rule, not for the repo), arm B = Claude Sonnet (`claude -p`), test-writer `glm-5.2-high` (cursor chat `b2/tw.chat_id`),
+change review `gpt-5.6-sol-high` + `glm-5.2-high` — the test-writer is under review (P487).
 
-## Also open: P478 (historical one-off tools, from the P476 change review)
+- **References:** s1 = Sonnet (`runs/s1.sonnet.diff`), s2 = Sonnet (`runs/s2.sonnet.diff`); committed locally in
+  `arm-sonnet/mlx_local_stack` as "scratch: s1 / s2 reference". Arm A produced no s1 / s2 candidate (7 runs, zero edits; a
+  pre-digested plan run wrote one test file only).
+- **s3 finished, NOT yet scored:** `runs/s3.sonnet.diff` (complete; stated gaps: entry not wired in `run_tg1_chain.py` — outside its
+  file list; settle / ready record / DNF row left to s4 via an injectable check; method-level tests only) and `runs/s3.sous.diff`
+  (arm A timed out at 5400 s but made its first production edits; partial, no report). Next: score both (functional + 1–5
+  non-functional: maintainability, testability, documentation, naming, design / cohesion, error handling, codebase consistency, scope
+  discipline, security; blind judges = the `blind-judge` agent + `gpt-5.6-sol-high` on anonymized X / Y diffs), pick the s3 reference,
+  fold the `run_tg1_chain.py` entry wiring into s4's scope.
+- **Frozen tests v6** `b2/frozen/` (190 tests, SHA256, `FROZEN_AT`, `POST_REVEAL_TAGS.json`): still defective (fixture misuse,
+  invented interfaces `OpencodeArm(p426=…)` / `abort_manifest`, a C221-incompatible self-test, `p1` vs `p01`); failures triaged by hand,
+  all so far test defects. **P487: replace the test-writer before Accept** — lead rec `gpt-5.6-sol-high` as a fresh blind test-writer
+  (spec + baseline only, every fixture path validated on the baseline before freezing), change review `glm-5.2-high` + a third family
+  available in Cursor; counterpoint: sol leaves the change review it was strongest in; ≈ 1–2 h.
+- Clean evaluation copy `b2/eval/mlx_local_stack` = baseline + s1 + s2 (Sonnet) + frozen v6.
+- After s9: full stack suite on the final candidate, test-writer second delivery, strict change review (sensitive hunks: harvest / scrub /
+  secret gate, pair gate, chain-core policy / ledger / dispositions, locks, probe edits), Accept. While a GPU run is active, cursor-agent
+  helpers get a one-line argv pointing at a brief file (P454 / P486). If P488 changes the serving build, B2's baseline moves with it.
+- **Pending deliverable to the operator:** the end-of-experiment feedback list on the arm-A worker (source: `b2/sous-agent-observations.md`
+  — per-run outcomes, the multi-turn follow-ups with root causes, the progress-visibility suggestions, nudges A / B results).
 
-`benchmark/mem_decompose.py` (silently falls back to a 262,144 cap for a model absent from the registry), `benchmark/run_bfcl_h2h.sh`,
-`benchmark/w0_gemma_ladder.sh` / `w0_gemma_scout.sh`, `benchmark/bfcl_shim/sitecustomize.py` target models no longer in the registry
-(pre-existing, made more visible by the P476 prune). **Lead rec: retire them as a class** — move them to `benchmark/archive/` behind a
-refusal that names the last commit they ran on (history stays in git; every output they produced stays where it is), and fix
-`mem_decompose.lookup_yaml`'s silent fallback into a refusal if that tool is kept live. Small build (test-first; four-eyes light or exempt
-as a mechanical move — say which at the ask); after B2, never during a GPU run's test-sensitive window. Counterpoint: they are inert
-unless run, and the survey of every runner that might import them costs time. Operator decision.
+## Other open items
 
-## Worktrees / copies to resolve
+- **P478** (historical one-off tools targeting pruned / gone models): lead rec retire them as a class into `benchmark/archive/` behind a
+  refusal naming their last commit; fix `mem_decompose.lookup_yaml`'s silent 262,144 fallback if kept. After B2; operator decision.
+- GPU: nothing citable can run before B2's rehearsal; optional OFF `chain s2 reload` rehearsal (≈ 9 h) only if the operator wants the GPU
+  busy (walls for the s2 order; small marginal value).
 
-`$STACK_WORKDIR/b2/{tw,arm-sous,arm-sous-s2,arm-sous-s2b,arm-sous-s3,arm-sonnet,eval}` — scratch clones for B2; resolve by harvesting
-the accepted candidate into the repo at Accept, then delete. No git worktrees of the main checkout.
+## Copies to resolve
+
+`$STACK_WORKDIR/b2/{tw,arm-sous,arm-sous-s2,arm-sous-s2b,arm-sous-s3,arm-sonnet,eval}` — scratch clones for B2; harvest the accepted
+candidate into the repo at Accept, then delete. No git worktrees of the main checkout.
 
 ## Rules learned (session 8)
 
-- Harvesters waiting on helpers must key on PIDs / rc files, not `pgrep` patterns (the session-7 harvester fired early).
-- Never copy ignored files (`.env`) into helper copies; helper copies need the venv symlinks excluded via `.git/info/exclude`.
+- Harvesters waiting on helpers key on PIDs / rc files, never `pgrep` patterns.
+- Never copy ignored files (`.env`) into helper copies; exclude the venv symlinks via `.git/info/exclude`.
 - Frozen tests must be standing-suite quality and validated on the baseline through every fixture path before freezing.
-- The fork's pre-push gate checks naming per pushed commit: fix hits in the commit itself (allow-shorthand / full names), not in a follow-up.
+- The fork's pre-push gate checks naming per pushed commit: fix hits in the commit itself.
+- Fetch `origin` before planning a push: the other box pushes too.
 - GPU is the bottleneck: always look for useful GPU work (memory `gpu-is-the-bottleneck`).
 
-Next decision id C236; discussion ids continue from P487.
+Next decision id C236; discussion ids continue from P488.
