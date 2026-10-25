@@ -23,6 +23,10 @@ MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first: B2 build 
 - **P476 DONE** (four-eyes light, accepted): stack suite after the bump 7340 passed / 0 failed (incl. K3); fork suite 6911 / 0 failed +
   8 audits green on the merge. Records `docs/reviews/p476/` (change round 4, test-writer round 3, frozen tests under `run/`).
 
+**P486 rehearsal FINISHED 2026-10-25T08:26Z** (≈ 9.5 h): `ALL LEGS DONE`, every invocation rc 0, conv 100 %, 140 W throughout,
+own router stopped, `:8000` free. The pruned registry served both picks end to end. GPU now IDLE. To do: harvest the per-item walls
+(both picks, both languages; never graded / paired) into the B2 §10.2 Go-deadline input and the Wave-2 estimate.
+
 ## B2 build (four-eyes STRICT; cast per C235 Go)
 
 Everything lives under `$STACK_WORKDIR/b2/` (scratch; NOT in the repo). Slices `SLICES.md` (s1 cli … s9 harvest), briefs `briefs/`,
