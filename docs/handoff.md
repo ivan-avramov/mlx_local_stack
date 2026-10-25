@@ -48,6 +48,16 @@ both arms from the chosen reference of the previous slices.
   pair gate, chain-core policy / ledger / dispositions, locks, probe edits), Accept. While a GPU run is active, cursor-agent helpers get
   a one-line argv pointing at a brief file (P454 / P486).
 
+## Also open: P478 (historical one-off tools, from the P476 change review)
+
+`benchmark/mem_decompose.py` (silently falls back to a 262,144 cap for a model absent from the registry), `benchmark/run_bfcl_h2h.sh`,
+`benchmark/w0_gemma_ladder.sh` / `w0_gemma_scout.sh`, `benchmark/bfcl_shim/sitecustomize.py` target models no longer in the registry
+(pre-existing, made more visible by the P476 prune). **Lead rec: retire them as a class** — move them to `benchmark/archive/` behind a
+refusal that names the last commit they ran on (history stays in git; every output they produced stays where it is), and fix
+`mem_decompose.lookup_yaml`'s silent fallback into a refusal if that tool is kept live. Small build (test-first; four-eyes light or exempt
+as a mechanical move — say which at the ask); after B2, never during a GPU run's test-sensitive window. Counterpoint: they are inert
+unless run, and the survey of every runner that might import them costs time. Operator decision.
+
 ## Worktrees / copies to resolve
 
 `$STACK_WORKDIR/b2/{tw,arm-sous,arm-sous-s2,arm-sous-s2b,arm-sous-s3,arm-sonnet,eval}` — scratch clones for B2; resolve by harvesting
