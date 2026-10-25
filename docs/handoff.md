@@ -33,7 +33,8 @@ both arms from the chosen reference of the previous slices.
 
 - **References so far: s1 = Sonnet (`runs/s1.sonnet.diff`), s2 = Sonnet (`runs/s2.sonnet.diff`)**, committed locally in
   `arm-sonnet/mlx_local_stack` as "scratch: s1 / s2 reference". Every frozen-test failure on them was triaged as a frozen-test defect.
-- **In flight at checkpoint:** s3 (core) both arms — `arm-sous-s3` and `arm-sonnet` (results `runs/s3.*.json`, rc files); side
+- **s3 finished after the checkpoint:** arm B (Sonnet) complete with stated gaps (entry wiring in `run_tg1_chain.py` outside its file list; settle / ready record / DNF row deferred to s4) — `runs/s3.sonnet.diff`; arm A timed out at 5400 s but made its first production edits (partial, no report) — `runs/s3.sous.diff`. Next: score both (functional + 1–5 non-functional + blind judges), pick the s3 reference, decide whether the entry wiring joins s4's scope.
+- **In flight at checkpoint (now finished):** s3 (core) both arms — `arm-sous-s3` and `arm-sonnet` (results `runs/s3.*.json`, rc files); side
   experiment s2b (pre-digested plan) in `arm-sous-s2b` (`runs/s2b.*`). Arm-A runs so far: 7 runs, zero edits (see the notes file).
 - **Frozen tests: v6** in `b2/frozen/` (190 tests, SHA256, `FROZEN_AT`, `POST_REVEAL_TAGS.json`). v1 had 75 placeholder skips; v2–v6
   amendments were designer rulings from baseline code (the test-writer saw no candidate) — still contains test defects (fixture misuse,
