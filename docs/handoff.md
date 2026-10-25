@@ -40,6 +40,7 @@ both arms from the chosen reference of the previous slices.
   invented interfaces such as `OpencodeArm(p426=…)` / `abort_manifest`, a C221-incompatible self-test, `p1` vs `p01`). Decision: frozen
   at v6; every failure triaged by hand for both arms; list the defects in the four-eyes report; the test-writer's second delivery is on
   the final candidate.
+- **OPEN for the operator: P487** — replace the test-writer before Accept (lead rec: `gpt-5.6-sol-high` as a fresh blind test-writer, change review `glm-5.2-high` + a third family); ask at the start of the next session.
 - Clean evaluation copy: `b2/eval/mlx_local_stack` (baseline + s1 + s2 Sonnet + frozen v6).
 - Next: score s3 (functional + 1–5 non-functional per arm; blind judges `blind-judge` agent + `gpt-5.6-sol-high` on anonymized X/Y
   diffs, per the operator's evaluation request), pick the s3 reference, continue s4 … s9 in lockstep, then the full stack suite on the
@@ -60,4 +61,4 @@ the accepted candidate into the repo at Accept, then delete. No git worktrees of
 - The fork's pre-push gate checks naming per pushed commit: fix hits in the commit itself (allow-shorthand / full names), not in a follow-up.
 - GPU is the bottleneck: always look for useful GPU work (memory `gpu-is-the-bottleneck`).
 
-Next decision id C236; discussion ids continue from P486.
+Next decision id C236; discussion ids continue from P487.
