@@ -30,7 +30,7 @@ Next, in order:
    router per arm; 3 requests; ON draft counters on every ≥ 2-token request (worker log `$TMPDIR/mlx-manager-logs/<model>.log`
    `Request completed` + `draft_n=`), OFF none; teardown verified; P504 qualify ON copy byte-identical; #2545 not reaching M1.
 5. Local gate receipts `c688e722`, `e6a7a5a` in that GPU window; stack receipt after the commit lands, before the push.
-6. Accept (operator): final diff + findings + P507 / P510 / P511 shown; apply as B0 did; rebuild main's venvs.
+6. Accept (operator): final diff + findings (P507 / P510 / P511 ruled, C241); apply as B0 did; rebuild main's venvs.
 7. Push point P509 (ask). 8. S′ cut + `p426-on-s2` (P511 form) + worktrees + `frozen.s2.json` (candidate names) + Wave 1 `--build s2`.
 
 ## B2 — state (session 10)
@@ -73,4 +73,4 @@ then delete. No git worktrees of the main checkout.
 - cursor-agent briefs: pass a one-line argv pointing at the brief file (P454), even when the text is BUSY-free.
 - An eval copy needs its submodules checked out (tests read the fork's `pins.json`).
 
-Next decision id C241; discussion ids continue from P511.
+Next decision id C242; discussion ids continue from P511.
