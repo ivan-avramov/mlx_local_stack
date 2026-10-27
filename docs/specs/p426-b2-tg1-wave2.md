@@ -480,8 +480,7 @@ flag, file or field, and exits 2.
   dict, `.offset`); `reconcile_item(row, lines, before, after) -> ItemReport` and `reconcile_dnf(abort_manifest, lines, before, after) ->
   ItemReport` (`.ok`, `.case`, `.problems`, `.requests`, `.totals`); `engagement_problems(requests, arm) -> list[str]`;
   `settle(read_metrics, read_log, cursor, *, bound_s, clock, sleep) -> SettleResult(settled, in_flight, waited_s)`;
-  `decode_time(snapshot) -> float` (§4.1); `decode_rate(requests, delta_d) -> float | None` (§8); `a4_window_problems(lines, a4_receipt)
-  -> list[str]`.
+  `decode_time(snapshot) -> float` (§4.1); `decode_rate(requests, delta_d) -> float | None` (§8); `a4_window_problems(lines, a4_receipt, a4_gate) -> list[str]` (`a4_gate`: the A4 run's `gate.json`) [o4].
 - **`bench.p426_hooks.P426Hooks(ChainHooks)`** (s4): `__init__(*, ops, out_root, arm, settle_bound_s, clock=time.time,
   sleep=time.sleep)`; `before_attempt(slot, context)` writes the ready record, returns `accept`; `after_attempt(slot, done, context)`
   settles, reconciles, writes the item record, returns `accept` or `invalidate(reason)`. The chain installs it in P426 mode.
@@ -539,3 +538,27 @@ flag, file or field, and exits 2.
 - **Harvest**: a `HARVEST.json` entry is keyed by its `source` path relative to the attempt's leg root (or `log:<file>` for a log range);
   the scrub is `p426_harvest.Scrub` as Wave 1 constructs it (no manifest file); `credential_values(*, home, config_path, environ,
   env_files=())` (the sequencer passes `<WT>/.env` when present); foreign emails go to `HARVEST.json` `review.emails`.
+
+### 16.5 Seams named after the third test delivery [o4]
+- **Sequencer CLI** `python -m bench.p426_wave2`:
+  - `run --record-dir <dir> --worktree-off <WT> --worktree-on <WT> --out-base <dir> [--through <leg>]`: legs 1–8 in order from the records
+    in `<dir>` (`v8_base.json`, then `amendment.json`);
+  - `makeup --record-dir … --worktree-off … --worktree-on … --out-base … --occurrences <file>`;
+  - `rehearsal --manifest <path> --worktree-off … --worktree-on … --out-base …`: R1 (one HMAC key for its two legs, like a pair), R2,
+    R3 (each its own key);
+  - `--pause-file <path>` (default `<out-base>/PAUSE`).
+  Resume = the same command; the sequencer reads its own `<out-base>/sequence.json` (`{legs: [{leg, attempt, state}], pairs: [..]}`).
+- **Pair receipt flag**: the second chain of a pair gets `--pair-receipt <first leg's receipt.json>`; the chain compares at its after-load
+  checkpoint (§6.5) through `p426_receipt.pair_problems`.
+- **After-load busy census**: `ChainOps.busy_procs()` lists processes; the chain exempts the owned router / worker by `(pid, start)` and
+  its own descendants by `ChainOps.descendants(pid) -> set[int]`.
+- **Ledger key**: `chain.json` `p426_ledger` = `[{slot, kind: "row"|"dnf", invocation, index}]` (as built in s3); `p426_dnf` and
+  `p426_invalid` likewise.
+- **Pins and expected worker argv**: the chain reads the fork's pins from `<WT>/src/mlx-vlm/dev/p369_phase2/pins.json` and the expected
+  worker argv from `ChainOps.expected_worker_argv(registry_path, model) -> list[str]` (mlx-serve's own builder).
+- **ON argv comparison (§6.3)**: ON's argv is OFF's with the three flag pairs inserted where mlx-serve builds them; compared as OFF's
+  tokens in order plus exactly the three pairs, position-free.
+- **Operator email**: `p426_harvest.Scrub(..., emails=(…))`; the sequencer passes the main checkout's `git config user.email`.
+- **`RECORD` re-verification**: through `ChainOps.interpreter_inventory`; its mutated-file refusal is tested on a fixture
+  `site-packages` tree (`interpreter_inventory(pid, site_packages=<path>)` for tests); the live check runs in R1.
+- **Rehearsal ON commit**: R1's ON commit differs from its OFF commit by exactly the P426 plan's §11 restore, as v8's do.
