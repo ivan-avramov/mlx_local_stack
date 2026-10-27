@@ -1,7 +1,8 @@
 # P426 B2 — tg1 legs for Wave 2 (A7) — SPEC v3.2, 2026-10-27 (four-eyes STRICT, C228)
 
 **v3.1 → v3.2 applies the design opinion of the reset review budget (the operator reset the rounds, 2026-10-27; four-eyes 0.7.0)
-once and is NOT re-reviewed** (`docs/reviews/p426-b2/design-opinion-r4.dispositions.md`); its changes are marked [o4].
+once and is NOT re-reviewed** (`docs/reviews/p426-b2/design-opinion-r4.dispositions.md`); its changes are marked [o4]. C238 (2026-10-27)
+drops the cross-pair credential comparison (§6.4–6.5); the round-2 delta review covers [o4], §16 and C238.
 
 **v3 → v3.1 applies design review round 3 of 3 (the last) and is NOT re-reviewed** (`docs/reviews/p426-b2/design-round3.dispositions.md`).
 Round-3 changes are marked [r3].
@@ -61,7 +62,7 @@ to start before 600 s have passed since it.
 - **Attempts and pairs** [o4]: each launch of a leg is an attempt `<leg>.a<n>` (n from 1) with its own out-root
   `$STACK_WORKDIR/p426/wave2/<leg>.a<n>` and harvest destination `benchmark/results/p426/wave2/<leg>.a<n>/` (§11.2's `<leg>` is the attempt name); nothing of an earlier
   attempt is reused or overwritten. A pair is bound by its dossier (§6.5), which names its two attempts; B8 / B6 consume only attempts a
-  dossier names. An attempt voided by a restart between the two legs of its pair gets a harvested `voided/<leg>.a<n>.json` (reason).
+  dossier names. 
   Pushes go per pair, after its dossier (§11.4).
 
 ## 2. P426 mode
@@ -237,9 +238,7 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a ma
 4. **Arm-equality receipt (after load, every leg):** with `<WT>` (worktree root) and `<OUT>` (out-root) canonicalized in every path value:
    router and worker argv; the full environment of the router, the worker and the probe: every non-secret value after canonicalization
    [r3], except a closed list of volatile keys (`_`, `OLDPWD`, `PWD`, `SHLVL`, `TERM_SESSION_ID`, `SECURITYSESSIONID`, `__CF*`) recorded as
-   keys only; values of credential keys (§11.3's classifier) never recorded: each chain records their HMAC-SHA256 under a per-pair
-   random 256-bit key that the sequencer creates in memory and hands to both chains of the pair through an inherited pipe (never argv,
-   environment or a file), discarded when the pair ends [o4]; per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
+   keys only; credential keys (§11.3's classifier) recorded as keys only — never their values or any hash of them (C238); per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
    and a verified content inventory — for every non-editable distribution, name, version and its `RECORD` entries each re-verified
    against the installed bytes (a mismatch is systemic), hashed as sorted `(path, digest)`; editable distributions (`mlx-vlm`,
    `mlx-serve`) are identified by their resolved source tree (`<WT>/src/<sub>`, at the gitlink, `status --porcelain` empty), their
@@ -249,11 +248,11 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a ma
 5. **Pair gate:** for the second leg of each pair (pilots, s1, s2, reload, make-up) the sequencer passes the first leg's receipt path; the
    chain compares at its after-load checkpoint, before item one [r3] — allowed differences: the three §6.3 argv items, the drafter
    snapshot (ON only), the arm commit, the canonicalized roots and the volatile / allowed-difference lists frozen in v8 from R1's full pair
-   environment diff (extending them is a specification change) [o4]; any other difference, or a credential HMAC that differs → systemic. The
+   environment diff (extending them is a specification change) [o4]; any other difference (including a credential key present in one leg only) → systemic. The
    sequencer re-checks after the leg and writes an immutable pair dossier (`pairs/<pair>.json`: both receipts' sha256, both legs'
    `HARVEST.json` sha256, the two attempts, the verdict) [r3], published through the harvest to
-   `benchmark/results/p426/wave2/pairs/<pair>.json` (§11.2) [o4]. The HMAC key lives only in the sequencer's memory: a sequencer restart
-   between the two legs of a pair voids the pair — both legs run again as new attempts (§1) [r3] [o4].
+   `benchmark/results/p426/wave2/pairs/<pair>.json` (§11.2) [o4]. A sequencer restart between the two legs of a pair resumes the pair: the second leg compares with the first leg's persisted receipt
+   (C238).
 6. **Arms:** OFF = the v8 commit; ON = it + exactly the P426 plan's §11 restore (the three C177 lines, the `PROVISIONAL P426` note, the seeding test) [o4] on local branch
    `p426-on`. Commit diff = the three registry lines, the
    `PROVISIONAL P426` note, `benchmark/bench/tests/test_opencode_probe_seeding.py` (not on the serving path); served diff = the entry's
@@ -348,7 +347,7 @@ harvest is committed.
   the leg's log ranges.
 - Staged publication [o4]: files are copied to a staging directory, verified, and published by renaming each destination directory
   into place; `HARVEST.json` is written last; a retry discards an incomplete stage and restarts; a destination whose `HARVEST.json`
-  verifies is done (idempotent). The pair dossier and `voided/` records are published the same way.
+  verifies is done (idempotent). The pair dossier is published the same way.
 - `main` (`benchmark/results/p426/wave2/<leg>.a<n>/`) [o4]: parsed and structured artifacts only — the leg record, `chain.json`, `schedule.json`,
   the realized ledger, rows, manifests, sidecars, DNF / ready / item records, grader reports, per-item code diffs, final-tree manifests,
   the arm-equality receipt, the watcher receipt, `HARVEST.json`.
@@ -360,8 +359,7 @@ harvest is committed.
 ### 11.3 Scrub and secret gate (before compression)
 - P437 scrub rules (paths, user, host via `SCRUB_MANIFEST.json`), then a refusal scan over the original AND the scrubbed bytes of every
   staged file.
-- Exact secret values, compared in memory, never printed, logged or hashed into any output (the one exception: §6.4's HMAC under a
-  discarded per-pair key) [o4]. Credential-key classifier [r3]: a key whose
+- Exact secret values, compared in memory, never printed, logged or hashed into any output. Credential-key classifier [r3]: a key whose
   name matches `*TOKEN*`, `*KEY*`, `*SECRET*`, `*PASSWORD*`, `*CREDENTIAL*`, `*AUTH*` (case-insensitive) and is not on the committed
   non-secret allowlist (e.g. `TOKENIZERS_PARALLELISM`, the `KV_*` / `TQ_*` / `MLX_*` configuration keys the stack defines); a credential
   value shorter than 12 characters or a placeholder (`true`, `false`, `none`, `null`, `0`, `1`, empty, `changeme`) is not used for exact
@@ -468,7 +466,7 @@ flag, file or field, and exits 2.
   in_flight: {in_flight, message_id (null at a boundary), requests_started}}`.
 - **`log_bounds.json`** `{files: [{path, device, inode, offset_start, offset_end (null until finalized)}], created, finalized}`.
 - **Arm-equality receipt** `<out-root>/receipt.json` `{argv: {router, worker}, env: {router, worker, probe}: {key: value | "<volatile>"},
-  credentials: {key: hmac_hex}, interpreters: [{path, inventory_sha256, editables: {name: {tree, gitlink, clean}}}], loaded_images:
+  credential_keys: [key], interpreters: [{path, inventory_sha256, editables: {name: {tree, gitlink, clean}}}], loaded_images:
   [{path, sha256}], probe_entry, snapshots: {target, drafter}, sha256}`.
 - **Pair dossier** `{pair, attempts: [a, b], receipts_sha256: [..], harvest_sha256: [..], differences: [..], verdict, at, sha256}`.
 - **`HARVEST.json`** `{leg, attempt, state, files: [{source, sha256, destination: "main"|"evidence"|"excluded", published,
@@ -484,7 +482,7 @@ flag, file or field, and exits 2.
 - **`bench.p426_hooks.P426Hooks(ChainHooks)`** (s4): `__init__(*, ops, out_root, arm, settle_bound_s, clock=time.time,
   sleep=time.sleep)`; `before_attempt(slot, context)` writes the ready record, returns `accept`; `after_attempt(slot, done, context)`
   settles, reconciles, writes the item record, returns `accept` or `invalidate(reason)`. The chain installs it in P426 mode.
-- **`bench.p426_receipt`** (s5): `arm_receipt(ops, *, worktree, out_root, hmac_key: bytes) -> dict`; `pair_problems(first, second, *,
+- **`bench.p426_receipt`** (s5): `arm_receipt(ops, *, worktree, out_root, pids) -> dict`; `pair_problems(first, second, *,
   allowed, volatile) -> list[str]`; `write_dossier(path, *, pair, attempts, receipts, harvests, verdict) -> dict`.
 - **`bench.p426_secrets`** (s5, used by s9): `credential_values(*, home, config_path, environ) -> dict[str, str]` (in memory only);
   `is_credential_key(name) -> bool`; `scan(text) -> list[Finding(kind, start, end)]` (never carries the matched value);
@@ -520,9 +518,8 @@ flag, file or field, and exits 2.
   §16.1 recipe.
 - **Hook context** (as built in s3): `{stage: "ready"|"done", slot, item, k, ready: <the ready record>, row: <the full row at done, else
   None>, load: {idx, load_gen, worker, session, model, arm}}`.
-- **`p426_receipt.arm_receipt(ops, *, worktree, out_root, hmac_key, pids: {router, worker, probe})`**; argv and environment via
-  `ops.proc_argv(pid) -> list[str]` and `ops.proc_environ(pid)`. The sequencer hands the key to the chain as `--hmac-fd <n>` (an
-  inherited pipe; the chain reads 32 bytes and closes it; absent in `--rehearsal`, where a fresh key is drawn).
+- **`p426_receipt.arm_receipt(ops, *, worktree, out_root, pids: {router, worker, probe})`**; argv and environment via
+  `ops.proc_argv(pid) -> list[str]` and `ops.proc_environ(pid)` (C238: no key, no `--hmac-fd`).
 - **Arm spellings**: `engagement_problems(requests, arm)` and every P426 API take `arm` ∈ {`off`, `on`}.
 - **`p426_reconcile` inputs**: `before` / `after` / `decode_time(snapshot)` take the `/metrics` summary dict (as the ready record stores
   it); `settle`'s `read_log(start, end=None) -> bytes` and `read_metrics() -> dict`; its `cursor` is the ready record's `log_cursor`;
@@ -544,8 +541,7 @@ flag, file or field, and exits 2.
   - `run --record-dir <dir> --worktree-off <WT> --worktree-on <WT> --out-base <dir> [--through <leg>]`: legs 1–8 in order from the records
     in `<dir>` (`v8_base.json`, then `amendment.json`);
   - `makeup --record-dir … --worktree-off … --worktree-on … --out-base … --occurrences <file>`;
-  - `rehearsal --manifest <path> --worktree-off … --worktree-on … --out-base …`: R1 (one HMAC key for its two legs, like a pair), R2,
-    R3 (each its own key);
+  - `rehearsal --manifest <path> --worktree-off … --worktree-on … --out-base …`: R1 (a pair), R2, R3;
   - `--pause-file <path>` (default `<out-base>/PAUSE`).
   Resume = the same command; the sequencer reads its own `<out-base>/sequence.json` (`{legs: [{leg, attempt, state}], pairs: [..]}`).
 - **Pair receipt flag**: the second chain of a pair gets `--pair-receipt <first leg's receipt.json>`; the chain compares at its after-load
