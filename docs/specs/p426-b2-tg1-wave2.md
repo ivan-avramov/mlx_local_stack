@@ -1,4 +1,7 @@
-# P426 B2 — tg1 legs for Wave 2 (A7) — SPEC v3.1, 2026-10-24 (four-eyes STRICT, C228)
+# P426 B2 — tg1 legs for Wave 2 (A7) — SPEC v3.2, 2026-10-27 (four-eyes STRICT, C228)
+
+**v3.1 → v3.2 applies the design opinion of the reset review budget (the operator reset the rounds, 2026-10-27; four-eyes 0.7.0)
+once and is NOT re-reviewed** (`docs/reviews/p426-b2/design-opinion-r4.dispositions.md`); its changes are marked [o4].
 
 **v3 → v3.1 applies design review round 3 of 3 (the last) and is NOT re-reviewed** (`docs/reviews/p426-b2/design-round3.dispositions.md`).
 Round-3 changes are marked [r3].
@@ -25,7 +28,7 @@ One leg = ONE `run_tg1_chain.py --p426` invocation for ONE entry and ONE session
 Wave-2 sequencer (`bench.p426_wave2`). The sequencer records each leg's end time in `$STACK_WORKDIR/p426/LAST_LEG_END`; the chain refuses
 to start before 600 s have passed since it.
 
-| # | Leg | Arm worktree | Chain argv (besides §6.6's common flags) | Items | Record required |
+| # | Leg | Arm worktree | Chain argv (besides §6.7's common flags [o4]) | Items | Record required |
 |---|---|---|---|---|---|
 | R1 | `tg1-p426-rehearsal-{off,on}` | B2 commit / throwaway ON commit | `chain s1 --rehearsal` | 1 + 2 (smoke shape) | rehearsal manifest |
 | R2 | `tg1-p426-rehearsal-mismatch` [r3] | ON rehearsal commit | `chain s1 --rehearsal --inject reconcile-mismatch` | 2 | rehearsal manifest |
@@ -47,13 +50,19 @@ to start before 600 s have passed since it.
 - **Pre-freeze rehearsal:** through the real topology (router, worker, opencode, docker grader, item barrier, reconciliation, watcher,
   harvest into a scratch stage); never graded, paired or published; each run on a fresh root [r3]. R1 (positive pair) must show: every
   barrier fires and its ready / item records exist, reconciliation exact, ON counters present and OFF absent, the pair gate passes, the
-  harvest is complete. R2 (negative): the injected reconciliation mismatch stops the leg after that item, `INVALID`. R3: one real probe
+  harvest is complete; it records the pair's full environment diff (§6.4) and every ON request's `(generated_tokens, draft_rounds)`
+  (§4.4) [o4]. R2 (negative): the injected reconciliation mismatch stops the leg after that item, `INVALID`. R3: one real probe
   kill (a lowered stall limit on one item; `--inject` exists only with `--rehearsal`) is classified as a scored strict fail with its
   failed-line case recorded. R2 / R3 are excluded from the pair gate; v8 requires R1 VALID, R2 INVALID for exactly that reason, R3 VALID.
 - **Pilot gate (after legs 1–2):** both legs VALID (§5.1), 5 / 5 items reconciled, zero DNF, ON engagement proven on every eligible
   request (§4.4), both speed-valid (§8), the pair gate passed (§6.5); then the sequencer writes the timeout amendment. Otherwise it stops
   for the operator. Pilot rows never enter pairs or signals.
 - A systemic failure stops the leg and the sequencer (§5.1). A rerun is an operator decision, labelled, on a fresh out-root.
+- **Attempts and pairs** [o4]: each launch of a leg is an attempt `<leg>.a<n>` (n from 1) with its own out-root
+  `$STACK_WORKDIR/p426/wave2/<leg>.a<n>` and harvest destination `benchmark/results/p426/wave2/<leg>.a<n>/`; nothing of an earlier
+  attempt is reused or overwritten. A pair is bound by its dossier (§6.5), which names its two attempts; B8 / B6 consume only attempts a
+  dossier names. An attempt voided by a restart between the two legs of its pair gets a harvested `voided/<leg>.a<n>.json` (reason).
+  Pushes go per pair, after its dossier (§11.4).
 
 ## 2. P426 mode
 
@@ -63,6 +72,7 @@ to start before 600 s have passed since it.
   than one model, a record of the wrong kind for the leg (§1).
 - C221 applies to EVERY tg1 mode [r3]: the required `--models` list, the committed `<WT>/main_models.yaml` served verbatim, no overlay
   generation, `--predictor` as an assertion, per-model predictions from the pilot mean else a recorded generic default
+  (`generic_pred_s` = 250 s, today's fallback, recorded in `chain.json`) [o4]
   (`chain_core.PRED_S` retired from the tg1 path). Without `--p426` everything else is as at the B2 base commit: the item order and
   `schedule_sha256` for the M63 / P223 argv are byte-identical to golden values recorded from the base commit; the serialized `tg1`
   ChainConfig differs only in the C221 fields, its golden refreshed with old → new recorded (test).
@@ -108,19 +118,21 @@ The `done` hook receives the slot, the `.done` payload, the item's full row, the
 - **Server log:** `<WT>/logs/mlx_vlm.log` (append-only across legs; read from the byte cursor) `Request started` / `Request completed` /
   `Request failed` lines. The `Request completed` line is the per-request source of the draft counters: `_build_metrics_envelope`
   merges `draft_counters` into the payload and `_format_verify_counters` appends every `draft_*` key (fork `0f30522c`,
-  `server/generation.py`) [r3].
+  `server/generation.py`; unchanged at S′ `c688e722`, `generation.py:661, 777–789`) [r3] [o4].
 - **Worker counters:** `GET /metrics` on the owned worker: `summary.requests_started / requests_completed / requests_failed / in_flight /
-  prompt_tokens_total / generated_tokens_total`, and decode time `D = generated_tokens_total / avg_decode_tok_s` (= the worker's
-  `Σ decode_elapsed_s`; 0 when no tokens).
-- The field pairing between `request_usage` and the log line (which client count equals which server count) is the one the P456
-  rehearsal matched 17 / 17; a test pins it on a committed rehearsal row + log-slice fixture.
+  prompt_tokens_total / generated_tokens_total`, and decode time `D` = the worker's `Σ decode_elapsed_s`, computed as
+  `generated_tokens_total / avg_decode_tok_s` from the unrounded snapshot values, and 0 when `avg_decode_tok_s == 0` [o4].
+- The pairing between `request_usage` and the log lines is positional [o4]: the k-th `Request completed` line of the window pairs with the
+  k-th `request_usage` entry, and per pair the line's prompt / generated tokens equal the entry's `prompt_tokens` / `output_tokens` (the
+  fields the P456 rehearsal matched 17 / 17); a test pins it on a committed rehearsal row + log-slice fixture.
 
 ### 4.2 Ready record and settle
 - At `ready`, before `.go`: `items/<slot>.ready.json` (log byte cursor, worker snapshot, owned identities, time). Missing at `done` or at a
-  DNF → systemic.
+  DNF → systemic; an abort before the slot's `.ready` (no ready record) is systemic [o4].
 - Settle (at `done`, and after an aborted invocation): poll every 2 s until `in_flight == 0` and every `Request started` after the cursor
-  has its terminal line; bound 900 s in v8 base (a disconnect during a long prefill is noticed only when prefill ends), raised in the
-  timeout amendment to max(900 s, 2 × the largest single-request elapsed over both pilots) [r3]. Not settled → systemic.
+  has its terminal line; bound in v8 base: max(900 s, 2 × the largest single-request elapsed of this entry's Python and Go items in the
+  P499 rehearsal on S′ and the M63 / P456 rows) [o4] (a disconnect during a long prefill is noticed only when prefill ends), raised in the
+  timeout amendment to max(that, 2 × the largest single-request elapsed over both pilots) [r3]. Not settled → systemic.
 - Whole-leg log boundaries [r3]: before the router starts, `log_bounds.json` is exclusive-created with path, device, inode and byte offset of
   `<WT>/logs/mlx_vlm.log` and `<WT>/logs/main_model.log`; finalized after teardown; a truncated or replaced file → systemic (in the run) or a
   failed harvest (after). The harvest takes exactly these ranges.
@@ -130,9 +142,11 @@ The `done` hook receives the slot, the `.done` payload, the item's full row, the
 ### 4.3 Equalities
 Let `F` = the `Request failed` lines in the window, `C` = the completed lines, `S` = the started lines, `Δ` = worker deltas.
 - Serial: every `Request started` line shows `in_flight=1`, and no start precedes the previous request's terminal line.
-- Every line in `C` carries `session=` == the row's `session_id` and `backend=cached_session`; `C` equals `request_usage` in count and
-  order on the pinned field pairing; `Δrequests_completed == |C|`; `Δrequests_started == |S| == |C| + |F|`; `Δrequests_failed == |F|`;
-  `Δprompt_tokens_total` / `Δgenerated_tokens_total` == the sums over `C`.
+- Every line in `C` carries `session=` == the item's session (the row's `session_id`; for a DNF, which has no row, the abort manifest's
+  session id [o4]) and `backend=cached_session`; `C` pairs positionally with `request_usage` (§4.1), equal in count — except in the
+  `completed_unaccounted` rows below, where `C[:-1]` pairs with `request_usage` and the last line is the unaccounted one [o4];
+  `Δrequests_completed == |C|`; `Δrequests_started == |S| == |C| + |F|`; `Δrequests_failed == |F|`; `Δprompt_tokens_total` /
+  `Δgenerated_tokens_total` == the sums over `C` (the client's sums follow from the per-request pairing and are not compared again [o4]).
 - Allowed `F`, all other cases systemic:
 
 | Item outcome (structured evidence) | `|F|` | Condition |
@@ -140,6 +154,7 @@ Let `F` = the `Request failed` lines in the window, `C` = the completed lines, `
 | completed normally | 0 | — |
 | probe kill or `client_inactivity` (scored strict fail), at a request boundary | 0 | `gate.requests_completed_at_kill == |C|` (null for `client_inactivity` → `gate.requests_completed == |C|`) |
 | the same, with a request in flight | 1 | the last line of the window, `error=stream_closed_before_completion`, `|S| == |C| + 1` |
+| the same, a request in flight that the server completed before the client lost it [o4] | 0 | exactly one trailing `C` line absent from `request_usage`, its session == the row's, recorded `completed_unaccounted` |
 | DNF (any DNF cause), the abort at a request boundary | 0 | `|C| == len(request_usage)` from the abort manifest [r3] |
 | DNF, a request in flight that the server failed | 1 | the trailing `stream_closed_before_completion` line as above |
 | DNF, a request in flight that the server completed before the client lost it | 0 | exactly one trailing `C` line absent from `request_usage` (the abort manifest's in-flight message), its session == the row's, recorded as `completed_unaccounted` [r3] |
@@ -154,7 +169,9 @@ established-stream resets) [r3].
 - ON: every completed request with `generated_tokens ≥ 2` carries integer `draft_rounds ≥ 1`, integer `draft_n ≥ 1`, integer
   `0 ≤ draft_n_accepted ≤ draft_n`, `draft_kind=mtp`. Basis (code-read, fork `0f30522c`): the first token comes from prefill
   (`speculative/mtp.py` `emitted = 1  # caller already yielded the first bonus`); `speculative_stats_since` returns null when no round ran
-  (`speculative/common.py`). Requests with `generated_tokens ≤ 1` are counted and listed, not judged. The pilot is the known positive.
+  (`speculative/common.py`). Unchanged at S′ `c688e722` (`mtp.py:716`, `common.py:399–401`) [o4]. Requests with `generated_tokens ≤ 1`
+  are counted and listed, not judged. The pilot is the known positive; R1 records every ON request's `(generated_tokens, draft_rounds)`,
+  and a request there with `generated_tokens ≥ 2` and no round stops v8 for the operator [o4].
   Fields read from the item's `Request completed` lines (§4.1); `generated_tokens` is the reconciled value [r3]. Scope: item requests are
   judged; the A4 window's requests are recorded, not judged [r3].
 - OFF: no `draft_*` field on any request.
@@ -198,11 +215,12 @@ a non-success (AGENTS.md; no denominator shrink), labelled `transport_dnf` (not 
 arm and session beside it with an attention flag when they differ between arms [r3], the make-up result reported as a sensitivity line.
 
 ### 5.5 Make-up legs (operator's call)
-Input: an occurrences file — records `(session, language, item, seed, arm_of_dnf, occurrence)`, duplicates across sessions allowed — the
-ordered union of every DNF occurrence of both arms and both sessions; BOTH make-up legs run the whole union (C220: "for BOTH arms", so
+Input: an occurrences file — records `(session, language, item, seed, arm_of_dnf, occurrence)`, duplicates across sessions allowed — the ordered union of every DNF occurrence of the VALID-with-DNF legs of both arms and both sessions (an INVALID leg is rerun, not made
+up) [o4]; BOTH make-up legs run the whole union (C220: "for BOTH arms", so
 every rerun item has a pair). One fresh-load leg per arm (OFF then ON); inside a leg, one invocation per (session, seed, language) group
 [r3] in s1-then-s2 and original language order, items in their original order; own out-root namespace `makeup`; excluded from the
-per-session pairs; a repeat DNF is a finding. Same checkpoints and classes.
+per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a make-up leg that stops early records its unrun occurrences
+`not_run`, and the sensitivity line names them [o4].
 
 ## 6. Models and arms (C221, C218)
 
@@ -218,21 +236,25 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes.
 4. **Arm-equality receipt (after load, every leg):** with `<WT>` (worktree root) and `<OUT>` (out-root) canonicalized in every path value:
    router and worker argv; the full environment of the router, the worker and the probe: every non-secret value after canonicalization
    [r3], except a closed list of volatile keys (`_`, `OLDPWD`, `PWD`, `SHLVL`, `TERM_SESSION_ID`, `SECURITYSESSIONID`, `__CF*`) recorded as
-   keys only; values of credential keys (§11.3's classifier) NEVER recorded (not even hashed) — compared in memory across the pair,
-   recorded as `same` / `different`; per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
+   keys only; values of credential keys (§11.3's classifier) never recorded: each chain records their HMAC-SHA256 under a per-pair
+   random 256-bit key that the sequencer creates in memory and hands to both chains of the pair through an inherited pipe (never argv,
+   environment or a file), discarded when the pair ends [o4]; per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
    and a verified content inventory — for every non-editable distribution, name, version and its `RECORD` entries each re-verified
    against the installed bytes (a mismatch is systemic), hashed as sorted `(path, digest)`; editable distributions (`mlx-vlm`,
    `mlx-serve`) are identified by their resolved source tree (`<WT>/src/<sub>`, at the gitlink, `status --porcelain` empty), their
-   editable metadata excluded [r3]; the native libraries the worker actually loaded (`vmmap` / `lsof -p <worker>`: the loaded paths of
+   editable metadata excluded [r3]; the native libraries the worker actually loaded (`vmmap <worker>`; `lsof` lists descriptors, not loaded images [o4]: the loaded paths of
    `libmlx.dylib`, `mlx.metallib`) and the sha256 of each loaded file [r3]; the probe entry's resolved path; the target / drafter
    snapshot revisions and file hashes (§3) [r3].
 5. **Pair gate:** for the second leg of each pair (pilots, s1, s2, reload, make-up) the sequencer passes the first leg's receipt path; the
    chain compares at its after-load checkpoint, before item one [r3] — allowed differences: the three §6.3 argv items, the drafter
-   snapshot (ON only), the arm commit and the canonicalized roots; any other difference, or a credential value `different` → systemic. The
+   snapshot (ON only), the arm commit, the canonicalized roots and the volatile / allowed-difference lists frozen in v8 from R1's full pair
+   environment diff (extending them is a specification change) [o4]; any other difference, or a credential HMAC that differs → systemic. The
    sequencer re-checks after the leg and writes an immutable pair dossier (`pairs/<pair>.json`: both receipts' sha256, both legs'
-   `HARVEST.json` sha256, the verdict) [r3]. Credential equality lives only in memory: a sequencer restart between the two legs of a pair
-   voids the pair — both legs run again on fresh roots [r3].
-6. **Arms:** OFF = the v8 commit; ON = it + exactly the §11 restore on local branch `p426-on`. Commit diff = the three registry lines, the
+   `HARVEST.json` sha256, the two attempts, the verdict) [r3], published through the harvest to
+   `benchmark/results/p426/wave2/pairs/<pair>.json` (§11.2) [o4]. The HMAC key lives only in the sequencer's memory: a sequencer restart
+   between the two legs of a pair voids the pair — both legs run again as new attempts (§1) [r3] [o4].
+6. **Arms:** OFF = the v8 commit; ON = it + exactly the P426 plan's §11 restore (the three C177 lines, the `PROVISIONAL P426` note, the seeding test) [o4] on local branch
+   `p426-on`. Commit diff = the three registry lines, the
    `PROVISIONAL P426` note, `benchmark/bench/tests/test_opencode_probe_seeding.py` (not on the serving path); served diff = the entry's
    three keys. v8 asserts both.
 7. Common flags: `--p426 --models Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --predictor <arm> --out-root $STACK_WORKDIR/p426/wave2/<leg>
@@ -311,15 +333,21 @@ supervising the chain and the watcher, never kills; the operator decides. When t
 harvest is committed.
 
 ### 11.2 Inventory and destinations
-- Every regular file under the leg root (and the leg's server-log byte range) is inventoried; each gets a destination or a recorded
+- Every regular file under the attempt's leg root, under each run and evidence directory the attempt's own manifests name (the probe
+  writes its run directory and transcripts under `$STACK_WORKDIR`; each named directory must carry a run id of this attempt) [o4], and
+  the leg's server-log byte range, is inventoried; each gets a destination or a recorded
   exclusion reason from a closed rule table; an unmatched file fails the harvest. References are resolved transitively (rows, manifests,
   sidecars, DNF records, ready / item records, A4 receipts, grader reports, final-tree manifests and every object they reference, web
   evidence, the watcher receipt); a referenced file missing fails the harvest. Barrier and control files (`.ready`, `.go`, `.done`,
   `.continue`, `.stop`, ack / cancel files, `STOP`) are harvested; their presence is checked against the leg state (e.g. a `.stop` for every
   `invalidate`).
-- Symlinks [r3]: every file is examined with `lstat`; a symlink or non-regular file (anywhere, incl. final trees) is never followed or
-  copied — it is recorded (path, link target string) and the harvest fails for the operator; every source path must resolve inside the
-  leg root or the leg's log ranges.
+- Symlinks [r3] [o4]: every file is examined with `lstat`; a symlink or non-regular file is never followed or copied. Inside a model's
+  final tree it is recorded in the final-tree manifest (path, link target string) and excluded with reason `symlink`; anywhere else, or
+  when a required artifact references it, the harvest fails for the operator. Every source path must resolve inside the roots above or
+  the leg's log ranges.
+- Staged publication [o4]: files are copied to a staging directory, verified, and published by renaming each destination directory
+  into place; `HARVEST.json` is written last; a retry discards an incomplete stage and restarts; a destination whose `HARVEST.json`
+  verifies is done (idempotent). The pair dossier and `voided/` records are published the same way.
 - `main` (`benchmark/results/p426/wave2/<leg>/`): parsed and structured artifacts only — the leg record, `chain.json`, `schedule.json`,
   the realized ledger, rows, manifests, sidecars, DNF / ready / item records, grader reports, per-item code diffs, final-tree manifests,
   the arm-equality receipt, the watcher receipt, `HARVEST.json`.
@@ -345,7 +373,7 @@ harvest is committed.
 - A refusal quarantines that file (not staged; listed by path and pattern name only) and fails the harvest for the operator.
 
 ### 11.4 Pushes
-None automatic. `main` and `evidence` pushes each need the operator's in-turn approval.
+None automatic. `main` and `evidence` pushes each need the operator's in-turn approval, and go per pair, after its dossier [o4].
 
 ## 12. Contract to B8 / B6
 
@@ -396,7 +424,7 @@ policy, ledger and dispositions, locks, the probe-code edits).
 ## 15. Non-goals, assumptions, residuals
 
 - Non-goals: server code changes (C225); KV formats (C232); B6 / B8 / B3 builds; `Qwen3.8-27B-mlx-uniform-4bit` and later entries (the
-  harness is entry-agnostic: only the §6.3 argv delta and the §11 restore are per entry).
+  harness is entry-agnostic: only the §6.3 argv delta and the P426 plan's §11 restore are per entry).
 - Assumptions: opencode 2.0.20 `request_usage` and `session=` attribution as in the P456 rehearsal (17 / 17); the serial cached-session path
   (checked per request, §4.3); the barrier mechanism works on real hardware as on the fake probe (shown by the rehearsal before v8).
 - Residuals: third-party text in transcripts the secret gate cannot classify (on `evidence` only, listed emails reviewed before its push);
