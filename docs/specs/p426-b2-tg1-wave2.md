@@ -286,7 +286,7 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a ma
   valid session the ratio is descriptive, "not order-balanced". Quality is unaffected.
 - Decode-rate estimator (B6 / B8 input, plan §6 T2): per item, `Σ max(generated_tokens_i − 1, 0) / ΔD` over its completed requests [r3]
   (`decode_elapsed_s` spans first to last token, so the first token is excluded from the numerator; ≤ 1-token requests contribute 0 tokens
-  and a negligible `D`, listed). Same definition in both arms; the barrier's between-item waits are outside every request.
+  and the worker's own `D` for them, listed; §16.3) [o4]. Same definition in both arms; the barrier's between-item waits are outside every request.
 - The sequencer polls the watcher's pid + start time at every tick; a dead watcher marks the leg speed-invalid in the leg record [r3].
 - P469: `Chain.watch_rows` counts the leg's earlier validated invocations' rows plus the running one's; red test = the rehearsal shape
   (validated pilot invocation 1 row, full invocation running with 0) reads 1. The chain's WATCH lines stay informational.
@@ -429,3 +429,84 @@ policy, ledger and dispositions, locks, the probe-code edits).
   (checked per request, §4.3); the barrier mechanism works on real hardware as on the fake probe (shown by the rehearsal before v8).
 - Residuals: third-party text in transcripts the secret gate cannot classify (on `evidence` only, listed emails reviewed before its push);
   the Go deadline input is historical, not piloted (an overrun only pauses).
+
+## 16. Interfaces — the testable seams [o4]
+
+Named so the tests can be written blind (the first test delivery found G1–G15 unnamed). A name already built in s1–s3 is kept. All
+records are JSON, exclusive-created unless stated, and self-hashed: `sha256` = sha256 of the canonical JSON (`sort_keys`, separators
+`,` `:`, UTF-8) of the record without its `sha256` field. Every refusal prints one stderr line `REFUSED: <reason>` naming the offending
+flag, file or field, and exits 2.
+
+### 16.1 Records
+- **`--frozen-record <path>`** (s1): read once at entry; its `kind` must fit the mode — `--rehearsal` → `p426_rehearsal`; `pilot` →
+  `p426_v8_base`; `chain` / `makeup` → `p426_timeout_amendment`, whose `v8_base_sha256` must equal the sha256 of `v8_base.json` in the
+  same directory; a bad self-hash, a wrong kind or a missing file refuses.
+- **Rehearsal manifest** `{kind: "p426_rehearsal", off_commit, on_commit, off_worktree, on_worktree, out_root, rehearsal: true, created,
+  sha256}`.
+- **v8 base** `v8_base.json` `{kind: "p426_v8_base", build, off_commit, on_commit, off_worktree, on_worktree, gitlinks: {mlx_vlm,
+  mlx_serve}, production_ref, probe_code_sha256, scaffold_policy_sha256, generation_identity_sha256, pins_sha256, grader_image_id,
+  frozen_prompt_date, pilot_deadline_s, settle_bound_s, generic_pred_s, volatile_env_keys, allowed_env_differences,
+  rehearsal_manifest_sha256, stack_suite_receipt_sha256, created, sha256}`.
+- **Timeout amendment** `{kind: "p426_timeout_amendment", v8_base_sha256, w_python_s, w_go_s, leg_deadline_s: {"<session>": s},
+  settle_bound_s, created, sha256}`.
+- **Leg record** `<out-root>/leg.json` `{leg, attempt, state: VALID|VALID_WITH_DNF|INVALID|NOT_STARTED|OVERRUN, class, reason,
+  chain_rc, started, ended}` (written by the sequencer).
+- **Slot file names**: `chain_rows.slot_file(slot)` = the slot with `|` → `__` and `/` → `--`.
+- **Ready record** `items/<slot_file>.ready.json` `{slot, item, k, log_cursor: {path, device, inode, offset}, worker_snapshot: <the
+  /metrics summary dict>, owned: {router: {pid, start}, worker: {pid, create_time}}, at}`.
+- **Item record** `items/<slot_file>.json` (DNF: `.dnf.json`) `{slot, ready_sha256, log_range: {start, end, sha256}, worker_before,
+  worker_after, case, requests: [{session, backend, prompt_tokens, generated_tokens, decode_tok_s, draft_rounds, draft_n,
+  draft_n_accepted, draft_kind, error}], totals: {requests, prompt_tokens, generated_tokens, decode_s, accepted, proposed}, checks:
+  {<name>: {ok, detail}}, verdict: "reconciled"|"invalid"}`; `case` ∈ {`completed`, `kill_boundary`, `kill_inflight_failed`,
+  `kill_completed_unaccounted`, `dnf_boundary`, `dnf_inflight_failed`, `dnf_completed_unaccounted`}.
+- **`p426_dnf` record** (as built in s3; sidecar `<out-root>/<session>/p426_dnf/<slot_file>.json`) `{slot, item, session, language, seed,
+  arm, pick, load, load_gen, invocation, attempt, abort: {cause, error, evidence}, owned_at_incident, owned_after, settle: {in_flight,
+  settled}, item_record, at}`.
+- **Abort manifest** (s2): `transport_abort = {cause, error, evidence, session_id, in_flight_message_id (null at a boundary),
+  termination}` and `gate.request_usage`.
+- **`log_bounds.json`** `{files: [{path, device, inode, offset_start, offset_end (null until finalized)}], created, finalized}`.
+- **Arm-equality receipt** `<out-root>/receipt.json` `{argv: {router, worker}, env: {router, worker, probe}: {key: value | "<volatile>"},
+  credentials: {key: hmac_hex}, interpreters: [{path, inventory_sha256, editables: {name: {tree, gitlink, clean}}}], loaded_images:
+  [{path, sha256}], probe_entry, snapshots: {target, drafter}, sha256}`.
+- **Pair dossier** `{pair, attempts: [a, b], receipts_sha256: [..], harvest_sha256: [..], differences: [..], verdict, at, sha256}`.
+- **`HARVEST.json`** `{leg, attempt, state, files: [{source, sha256, destination: "main"|"evidence"|"excluded", published,
+  published_sha256, compression, exclusion_reason}], created, sha256}`.
+- **Watcher receipt** `<out-root>/watch.jsonl` (one line per tick, then one `exit_state` line).
+
+### 16.2 Modules
+- **`bench.p426_reconcile`** (s4): `parse_log(data: bytes) -> list[LogLine]` (`LogLine.kind` ∈ started / completed / failed, `.fields`
+  dict, `.offset`); `reconcile_item(row, lines, before, after) -> ItemReport` and `reconcile_dnf(abort_manifest, lines, before, after) ->
+  ItemReport` (`.ok`, `.case`, `.problems`, `.requests`, `.totals`); `engagement_problems(requests, arm) -> list[str]`;
+  `settle(read_metrics, read_log, cursor, *, bound_s, clock, sleep) -> SettleResult(settled, in_flight, waited_s)`;
+  `decode_time(snapshot) -> float` (§4.1); `decode_rate(requests, delta_d) -> float | None` (§8); `a4_window_problems(lines, a4_receipt)
+  -> list[str]`.
+- **`bench.p426_hooks.P426Hooks(ChainHooks)`** (s4): `__init__(*, ops, out_root, arm, settle_bound_s, clock=time.time,
+  sleep=time.sleep)`; `before_attempt(slot, context)` writes the ready record, returns `accept`; `after_attempt(slot, done, context)`
+  settles, reconciles, writes the item record, returns `accept` or `invalidate(reason)`. The chain installs it in P426 mode.
+- **`bench.p426_receipt`** (s5): `arm_receipt(ops, *, worktree, out_root, hmac_key: bytes) -> dict`; `pair_problems(first, second, *,
+  allowed, volatile) -> list[str]`; `write_dossier(path, *, pair, attempts, receipts, harvests, verdict) -> dict`.
+- **`bench.p426_secrets`** (s5, used by s9): `credential_values(*, home, config_path, environ) -> dict[str, str]` (in memory only);
+  `is_credential_key(name) -> bool`; `scan(text) -> list[Finding(kind, start, end)]` (never carries the matched value);
+  `exact_hits(text, values) -> list[Finding]`.
+- **`bench.p426_freeze`** (s8): CLI `rehearsal --off-worktree --on-worktree --out-root --out`; `v8 --off-worktree --on-worktree
+  --rehearsal-manifest --r1 --r2 --r3 --out`; `amend --v8 --pilot-off --pilot-on --out`; `main(argv, *, ops=None, checks=None)` with
+  `checks` the injectable precondition runner.
+- **`bench.p426_wave2`** (s8): `leg_argv(leg, attempt, *, worktrees, record_path, out_base) -> list[str]`; `deadline_s(session, langs,
+  amendment) -> float` (§10.2); `makeup_groups(occurrences) -> list[dict]` (§5.5); `main(argv, *, ops=None, clock=None, sleep=None)`.
+- **`bench.p426_harvest wave2 --leg-root <dir> --main-root <checkout> --evidence-stage <dir>`** (s9), with `p426_harvest.Scrub` (P437)
+  for the scrub; `harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets) -> dict` (the `HARVEST.json`).
+- **`bench_watch.main(argv, *, power=None, clock=None)`** (s6): `power()` returns `{watts, volts, battery, on_battery_intervals}`.
+- **`OpencodeArm(mode="tg1", p426=True)`** (s2, as built).
+- **ChainOps seams** (s4 / s5; `FakeOps` implements them): `server_log_path() -> Path`, `read_log(path, start, end=None) -> bytes`,
+  `worker_metrics()` (existing), `proc_environ(pid) -> dict`, `interpreter_inventory(pid) -> dict`, `loaded_images(pid) -> list[dict]`,
+  `snapshot_hashes(model) -> dict`.
+
+### 16.3 Clarifications
+- In P426 mode the chain passes `--evidence p426` to the probe.
+- `--rehearsal` selects the smoke shape: one pilot item, then two full items, of s1's P426 Python order (§7); `--smoke` stays refused.
+- The P426 pilot is the first five of s1's P426 Python order (`Random(seed).sample(sorted(pool), n)`, §7), not the legacy pilot's
+  `sorted(Random(seed).sample(pool, 5))`.
+- `D` per item is the worker's own count: a 1-token request contributes the fork's fallback interval (`_decode_elapsed_from_metrics`),
+  not zero; §8's numerator excludes it.
+- §14.5 "no change to production serving code" is B2's own diff; B2's base moves to S′ with T3 (C236).
+- `test_b2_frozen_s0_*` validates fixtures on the baseline; it is a record, not part of the committed suite.
