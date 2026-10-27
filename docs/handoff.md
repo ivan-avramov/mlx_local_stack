@@ -51,11 +51,16 @@ change review `gpt-5.6-sol-high` + `glm-5.2-high` — the test-writer is under r
   non-functional: maintainability, testability, documentation, naming, design / cohesion, error handling, codebase consistency, scope
   discipline, security; blind judges = the `blind-judge` agent + `gpt-5.6-sol-high` on anonymized X / Y diffs), pick the s3 reference,
   fold the `run_tg1_chain.py` entry wiring into s4's scope.
+- **Skills updated 2026-10-27 (four-eyes 0.7.0, review-panel):** the B2 run continues under them. Panel budget per work item: one
+  opinion (spent: B2's three design rounds) + at most one `verify` = the strict change review, fresh sessions (cursor cannot resume);
+  one fix round, a second is the operator's call; Accept needs the suite to fail only as on the baseline; frozen tests that constrain
+  source structure are invalid; cursor-agent cannot be a test-writer (not continuable). Report block `[four-eyes 0.7.0]`.
 - **Frozen tests v6** `b2/frozen/` (190 tests, SHA256, `FROZEN_AT`, `POST_REVEAL_TAGS.json`): still defective (fixture misuse,
   invented interfaces `OpencodeArm(p426=…)` / `abort_manifest`, a C221-incompatible self-test, `p1` vs `p01`); failures triaged by hand,
-  all so far test defects. **P487: replace the test-writer before Accept** — lead rec `gpt-5.6-sol-high` as a fresh blind test-writer
-  (spec + baseline only, every fixture path validated on the baseline before freezing), change review `glm-5.2-high` + a third family
-  available in Cursor; counterpoint: sol leaves the change review it was strongest in; ≈ 1–2 h.
+  all so far test defects. **P487: replace the test-writer before Accept** — lead rec (revised for 0.7.0) a fresh Claude Opus 5.5 `claude -p`
+  test-writer (blind: spec + baseline only, behaviour tests, every fixture path run on the baseline before freezing; `--resume` for
+  later deliveries), change `verify` by fresh `gpt-5.6-sol-high` + `glm-5.2-high`; counterpoint: the test-writer shares the
+  designer's model; ≈ 1–2 h.
 - Clean evaluation copy `b2/eval/mlx_local_stack` = baseline + s1 + s2 (Sonnet) + frozen v6.
 - After s9: full stack suite on the final candidate, test-writer second delivery, strict change review (sensitive hunks: harvest / scrub /
   secret gate, pair gate, chain-core policy / ledger / dispositions, locks, probe edits), Accept. While a GPU run is active, cursor-agent
