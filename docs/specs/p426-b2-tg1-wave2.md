@@ -585,3 +585,18 @@ flag, file or field, and exits 2.
   are `<out-base>/pairs/<pair>__off-a<n>__on-a<m>.json` before their publication.
 - `harvest_wave2` refuses by raising `p426_harvest.HarvestError` (the CLI prints `REFUSED: …`, rc 2) and publishes nothing.
 - The census's owned-worker identity is `(pid, ChainOps.create_time(pid))`; fakes answer the owned worker's own start time.
+
+### 16.7 Names pinned after delivery 1f [d2]
+- **R1 subset check**: `p426_freeze v8 … --r1-off <leg root> --r1-on <leg root>` (R1 is a pair); the dossier's `differences` is a list of
+  `{process: router|worker|probe|-, field, off, on}` (canonicalized; a credential entry names the key only, no value); v8 records it as
+  `r1_env_difference` and refuses when an entry lies outside §6.5's closed list.
+- `p426_receipt.pair_problems(first, second) -> list[str]` (the closed and volatile lists are module constants, not parameters);
+  `write_dossier(path, *, pair, off: {attempt, receipt, harvest}, on: {attempt, receipt, harvest}, differences, verdict) -> dict`.
+- `<pair>` ∈ {`r1`, `pilot`, `s1`, `s2`, `reload`, `makeup`}; `arms.<arm>.attempt` is the attempt name `<leg>.a<n>`.
+- `sequence.json` carries `previous_sha256` (the sha256 of the version it replaces; null for the first).
+- The sequencer writes the canonical occurrences per arm to `<out-base>/makeup/occurrences.<arm>.jsonl` and passes that file as each
+  make-up chain's `--occurrences`.
+- `p426_harvest.publish_dossier(path, *, main_root, evidence_stage, scrub) -> dict` and `publish_run_files(paths, *, main_root, scrub)
+  -> dict` (`paths` are files; the sequencer expands the frozen-record directory to its files); the `ops` methods wrap them.
+- `P426Hooks` called with `context=None` raises `HookInfrastructureError` (in P426 mode the chain always passes it).
+- Credential keys are absent from the receipt's `env` maps; they appear only in `credential_keys`.
