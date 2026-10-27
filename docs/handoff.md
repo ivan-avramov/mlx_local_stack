@@ -1,92 +1,68 @@
-# Handoff — 2026-10-25 (session 8 END): P476 done; B2 build mid-way (s1–s2 references, s3 unscored); asks first: P488, P487
+# Handoff — 2026-10-27 (session 9 CHECKPOINT ~19:40Z): T3 (S′ serving build) implementing; B2 s1–s5 built, fix pass next; GPU rehearsal on provisional S′
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P487, P486, C235, P481, C234 …), then
-`docs/specs/p426-b2-tg1-wave2.md` (v3.1; round-3 changes not re-reviewed; C235 rulings folded in) and `docs/reviews/p426-b2/`
-(design rounds 1–3 + dispositions). Model names: FULL registry names only, always (chat included).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C239, C238, P504, P501, P500, P503, P499, C236 …),
+then `docs/specs/p426-t3-serving-build.md` (v2.1) and `docs/specs/p426-b2-tg1-wave2.md` (v3.2 incl. §16; [o4] / [d2] changes, round 2
+of 3 done) and `docs/reviews/p426-t3/`, `docs/reviews/p426-b2/`. Model names: FULL registry names only, always (chat included).
+Skills in use: four-eyes 0.7.0, review-panel (updated 2026-10-27); review rounds were reset by the operator (AGENTS.md: 3 per artifact).
 
-## Goal and path (C218, C232, C234, C235)
+## Goal and path (C218, C232, C234, C235, C236)
 
-MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first: finish the B2 build → pre-freeze rehearsal R1–R3 → v8 base
-(`bench.p426_freeze`) → pilots → timeout amendment → Wave 2 → B8 / B6 → operator ship call. P475 / P475a stay PARKED.
+MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first, on the NEW serving build S′ (C236: fork `c688e722`, mlx-serve
+v0.3.0 `e6a7a5a`, mlx 0.32.4): T3 accepted → S′ cut, two committed arm worktrees → **Wave-1 rerun on S′** (≈ 18–23 h GPU, label `s2`)
+while B2 finishes → B2 rehearsal R1–R3 → v8 base → pilots → amendment → Wave 2 → B8 / B6 → ship call. P475 / P475a PARKED.
 
-## First asks of the next session
+## Running now (all under `$STACK_WORKDIR`)
 
-1. **P488 (new, operator): stack `main` and `origin/main` have diverged** — local ≈ 53 commits unpushed; origin has 4 from the other box
-   (`da94479e` m5max close-up docs, `d5508b32` bump `src/mlx-serve` to v0.3.0, `d7451d8f` C182 docs, `fd5ef108` bump `src/mlx-vlm` to
-   `08cdd08e`). Both bumps change the serving build (mlx-vlm `08cdd08e` carries production commits — tokenizer serialization, mistral3
-   embedding load, reranker / modernbert fixes; mlx-serve v0.3.0), and the gitlinks conflict with ours (mlx-vlm `c9543fc4`, mlx-serve
-   `86921f02`). Options: (a) merge and take the fork merge `282fb009` + mlx-serve v0.3.0 as the new serving build — Wave 2 then runs on a
-   build Wave 1 did not (both arms equal; cross-wave comparisons need a note; v8 records it); (b) merge keeping our two gitlinks for the
-   P426 campaign and re-apply the other box's bumps after the ship call; (c) hold the push. Lead rec: (a) if the other box's production
-   fixes are wanted in the shipped stack (C218: certify what ships), with a smoke on the new build before v8; counterpoint: "one serving
-   build across waves" (plan v4 §2) is broken. No push without the operator's in-turn approval.
-2. **P487: replace the B2 test-writer before Accept** (below).
+- **GPU (P499):** OFF tg1 `chain s1` rehearsal on the PROVISIONAL S′ (`t3/stack-prov`, branch `t3-provisional` `fa8f7b13`, own
+  `.venv`), out-root `t3/tg1-rehearsal-20261027` (+ `.chain.out`), launched 15:46Z. Pick 1 Python 22 / 22 rc 0; Go leg slow (mean
+  ≈ 980 s / item, one `client_inactivity`). Plan: stop it at an item boundary when T3 needs the GPU for its smoke (kill chain PID from
+  `t3/rehearsal.pid`, `scripts/stack_stop.sh`, verify). Never graded / pooled; walls labelled concurrent CPU load. TODO: compare its Go
+  walls with P486's (old build).
+- **T3 implementer** (fresh Claude Sonnet 5.5, `claude -p`) in `t3/impl/mlx_local_stack` (B0 `1a4187e6` = GitHub-main merge + new
+  gitlinks + spec), report → `t3/runs/impl-1.json`. **T3 frozen tests** `t3/frozen1/` (10 files, 19:33:33Z; test-writer Claude Opus 5.5
+  session `1396ee76…`). Next: candidate diff → test-writer second delivery (`--resume`) → strict verify (fresh sol + glm) → fix → smoke
+  (acceptance 6: OFF + ON from scratch committed worktrees) → Accept (operator).
+- **B2 test-writer review of s4** (Claude Opus 5.5 session `44568a2b…`, delivery 2b) → `b2/runs/tw2-2b.json`.
 
-## State of the world
+## B2 state
 
-- Box `m5max-128`, AC 140 W. **GPU IDLE** since 2026-10-25T08:26Z; no router / worker; `:8000` free. OrbStack running (docker grader).
-- **Fork pushed** (`08cdd08e..282fb009`: a merge of origin's 7 production commits of 2026-10-22/23 with P476 `c9543fc4`); the stack
-  pins `c9543fc4` (serving production unchanged vs Wave 1).
-- **P476 DONE** (four-eyes light, accepted): stack suite after the bump 7340 passed / 0 failed (incl. K3); fork suite 6911 / 0 + 8 audits
-  green on the merge. Records `docs/reviews/p476/`.
-- **P486 rehearsal DONE** (2026-10-24T22:59Z → 2026-10-25T08:26Z): OFF `chain s1`, both picks, pruned registry; 86 rows, every
-  invocation rc 0, conv 100 %, 140 W throughout; box torn down. Out-root `$STACK_WORKDIR/p426/tg1-rehearsal-20261024` (+ `.chain.out`,
-  `.monitor.log`). Never graded / paired (P279). TODO: extract per-item walls (both picks, both languages) for the B2 §10.2 Go deadline
-  and the Wave-2 estimate (label: taken under concurrent CPU load from B2 helpers).
-
-## B2 build (four-eyes STRICT; Go C235)
-
-All build state is scratch under `$STACK_WORKDIR/b2/` (not in the repo): `SLICES.md` (s1 cli … s9 harvest), `briefs/`, `runs/`
-(per-run JSON, rc, start / end, diffs). Arms run in LOCKSTEP (P485): each slice starts both arms from the chosen reference.
-Cast (C235 Go): arm A = the low-tier worker under the operator's session-local evaluation (notes `b2/sous-agent-observations.md`;
-not a rule, not for the repo), arm B = Claude Sonnet (`claude -p`), test-writer `glm-5.2-high` (cursor chat `b2/tw.chat_id`),
-change review `gpt-5.6-sol-high` + `glm-5.2-high` — the test-writer is under review (P487).
-
-- **References:** s1 = Sonnet (`runs/s1.sonnet.diff`), s2 = Sonnet (`runs/s2.sonnet.diff`); committed locally in
-  `arm-sonnet/mlx_local_stack` as "scratch: s1 / s2 reference". Arm A produced no s1 / s2 candidate (7 runs, zero edits; a
-  pre-digested plan run wrote one test file only).
-- **s3 finished, NOT yet scored:** `runs/s3.sonnet.diff` (complete; stated gaps: entry not wired in `run_tg1_chain.py` — outside its
-  file list; settle / ready record / DNF row left to s4 via an injectable check; method-level tests only) and `runs/s3.sous.diff`
-  (arm A timed out at 5400 s but made its first production edits; partial, no report). Next: score both (functional + 1–5
-  non-functional: maintainability, testability, documentation, naming, design / cohesion, error handling, codebase consistency, scope
-  discipline, security; blind judges = the `blind-judge` agent + `gpt-5.6-sol-high` on anonymized X / Y diffs), pick the s3 reference,
-  fold the `run_tg1_chain.py` entry wiring into s4's scope.
-- **Skills updated 2026-10-27 (four-eyes 0.7.0, review-panel):** the B2 run continues under them. Panel budget per work item: one
-  opinion (spent: B2's three design rounds) + at most one `verify` = the strict change review, fresh sessions (cursor cannot resume);
-  one fix round, a second is the operator's call; Accept needs the suite to fail only as on the baseline; frozen tests that constrain
-  source structure are invalid; cursor-agent cannot be a test-writer (not continuable). Report block `[four-eyes 0.7.0]`.
-- **Frozen tests v6** `b2/frozen/` (190 tests, SHA256, `FROZEN_AT`, `POST_REVEAL_TAGS.json`): still defective (fixture misuse,
-  invented interfaces `OpencodeArm(p426=…)` / `abort_manifest`, a C221-incompatible self-test, `p1` vs `p01`); failures triaged by hand,
-  all so far test defects. **P487: replace the test-writer before Accept** — lead rec (revised for 0.7.0) a fresh Claude Opus 5.5 `claude -p`
-  test-writer (blind: spec + baseline only, behaviour tests, every fixture path run on the baseline before freezing; `--resume` for
-  later deliveries), change `verify` by fresh `gpt-5.6-sol-high` + `glm-5.2-high`; counterpoint: the test-writer shares the
-  designer's model; ≈ 1–2 h.
-- Clean evaluation copy `b2/eval/mlx_local_stack` = baseline + s1 + s2 (Sonnet) + frozen v6.
-- After s9: full stack suite on the final candidate, test-writer second delivery, strict change review (sensitive hunks: harvest / scrub /
-  secret gate, pair gate, chain-core policy / ledger / dispositions, locks, probe edits), Accept. While a GPU run is active, cursor-agent
-  helpers get a one-line argv pointing at a brief file (P454 / P486). If P488 changes the serving build, B2's baseline moves with it.
-- **Pending deliverable to the operator:** the end-of-experiment feedback list on the arm-A worker (source: `b2/sous-agent-observations.md`
-  — per-run outcomes, the multi-turn follow-ups with root causes, the progress-visibility suggestions, nudges A / B results).
+- Spec v3.2 (main `6fe4c1f6`): design opinion after the reset [o4], §16 testable interfaces (from five blind test deliveries), C238
+  (credential comparison dropped: keys only, per process), round-2 delta review [d2] (closed env allowed list, versioned arm-keyed
+  dossiers, record classes, single harvest commit point, typed sources, portable records). Round 3 in reserve.
+- **Frozen tests `b2/frozen4/`** (21 files, 19:06:51Z, `POST_REVEAL_TAGS.json`: amendments after the s1–s3 reveal, for C238 / [d2] /
+  §16.7 and three test-writer defects). Earlier freezes `frozen2`, `frozen3` kept as records; glm's v6 `frozen/` superseded (P487).
+- Slices (arm B = Claude Sonnet 5.5; arm-A sous-agent PAUSED for this session by the operator — session-only, nothing in AGENTS.md):
+  s1–s3 reference `0274f35b`, s4 `489f6611`, s5 `5d4cac8e` (all in `b2/arm-sonnet/mlx_local_stack`, scratch commits). Frozen s1–s5 on
+  s5: 116 passed / 76 failed (mostly §16 rules the slices predate). Test-writer review of s1–s3 (`docs/reviews/p426-b2/test-writer2-
+  delivery2a-s1-s3.md`): fix-then-merge; R2 `--frozen-record` never read, R3 DNF limit per language, R4 router liveness not identity, R5
+  injected ops read the real registry. s5 self-reported: a silent skip of s5 checks when test doubles lack seams (hazard), snapshot
+  re-hash before every invocation (~20 GB each).
+- **Next (C239): ONE fix pass on s1–s5** (fresh Sonnet; adopted findings + frozen4 read-only; test-writer re-runs and adds failing-case
+  tests), then s6 watch, s7 locks, s8 freeze + sequencer, s9 harvest on the fixed base; then full suite, test-writer final delivery,
+  strict verify, the four-eyes fix round, Accept.
+- Evaluation copies `b2/eval-s3`, `eval-s4`, `eval-s5` (frozen4 installed); scoring packets `b2/judge-s3/`.
 
 ## Other open items
 
-- **P478** (historical one-off tools targeting pruned / gone models): lead rec retire them as a class into `benchmark/archive/` behind a
-  refusal naming their last commit; fix `mem_decompose.lookup_yaml`'s silent 262,144 fallback if kept. After B2; operator decision.
-- GPU: nothing citable can run before B2's rehearsal; optional OFF `chain s2 reload` rehearsal (≈ 9 h) only if the operator wants the GPU
-  busy (walls for the s2 order; small marginal value).
+- **C237** (from the m5max box, renumbered from its colliding C182; lands with the T3 merge): KRAFTON/Raon-1-mini-preview — that box
+  recommends not funnelling. Operator, not urgent.
+- **P503**: two load-sensitive stack tests (P22 deadlock test, M64 selftest `check_terminal_shapes`) — root-cause after B2.
+- **P498** (lead rec, not ruled): serving pins move only through a certification.
+- **P478**: retire historical one-off tools as a class (after B2).
+- sous-agent: issue NetApp/sous-agent#11 has the full feedback (latest comment 6451488159: s4 run, latency vs behaviour).
+- Stack `main` ≈ 70 local commits unpushed; GitHub `main` is merged only in T3's B0 (lands at T3 Accept). Push needs the operator.
 
 ## Copies to resolve
 
-`$STACK_WORKDIR/b2/{tw,arm-sous,arm-sous-s2,arm-sous-s2b,arm-sous-s3,arm-sonnet,eval}` — scratch clones for B2; harvest the accepted
-candidate into the repo at Accept, then delete. No git worktrees of the main checkout.
+`$STACK_WORKDIR/t3/{stack-prov (P499), impl, tw, dop, dop2, venv-fork, frozen1}`; `$STACK_WORKDIR/b2/{tw, tw2, arm-sonnet, arm-sous,
+arm-sous-s2, arm-sous-s2b, arm-sous-s3, arm-sous-s4, eval, eval-s3, eval-s4, eval-s5, dop, dop2, frozen*, judge-s3}` — scratch; harvest
+accepted candidates at Accept, then delete. No git worktrees of the main checkout.
 
-## Rules learned (session 8)
+## Rules learned (session 9)
 
-- Harvesters waiting on helpers key on PIDs / rc files, never `pgrep` patterns.
-- Never copy ignored files (`.env`) into helper copies; exclude the venv symlinks via `.git/info/exclude`.
-- Frozen tests must be standing-suite quality and validated on the baseline through every fixture path before freezing.
-- The fork's pre-push gate checks naming per pushed commit: fix hits in the commit itself.
-- Fetch `origin` before planning a push: the other box pushes too.
-- GPU is the bottleneck: always look for useful GPU work (memory `gpu-is-the-bottleneck`).
+- Never launch a helper from a command line that also carries brief text: write the brief in one call, launch in another (P454).
+- Never run a suite in a copy a helper is editing.
+- Check the fork's and the stack's GitHub state before any merge; the forks sync weekly.
+- A spec change after a freeze invalidates tests: only the test-writer amends them; tag post-reveal amendments.
 
-Next decision id C236; discussion ids continue from P488.
+Next decision id C240; discussion ids continue from P506.
