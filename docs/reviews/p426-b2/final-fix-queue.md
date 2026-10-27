@@ -10,3 +10,4 @@
 - P45 note: `generic_pred_s` rename changed every tg1 config hash (record it; legacy differential passes).
 - (s7 scope, not fix round) P36 ready-barrier checks (registry sha, lifecycle hash, clean worktree); P37 entry checks before the router.
 - (tests) P38: the test-writer adds coverage for snapshot drift after load and "a legacy chain runs none of the receipt checks".
+- s6: driver start time via ps -o lstart (1 s resolution); identity must use proc_guard.start_time() (box-notes C151).
