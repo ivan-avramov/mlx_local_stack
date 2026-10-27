@@ -2,7 +2,8 @@
 
 **v3.1 → v3.2 applies the design opinion of the reset review budget (the operator reset the rounds, 2026-10-27; four-eyes 0.7.0)
 once and is NOT re-reviewed** (`docs/reviews/p426-b2/design-opinion-r4.dispositions.md`); its changes are marked [o4]. C238 (2026-10-27)
-drops the cross-pair credential comparison (§6.4–6.5); the round-2 delta review covers [o4], §16 and C238.
+drops the cross-pair credential comparison (§6.4–6.5); the round-2 delta review of [o4], §16 and C238 is applied once, marked [d2], NOT
+re-reviewed (`docs/reviews/p426-b2/design-round2-delta.dispositions.md`).
 
 **v3 → v3.1 applies design review round 3 of 3 (the last) and is NOT re-reviewed** (`docs/reviews/p426-b2/design-round3.dispositions.md`).
 Round-3 changes are marked [r3].
@@ -86,8 +87,8 @@ to start before 600 s have passed since it.
   (`report_gate_on_abort` extended to p426). Defaults unchanged.
 - Chain-core edits, enumerated [r3]: every site that branches on `transport_policy` (`chain_core.py` at the `incident_retry` tests near
   lines 526, 1318, 1353, 1774, 1906, 2000 at the base commit) gets an explicit `p426_continue` branch; none falls through to the
-  `abort_restart` side. `chain_hooks`: `invalidate` joins `KINDS`, `BEFORE_KINDS`, `AFTER_KINDS`, `from_dict` and the disposition
-  vocabulary; `after_attempt` / `before_attempt` gain a context argument (row, ready record, load context) with legacy hooks unchanged;
+  `abort_restart` side. `chain_hooks`: `invalidate` joins the hook vocabulary — `KINDS`, `BEFORE_KINDS`, `AFTER_KINDS`, `from_dict` — and, like `pre_spawn_incident`, has no
+  slot disposition (the chain handles it before any `slot_disposition` call) [d2]; `after_attempt` / `before_attempt` gain a context argument (row, ready record, load context) with legacy hooks unchanged;
   in P426 mode a `HookInfrastructureError` (e.g. `/metrics` unreadable, a record write failing) is systemic, never `pre_spawn_incident`.
   One test per site.
 
@@ -158,7 +159,7 @@ Let `F` = the `Request failed` lines in the window, `C` = the completed lines, `
 | the same, a request in flight that the server completed before the client lost it [o4] | 0 | exactly one trailing `C` line absent from `request_usage`, its session == the row's, recorded `completed_unaccounted` |
 | DNF (any DNF cause), the abort at a request boundary | 0 | `|C| == len(request_usage)` from the abort manifest [r3] |
 | DNF, a request in flight that the server failed | 1 | the trailing `stream_closed_before_completion` line as above |
-| DNF, a request in flight that the server completed before the client lost it | 0 | exactly one trailing `C` line absent from `request_usage` (the abort manifest's in-flight message), its session == the row's, recorded as `completed_unaccounted` [r3] |
+| DNF, a request in flight that the server completed before the client lost it | 0 | exactly one trailing `C` line absent from `request_usage` (the abort manifest's in-flight message), its session == the abort manifest's `session_id` [d2], recorded as `completed_unaccounted` [r3] |
 
 The DNF rows are decided by observed started / completed / failed state, not by the cause name (`connection` also covers
 established-stream resets) [r3].
@@ -238,7 +239,7 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a ma
 4. **Arm-equality receipt (after load, every leg):** with `<WT>` (worktree root) and `<OUT>` (out-root) canonicalized in every path value:
    router and worker argv; the full environment of the router, the worker and the probe: every non-secret value after canonicalization
    [r3], except a closed list of volatile keys (`_`, `OLDPWD`, `PWD`, `SHLVL`, `TERM_SESSION_ID`, `SECURITYSESSIONID`, `__CF*`) recorded as
-   keys only; credential keys (§11.3's classifier) recorded as keys only — never their values or any hash of them (C238); per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
+   keys only; credential keys (§11.3's classifier) recorded as keys only, per process — never their values or any hash of them (C238) [d2]; per distinct interpreter the router, worker and probe use (resolved from their pids) [r3]: its path
    and a verified content inventory — for every non-editable distribution, name, version and its `RECORD` entries each re-verified
    against the installed bytes (a mismatch is systemic), hashed as sorted `(path, digest)`; editable distributions (`mlx-vlm`,
    `mlx-serve`) are identified by their resolved source tree (`<WT>/src/<sub>`, at the gitlink, `status --porcelain` empty), their
@@ -247,11 +248,11 @@ per-session pairs; a repeat DNF is a finding. Same checkpoints and classes; a ma
    snapshot revisions and file hashes (§3) [r3].
 5. **Pair gate:** for the second leg of each pair (pilots, s1, s2, reload, make-up) the sequencer passes the first leg's receipt path; the
    chain compares at its after-load checkpoint, before item one [r3] — allowed differences: the three §6.3 argv items, the drafter
-   snapshot (ON only), the arm commit, the canonicalized roots and the volatile / allowed-difference lists frozen in v8 from R1's full pair
-   environment diff (extending them is a specification change) [o4]; any other difference (including a credential key present in one leg only) → systemic. The
-   sequencer re-checks after the leg and writes an immutable pair dossier (`pairs/<pair>.json`: both receipts' sha256, both legs'
-   `HARVEST.json` sha256, the two attempts, the verdict) [r3], published through the harvest to
-   `benchmark/results/p426/wave2/pairs/<pair>.json` (§11.2) [o4]. A sequencer restart between the two legs of a pair resumes the pair: the second leg compares with the first leg's persisted receipt
+   snapshot (ON only), the arm commit, the canonicalized roots, and the keys of §6.4's closed volatile list; nothing else — the allowed list is closed here and R1 only
+   confirms that its observed difference is a subset of it (a difference R1 reveals outside it is a finding for the operator, never an
+   automatic allowance) [d2]; any other difference (including a credential key present in one process of one leg only) → systemic. The
+   sequencer re-checks after the leg and writes an immutable pair dossier per pair attempt, `pairs/<pair>__off-a<n>__on-a<m>.json`, keyed by arm (§16.1) [d2], published by
+   `p426_harvest.publish_dossier` to `benchmark/results/p426/wave2/pairs/` (§11.2) [d2]; `sequence.json` names each pair's selected dossier. A sequencer restart between the two legs of a pair resumes the pair: the second leg compares with the first leg's persisted receipt
    (C238).
 6. **Arms:** OFF = the v8 commit; ON = it + exactly the P426 plan's §11 restore (the three C177 lines, the `PROVISIONAL P426` note, the seeding test) [o4] on local branch
    `p426-on`. Commit diff = the three registry lines, the
@@ -345,9 +346,13 @@ harvest is committed.
   final tree it is recorded in the final-tree manifest (path, link target string) and excluded with reason `symlink`; anywhere else, or
   when a required artifact references it, the harvest fails for the operator. Every source path must resolve inside the roots above or
   the leg's log ranges.
-- Staged publication [o4]: files are copied to a staging directory, verified, and published by renaming each destination directory
-  into place; `HARVEST.json` is written last; a retry discards an incomplete stage and restarts; a destination whose `HARVEST.json`
-  verifies is done (idempotent). The pair dossier is published the same way.
+- Staged publication [o4] [d2]: the attempt's files are copied to a staging directory beside each destination, verified, and published
+  evidence first, then `main`; the `main` destination carries `HARVEST.json`, and its rename into place is the single commit point. A retry
+  verifies the attempt's `main` destination: with a verifying `HARVEST.json` it is done (idempotent); otherwise it deletes that attempt's
+  incomplete destinations and stages (never another attempt's) and restarts. The pair dossier (`publish_dossier`) and the run records
+  (`publish_run_files`: the frozen-record directory, the sequencer's `sequence.json`, to `wave2/run/`) are published the same way [d2].
+- Structured records are portable at creation [d2]: every path in a record destined for `main` is written as `$STACK_WORKDIR/…`,
+  `<WT>/…` or `<OUT>/…`, never absolute, so the scrub is byte-identity on them; a scrub change to a `main` record fails the harvest.
 - `main` (`benchmark/results/p426/wave2/<leg>.a<n>/`) [o4]: parsed and structured artifacts only — the leg record, `chain.json`, `schedule.json`,
   the realized ledger, rows, manifests, sidecars, DNF / ready / item records, grader reports, per-item code diffs, final-tree manifests,
   the arm-equality receipt, the watcher receipt, `HARVEST.json`.
@@ -433,8 +438,11 @@ policy, ledger and dispositions, locks, the probe-code edits).
 ## 16. Interfaces — the testable seams [o4]
 
 Named so the tests can be written blind (the first test delivery found G1–G15 unnamed). A name already built in s1–s3 is kept. All
-records are JSON, exclusive-created unless stated, and self-hashed: `sha256` = sha256 of the canonical JSON (`sort_keys`, separators
-`,` `:`, UTF-8) of the record without its `sha256` field. Every refusal prints one stderr line `REFUSED: <reason>` naming the offending
+records are JSON. Three classes [d2]: **immutable records** — exclusive-created and self-hashed (`sha256` = sha256 of the canonical JSON,
+`sort_keys`, separators `,` `:`, UTF-8, of the record without its `sha256` field): the rehearsal manifest, v8 base, timeout amendment,
+ready, item and `p426_dnf` records, the receipt, the pair dossier, the leg record, `HARVEST.json`; **two-phase records** — exclusive-created,
+then finalized once by atomic replace and immutable after: `log_bounds.json`; **state files and journals** — `sequence.json`
+(atomic replace, `sha256` of each version recorded in the next), `watch.jsonl` (append-only, one JSON line per event). Every refusal prints one stderr line `REFUSED: <reason>` naming the offending
 flag, file or field, and exits 2.
 
 ### 16.1 Records
@@ -444,7 +452,8 @@ flag, file or field, and exits 2.
   sha256}`.
 - **v8 base** `v8_base.json` `{kind: "p426_v8_base", build, off_commit, on_commit, off_worktree, on_worktree, gitlinks: {mlx_vlm,
   mlx_serve}, production_ref, probe_code_sha256, scaffold_policy_sha256, generation_identity_sha256, pins_sha256, grader_image_id,
-  frozen_prompt_date, pilot_deadline_s, settle_bound_s, generic_pred_s, volatile_env_keys, allowed_env_differences,
+  frozen_prompt_date, pilot_deadline_s, settle_bound_s, generic_pred_s, volatile_env_keys (= §6.4's closed list), r1_env_difference (R1's observed pair difference,
+  a subset of §6.5's allowed list) [d2],
   rehearsal_manifest_sha256, stack_suite_receipt_sha256, created, sha256}`.
 - **Timeout amendment** `{kind: "p426_timeout_amendment", v8_base_sha256, w_python_s, w_go_s, leg_deadline_s: {"<session>": s},
   settle_bound_s, created, sha256}`.
@@ -458,7 +467,9 @@ flag, file or field, and exits 2.
   draft_n_accepted, draft_kind, error}], totals: {requests, prompt_tokens, generated_tokens, decode_s, accepted, proposed}, checks:
   {<name>: {ok, detail}}, verdict: "reconciled"|"invalid"}`; `case` ∈ {`completed`, `kill_boundary`, `kill_inflight_failed`,
   `kill_completed_unaccounted`, `dnf_boundary`, `dnf_inflight_failed`, `dnf_completed_unaccounted`}.
-- **`p426_dnf` record** (the chain's record of a DNF, as built in s3; its `item_record` names the DNF's item record
+- **`p426_dnf` record** (`pick` = the leg's one model; `load_gen` = the load generation of the aborted invocation; `invocation` = its
+  index in `chain.json` `progress.invocations`; `attempt` = the `n` of the out-root's name `<leg>.a<n>`, which the chain requires in
+  P426 mode [d2]) (the chain's record of a DNF, as built in s3; its `item_record` names the DNF's item record
   `items/<slot_file>.dnf.json`, which holds the §4 reconciliation of the DNF window — two linked records; sidecar `<out-root>/<session>/p426_dnf/<slot_file>.json`) `{slot, item, session, language, seed,
   arm, pick, load, load_gen, invocation, attempt, abort: {cause, error, evidence}, owned_at_incident, owned_after, settle: {in_flight,
   settled}, item_record, at}`.
@@ -466,9 +477,10 @@ flag, file or field, and exits 2.
   in_flight: {in_flight, message_id (null at a boundary), requests_started}}`.
 - **`log_bounds.json`** `{files: [{path, device, inode, offset_start, offset_end (null until finalized)}], created, finalized}`.
 - **Arm-equality receipt** `<out-root>/receipt.json` `{argv: {router, worker}, env: {router, worker, probe}: {key: value | "<volatile>"},
-  credential_keys: [key], interpreters: [{path, inventory_sha256, editables: {name: {tree, gitlink, clean}}}], loaded_images:
+  credential_keys: {router: [key], worker: [key], probe: [key]} [d2], interpreters: [{path, inventory_sha256, editables: {name: {tree, gitlink, clean}}}], loaded_images:
   [{path, sha256}], probe_entry, snapshots: {target, drafter}, sha256}`.
-- **Pair dossier** `{pair, attempts: [a, b], receipts_sha256: [..], harvest_sha256: [..], differences: [..], verdict, at, sha256}`.
+- **Pair dossier** `{pair, arms: {off: {attempt, receipt_sha256, harvest_sha256}, on: {…}}, differences: [..], verdict, at, sha256}`
+  [d2].
 - **`HARVEST.json`** `{leg, attempt, state, files: [{source, sha256, destination: "main"|"evidence"|"excluded", published,
   published_sha256, compression, exclusion_reason}], created, sha256}`.
 - **Watcher receipt** `<out-root>/watch.jsonl` (one line per tick, then one `exit_state` line).
@@ -480,7 +492,7 @@ flag, file or field, and exits 2.
   `settle(read_metrics, read_log, cursor, *, bound_s, clock, sleep) -> SettleResult(settled, in_flight, waited_s)`;
   `decode_time(snapshot) -> float` (§4.1); `decode_rate(requests, delta_d) -> float | None` (§8); `a4_window_problems(lines, a4_receipt, a4_gate) -> list[str]` (`a4_gate`: the A4 run's `gate.json`) [o4].
 - **`bench.p426_hooks.P426Hooks(ChainHooks)`** (s4): `__init__(*, ops, out_root, arm, settle_bound_s, clock=time.time,
-  sleep=time.sleep)`; `before_attempt(slot, context)` writes the ready record, returns `accept`; `after_attempt(slot, done, context)`
+  sleep=time.sleep)`; `before_attempt(slot, context=None)` writes the ready record, returns `accept`; `after_attempt(slot, done, context=None)` [d2]
   settles, reconciles, writes the item record, returns `accept` or `invalidate(reason)`. The chain installs it in P426 mode.
 - **`bench.p426_receipt`** (s5): `arm_receipt(ops, *, worktree, out_root, pids) -> dict`; `pair_problems(first, second, *,
   allowed, volatile) -> list[str]`; `write_dossier(path, *, pair, attempts, receipts, harvests, verdict) -> dict`.
@@ -496,7 +508,8 @@ flag, file or field, and exits 2.
   for the scrub; `harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets) -> dict` (the `HARVEST.json`).
 - **`bench_watch.main(argv, *, power=None, clock=None)`** (s6): `power()` returns `{watts, volts, battery, on_battery_intervals}`.
 - **`OpencodeArm(mode="tg1", p426=True)`** (s2, as built).
-- **ChainOps seams** (s4 / s5; `FakeOps` implements them): `server_log_path() -> Path`, `read_log(path, start, end=None) -> bytes`,
+- **ChainOps seams** (s4 / s5; `FakeOps` implements them, with those of §16.4–§16.6 — the union [d2]): `proc_argv(pid) -> list[str]`,
+  `server_log_path() -> Path`, `read_log(path, start, end=None) -> bytes`,
   `worker_metrics()` (existing), `proc_environ(pid) -> dict`, `interpreter_inventory(pid) -> dict`, `loaded_images(pid) -> list[dict]`,
   `snapshot_hashes(model) -> dict`.
 
@@ -505,8 +518,8 @@ flag, file or field, and exits 2.
 - `--rehearsal` selects the smoke shape: one pilot item, then two full items, of s1's P426 Python order (§7); `--smoke` stays refused.
 - The P426 pilot is the first five of s1's P426 Python order (`Random(seed).sample(sorted(pool), n)`, §7), not the legacy pilot's
   `sorted(Random(seed).sample(pool, 5))`.
-- `D` per item is the worker's own count: a 1-token request contributes the fork's fallback interval (`_decode_elapsed_from_metrics`),
-  not zero; §8's numerator excludes it.
+- `ΔD` per item = `decode_time(after) − decode_time(before)`, the worker's aggregate decode time over all the item's requests, 1-token
+  ones included as the worker counts them; §8's numerator excludes their single token [d2].
 - §14.5 "no change to production serving code" is B2's own diff; B2's base moves to S′ with T3 (C236).
 - `test_b2_frozen_s0_*` validates fixtures on the baseline; it is a record, not part of the committed suite.
 
@@ -532,7 +545,8 @@ flag, file or field, and exits 2.
   provides `launch(argv, *, cwd, pass_fds) -> handle`, `wait(handle) -> rc`, `alive(pid, start) -> bool`, `power() -> dict`,
   `harvest(leg_root) -> rc`.
 - **`bench_watch --chain-json <path> --driver-pid <pid> --out <out-root>/watch.jsonl`**.
-- **Harvest**: a `HARVEST.json` entry is keyed by its `source` path relative to the attempt's leg root (or `log:<file>` for a log range);
+- **Harvest**: a `HARVEST.json` entry is keyed by a typed `source` [d2]: `leg:<path relative to the leg root>`, `run:<run-id>/<rel>`,
+  `evidence:<run-id>/<rel>`, `record:<rel>` (sequencer-level run files) or `log:<file>:<start>-<end>`;
   the scrub is `p426_harvest.Scrub` as Wave 1 constructs it (no manifest file); `credential_values(*, home, config_path, environ,
   env_files=())` (the sequencer passes `<WT>/.env` when present); foreign emails go to `HARVEST.json` `review.emails`.
 
@@ -561,12 +575,13 @@ flag, file or field, and exits 2.
 
 ### 16.6 Sequencer details named after the fourth test delivery [o4]
 - `ops.launch(...)` returns a handle with `pid`, `start` (process start time as `ChainOps` reports it) and `argv`; liveness is
-  `ops.alive(handle.pid, handle.start)`; `ops.harvest(leg_root, *, emails) -> rc`.
+  `ops.alive(handle.pid, handle.start)`; `ops.harvest(leg_root, *, emails) -> {rc, harvest_json, harvest_sha256}` [d2]; `ops.publish_dossier(path, *, emails)` and
+  `ops.publish_run_files(paths, *, emails)` likewise.
 - The sequencer classifies a leg from the chain's rc, its `chain.json` (`status`, `p426_ledger`, `p426_dnf`, `p426_invalid`), the item
   records' draft counters, and `watch.jsonl`'s `exit_state`; pilot walls come from the rows (`wall_s`) of the invocations
   `chain.json` `progress.invocations` names.
 - `OVERRUN_PAUSED` is `<out-base>/OVERRUN_PAUSED` (`{leg, attempt, deadline_s, at}`); the leg record carries `speed_valid` and
-  `speed_reason`; the occurrences file is JSON lines of the §5.5 records; pair dossiers are `<out-base>/pairs/<pair>.json` before their
-  harvest.
+  `speed_reason`; the occurrences file is JSON lines of the §5.5 records, an unordered set the sequencer canonicalizes (§5.5 order) [d2]; pair dossiers
+  are `<out-base>/pairs/<pair>__off-a<n>__on-a<m>.json` before their publication.
 - `harvest_wave2` refuses by raising `p426_harvest.HarvestError` (the CLI prints `REFUSED: …`, rc 2) and publishes nothing.
 - The census's owned-worker identity is `(pid, ChainOps.create_time(pid))`; fakes answer the owned worker's own start time.
