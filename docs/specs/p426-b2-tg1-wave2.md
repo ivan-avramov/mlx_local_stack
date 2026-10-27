@@ -600,3 +600,9 @@ flag, file or field, and exits 2.
   -> dict` (`paths` are files; the sequencer expands the frozen-record directory to its files); the `ops` methods wrap them.
 - `P426Hooks` called with `context=None` raises `HookInfrastructureError` (in P426 mode the chain always passes it).
 - Credential keys are absent from the receipt's `env` maps; they appear only in `credential_keys`.
+- (after delivery 1g) Every record path field (`off_worktree`, `on_worktree`, `out_root`, …) is written in the portable form
+  (`$STACK_WORKDIR/…`); readers expand it before comparing. `p426_freeze` takes the v8 inputs it cannot derive from the worktrees
+  (build label, production ref, grader image id) from `ops.build_inputs() -> dict`. `write_dossier`'s `receipt` / `harvest` are paths;
+  `receipt_sha256` / `harvest_sha256` are the files' sha256. A `differences` entry's `field` is the dotted receipt path (`argv.worker`,
+  `env.<KEY>`, `snapshots.drafter`, …). `publish_dossier` / `publish_run_files` return `{published: [{source, destination, sha256}],
+  harvest_sha256}`.
