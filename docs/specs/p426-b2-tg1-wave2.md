@@ -606,3 +606,8 @@ flag, file or field, and exits 2.
   `receipt_sha256` / `harvest_sha256` are the files' sha256. A `differences` entry's `field` is the dotted receipt path (`argv.worker`,
   `env.<KEY>`, `snapshots.drafter`, …). `publish_dossier` / `publish_run_files` return `{published: [{source, destination, sha256}],
   harvest_sha256}`.
+- (after the s4 / s5 reviews) `log_bounds.json` is a `main` record: its paths are portable (`<WT>/logs/…`). The receipt's probe
+  environment is the chain's probe launch environment — the exact base environment it passes to every probe invocation of the leg —
+  with the per-invocation keys (receipt path, nonce, cancel / ack files) recorded by name only; there is no probe process at the
+  after-load checkpoint. In P426 mode a ChainOps seam the checks need that is missing is systemic (never a skip); identities use
+  `ChainOps.create_time(pid)`. The worker argv equals the expected argv exactly (no tolerated leading tokens).
