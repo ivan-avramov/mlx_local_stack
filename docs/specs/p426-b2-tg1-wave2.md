@@ -287,7 +287,7 @@ the arbiter, refuse. So of two simultaneous starters exactly one runs. The seque
 
 ### 10.1 v8 base (`bench.p426_freeze`, C226)
 After B2 + P476 land and the rehearsal passed: derives and verifies both arm commits / worktrees (§6.6 diffs), identical gitlinks and fork
-production tree == S's, equal `probe_code_sha256` / `scaffold_policy_sha256` / `generation_identity_sha256` across arms (`--print-identity`),
+production tree == the serving build's (S′ since C236: the stack commit that takes the fork's current main and mlx 0.32.4), equal `probe_code_sha256` / `scaffold_policy_sha256` / `generation_identity_sha256` across arms (`--print-identity`),
 pins.json sha, grader image id, the REQUIRED frozen prompt date, the pilot deadline (§10.2); runs its preconditions (venvs synced to their
 locks in both worktrees, real entry points, K3, a stack suite receipt); exclusive-creates the self-hashed record. The sequencer and every
 leg re-verify it against the live state.
