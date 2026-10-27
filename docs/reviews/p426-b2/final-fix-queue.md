@@ -12,3 +12,8 @@
 - (tests) P38: the test-writer adds coverage for snapshot drift after load and "a legacy chain runs none of the receipt checks".
 - s6: driver start time via ps -o lstart (1 s resolution); identity must use proc_guard.start_time() (box-notes C151).
 - s6 (P510): a malformed / unparseable `on_battery_intervals` crashes the watcher at exit (`_overlap`, `bench_watch.py:507`); it must write `exit_state` with the window unproven → speed-invalid.
+- s6 P47: speed-valid needs ≥ 1 tick with the driver bound + alive and power observed; a liveness read failure is not an exit (with the proc_guard identity).
+- s6 P48: no recognized `pmset -g log` source line at or before the window start → intervals unproven → speed-invalid.
+- s6 P50: read `pmset -g log` once at exit, not per tick.
+- s6 P51: derive the planned slots from `chain.json`'s frozen schedule; `--planned` only overrides.
+- s6 P52: tick `t` pinned to epoch seconds; the exit line drops `speed_valid` / `speed_reason` (the verdict is `speed_verdict(journal)`, called by the sequencer).
