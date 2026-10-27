@@ -1,8 +1,8 @@
-# P426 T3 — the serving build S′ and the Wave-1 rerun on committed arms — SPEC v2, 2026-10-27 (four-eyes STRICT, C236)
+# P426 T3 — the serving build S′ and the Wave-1 rerun on committed arms — SPEC v2.1, 2026-10-27 (four-eyes STRICT, C236)
 
 Strict because it changes the P426 evidence namespace, the frozen-build record and how arms are served (isolation between S and S′
-evidence; C218) and the serving dependency set. v1 → v2: the design opinion (`docs/reviews/p426-t3/`) applied once; changes marked
-[o1] are NOT re-reviewed.
+evidence; C218) and the serving dependency set. v1 → v2: the design opinion (`docs/reviews/p426-t3/`, round 1 of 3); v2 → v2.1: the
+delta review of the [o1] changes (round 2 of 3); changes marked [r2] are NOT re-reviewed.
 
 ## Goal
 
@@ -61,20 +61,23 @@ Whatever the stack suite shows broken by the new dependencies is fixed in the st
 restores the documented behaviour, each named with the failing test that shows it. No behaviour change beyond that. A failure caused by
 the fork is reported with the failing test and left failing.
 
-**The local gate on S′** [o1]: `bench.local_gate` runs, for a fork sha, exactly the audits the fork's own `dev/ci.py` runs at that sha
-(S′: nine, incl. `check_upstream_test_copies.py`) against the upstream ref that sha records (`.upstream-sync-ref` when present; the
-workflow file only for older shas). A PASS receipt for the stack, `c688e722` and `e6a7a5a` is part of acceptance.
+**The local gate on S′** [o1] [r2] — a code change to `bench.local_gate`: `current_parity` reads the upstream ref from
+`.upstream-sync-ref` at the sha when present, else from `.github/workflows/upstream-parity.yml`; the audit list is the fork's own
+`dev/ci.py` `AUDITS` at that sha (S′: nine, incl. `check_upstream_test_copies.py`), derived per sha, not a fixed tuple. A PASS receipt
+for the stack, `c688e722` and `e6a7a5a` is part of acceptance.
 
 ## 4. The Wave-1 rerun on S′
 
 The Wave-1 tooling (`bench.p426_wave1`, `bench.p426_leg`, `bench.p426_plan`, `bench.p426_harvest`, `bench.p426_panel`) takes a build
 label so the same reviewed sequencer runs Wave 1 again on S′, with each arm served from its own committed worktree.
 
-- **Label.** `--build <label>`, grammar `^[a-z][a-z0-9]{0,7}$`. `bench.p426_wave1` requires it [o1]; `bench.p426_leg` defaults to `s` and
+- **Label.** `--build <label>`, grammar `^[a-z][a-z0-9]{0,7}$`. `bench.p426_wave1` requires it [o1] (the one existing test that calls the
+  sequencer without it, `test_main_refuses_a_workdir_that_is_not_stack_workdir`, gains `--build s` and keeps its assertion [r2]); `bench.p426_leg` defaults to `s` and
   the sequencer passes `--build` only when the label is not `s`. Under `s` every name, path, argv, record and receipt is byte-identical
   to today's (the existing tests pass unchanged).
 - **Expected build per label, in code** [o1]: `s2` → `mlx_vlm` `c688e7223ac83f8060fde15a19e48a6c5186d239`, `mlx_serve`
-  `e6a7a5a6f589b5e11872c731443acc2301a49060`, `production_ref` = `mlx_vlm`, mlx 0.32.4 in both venvs; `s` → the values its record
+  `e6a7a5a6f589b5e11872c731443acc2301a49060`, `production_ref` `b26fa7c9faf23bc3167db3419504ef0b2b82a8e6` (the fork's `qualify` requires a
+  STRICT ancestor of the reviewed head; `b26fa7c9..c688e722` changes `handoff.md` only) [r2], mlx 0.32.4 in both venvs; `s` → the values its record
   already holds (no new check). A record whose pins differ from its label's expected build refuses (NOT_STARTED), even when
   self-consistent with the tree.
 - **Names under a label `b` ≠ `s`** (S′ uses `s2`):
@@ -84,16 +87,22 @@ label so the same reviewed sequencer runs Wave 1 again on S′, with each arm se
   - leg names `<axis>-p426<b>-<arm>-…` [o1], hence the receipt, `.refused-*`, `.stdout`, `.watch.log`, `.power.json` files and the
     per-request session prefix `MLX_BENCH_SESSION_PREFIX=p426-<leg name>`;
   - M1 qualify directory `<workdir>/p426/<b>/m1/<tune>`;
-  - harvest dossiers `benchmark/results/p426/wave1.<b>/<leg>/` and run files `benchmark/results/p426/wave1.<b>/run/`; the naming-hook
-    exemption for harvested Wave-1 evidence (`bench.modelnames`) covers `wave1.<b>/` as it covers `wave1/` [o1];
+    - harvest dossiers `benchmark/results/p426/wave1.<b>/<leg>/` and run files `benchmark/results/p426/wave1.<b>/run/`; a code change to
+    `bench.modelnames`: its exemption for harvested Wave-1 evidence matches `benchmark/results/p426/wave1(\.[a-z][a-z0-9]{0,7})?/` [o1] [r2];
   - the sequencer's `--out`: it writes a `.build` marker on first start; an `--out` whose marker names another label, or that holds
     receipts or a `sequence.log` without a marker, refuses [o1].
 - **Arms as commits** [o1]. Under `b` ≠ `s` the ON overlay is retired: `--registry-on` is refused; the sequencer takes
   `--stack-root-off <WT_off>` and `--stack-root-on <WT_on>`; every leg runs (cwd, router, driver, server log) from its arm's worktree and
   serves that worktree's committed `main_models.yaml`. `WT_on`'s HEAD is `WT_off`'s HEAD + one commit whose diff is exactly the restore
   paths (`main_models.yaml`: the entry's three C177 lines and the `PROVISIONAL P426` note; `benchmark/bench/tests/test_opencode_probe_seeding.py`);
-  the sequencer asserts that diff, both trees clean and both heads equal to the record before the first leg and the leg re-asserts its
-  own tree at entry and exit. M1 runs from its arm's worktree (P472).
+  the sequencer asserts that diff at patch level — exactly the entry's three C177 lines and the `PROVISIONAL P426` note in
+  `main_models.yaml`, and exactly the P426 plan's §11 changes in the seeding test (`per_query` → `joint_v1`, source `registry`), no
+  other hunk, mode or metadata change [r2] — both trees clean (no tracked change: `git status --porcelain --untracked-files=no`, as K2
+  does today; generated outputs are checked by the stem refusal) [r2] and both heads equal to the record before the first leg, and the
+  leg re-asserts its own tree at entry and exit: under `b` its live head is compared with `stack_head_off` (OFF) or `stack_head_on` (ON)
+  of its own arm worktree, never a missing `stack_head` [r2]. M1 runs from its arm's worktree (P472); the fork's `qualify` writes the
+  ON registry it serves as `overlay-<entry>.yaml` even when the committed registry is already ON — the leg asserts that file's sha256 ==
+  the ON worktree's `main_models.yaml` and records both (operator ask P504) [r2].
 - **The frozen record under `b`** carries `build`, both heads (`stack_head_off`, `stack_head_on`), both trees clean, `mlx_vlm`,
   `mlx_serve`, `production_ref`, both registry shas (each worktree's `main_models.yaml`), the sha256 of `uv.lock` and
   `benchmark/requirements-bench.lock`, and per worktree and venv (`.venv`, `.venv-bench`) the installed versions of mlx, mlx-metal,
@@ -115,6 +124,10 @@ byte-unchanged.
 Failure paths: (1) `frozen.json` copied as `frozen.s2.json` → refused for the expected-build mismatch before any harvest, nothing
 launched, rc 1, nothing of S touched. (2) `WT_on` with an extra change beyond the restore → refused before the first leg. (3) a worktree
 whose `.venv` has mlx 0.32.3 → the leg refuses NOT_STARTED.
+
+**Stack code changed by T3** [r2]: `uv.lock`, `benchmark/requirements-bench.lock`, `bench.local_gate`, `bench.modelnames`,
+`bench.p426_wave1`, `bench.p426_leg`, `bench.p426_plan`, `bench.p426_harvest`, `bench.p426_panel`, their tests, and what §3's suite run
+shows broken.
 
 ## 5. Documents
 
