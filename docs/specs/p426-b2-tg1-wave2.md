@@ -562,3 +562,15 @@ flag, file or field, and exits 2.
 - **`RECORD` re-verification**: through `ChainOps.interpreter_inventory`; its mutated-file refusal is tested on a fixture
   `site-packages` tree (`interpreter_inventory(pid, site_packages=<path>)` for tests); the live check runs in R1.
 - **Rehearsal ON commit**: R1's ON commit differs from its OFF commit by exactly the P426 plan's §11 restore, as v8's do.
+
+### 16.6 Sequencer details named after the fourth test delivery [o4]
+- `ops.launch(...)` returns a handle with `pid`, `start` (process start time as `ChainOps` reports it) and `argv`; liveness is
+  `ops.alive(handle.pid, handle.start)`; `ops.harvest(leg_root, *, emails) -> rc`.
+- The sequencer classifies a leg from the chain's rc, its `chain.json` (`status`, `p426_ledger`, `p426_dnf`, `p426_invalid`), the item
+  records' draft counters, and `watch.jsonl`'s `exit_state`; pilot walls come from the rows (`wall_s`) of the invocations
+  `chain.json` `progress.invocations` names.
+- `OVERRUN_PAUSED` is `<out-base>/OVERRUN_PAUSED` (`{leg, attempt, deadline_s, at}`); the leg record carries `speed_valid` and
+  `speed_reason`; the occurrences file is JSON lines of the §5.5 records; pair dossiers are `<out-base>/pairs/<pair>.json` before their
+  harvest.
+- `harvest_wave2` refuses by raising `p426_harvest.HarvestError` (the CLI prints `REFUSED: …`, rc 2) and publishes nothing.
+- The census's owned-worker identity is `(pid, ChainOps.create_time(pid))`; fakes answer the owned worker's own start time.
