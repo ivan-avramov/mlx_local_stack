@@ -73,4 +73,4 @@ then delete. No git worktrees of the main checkout.
 - cursor-agent briefs: pass a one-line argv pointing at the brief file (P454), even when the text is BUSY-free.
 - An eval copy needs its submodules checked out (tests read the fork's `pins.json`).
 
-Next decision id C242; discussion ids continue from P511.
+Next decision id C243; discussion ids continue from P512.
