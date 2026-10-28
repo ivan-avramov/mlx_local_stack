@@ -1,4 +1,4 @@
-# Handoff — 2026-10-27 (session 10 checkpoint ~23:35Z; was session 9 END ~21:40Z): T3 candidate reviewed (fix then merge); B2 s1–s6 built, s1–s5 fixed; GPU rehearsal on provisional S′
+# Handoff — 2026-10-28 (session 10 checkpoint ~04:00Z: T3 accepted; was session 9 END 2026-10-27 ~21:40Z): T3 candidate reviewed (fix then merge); B2 s1–s6 built, s1–s5 fixed; GPU rehearsal on provisional S′
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C240, C239, C238, P504, P501, P500, P503, P499,
 C236 …), then `docs/specs/p426-t3-serving-build.md` (v2.1) with `docs/reviews/p426-t3/`, and `docs/specs/p426-b2-tg1-wave2.md` (v3.2
@@ -12,26 +12,19 @@ MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first, on the ne
 v0.3.0 `e6a7a5a`, mlx 0.32.4): **T3 accepted → push (P509) → S′ cut + two committed arm worktrees → Wave-1 rerun on S′** (label `s2`,
 ≈ 18–23 h GPU) while B2 finishes → B2 R1–R3 → v8 base → pilots → amendment → Wave 2 → B8 / B6 → ship call. P475 / P475a PARKED.
 
-## T3 — state and next steps (four-eyes strict; Go C238) — session 10 checkpoint 2026-10-27 ~23:35Z
+## T3 — ACCEPTED (C243) and on `main` — session 10, 2026-10-28 ~04:00Z
 
-Done this session: (1) record names ruled = the candidate's; test-writer delivery 3 (`docs/reviews/p426-t3/test-writer-delivery3.md`):
-fixtures renamed, 4 support checks fixed, a control twin on every refusal test → candidate 137 / 138 (the 1 = F1), baseline 93 failed
-(all b); **frozen2** `t3/frozen2/` 23:22:51Z. (2) Strict verify (round 1 of 3) sol + glm → `change-verify.dispositions.md`: V1 / V2
-exact-bytes restore (P511 pins the bytes), V3 / P507 pinned lock pair, V4 dist-info fail-closed, V5 plan §2 S-era bullets, V6 `--build
-s` on the existing test; V7 declined. (3) Fix round launched 23:25Z: fresh Claude Sonnet 5.5, copy `t3/fix/mlx_local_stack` (base
-`b3fd6073` + `77244972` docs; own venvs; frozen2 installed), brief `t3/briefs/fix-1.md`, outputs `t3/runs/fix-1.*`.
+`main`: `9e4ab5da` (GitHub `main` merged as B0 did; gitlinks → S′ `1c7c8fa1` / `1ddf6f84`, C242) + `d4861621` (the T3 change: impl-1 +
+fix round 1 + the C242 pin move; frozen4 tests; fork skip baselines). Venvs rebuilt (mlx 0.32.4). Fork hygiene commits (local only, NOT
+pushed): mlx-vlm `1c7c8fa1` (uv.lock refresh), mlx-serve `1ddf6f84` (ruff format; local `main` fast-forwarded to `e6a7a5a` first).
 Next, in order:
-1. Judge the fix report; export `fix-1.diff` (against `77244972`); build a clean eval copy (B0 + spec + candidate + fix, own venvs).
-2. Test-writer delivery 4 (`--resume 1396ee76-…`): amend the restore fixture to P511 (expected: its correct-restore controls are
-   refused by the fixed candidate until then), failing-case tests for V1–V4 / V6, run frozen set on baseline + fixed candidate.
-3. Re-freeze (frozen3). No second verify unless the budget allows (verify budget spent: one per work item).
-4. Smoke (acceptance 6, GPU): stop the P499 rehearsal at an item boundary (`t3/rehearsal.pid` = 86865; `scripts/stack_stop.sh`;
-   verify :8000 free, no survivors); OFF / ON worktrees of the final candidate from scratch (ON = + the P511 restore commit); lean
-   router per arm; 3 requests; ON draft counters on every ≥ 2-token request (worker log `$TMPDIR/mlx-manager-logs/<model>.log`
-   `Request completed` + `draft_n=`), OFF none; teardown verified; P504 qualify ON copy byte-identical; #2545 not reaching M1.
-5. Local gate receipts `c688e722`, `e6a7a5a` in that GPU window; stack receipt after the commit lands, before the push.
-6. Accept (operator): final diff + findings (P507 / P510 / P511 ruled, C241); apply as B0 did; rebuild main's venvs.
-7. Push point P509 (ask). 8. S′ cut + `p426-on-s2` (P511 form) + worktrees + `frozen.s2.json` (candidate names) + Wave 1 `--build s2`.
+1. Gate receipts: forks `1ddf6f84`, `1c7c8fa1`; stack run 1 lists the stack skips → review → commit `benchmark/gate/stack.skips.txt`
+   (`chore(stack)`) → stack run 2 on that HEAD → PASS (box quiet; `$STACK_WORKDIR/gate/`).
+2. Push (P509, ASK): forks first (gitlinks must be reachable), then stack `main`. Never push `p426-on-s2`.
+3. S′ cut: OFF = `main` HEAD after step 1; `p426-on-s2` = OFF + the P511 restore commit (bytes as `t3/smoke-on`'s, checked by
+   `restore_diff_problems` → `[]`); worktrees `$STACK_WORKDIR/worktrees/stack-p426-s2-{off,on}` (fresh venvs, submodules); `frozen.s2.json`
+   with the candidate's field names; then `bench.p426_wave1 --build s2 --stack-root-off … --stack-root-on … --out
+   $STACK_WORKDIR/p426/wave1.s2 …` detached + watcher daemon; per-leg harvest `data(bench)` commits.
 
 ## B2 — state (session 10)
 
@@ -55,7 +48,7 @@ TODO: compare its Go walls with P486's (old build); never graded / pooled.
 
 ## Copies to resolve
 
-`$STACK_WORKDIR/t3/{stack-prov, impl, tw, eval, fix, vfy, dop, dop2, venv-fork, venv-fork2, frozen1, frozen2}`, `$STACK_WORKDIR/b2/{tw, tw2, arm-sonnet,
+`$STACK_WORKDIR/t3/{stack-prov, impl, tw, eval, fix, vfy, smoke, smoke-off, smoke-on, accept-dry, forkcheck, baselines, dop, dop2, venv-fork, venv-fork2, frozen1–4}` (T3 accepted: harvested; delete after the S′ cut), `$STACK_WORKDIR/b2/{tw, tw2, arm-sonnet,
 arm-sous*, eval, eval-s3, eval-s6, eval-s4, eval-s5, eval-fix, dop, dop2, frozen*, judge-s3}` — scratch; harvest accepted candidates at Accept,
 then delete. No git worktrees of the main checkout.
 
