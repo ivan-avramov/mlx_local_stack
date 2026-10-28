@@ -57,7 +57,7 @@ Audit of every `RuntimeConfig.from_env` knob against the CLI's env writes (`cli.
 | `kv_bits`, `kv_group_size`, `quantized_kv_start` | yes | `None` | correct via `app.py` env fallbacks |
 | `kv_key_bits`, `kv_value_bits`, `kv_key_scheme`, `kv_value_scheme` | yes | `None` | reach the generator via fallbacks, but the cached-session path does not forward them (P407, latent: no registry entry sets them) |
 | `max_kv_size` | yes | `None` | correct via `generation.py` fallback |
-| `spec_draft_model`, `spec_draft_kind` | yes | `None` | correct via `ResponseGenerator` env fallback |
+| `draft_model`, `draft_kind` | yes | `None` | correct via `ResponseGenerator` env fallback |
 | `apc_*`, `token_queue_timeout` | no | — | unaffected |
 
 Every row's `/v1/settings` `replace` restore point is the import-time value today; F1 fixes all of them.

@@ -20,6 +20,13 @@ COMPRESS_BYTES = 8 * 1024 * 1024  # a larger dossier file is published `<name>.x
 WAVE1 = Path("benchmark") / "results" / "p426" / "wave1"
 
 
+def wave1_dir(build="s"):
+    """`wave1` for S, `wave1.<label>` for any other build (T3 §4: a label never reads or writes another label's dossiers)."""
+    from bench.p426_plan import check_build, is_s
+
+    return WAVE1 if is_s(build) else WAVE1.with_name(f"wave1.{check_build(build)}")
+
+
 class HarvestError(RuntimeError):
     pass
 
@@ -98,9 +105,9 @@ def _sources(name, plan, receipts, stdout, log_slice, dossier):
     return out
 
 
-def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub):
+def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub, build="s"):
     main_root = Path(main_root)
-    dossier = WAVE1 / name
+    dossier = wave1_dir(build) / name
     problems, staged = [], []
     if (main_root / dossier).exists():
         problems.append(f"{dossier} exists (a leg is harvested once)")
@@ -129,13 +136,14 @@ def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub):
     return manifest
 
 
-def harvest_run_files(paths, *, main_root, scrub, overwrite=()):
+def harvest_run_files(paths, *, main_root, scrub, overwrite=(), build="s"):
     """The run-level records (frozen.json, the ON overlay; `overwrite` = append-only logs refreshed each harvest)."""
-    run = Path(main_root) / WAVE1 / "run"
+    wave1 = wave1_dir(build)
+    run = Path(main_root) / wave1 / "run"
     staged, problems = [], []
     for p in paths:
         p = Path(p)
-        rel = str(WAVE1 / "run" / p.name)
+        rel = str(wave1 / "run" / p.name)
         _, _, published, found = _publish(p.read_bytes(), rel, scrub)
         problems += found
         dest = run / p.name

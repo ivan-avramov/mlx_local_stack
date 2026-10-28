@@ -22,6 +22,10 @@ procedures are archived in `docs/two-box-archive.md`.
 - **mlx 0.32.4 breaks quantized speculative-verifier exactness (2026-10-17, P369):** a fresh `pip install -e .` of the fork pulls mlx 0.32.4,
   which fails 138 quantized-verifier exactness tests; 0.32.3 (the stack's `uv.lock`) passes. Any mlx bump must re-run the fork's verifier
   exactness tests before serving MTP. TF32 on → f32 MTP-ON/OFF laws differ ≈ 5e-4 (tests disable it; bf16 unaffected).
+  *Scope: the fork at S (`src/mlx-vlm` before `c688e722`); superseded for the fork at `c688e722` and later by the next note.*
+- **mlx 0.32.4 is required by the fork at `c688e722` and later (2026-10-27, P426 T3, C236):** the fork's exact verifier kernels need
+  mlx 0.32.4 and fail on 0.32.3; `uv.lock` and `benchmark/requirements-bench.lock` pin 0.32.4 (mlx-metal equal). The rule stays: re-run
+  the fork's verifier exactness tests on any mlx bump before serving MTP.
 
 ## Shell and agent-tooling traps (apply on every M5 box)
 

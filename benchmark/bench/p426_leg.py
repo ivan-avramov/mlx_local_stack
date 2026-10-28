@@ -52,6 +52,7 @@ class LegSpec:
     seeds: dict = None  # K4: {row key: {field: planned seed}}
     pins: dict = None  # K2: stack_head, stack_clean, mlx_vlm, mlx_serve, registry_off_sha, registry_on_sha
     cwd: str = None
+    build: str = "s"  # T3 §4: the build label; != "s" = arms as commits (the ON registry is the ON worktree's committed file)
 
 
 P426_ON = {  # the exact settings the ON arm adds (the C177 lines restored), pinned independently of the fork rule (H2)
@@ -106,9 +107,11 @@ def _models(text):
     return dict(zip(names, models)), names, {k: v for k, v in doc.items() if k != "models"}
 
 
-def registry_delta_problems(on_text, off_text, entry, expected=None):
+def registry_delta_problems(on_text, off_text, entry, expected=None, allow_added_comments=False):
     """ON == OFF except that ``entry`` gains exactly its pinned MTP settings (``P426_ON``): strict, type-aware, and the text
-    delta is exactly those lines added with only comment lines removed (B4 code round 2 H2)."""
+    delta is exactly those lines added with only comment lines removed (B4 code round 2 H2). ``allow_added_comments``: the
+    committed ON registry of T3 §4 also carries its ``PROVISIONAL P426`` note (comment lines only; the sequencer asserts the
+    patch itself)."""
     expected = expected if expected is not None else P426_ON.get(entry)
     if not expected:
         return [f"{entry}: no pinned ON settings"]
@@ -140,7 +143,8 @@ def registry_delta_problems(on_text, off_text, entry, expected=None):
         if not _same(rest.get(key), b.get(key)):
             problems.append(f"{entry}: {key} differs between the arms")
     delta = [d for d in difflib.ndiff(off_text.splitlines(), on_text.splitlines()) if d[:2] in ("- ", "+ ")]
-    added = sorted(d[2:].strip() for d in delta if d.startswith("+ "))
+    added = sorted(d[2:].strip() for d in delta if d.startswith("+ ")
+                   and not (allow_added_comments and d[2:].lstrip().startswith("#")))
     removed = [d[2:] for d in delta if d.startswith("- ")]
     if added != sorted(f"{k}: {v}" for k, v in expected.items()):
         problems.append(f"{entry}: added lines {added} are not exactly the pinned MTP lines")
@@ -296,7 +300,13 @@ def pin_problems(state, spec):
     """K2: the frozen build (stack HEAD + clean tracked tree + both submodules) and both registry texts, before anything
     starts."""
     pins = spec.pins or {}
-    problems = [f"{k}: {state.get(k)!r} != pinned {pins.get(k)!r}" for k in PIN_KEYS if state.get(k) != pins.get(k)]
+    if spec.build != "s":  # T3 §4: the arm's own worktree against ITS recorded head, locks and venv versions
+        from bench.p426_plan import build_pins
+
+        want = dict(build_pins(pins, spec.arm), frozen_sha=pins.get("frozen_sha"))
+        problems = [f"{k}: {state.get(k)!r} != pinned {want.get(k)!r}" for k in want if k != "registry_sha" and state.get(k) != want.get(k)]
+    else:
+        problems = [f"{k}: {state.get(k)!r} != pinned {pins.get(k)!r}" for k in PIN_KEYS if state.get(k) != pins.get(k)]
     if sha256_text(spec.off_registry_text) != pins.get("registry_off_sha"):
         problems.append("registry_off_sha: the committed registry is not the pinned one")
     if spec.arm == "on" and sha256_text(spec.registry_text) != pins.get("registry_on_sha"):
@@ -427,7 +437,8 @@ def _guard_pre(spec, ops, repo_state, pins_check):
     state = repo_state()
     pre += pin_problems(state, spec) + destination_problems(spec.destinations)
     if spec.arm == "on":
-        pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model)
+        pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model,
+                                       allow_added_comments=spec.build != "s")
     elif spec.registry_text != spec.off_registry_text:
         pre.append("the OFF arm must serve the committed registry verbatim")
     pre += pins_check(spec.model, spec.arm)
@@ -576,6 +587,12 @@ def run_qualify_leg(spec, ops, *, run_driver, pins_check, battery_intervals, clo
         receipt["report"] = {k: report.get(k) for k in ("predictor", "entries", "reviewed_head", "registry_sha256",
                                                         "production")}
         problems += qualify_problems(report, spec.model, spec.arm, (spec.pins or {}).get("production_ref"))
+        if spec.build != "s" and spec.arm == "on":  # T3 §4 (P504): qualify's own copy of the ON registry is the committed one
+            overlay = Path(out_dir) / f"overlay-{spec.model}.yaml"
+            served, committed = (hashlib.sha256(overlay.read_bytes()).hexdigest() if overlay.is_file() else None), sha256_text(spec.registry_text)
+            receipt["overlay"] = dict(file=overlay.name, sha256=served, registry_on_sha256=committed)
+            if served != committed:
+                problems.append(f"{overlay.name} sha256 {served} != the ON worktree's main_models.yaml {committed}")
         if ops.busy_procs():
             speed.append("busy processes at exit")
     except BaseException as exc:  # noqa: BLE001
@@ -680,13 +697,15 @@ def _watcher_for(repo, total, out_dir, interval_s=None, startup_s=10.0):
     return start
 
 
-FROZEN = "p426/frozen.json"  # K2: the one frozen-build record, under $STACK_WORKDIR (written once when S is cut)
+FROZEN = "p426/frozen.json"  # K2: S's frozen-build record, under $STACK_WORKDIR (a label's: `p426_plan.frozen_path`)
 
 
 def main(argv=None):
     """``--axis --arm (--block N | --smoke) --stack-root <frozen worktree> --workdir <STACK_WORKDIR> --registry-on <overlay>
     --receipt-dir <dir>``: the leg is PLANNED from ids.json (K3) and pinned to ``<workdir>/p426/frozen.json`` (K2); a failure
-    before the leg starts still leaves a NOT_STARTED receipt (K1)."""
+    before the leg starts still leaves a NOT_STARTED receipt (K1). ``--build <label>`` (T3 §4): the label's names, its
+    ``frozen.<label>.json`` and its expected build; the arm is its own worktree (``--stack-root``; an ON leg also
+    ``--stack-root-off``) and serves that worktree's committed registry — no ``--registry-on``."""
     import os
     import time
 
@@ -696,35 +715,66 @@ def main(argv=None):
     sel = ap.add_mutually_exclusive_group(required=True)
     sel.add_argument("--block", type=int)
     sel.add_argument("--smoke", action="store_true")
-    ap.add_argument("--stack-root", required=True)
+    ap.add_argument("--stack-root", required=True, help="the arm's worktree (under a build label: its committed registry is served)")
     ap.add_argument("--workdir", required=True)
-    ap.add_argument("--registry-on", required=True, help="the ON overlay written by bench.p426_overlay")
+    ap.add_argument("--registry-on", help="build s only: the ON overlay written by bench.p426_overlay")
     ap.add_argument("--receipt-dir", required=True)
     ap.add_argument("--timeout-s", type=float, default=6 * 3600)
+    ap.add_argument("--build", default="s", help="T3 §4: the build label (default s = S); S′ runs use s2")
+    ap.add_argument("--stack-root-off", help="a label's ON leg: the OFF worktree whose committed registry is the delta's base")
     args = ap.parse_args(argv)
-    name = f"{args.axis}-p426-{args.arm}-{'smoke' if args.smoke else f'b{args.block}'}"
+    from bench import p426_plan
+
+    try:
+        build = p426_plan.check_build(args.build)
+    except ValueError as exc:
+        print(f"[p426_leg] refused: {exc}", file=sys.stderr)
+        return 2
+    name = p426_plan.leg_name(args.axis, args.arm, "smoke" if args.smoke else args.block, build)
     stub = LegSpec(name=name, arm=args.arm, kind=args.axis, model=None, registry_text="", off_registry_text="",
                    driver_argv=[], destinations=[], rows_path=None, planned=[], receipt_dir=Path(args.receipt_dir),
                    server_log=None)
     try:
-        from bench import p426_plan
         from bench.chain_ops import ChainOps
 
+        under_label = build != "s"
+        if under_label and args.registry_on:
+            raise ValueError(f"--registry-on is retired under build {build}: each arm serves its worktree's committed registry")
+        if not under_label and not args.registry_on:
+            raise ValueError("--registry-on is required under build s")
+        if not under_label and args.stack_root_off:
+            raise ValueError("--stack-root-off is for a build label")
         configured = os.environ.get("STACK_WORKDIR")
         if not configured or Path(configured).resolve() != Path(args.workdir).resolve():
             raise ValueError(f"--workdir {args.workdir} is not $STACK_WORKDIR ({configured})")
         repo = Path(args.stack_root).resolve()
-        frozen_path = Path(args.workdir).resolve() / FROZEN
+        frozen_path = p426_plan.frozen_path(Path(args.workdir).resolve(), build)  # the label's one record, no other path
+        if not frozen_path.is_file():
+            raise FileNotFoundError(f"frozen record {frozen_path} is missing")
         frozen_bytes = frozen_path.read_bytes()  # K2: ONE snapshot, parsed and hashed
         pins = dict(json.loads(frozen_bytes), frozen_sha=hashlib.sha256(frozen_bytes).hexdigest())
+        if under_label:
+            refused = p426_plan.record_problems(pins, build)
+            if refused:
+                raise ValueError(f"frozen record {frozen_path.name} is not build {build}'s: {'; '.join(refused)[:600]}")
         plan = p426_plan.plan_leg(repo, args.axis, args.arm, args.block, smoke=args.smoke, workdir=args.workdir,
-                                  reviewed_head=pins.get("mlx_vlm"), production_ref=pins.get("production_ref"))
-        off_text = (repo / "main_models.yaml").read_bytes().decode("utf-8")
-        on_path = Path(args.registry_on)
+                                  reviewed_head=pins.get("mlx_vlm"), production_ref=pins.get("production_ref"), build=build)
+        if under_label:
+            off_root = Path(args.stack_root_off).resolve() if args.stack_root_off else None
+            if args.arm == "off" and off_root not in (None, repo):
+                raise ValueError("an OFF leg runs from the OFF worktree: --stack-root-off must be --stack-root")
+            if args.arm == "on" and off_root is None:
+                raise ValueError("an ON leg needs --stack-root-off (the OFF worktree's committed registry)")
+            off_text = ((off_root or repo) / "main_models.yaml").read_bytes().decode("utf-8")
+            on_path, own_text = repo / "main_models.yaml", (repo / "main_models.yaml").read_bytes().decode("utf-8")
+        else:
+            off_text = (repo / "main_models.yaml").read_bytes().decode("utf-8")
+            on_path = Path(args.registry_on)
+            own_text = on_path.read_bytes().decode("utf-8") if args.arm == "on" else off_text
         spec = LegSpec(
             name=name, arm=args.arm, kind=args.axis, model=plan["entry"],
-            registry_text=on_path.read_bytes().decode("utf-8") if args.arm == "on" else off_text,
-            off_registry_text=off_text, driver_argv=plan["driver_argv"],
+            registry_text=own_text,
+            off_registry_text=off_text, driver_argv=plan["driver_argv"], build=build,
             destinations=p426_plan.existing_outputs(plan) + ([plan["rows_path"]] if plan["rows_path"] else []),
             rows_path=plan["rows_path"], planned=plan["planned"], receipt_dir=Path(args.receipt_dir),
             server_log=repo / "logs/mlx_vlm.log", timeout_s=args.timeout_s, row_key=plan["row_key"],
@@ -754,7 +804,11 @@ def main(argv=None):
         base_state = _repo_state_for(repo)
 
         def repo_state():  # K2: the frozen record's current bytes are part of the build identity, at entry and exit
-            return dict(base_state(), frozen_sha=hashlib.sha256(frozen_path.read_bytes()).hexdigest())
+            state = dict(base_state(), frozen_sha=hashlib.sha256(frozen_path.read_bytes()).hexdigest())
+            if under_label:  # T3 §4: the arm's locks and both venvs' versions are part of the identity too
+                live = p426_plan.arm_state(repo)
+                state.update({k: live[k] for k in ("uv_lock_sha256", "bench_lock_sha256", "venvs")})
+            return state
 
         common = dict(run_driver=_real_driver, pins_check=_pins_check_for(fork_dev), battery_intervals=battery,
                       clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"), repo_state=repo_state)

@@ -36,6 +36,9 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 
+# P437 / T3 §4: harvested Wave-1 evidence — `wave1/` (S) and `wave1.<build label>/` (e.g. `wave1.s2/`) — is data, not prose.
+_P426_WAVE1 = re.compile(r"^benchmark/results/p426/wave1(\.[a-z][a-z0-9]{0,7})?/")
+
 # A line that DOCUMENTS the rule must be able to name the forms it bans, or the rule could never be
 # written down. Verbose so it cannot be typed by accident; greppable so misuse is auditable:
 #   git grep -n allow-shorthand
@@ -270,7 +273,7 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # EvalPlus grader output *_samples_eval_results.json, which embeds the
             # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
             # P437: harvested Wave-1 evidence is a verbatim, sha-manifested copy (registry, receipts, logs) — data too.
-            is_result_rows = path.startswith("benchmark/results/p426/wave1/") or path.startswith("benchmark/results/") and (
+            is_result_rows = _P426_WAVE1.match(path) or path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))

@@ -29,13 +29,21 @@ present in ON and absent in OFF.
 
 ## 2. Build, arms, provenance
 
-- **One serving build** (R11): stack commit S = the bump carrying fork B1 + B4 + B7 (§9); `src/mlx-vlm` = production `7207179b` +
+- **Wave 1 on S — superseded by the R11 S′ bullet below.** **One serving build** (R11): stack commit S = the bump carrying fork B1 + B4 + B7 (§9); `src/mlx-vlm` = production `7207179b` +
   B1's logging only (+ dev-only B4 / B7), `src/mlx-serve` `86921f02`, `main_models.yaml`. Every leg asserts these three pins
   (submodule SHAs + registry sha256). Driver code may differ between waves (recorded per leg); no fork change after S.
-- **Frozen worktree** (R11): every leg runs router AND driver from `$STACK_WORKDIR/worktrees/stack-p426` at S (submodules checked
+- **Wave 1 on S — superseded by the R11 S′ bullet below.** **Frozen worktree** (R11): every leg runs router AND driver from `$STACK_WORKDIR/worktrees/stack-p426` at S (submodules checked
   out, own `.venv` via `uv sync`, `.env` copied). Wave 2 moves it to the stack commit carrying B2 / B6 only after asserting the
   serving pins unchanged.
-- **Arms.** OFF = `main_models.yaml` at S. ON = OFF with exactly the three C177 lines uncommented by the B4 rule (cross-checked
+- **R11 names S′ (C236, T3 `docs/specs/p426-t3-serving-build.md`).** S's Wave 1 is superseded: its rows, receipts and dossiers
+  (`p426-*` tunes, `benchmark/results/p426/wave1/`) are retained and never pooled with S′. P426's one serving build is now S′:
+  `src/mlx-vlm` `1c7c8fa166582ac1a1c23ae9063527b2b5215b11` (`qualify` production ref `b26fa7c9faf23bc3167db3419504ef0b2b82a8e6`),
+  `src/mlx-serve` `1ddf6f842f159a62d240f3ac6965fc33cbdb0b0d` (v0.3.0), mlx / mlx-metal 0.32.4 in both venvs, build label `s2`
+  (C242: `c688e722` + a fork lock refresh; mlx-serve `e6a7a5a` + ruff format).
+  Arms are two committed worktrees (C218): OFF = the S′ commit, ON = OFF + one restore commit (the three C177 lines, the
+  `PROVISIONAL P426` note, the seeding test), each served from its own worktree's `main_models.yaml`; no overlay file. Wave 1
+  reruns from the same sequencer under `--build s2` into `p426s2-*` tunes, `frozen.s2.json` and `wave1.s2/`; Wave 2 runs on S′.
+- **Wave 1 on S — superseded by the R11 S′ bullet above (arms as two committed worktrees, no overlay file).** **Arms.** OFF = `main_models.yaml` at S. ON = OFF with exactly the three C177 lines uncommented by the B4 rule (cross-checked
   equal to `registry_states.overlay_on`); `$STACK_WORKDIR/p426/registry-{on,off}.yaml`, both sha256 in every receipt; the
   three-line unified diff asserted before every ON leg.
 - **Fixed:** weights, tune (t0.5, medium), native16 KV, cap / preallocation 262,144, prefill step 512, budgets (`max_tokens`
@@ -83,7 +91,7 @@ receipts, engagement, zero transport errors), estimate recalibrated from smoke w
 | A2 | cjudge 40 | `benchmark/run.py generate --models <entry> --benches cjudge --limit cjudge=0 --ids cjudge=<block ids, colon-separated> --sampling-profile deployed --tune p426-<arm>-b<k> --order roundrobin --seed 0 --seed-base 0 --samples 1` | mechanical quality N/A (grader `acc: null`, S4): panel only; conv%; decode; acceptance |
 | A3 | Vision gate 20 | `benchmark/vision_gate.py --model <entry> --ids <block ids> --out benchmark/results/<entry>/vision_gate.p426-<arm>-b<k>.jsonl` (`--ids` = B11) | self-pass (lenient, labelled); panel (§7); turn-1 latency + decode |
 | A4 | Reasoning depth 128K | `bench.run_reasoning --model <entry> --grid 128000 --samples 3 --chain-len 4 --sampling-profile deployed --out-tag p426-<arm>-b<k> --task-seed-base <b>` (B13); block 1 task seeds 128000000–002, block 2 128000003–005, each draw with an explicit request seed `rowschema.sample_seed` recorded beside the task seed, both paired across arms (S5); completion text persisted (B12) | strict draws, budget hits; DESCRIPTIVE (6 unique draws per arm, one synthetic task; no interval); decode; acceptance |
-| M1 | Memory at 256K | fork `dev/p369_phase2/qualify.py --stack-root <worktree> --fork-root <worktree>/src/mlx-vlm --reviewed-head <S's fork sha> --entry Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --predictor {off,on} --out $STACK_WORKDIR/p426/m1/leg<k>-<arm>` (B7), legs OFF / ON / ON / OFF, four fresh outs; 260,096-token prompt, shipped settings, phase-reset `mx.get_peak_memory` | prefill / decode / retire peaks per leg, ON − OFF; prefill + decode tok/s; acceptance |
+| M1 | Memory at 256K | fork `dev/p369_phase2/qualify.py --stack-root <worktree> --fork-root <worktree>/src/mlx-vlm --reviewed-head <S's fork sha> --entry Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --predictor {off,on} --out $STACK_WORKDIR/p426/m1/leg<k>-<arm>` (B7; Wave 1 on S — under a build label ≠ `s` the leg is the planner's: `--reviewed-head` = the label's reviewed head (`s2`: fork `1c7c8fa166582ac1a1c23ae9063527b2b5215b11`), `--production-ref` = the label's production ref (`s2`: `b26fa7c9faf23bc3167db3419504ef0b2b82a8e6`), `--out $STACK_WORKDIR/p426/<b>/m1/<tune>`, one fresh out per planned leg), legs OFF / ON / ON / OFF, four fresh outs; 260,096-token prompt, shipped settings, phase-reset `mx.get_peak_memory` | prefill / decode / retire peaks per leg, ON − OFF; prefill + decode tok/s; acceptance |
 
 Every runner's planned item list is asserted equal to the committed block membership before the first request (B10, T1)
 and again from the rows at exit. Row `peak_mem_gb` is reported only as "arm-lifetime high-water". Historical numbers (R7 MTP-ON 38.25 GB, M40, M42) are context

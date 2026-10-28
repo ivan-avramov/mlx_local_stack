@@ -14,6 +14,7 @@ reachability from the fork's `origin/main`. Threat model: accidental pushes only
 """
 
 import argparse
+import ast
 import dataclasses
 import hashlib
 import json
@@ -56,15 +57,28 @@ def parity_ref(workflow_text):
     return m.group(1)
 
 
-def audit_argvs(py, ref):
-    return [[py, f"dev/{name}", "--upstream-ref", ref, *(["--strict"] if name == "check_upstream_deletions.py" else [])]
-            for name in AUDITS]
+def sync_ref_text(text):
+    """The first non-blank, non-comment line of a fork's `.upstream-sync-ref` (the file its `dev/ci.py` reads)."""
+    for line in text.splitlines():
+        line = line.strip()
+        if line and not line.startswith("#"):
+            return line
+    raise GateError(".upstream-sync-ref: no ref")
 
 
-def policy_digest(repo, gate_source, baseline, parity):
-    doc = json.dumps(dict(repo=repo, canonical=CANONICAL[repo], gate=hashlib.sha256(gate_source).hexdigest(),
-                          baseline=baseline, parity=parity), sort_keys=True)
-    return hashlib.sha256(doc.encode()).hexdigest()
+def audit_argvs(py, ref, audits=None):
+    """`audits`: the fork's own (script, extra args) list at the sha (`audits_at`); None = the S layout's eight."""
+    if audits is None:
+        audits = [(name, ("--strict",) if name == "check_upstream_deletions.py" else ()) for name in AUDITS]
+    return [[py, f"dev/{name}", "--upstream-ref", ref, *extra] for name, extra in audits]
+
+
+def policy_digest(repo, gate_source, baseline, parity, audits=None):
+    doc = dict(repo=repo, canonical=CANONICAL[repo], gate=hashlib.sha256(gate_source).hexdigest(), baseline=baseline,
+               parity=parity)
+    if audits is not None:
+        doc["audits"] = [[name, list(extra)] for name, extra in audits]
+    return hashlib.sha256(json.dumps(doc, sort_keys=True).encode()).hexdigest()
 
 
 def busy_problems(ps_text, listeners, my_pid):
@@ -111,7 +125,7 @@ def _workdir():
     return wd
 
 
-def steps_for(repo, scratch, parity):
+def steps_for(repo, scratch, parity, audits=None):
     s = Path(scratch)
     junit = f"--junitxml={s / '.gate-junit.xml'}"
     if repo == "stack":
@@ -134,7 +148,7 @@ def steps_for(repo, scratch, parity):
             Step("sync", ["uv", "sync", "--python", "3.12", "--locked", "--extra", "test"], s),
             Step("extras", ["uv", "pip", "install", "--python", py, *FORK_EXTRAS], s),
             Step("pre-commit", ["uvx", "pre-commit", "run", "--all-files"], s),
-            *[Step(f"audit:{i}", argv, s) for i, argv in enumerate(audit_argvs(py, parity))],
+            *[Step(f"audit:{i}", argv, s) for i, argv in enumerate(audit_argvs(py, parity, audits))],
             Step("pytest", [py, "-m", "pytest", "-q", junit, "mlx_vlm/tests"], s),
         ]
     if repo == "mlx-serve":
@@ -224,14 +238,40 @@ def _receipt_path(gate_dir, repo, sha, digest):
 
 
 def current_parity(repo, live, sha):
+    """The fork's upstream ref at the sha: `.upstream-sync-ref` when it has one (S′ layout), else the parity workflow (S)."""
     if repo != "mlx-vlm":
         return None
+    if _git(live, "cat-file", "-t", f"{sha}:.upstream-sync-ref", check=False) == "blob":
+        return sync_ref_text(_git(live, "show", f"{sha}:.upstream-sync-ref"))
     return parity_ref(_git(live, "show", f"{sha}:.github/workflows/upstream-parity.yml"))
+
+
+def audits_at(live, sha):
+    """The fork's gating audits at the sha: the `AUDITS` list of its own `dev/ci.py` (parsed, never executed); a sha without
+    one (the S layout) has the fixed eight."""
+    if _git(live, "cat-file", "-t", f"{sha}:dev/ci.py", check=False) != "blob":
+        return [(name, ("--strict",) if name == "check_upstream_deletions.py" else ()) for name in AUDITS]
+    for node in ast.parse(_git(live, "show", f"{sha}:dev/ci.py")).body:
+        target = node.target if isinstance(node, ast.AnnAssign) else (node.targets[0] if isinstance(node, ast.Assign) else None)
+        if isinstance(target, ast.Name) and target.id == "AUDITS":
+            try:
+                audits = [(name, tuple(extra)) for name, extra in ast.literal_eval(node.value)]
+            except (ValueError, TypeError) as exc:
+                raise GateError(f"dev/ci.py at {sha[:8]}: AUDITS is not a literal list of (script, args): {exc}") from exc
+            if not audits or not all(isinstance(n, str) and all(isinstance(a, str) for a in e) for n, e in audits):
+                raise GateError(f"dev/ci.py at {sha[:8]}: AUDITS is empty or malformed")
+            return audits
+    raise GateError(f"dev/ci.py at {sha[:8]}: no AUDITS list")
+
+
+def _audits_for(repo, live, sha):
+    return audits_at(live, sha) if repo == "mlx-vlm" else None
 
 
 def digest_for(repo, sha, live, baselines):
     base = (Path(baselines) / f"{repo}.skips.txt")
-    return policy_digest(repo, _gate_source(), base.read_text() if base.exists() else "<none>", current_parity(repo, live, sha))
+    return policy_digest(repo, _gate_source(), base.read_text() if base.exists() else "<none>", current_parity(repo, live, sha),
+                         _audits_for(repo, live, sha))
 
 
 def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real_busy, dirty=_real_dirty, artifacts=_artifacts):
@@ -242,16 +282,17 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
         raise GateError(f"{live} origin is not the canonical {repo}")
     sha = _git(live, "rev-parse", f"{sha}^{{commit}}")
     parity = current_parity(repo, live, sha)
+    audits = _audits_for(repo, live, sha)
     baseline_file = Path(baselines) / f"{repo}.skips.txt"
     baseline = baseline_file.read_text() if baseline_file.exists() else None
-    digest = policy_digest(repo, _gate_source(), baseline if baseline is not None else "<none>", parity)
+    digest = policy_digest(repo, _gate_source(), baseline if baseline is not None else "<none>", parity, audits)
     scratch = gate_dir / "scratch" / f"{repo}-{sha[:12]}-{time.time_ns()}"
     receipt = dict(repo=repo, sha=sha, policy_digest=digest, parity_ref=parity, python="3.12", steps=[], problems=[],
                    started=time.strftime("%Y-%m-%d %H:%M:%S"),
                    not_covered="python 3.10 (fork CI)" if repo == "mlx-vlm" else
                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
     try:
-        for step in steps_for(repo, scratch, parity):
+        for step in steps_for(repo, scratch, parity, audits):
             if busy():
                 receipt["problems"].append(f"box became busy before {step.name}")
                 break
@@ -295,7 +336,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
         receipt["problems"].append(f"{type(exc).__name__}: {exc}"[:600])
     finally:
         shutil.rmtree(scratch, ignore_errors=True)
-    receipt["verdict"] = "PASS" if not receipt["problems"] and len(receipt["steps"]) == len(steps_for(repo, scratch, parity)) \
+    receipt["verdict"] = "PASS" if not receipt["problems"] and len(receipt["steps"]) == len(steps_for(repo, scratch, parity, audits)) \
         else "FAIL"
     receipt["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
     path, fd = _receipt_path(gate_dir, repo, sha, digest)

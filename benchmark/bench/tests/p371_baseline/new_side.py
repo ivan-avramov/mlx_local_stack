@@ -374,16 +374,23 @@ def _closure_members():
             for p in ic.python_closure(REPO / LIFECYCLE_NAMED["runner"], REPO)}
 
 
+TOOLCHAIN_LOCK_OLD = "ecd97da3ba64b482fda9e8bc91e36794231d34d9bfe63af84b1c2f7f20e73bcf"  # the value the goldens hold
+TOOLCHAIN_LOCK_NEW = "46612efe44cdbf4563479cfedadcd943d2320a97a7c4fe2801d253335adfb380"  # sha256 of the S′ bench lock
 POINTERS = {"/probe_code_sha256": "probe_code_sha256", "/scaffold_policy_sha256": "scaffold_policy_sha256",
             "/generation_identity_sha256": "generation_identity_sha256"}
 
 
 def rederive(result):
     """The hook for `compare(..., rederive=)`: a changed value is accepted only when it equals the independently
-    re-derived one of the same run. Policy VALUE changes (`/runtime/policy/*`) are never accepted."""
+    re-derived one of the same run. Policy VALUE changes (`/runtime/policy/*`) are never accepted — except the toolchain's
+    lock hash, for exactly one pinned pair (P426 T3 / P507): the goldens' `ecd97da3…` (`TOOLCHAIN_LOCK_OLD`) → the sha256 of
+    the committed S′ `benchmark/requirements-bench.lock` (`TOOLCHAIN_LOCK_NEW`, `46612efe…`), both literals; any other old or
+    new value is a difference, and a later lock change fails here until a reviewed pair replaces this one."""
     import re
 
     def hook(ptr, old, new):
+        if re.match(r"^/runs/\d+/manifest/runtime/policy/toolchain/lock_sha256$", ptr):
+            return (old, new) == (TOOLCHAIN_LOCK_OLD, TOOLCHAIN_LOCK_NEW)
         m = re.match(r"^/runs/(\d+)/(?:rows/\d+|manifest/runtime)/(?P<key>[a-z_0-9]+)$", ptr)
         if not m or m["key"] not in POINTERS.values():
             return False

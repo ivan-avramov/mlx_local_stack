@@ -16,6 +16,14 @@ from pathlib import Path
 from bench import judge_pairwise as jp
 
 OFF_TUNE, ON_TUNE = "p426-off", "p426-on"
+
+
+def tunes(build="s"):
+    """The OFF / ON panel tunes of a build label: `p426-off` / `p426-on` for S, `p426<label>-off` / `-on` otherwise."""
+    from bench.p426_plan import tune_prefix
+
+    prefix = tune_prefix(build)
+    return f"{prefix}-off", f"{prefix}-on"
 RUBRICS = {
     "cjudge": jp.RUBRIC_SYSTEM_PROMPT,
     "reasoning": (
@@ -60,9 +68,9 @@ def load_judges(path, modality):
     return judges
 
 
-def pairs(model, off_rows, on_rows, seed=426):
+def pairs(model, off_rows, on_rows, seed=426, build="s"):
     """One blind ON vs OFF pair per item both arms hold (converged), balanced A / B slots (judge_pairwise)."""
-    return jp.build_tune_pairs(model, OFF_TUNE, ON_TUNE, off_rows, on_rows, seed=seed)
+    return jp.build_tune_pairs(model, *tunes(build), off_rows, on_rows, seed=seed)
 
 
 TEXT_FIELD = {"math500": "content", "cjudge": "content", "reasoning": "content", "vision": "description", "tg1": "content"}
@@ -89,9 +97,10 @@ def select(axis, off, on, correct_off=None, correct_on=None):
     return items, excluded
 
 
-def make_pairs(model, items, seed=426):
+def make_pairs(model, items, seed=426, build="s"):
     """K10: one blind pair per selected item, A / B slots balanced (exactly half the items show ON as A), seeded."""
-    key_off, key_on = f"{model}@{OFF_TUNE}", f"{model}@{ON_TUNE}"
+    off_tune, on_tune = tunes(build)
+    key_off, key_on = f"{model}@{off_tune}", f"{model}@{on_tune}"
     flags = jp._balanced_flags(len(items), jp._sub_rng(seed, key_off, key_on))
     out = []
     for (item_id, off_text, on_text), on_first in zip(items, flags):
@@ -241,9 +250,10 @@ def run_cursor_judge(out_dir, judge, runner=subprocess.run, timeout_s=900):
     return {"written": written, "failed": failed, "client_version": version}
 
 
-def item_scores(rows):
+def item_scores(rows, build="s"):
     """{item: {score, n, missing}}: ON 1 / tie 0.5 / OFF 0 per verdict (choices are in the SHOWN order: in BA the pair's b
     is shown as "A"), averaged over judges × orders; a missing / unparseable verdict is counted, never scored."""
+    on_tune = tunes(build)[1]
     out = {}
     for r in rows:
         s = out.setdefault(r["item_id"], {"sum": 0.0, "n": 0, "missing": 0})
@@ -257,7 +267,7 @@ def item_scores(rows):
             continue
         shown = (r["a_key"], r["b_key"]) if r["order"] == "AB" else (r["b_key"], r["a_key"])
         chosen = shown[0] if choice == "A" else shown[1]
-        s["sum"] += 1.0 if f"@{ON_TUNE}::" in chosen else 0.0
+        s["sum"] += 1.0 if f"@{on_tune}::" in chosen else 0.0
     return {k: {"score": (v["sum"] / v["n"]) if v["n"] else None, "n": v["n"], "missing": v["missing"]}
             for k, v in out.items()}
 
