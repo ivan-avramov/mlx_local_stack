@@ -29,8 +29,10 @@ v0.3.0 `e6a7a5a`, mlx 0.32.4): **T3 accepted → push (P509) → S′ cut + two 
 
 1. As each Wave-1 leg ends: commit its evidence. At the end: grade (generate→grade over HTTP per `benchmark/README.md`), the
    two-judge panel (C161), README / campaign-results evidence rows; report per axis to the operator.
-2. **C244:** after Wave 1, the P369 regression smoke on S′ (`docs/specs/p369-phase2-run-plan.md`, smoke15 ≈ 30 min GPU; fork
-   `dev/p369_phase2/`); PASS → one `main` commit = the `p426-on-s2` restore bytes (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only, `PROVISIONAL P426`) → stack gate →
+2. **C244:** after Wave 1, the P369 regression smoke on S′ (precedent: `$STACK_WORKDIR/p369/phase2/20261020-64afc7dd-smoke15-fable-regression`,
+   1,603 s): from the S′ OFF worktree `W=$STACK_WORKDIR/worktrees/stack-p426-s2-off`: `$W/.venv/bin/python $W/src/mlx-vlm/dev/p369_phase2/orchestrate.py
+   --stack-root $W --fork-root $W/src/mlx-vlm --out $STACK_WORKDIR/p369/phase2/<date>-1c7c8fa1-smoke-fable-s2 --phase smoke --pick
+   Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --reviewed-head 1c7c8fa1` (`--plan-only` first; quiet box); PASS → one `main` commit = the `p426-on-s2` restore bytes (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only, `PROVISIONAL P426`) → stack gate →
    push (ask); FAIL → stay OFF, report.
 3. B2: rebase s1–s6 onto the new `main` (T3 and s7 both touch `bench.local_gate`; the B2 copies symlink `main`'s venvs, now mlx
    0.32.4); then s7 → s8 → s9, full suite, final test-writer delivery, strict verify, final fix round, Accept. With `main` ON after
