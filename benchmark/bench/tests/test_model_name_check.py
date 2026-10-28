@@ -102,6 +102,19 @@ def test_allow_marker_lets_the_rule_document_itself():
     assert MN.violations("banned: bare Ornith and gemma") != []
 
 
+def test_the_pinned_off_registry_fixture_is_data_not_prose():
+    """P518 / C246: `benchmark/bench/tests/fixtures/p426_off/` holds a sha256-pinned, byte-for-byte copy of a committed
+    `main_models.yaml` and seeding test; it cannot carry markers without breaking its pin, and its content was already
+    committed as the registry. A registry-like fixture anywhere else stays checked."""
+    line = '+    display_name: "Ornith-1.0-35B (256K agentic, MoE)"\n'
+    pinned = "+++ b/benchmark/bench/tests/fixtures/p426_off/main_models.yaml\n@@ -0,0 +1,1 @@\n" + line
+    assert MN.diff_violations(pinned) == []
+    other = "+++ b/benchmark/bench/tests/fixtures/some_registry.yaml\n@@ -0,0 +1,1 @@\n" + line
+    assert MN.diff_violations(other) != []
+    lookalike = "+++ b/benchmark/bench/tests/fixtures/p426_off_extra/main_models.yaml\n@@ -0,0 +1,1 @@\n" + line
+    assert MN.diff_violations(lookalike) != []
+
+
 def test_this_module_and_its_test_are_exempt_by_path():
     """A file that DEFINES the patterns must be able to contain them.
 
