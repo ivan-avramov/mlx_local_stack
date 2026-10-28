@@ -25,3 +25,11 @@ seeds gave identical completion lengths in both arms (consistent with exact spec
 - **#2545** (fork `73d366ec`, unset sampling from the checkpoint for Python / CLI callers): does not reach M1. M1 generates through
   the worker's server path (unchanged by #2545), and `qualify` refuses unless every resolved sampling key equals the registry's
   `generation_defaults` (`qualify.py:332–338`; the entry pins temperature 0.5, top_p 0.95, top_k 20, min_p 0.0, presence_penalty 0.0).
+
+## Rerun on the C242 pins (2026-10-28 03:04–03:06Z)
+
+S′'s pins moved (C242) to fork `1c7c8fa1` (lock refresh) and mlx-serve `1ddf6f84` (`ruff format`). Worktrees rebuilt from scratch at
+the pin-moved candidate (scratch `5ea34d16`; ON = it + the P511 restore commit, restore check `[]`), fresh venvs (mlx 0.32.4). Same driver
+and requests: **OFF PASS** (no draft flags, 3 / 3 `stop`, no draft fields), **ON PASS** (`--draft-kind mtp` + drafter + `joint_v1`, draft
+counters on 3 / 3), completion lengths again 488 / 179 / 24 in both arms, teardown verified each time (`off.pins2.result.json`,
+`on.pins2.result.json`). P504 rechecked on the new ON registry: `overlay_on` restores nothing, byte-identical (sha256 `11861d8a3956…`).
