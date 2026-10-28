@@ -1,4 +1,4 @@
-# Handoff — 2026-10-28 (session 10 checkpoint ~04:00Z: T3 accepted; was session 9 END 2026-10-27 ~21:40Z): T3 candidate reviewed (fix then merge); B2 s1–s6 built, s1–s5 fixed; GPU rehearsal on provisional S′
+# Handoff — 2026-10-28 (session 10 checkpoint ~15:00Z: T3 accepted + pushed; Wave 1 on S′ running): T3 candidate reviewed (fix then merge); B2 s1–s6 built, s1–s5 fixed; GPU rehearsal on provisional S′
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C240, C239, C238, P504, P501, P500, P503, P499,
 C236 …), then `docs/specs/p426-t3-serving-build.md` (v2.1) with `docs/reviews/p426-t3/`, and `docs/specs/p426-b2-tg1-wave2.md` (v3.2
@@ -12,19 +12,31 @@ MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first, on the ne
 v0.3.0 `e6a7a5a`, mlx 0.32.4): **T3 accepted → push (P509) → S′ cut + two committed arm worktrees → Wave-1 rerun on S′** (label `s2`,
 ≈ 18–23 h GPU) while B2 finishes → B2 R1–R3 → v8 base → pilots → amendment → Wave 2 → B8 / B6 → ship call. P475 / P475a PARKED.
 
-## T3 — ACCEPTED (C243) and on `main` — session 10, 2026-10-28 ~04:00Z
+## State — session 10, 2026-10-28 ~15:00Z
 
-`main`: `9e4ab5da` (GitHub `main` merged as B0 did; gitlinks → S′ `1c7c8fa1` / `1ddf6f84`, C242) + `d4861621` (the T3 change: impl-1 +
-fix round 1 + the C242 pin move; frozen4 tests; fork skip baselines). Venvs rebuilt (mlx 0.32.4). Fork hygiene commits (local only, NOT
-pushed): mlx-vlm `1c7c8fa1` (uv.lock refresh), mlx-serve `1ddf6f84` (ruff format; local `main` fast-forwarded to `e6a7a5a` first).
-Next, in order:
-1. Gate receipts: forks `1ddf6f84`, `1c7c8fa1`; stack run 1 lists the stack skips → review → commit `benchmark/gate/stack.skips.txt`
-   (`chore(stack)`) → stack run 2 on that HEAD → PASS (box quiet; `$STACK_WORKDIR/gate/`).
-2. Push (P509, ASK): forks first (gitlinks must be reachable), then stack `main`. Never push `p426-on-s2`.
-3. S′ cut: OFF = `main` HEAD after step 1; `p426-on-s2` = OFF + the P511 restore commit (bytes as `t3/smoke-on`'s, checked by
-   `restore_diff_problems` → `[]`); worktrees `$STACK_WORKDIR/worktrees/stack-p426-s2-{off,on}` (fresh venvs, submodules); `frozen.s2.json`
-   with the candidate's field names; then `bench.p426_wave1 --build s2 --stack-root-off … --stack-root-on … --out
-   $STACK_WORKDIR/p426/wave1.s2 …` detached + watcher daemon; per-leg harvest `data(bench)` commits.
+- **T3 accepted (C243), on `main`, PUSHED** (C245: stack `fd5ef108..10014b4a` via a one-time `--no-verify` — naming false positives in
+  old commits; forks mlx-vlm `c688e722..1c7c8fa1`, mlx-serve `e6a7a5a..1ddf6f84` through their gates). Receipts PASS in
+  `$STACK_WORKDIR/gate/` for stack `10014b4a`, `1c7c8fa1`, `1ddf6f84`. Skip baselines `benchmark/gate/{stack,mlx-vlm,mlx-serve}.skips.txt`.
+- **Wave 1 on S′ RUNNING** (sequencer PID in `$STACK_WORKDIR/p426/wave1.s2.pid`, out `$STACK_WORKDIR/p426/wave1.s2`, log
+  `sequence.log`): 15 / 30 VALID (10 smokes + math500 ×4 + cjudge off-b1) at 14:36Z; ETA ≈ 22:00–23:00Z. Arms: OFF worktree
+  `$STACK_WORKDIR/worktrees/stack-p426-s2-off` at `10014b4a`, ON `…-s2-on` on local branch `p426-on-s2` (`f2b61127`, P511 restore; NEVER
+  push); `frozen.s2.json` in `$STACK_WORKDIR/p426/`. Two archived attempts (P513 busy waiter, P514 fork venv). Monitor ONLY by port /
+  PID / log lines — never a BUSY string on any command line. After each leg: commit its harvested dossier + rows (`data(bench)`, per
+  leg, hooks on; the loop in this session's history: rows `benchmark/results/<entry>/<axis-prefix>.<tune>.*`, vision → `vision_gate`).
+- `main` is 18 commits ahead of GitHub (docs + Wave-1 evidence); push after Wave 1 with a fresh stack gate receipt (box quiet).
+
+## Next, in order
+
+1. As each Wave-1 leg ends: commit its evidence. At the end: grade (generate→grade over HTTP per `benchmark/README.md`), the
+   two-judge panel (C161), README / campaign-results evidence rows; report per axis to the operator.
+2. **C244:** after Wave 1, the P369 regression smoke on S′ (`docs/specs/p369-phase2-run-plan.md`, smoke15 ≈ 30 min GPU; fork
+   `dev/p369_phase2/`); PASS → one `main` commit = the `p426-on-s2` restore bytes (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only, `PROVISIONAL P426`) → stack gate →
+   push (ask); FAIL → stay OFF, report.
+3. B2: rebase s1–s6 onto the new `main` (T3 and s7 both touch `bench.local_gate`; the B2 copies symlink `main`'s venvs, now mlx
+   0.32.4); then s7 → s8 → s9, full suite, final test-writer delivery, strict verify, final fix round, Accept. With `main` ON after
+   C244, Wave 2's OFF arm = `main` + a revert commit.
+4. Queued small changes: the naming scan treats committed verbatim panel / helper outputs as data (C245); P503 (three
+   load-sensitive tests) after B2; the frozen-worktree procedure includes `src/mlx-vlm/.venv` (P514).
 
 ## B2 — state (session 10)
 
@@ -65,5 +77,8 @@ then delete. No git worktrees of the main checkout.
 - Every format the spec leaves open (record fields, restore bytes, value encodings) is pinned by the designer before the test-writer's first delivery; three such mismatches (P510, P511, the record names) cost a delivery each.
 - cursor-agent briefs: pass a one-line argv pointing at the brief file (P454), even when the text is BUSY-free.
 - An eval copy needs its submodules checked out (tests read the fork's `pins.json`).
+- A frozen worktree needs `.venv`, `.venv-bench` and `src/mlx-vlm/.venv` (fork lock) — `qualify` runs from the fork venv (P514).
+- Never commit with `--no-verify`; use the per-line `allow-shorthand` marker (the pre-push scan re-checks every commit, C245).
+- In zsh never name a loop variable `path` (it is tied to `PATH`).
 
-Next decision id C244; discussion ids continue from P512.
+Next decision id C246; discussion ids continue from P517.
