@@ -3,6 +3,7 @@ arm worktrees into names that cannot overwrite or be confused with S's. Under `s
 the proof); these tests cover the label's names, expected build, frozen record, arms as commits, `--out` marker, check order,
 isolation, harvest paths, the naming exemption and the panel tunes. Fixtures are tiny local git repos; nothing starts a process."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -251,8 +252,20 @@ def _git(cwd, *args, check=True):
 
 
 SEEDING = "benchmark/bench/tests/test_opencode_probe_seeding.py"
-REG_OFF = (REPO / "main_models.yaml").read_text()  # the committed registry: the fork's overlay rule accepts only its real states
-SEED_OFF = (REPO / SEEDING).read_text()
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "p426_off"  # copies of commit 10014b4a's files (C246), never the live tree
+REG_OFF_SHA256 = "7739900f0f7ffe501af1e0b7c6a6b517265c2761f45420c7e9e7133f7c1cf572"
+SEED_OFF_SHA256 = "8f8d25f444c465f25b408e1c872cf4beb3d705356d817240748f511e3e7713c6"
+
+
+def _pinned(name, sha256):
+    data = (FIXTURE / name).read_bytes()
+    got = hashlib.sha256(data).hexdigest()
+    assert got == sha256, f"pinned OFF fixture {name} changed: sha256 {got}, expected {sha256}"
+    return data.decode()
+
+
+REG_OFF = _pinned("main_models.yaml", REG_OFF_SHA256)  # the fork's overlay rule accepts only its real states
+SEED_OFF = _pinned("test_opencode_probe_seeding.py.txt", SEED_OFF_SHA256)
 NOTE = "      # PROVISIONAL P426 2026-10-27: MTP ON restored for the Wave-1 rerun on S2 (C236)"
 C177_COMMENT = ("    # C177 / P369 interim: the daily-driver registry runs the picks MTP-OFF, so the real registry resolves the default\n"
                 "    # scan; restore `joint_v1` + source \"registry\" when MTP is re-certified and switched back on.\n")

@@ -29,12 +29,34 @@ def test_a_venv_reports_exactly_its_versions_to_its_own_interpreter(tmp_path):
     assert T.installed(venv) == dict(T.S2_VERSIONS, mlx="0.32.3")
 
 
+# POST-REVEAL tw-6: C246 pinned OFF fixture — the OFF text is the pinned copy (`T.off_registry`), not the live registry.
 def test_the_s_overlay_passes_todays_registry_delta_check():
     off = T.off_registry()
     assert L.registry_delta_problems(T.overlay_on(off), off, T.ENTRY) == []
 
 
+# POST-REVEAL tw-6: C246 pinned OFF fixture — the files are the pinned bytes (sha256 asserted), MTP OFF (C177's three commented
+# lines in the entry, C177's seeding hunk present once), and the worlds' OFF commits carry exactly those bytes.
+def test_the_off_fixture_is_the_pinned_mtp_off_copy(tmp_path):
+    import hashlib
+
+    for name, sha in T.OFF_FIXTURE_SHA256.items():
+        assert hashlib.sha256((T.OFF_FIXTURE / name).read_bytes()).hexdigest() == sha
+    off, seeding = T.off_registry(), T.off_seeding()
+    entry = {m["name"]: m for m in yaml.safe_load(off)["models"]}[T.ENTRY]
+    assert not any(k in entry for k in L.P426_ON[T.ENTRY])
+    assert all(sum(x.startswith(p) for x in off.split("\n")) >= 1 for p in T.C177)
+    assert seeding.count(T.SEEDING_OFF) == 1
+    w = T.make_arms_world(tmp_path / "arms")
+    s = T.make_s_world(tmp_path / "s")
+    for root in (w.off, s.root):
+        assert (root / "main_models.yaml").read_bytes() == T.off_fixture_bytes("main_models.yaml")
+        assert (root / T.SEEDING_TEST).read_bytes() == T.off_fixture_bytes("test_opencode_probe_seeding.py.txt")
+    assert (T.OFF_FIXTURE / "main_models.yaml").exists() and T.names_root(tmp_path)
+
+
 # POST-REVEAL tw-4: the seeding restore is now C241 / P511's exact reverse of C177's hunk (no tuple form, no comment kept).
+# POST-REVEAL tw-6: C246 pinned OFF fixture — the OFF seeding text is the pinned copy, not the live file.
 def test_the_restored_registry_is_the_three_c177_lines_and_the_note():
     off, on = T.off_registry(), T.restored_registry(T.off_registry())
     entry = {m["name"]: m for m in yaml.safe_load(on)["models"]}[T.ENTRY]
@@ -46,7 +68,7 @@ def test_the_restored_registry_is_the_three_c177_lines_and_the_note():
     added = [d[2:] for d in delta if d.startswith("+ ")]
     assert len(removed) == 3 and all(x.lstrip().startswith("#") for x in removed)
     assert sorted(added) == sorted(list(T.C177.values()) + [T.PROVISIONAL_NOTE])
-    seeding = (T.REPO / T.SEEDING_TEST).read_text()
+    seeding = T.off_seeding()  # POST-REVEAL tw-6: C246 pinned OFF fixture (was the live seeding test)
     restored = T.restored_seeding(seeding)
     assert seeding.count(T.SEEDING_OFF) == 1 and restored.count(T.SEEDING_ON) == 1 and T.SEEDING_OFF not in restored
     assert "C177" not in restored and restored.replace(T.SEEDING_ON, T.SEEDING_OFF) == seeding
@@ -54,11 +76,12 @@ def test_the_restored_registry_is_the_three_c177_lines_and_the_note():
 
 # POST-REVEAL tw-4: C241 / P511 — the restore helpers produce the pinned bytes from the fork's own rule, and the fake fork of
 # every arm worktree carries that rule so `bench.p426_overlay.load_registry_states` loads it from the worktree.
+# POST-REVEAL tw-6: C246 pinned OFF fixture — compared with the pinned OFF copy, not the live registry.
 def test_the_p511_restore_bytes_come_from_the_forks_rule_in_each_worktree(tmp_path):
     from bench import p426_overlay
 
     off = T.off_registry()
-    assert T.fork_overlay_on(off) == T.overlay_on(off)  # the S overlay helper equals the B4 rule on the committed registry
+    assert T.fork_overlay_on(off) == T.overlay_on(off)  # the S overlay helper equals the B4 rule on the pinned OFF registry
     on = T.restored_registry(off).split("\n")
     gd = on.index("    generation_defaults:", on.index(f"  - name: {T.ENTRY}"))
     assert on[gd + 1] == T.PROVISIONAL_NOTE and on[:gd + 1] + on[gd + 2:] == T.fork_overlay_on(off).split("\n")

@@ -123,8 +123,35 @@ def snapshot(*roots):
 
 
 # ------------------------------------------------------------------ registry texts
+# POST-REVEAL tw-6: C246 pinned OFF fixture — every OFF text is the committed, sha256-pinned copy of commit `10014b4a`'s
+# files in `benchmark/bench/tests/fixtures/p426_off/`, never the live tree (which C244 switched to MTP ON).
+OFF_FIXTURE = REPO / "benchmark" / "bench" / "tests" / "fixtures" / "p426_off"
+OFF_FIXTURE_SHA256 = {
+    "main_models.yaml": "7739900f0f7ffe501af1e0b7c6a6b517265c2761f45420c7e9e7133f7c1cf572",
+    "test_opencode_probe_seeding.py.txt": "8f8d25f444c465f25b408e1c872cf4beb3d705356d817240748f511e3e7713c6",
+}
+
+
+# POST-REVEAL tw-6: C246 pinned OFF fixture
+def off_fixture_bytes(name):
+    """One pinned OFF file's bytes, refused unless its sha256 is the pinned one."""
+    data = (OFF_FIXTURE / name).read_bytes()
+    got = hashlib.sha256(data).hexdigest()
+    if got != OFF_FIXTURE_SHA256[name]:
+        raise AssertionError(f"{OFF_FIXTURE / name}: sha256 {got} != pinned {OFF_FIXTURE_SHA256[name]} (C246)")
+    return data
+
+
+# POST-REVEAL tw-6: C246 pinned OFF fixture
 def off_registry():
-    return (REPO / "main_models.yaml").read_bytes().decode("utf-8")
+    """The OFF `main_models.yaml` (C246: the pinned fixture)."""
+    return off_fixture_bytes("main_models.yaml").decode("utf-8")
+
+
+# POST-REVEAL tw-6: C246 pinned OFF fixture
+def off_seeding():
+    """The OFF seeding test (C246: the pinned fixture)."""
+    return off_fixture_bytes("test_opencode_probe_seeding.py.txt").decode("utf-8")
 
 
 def _restore_lines(text):
@@ -249,11 +276,14 @@ def make_checkout(path, sha, *, fork=False):
     return path
 
 
+# POST-REVEAL tw-6: C246 pinned OFF fixture — the seeding test of the OFF commit is the pinned copy, not the live file.
 def tracked_files():
-    """The committed inputs a P426 leg plans from (ids.json and its M40 sources: `bench/p426_ids.py:16-23`)."""
+    """The committed inputs a P426 leg plans from (ids.json and its M40 sources: `bench/p426_ids.py:16-23`) and the OFF
+    seeding test (C246: the pinned fixture)."""
     from bench import p426_ids
 
-    out = {rel: (REPO / rel).read_bytes() for rel in [p426_ids.OUT, *p426_ids.SOURCES.values(), SEEDING_TEST]}
+    out = {rel: (REPO / rel).read_bytes() for rel in [p426_ids.OUT, *p426_ids.SOURCES.values()]}
+    out[SEEDING_TEST] = off_fixture_bytes("test_opencode_probe_seeding.py.txt")
     out["uv.lock"] = b"version = 1\n# T3 frozen-test stand-in\n"
     out["benchmark/requirements-bench.lock"] = b"# T3 frozen-test stand-in\nmlx==0.32.4\n"
     out["README.md"] = b"stack\n"
@@ -874,7 +904,7 @@ def fragment():
 def names_root(tmp):
     root = Path(tmp) / "names"
     root.mkdir(exist_ok=True)
-    (root / "main_models.yaml").write_bytes((REPO / "main_models.yaml").read_bytes())
+    (root / "main_models.yaml").write_bytes(off_fixture_bytes("main_models.yaml"))  # POST-REVEAL tw-6: C246 pinned OFF fixture
     return str(root)
 
 
