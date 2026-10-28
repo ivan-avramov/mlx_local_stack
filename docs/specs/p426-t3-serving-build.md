@@ -1,5 +1,7 @@
 # P426 T3 — the serving build S′ and the Wave-1 rerun on committed arms — SPEC v2.1, 2026-10-27 (four-eyes STRICT, C236)
 
+**Correction 2026-10-28 (C242, operator):** S′'s pins move to fork `1c7c8fa166582ac1a1c23ae9063527b2b5215b11` (= `c688e722` + a `uv.lock` refresh; the fork's own lock was stale and failed the local gate's `uv sync --locked`) and mlx-serve `1ddf6f842f159a62d240f3ac6965fc33cbdb0b0d` (= `e6a7a5a` + `ruff format` of six files with the pinned ruff 0.15.8; no behaviour change). `production_ref` `b26fa7c9` is unchanged (the production tree `mlx_vlm/` minus tests is identical). Every `c688e722` / `e6a7a5a` below as S′'s pin reads as these; the gate's skip baselines `benchmark/gate/{stack,mlx-vlm,mlx-serve}.skips.txt` are committed with T3 (none existed).
+
 Strict because it changes the P426 evidence namespace, the frozen-build record and how arms are served (isolation between S and S′
 evidence; C218) and the serving dependency set. v1 → v2: the design opinion (`docs/reviews/p426-t3/`, round 1 of 3); v2 → v2.1: the
 delta review of the [o1] changes (round 2 of 3); changes marked [r2] are NOT re-reviewed.
