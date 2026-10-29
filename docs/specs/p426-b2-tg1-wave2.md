@@ -645,3 +645,10 @@ flag, file or field, and exits 2.
   thread with the fake probe: real argv, locks, records, `chain.json`, `LAST_LEG_END` and watcher contract; no router, worker or model.
 - (after delivery 3e) **`not_run` (§5.5)**: an occurrence with no scored ledger row — never launched, or invalidated at its barrier — is
   `not_run`; the sensitivity line names every such occurrence.
+- (after the s9 delivery) **Portable `chain.json`**: the chain writes `argv` and `probe` (and every other path it records in `chain.json`)
+  in the portable form (`$STACK_WORKDIR/…`, `<WT>/…`, `<OUT>/…`), so the §11.2 scrub-identity rule holds for real legs.
+- **The sequencer's launch log** is `<out-base>/logs/<attempt>.stdout` (never inside the attempt's out-root, which the chain creates
+  fresh); the harvest inventories it as part of the attempt and routes it to `evidence`.
+- **Other email addresses (§11.3)** are written to a local review file `$STACK_WORKDIR/p426/review/<attempt>.emails.json`
+  (`{address, sources}`; never published); `HARVEST.json` carries only `review.emails_count` and that file's portable path. Absent
+  credential sources stay listed by label in `HARVEST.json` (no values).

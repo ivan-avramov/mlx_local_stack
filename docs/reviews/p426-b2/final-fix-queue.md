@@ -22,3 +22,4 @@
 - P532 (session 11): the full suite leaves an empty `benchmark/control/` in the tree (`bench.workqueue` or its tests); write it under `tmp_path`.
 - s8c P67 (test-writer 3e): the implementer's fake-probe R3 stall sets only `nonconv_kind="stalled"` — make it a real kill (`termination.killed`, `requests_completed_at_kill`) and assert a `kill_*` item record.
 - s8c P68 (test-writer 3e): the probe gained `--inject-stall-item` / `--inject-stall-s` → `probe_code_sha256` moved; R1–R3 and v8 are frozen only after the last B2 code change.
+- s9 U3 (implementer): the harvest rule table is fail-closed and partly guessed (`a4/`, `quarantine/`, `archive/`); expect additions from the first real rehearsal harvest (R1).
