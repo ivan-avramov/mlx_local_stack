@@ -61,6 +61,7 @@ test-writer copy backup).
 - The test-writer's eval wrapper unsets `STACK_WORKDIR`: a self-exclusion check must set it explicitly.
 - `--plan-only` stops after preflight; the registry byte-state check runs at the start of the real run.
 - No process during a P369 run — tests, helpers or git hooks.
+- A P369 full run is authorized only by a smoke on the same reviewed head and stack root (overlay bytes, `benchmark/bench` tree) (P534 / P535); a stack-root worktree needs `.venv` AND `.venv-bench`.
 
 ## Rules learned (sessions 9–10, still apply)
 
