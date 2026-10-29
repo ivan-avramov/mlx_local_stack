@@ -20,3 +20,5 @@
 - P530 (test-writer 3a): the chain fixture deletes `MLX_SERVE_CONFIG` from the fake probe environment (`FakeOps.env_base()` copies `os.environ`).
 - s1 (test-writer 3b): `--rehearsal` must select the §16.3 smoke shape (one pilot item + two full items of s1's Python order); the candidate runs the full s1 shape (frozen s7 `the_rehearsal_runs_the_smoke_shape_of_s1s_p426_python_order`).
 - P532 (session 11): the full suite leaves an empty `benchmark/control/` in the tree (`bench.workqueue` or its tests); write it under `tmp_path`.
+- s8c P67 (test-writer 3e): the implementer's fake-probe R3 stall sets only `nonconv_kind="stalled"` — make it a real kill (`termination.killed`, `requests_completed_at_kill`) and assert a `kill_*` item record.
+- s8c P68 (test-writer 3e): the probe gained `--inject-stall-item` / `--inject-stall-s` → `probe_code_sha256` moved; R1–R3 and v8 are frozen only after the last B2 code change.

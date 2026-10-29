@@ -643,3 +643,5 @@ flag, file or field, and exits 2.
   `ops.identity(off_worktree)`.
 - **Topology test (§13)**: in-process — the real `Sequencer` whose `launch` runs the real `run_tg1_chain.main(argv, ops=FakeOps)` on a
   thread with the fake probe: real argv, locks, records, `chain.json`, `LAST_LEG_END` and watcher contract; no router, worker or model.
+- (after delivery 3e) **`not_run` (§5.5)**: an occurrence with no scored ledger row — never launched, or invalidated at its barrier — is
+  `not_run`; the sensitivity line names every such occurrence.
