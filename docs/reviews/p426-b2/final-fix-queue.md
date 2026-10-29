@@ -17,3 +17,4 @@
 - s6 P50: read `pmset -g log` once at exit, not per tick.
 - s6 P51: derive the planned slots from `chain.json`'s frozen schedule; `--planned` only overrides.
 - s6 P52: tick `t` pinned to epoch seconds; the exit line drops `speed_valid` / `speed_reason` (the verdict is `speed_verdict(journal)`, called by the sequencer).
+- P530 (test-writer 3a): the chain fixture deletes `MLX_SERVE_CONFIG` from the fake probe environment (`FakeOps.env_base()` copies `os.environ`).
