@@ -1,89 +1,76 @@
-# Handoff — 2026-10-29 (session 10 END ~01:00Z: Wave 1 on S′ done, MTP-ON provisional for the first pick, all pushed; next B2 s7): T3 candidate reviewed (fix then merge); B2 s1–s6 built, s1–s5 fixed; GPU rehearsal on provisional S′
+# Handoff — 2026-10-29 (session 11: MTP ON provisional for all four MTP entries, pushed; P369 full runs started; B2 s7 built, reviewed, fixed)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C240, C239, C238, P504, P501, P500, P503, P499,
-C236 …), then `docs/specs/p426-t3-serving-build.md` (v2.1) with `docs/reviews/p426-t3/`, and `docs/specs/p426-b2-tg1-wave2.md` (v3.2
-incl. §16) with `docs/reviews/p426-b2/` (newest: `final-fix-queue.md`, `test-writer2-delivery2d-fix-s1-s5.md`). Model names: FULL
-registry names only, always (chat included). Skills: four-eyes 0.7.0, review-panel (updated 2026-10-27). Review rounds were reset by
-the operator: AGENTS.md's 3 per artifact (C238); both specs have used rounds 1–2, round 3 is in reserve.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C251, P533, P529, P528, P527, C250, C249, C248,
+C247, P531, P530, …), then `docs/specs/p426-b2-tg1-wave2.md` (v3.2 incl. §16) with `docs/reviews/p426-b2/` (newest:
+`test-writer2-delivery3b-s7.md`, `final-fix-queue.md`). Model names: FULL registry names only, always (chat included). Skills: four-eyes
+0.7.0, review-panel. Review rounds: AGENTS.md's 3 per artifact (C238); both specs have used rounds 1–2, round 3 is in reserve.
 
-## Goal and path (C218, C232, C234, C235, C236, C244)
+## Goal and path (C218, C232, C234, C235, C236, C244, C247, C248)
 
-MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on the serving build S′ (C236 / C242: fork `1c7c8fa1`, mlx-serve
-`1ddf6f84`, mlx 0.32.4). Done: T3, Wave 1 on S′ (30 / 30 VALID), MTP ON as the PROVISIONAL default (C244). Remaining: **B2 (s7 → s9,
-verify, fix, Accept) → v8 freeze → pilots → amendment → Wave 2 → B8 / B6 → the ship call (CERTIFIED or back OFF)**. P475 / P475a PARKED.
+MTP blessing for the four MTP entries on the serving build S′ (fork `1c7c8fa1`, mlx-serve `1ddf6f84`, mlx 0.32.4). Done: T3, Wave 1 on S′
+for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, MTP ON PROVISIONAL for all four (C244, C247). Remaining:
+- **P369 full on all four (C248 / C249 / C251)** — exactness certification; ON / OFF memory and speed also needed before CERTIFIED (P523).
+- **B2 (s8 → s9, verify, fix, Accept) → v8 freeze → pilots → amendment → Wave 2 (first pick only) → B8 / B6 → the ship call.**
 
-## State — session 10, 2026-10-29 ~00:30Z
+## State — session 11, 2026-10-29 ~07:30Z
 
-- **Pushed** (all through the gate hooks): stack `main` `3d7cfaac`, mlx-vlm `1cce312f` (P369 harness production pin → `b26fa7c9`, dev
-  only), mlx-serve `1ddf6f84`. Earlier the same day: T3 (C243), the one-time `--no-verify` push (C245).
-- **Wave 1 on S′: DONE, 30 / 30 VALID**, evidence committed per leg; math500 graded (`acc_strict` 0.98 / 0.98, 0.94 / 0.94); ON outputs
-  byte-identical to OFF on 166 / 166 items (math500 100, cjudge 40, vision 20 by description / verdict / tokens, reasoning 6); decode
-  1.6–1.7×; 256K peak +0.32 GB. Not yet: the cjudge / vision two-judge panel (C161), the B8 signals sheet.
-- **C244 done:** P369 regression smoke on S′ SMOKE_PASS (`$STACK_WORKDIR/p369/phase2/20261028-1cce312f-smoke-fable-s2`); MTP ON by default,
-  PROVISIONAL, for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on `main` (`3d7cfaac`); `Qwen3.8-27B-mlx-uniform-4bit` OFF.
-- **P518 / C246 done:** T3's tests read a sha256-pinned OFF fixture (`benchmark/bench/tests/fixtures/p426_off/`, naming-exempt as data).
-- The S′ arm worktrees (`$STACK_WORKDIR/worktrees/stack-p426-s2-{off,on}`, branch `p426-on-s2`) are kept for the Wave-1 analysis and
-  until Wave 2's v8 freeze; never push `p426-on-s2`.
-
-## Waiting on the operator
-
-- **P519 (asked, unanswered):** `Qwen3.8-27B-mlx-uniform-4bit` provisional MTP-ON — run the P369 regression smoke on S′ (≈ 30 min GPU,
-  command as C244's with `--pick Qwen3.8-27B-mlx-uniform-4bit`, fork root `$STACK_WORKDIR/p369/fork-1cce312f`); on PASS, the same
-  restore-form commit for that entry (its served KV is TurboQuant 4, itself PROVISIONAL pending P405 R6; its HF drafter card still says
-  PROBE-ONLY). `Ornith-1.0-35B-mlx-uniform-4bit` and `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` stay OFF (per-entry re-cert, plan §11).
+- **Pushed:** stack `main` `4686919a` (C247: MTP ON PROVISIONAL for `Qwen3.8-27B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`,
+  `Ornith-1.0-35B-mlx-uniform-4bit`; gate PASS). Unpushed docs commits after it: `90bf15be`, `6256e1aa`, `664f87ee`, + this handoff.
+- **P369 S′ smokes (P519):** SMOKE_PASS ×3 (`$STACK_WORKDIR/p369/phase2/20261029-1cce312f-smoke-*-s2`): E1c T = 1K / 64K 158 / 158 rows
+  each, max TV 0; E2 identical; E7b observed.
+- **P369 full (C248), RUNNING:** `Qwen3.8-27B-mlx-uniform-4bit` (`run_p369_full.sh`, out `$STACK_WORKDIR/p369/phase2/20261029-1cce312f-full-uniform-s2`,
+  log `c248-full.log`). Stack root = worktree `$STACK_WORKDIR/worktrees/stack-p369-full-off` (branch `p369-full-off` = `4686919a` +
+  `7081c7af` all four OFF; P527: the orchestrator's OFF arm is the stack root's registry). Fork root `$STACK_WORKDIR/p369/fork-1cce312f`,
+  `--reviewed-head 1cce312f` (C251). A full run is bound by its smoke's `stack_bench` tree (`HEAD:benchmark/bench`): the first `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
+  full attempt (07:17Z) refused in 8 s, no GPU (its 10-28 smoke predates P518's `benchmark/bench` change). Order (P534, lead call):
+  `Qwen3.8-27B-mlx-uniform-4bit` → `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` → `Ornith-1.0-35B-mlx-uniform-4bit` (their 10-29 smokes bind) → a fresh
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` smoke on the all-OFF stack root, then its full. One GPU job at a time, a B2 delivery
+  between runs (C249 option B).
+- **B2 s7: built (delivery 1 + s7b P531 + s7c fixes P54 / P55 / P56), reviewed (test-writer 3b: fix then merge → fixed).** Implementer
+  copy `$STACK_WORKDIR/b2/arm-rebased/mlx_local_stack` (uncommitted s7 changes on `aeb607b4`); eval copy `b2/eval-s7` = `aeb607b4` +
+  `f0b755e6` (s7 delivery 1 + s7b; s7c NOT yet applied). Gate self-exclusion proven (full suite with `STACK_WORKDIR` set and
+  `gate/RUNNING` held: no lock file created). s7 implementer session `f91e5dc1-eb14-4f5e-b39d-a4b61701ddfc` (Claude Sonnet 5.5).
+- **B2 test-writer** (session `44568a2b-2638-419f-8c1d-17b471a74c5e`, cwd `b2/tw2/mlx_local_stack`, now on `61d31bcd` + its set; P533:
+  keep resuming it — `total_cost_usd` in the CLI JSON is the session's running total, per-job cost is the increment, ≈ $5–10).
 
 ## Next, in order
 
-1. **B2 s7.** Rebased copy `$STACK_WORKDIR/b2/arm-rebased/mlx_local_stack` = `main` `61d31bcd` (MTP ON, P518) + `86341e04` s1–s5 fixed
-   + `aeb607b4` s6; S′ submodules; `main`'s venvs; the test-writer's current B2 set copied in (untracked). Its B2 tests: 115 failed /
-   713 passed (`$STACK_WORKDIR/b2/rebased-b2-tests.out`): 109 as on the old base (later slices + queued defects) plus 6 NEW from
-   the rebase — `test_b2_s1_cli` ×4 and `test_b2_s2_probe` ×1 run the chain with `--predictor off` against the live registry, which
-   is now ON (C221 refuses, correctly) → the P518 fix (pin to `benchmark/bench/tests/fixtures/p426_off/`); `test_b2_frozen_s0_support`
-   +1 pins S's fork shas (base identity → S′). Fold both into the s7 brief (implementer: its own s1/s2 tests; the test-writer: s0 and
-   any frozen test reading the live registry). Then the s7 implementer (fresh Claude Sonnet 5.5; brief `b2/briefs/s7.md`), the
-   test-writer review (B2 session `44568a2b-2638-419f-8c1d-17b471a74c5e`, cwd `b2/tw2/mlx_local_stack` — rebase that copy onto the
-   same base first), s8 → s9, full suite, final delivery, strict verify, final fix round (`docs/reviews/p426-b2/final-fix-queue.md`),
-   Accept. Wave 2's OFF arm = `main` + a revert of the C244 restore; ON = that + the restore (the P511 check holds).
-2. **P503 (lead rec: right after s7):** five load-sensitive tests (stack: agentbench P22, m64 selftest, m64 oc-contract ×2; fork:
-   `test_models.py::test_distributed_model[minimax_m3_packed-bfloat16-4]`). Root-cause, failing test first, zero-flakes.
-3. Wave-1 S′ analysis: the cjudge / vision two-judge panel (C161); the signals sheet when B8 exists.
-4. Queued small: the naming scan treats committed verbatim panel / helper outputs as data (C245).
-
-## GPU
-
-Idle. Wave 1 on S′ done. Candidate GPU work: P519 smoke (if approved); later the Wave-2 pilot (needs B2 Accept). The P499 rehearsal is
-stopped for good (its 15 block-2 Go walls are the data; `t3/tg1-rehearsal-20261027`, never graded / pooled). One resident model; a
-gate run needs a quiet box (no BUSY process, nothing else running).
-
-## Other open items
-
-- C237 PARKED (C240). P503 (C240: designer's discretion; lead rec now: right after s7). P498 (pins move only via certification) lead rec, not ruled.
-  P478 after B2.
-- sous-agent: NetApp/sous-agent#11 holds all feedback (latest 6451488159).
+1. When the `Qwen3.8-27B-mlx-uniform-4bit` full run ends (waiter): commit the docs (no process runs during a P369 run, not even a git hook), read its summary,
+   record. Then: apply `runs/s7c.sonnet.diff` to `b2/eval-s7` (new commit), run the frozen s7 file there, commit s7 in `arm-rebased`
+   ("scratch: B2 s7 …"), launch the s8 implementer (fresh Claude Sonnet 5.5, `b2/briefs/s8.md`, launcher pattern `runs/launch_s7.sh`).
+2. Then the next full run (`Qwen3.6-27B-Opus-Distill-OptiQ-4bit`, smoke `20261029-1cce312f-smoke-qwen36-s2`); test-writer s8 review in the gap
+   after it; s9; full suite; final delivery; strict verify; final fix round (`docs/reviews/p426-b2/final-fix-queue.md`); Accept.
+3. P527 guard (C251): fork dev-only, test-first, in `../mlx-vlm` AFTER the four full runs.
+4. P503 (six load-sensitive tests incl. `test_m61_web_audit.py::test_real_system_override`), after s7 per lead rec.
+5. Wave-1 S′ analysis: the cjudge / vision two-judge panel (C161); signals sheet when B8 exists.
 
 ## Copies to resolve
 
-`$STACK_WORKDIR/t3/{stack-prov, impl, tw, eval, fix, vfy, smoke, smoke-off, smoke-on, accept-dry, forkcheck, baselines, p518, dop, dop2, venv-fork, venv-fork2, frozen1–4}` (T3 accepted + harvested: delete), `$STACK_WORKDIR/p369/fork-1cce312f` (smoke fork root; keep for P519), git worktrees `$STACK_WORKDIR/worktrees/stack-p426-s2-{off,on}` + local branch `p426-on-s2` (keep until Wave 2's freeze; never push), `$STACK_WORKDIR/b2/{tw, tw2, arm-sonnet,
-arm-sous*, eval, eval-s3, eval-s6, eval-s4, eval-s5, eval-fix, dop, dop2, frozen*, judge-s3}` — scratch; harvest accepted candidates at Accept,
-then delete (`b2/arm-rebased` is the live B2 base).
+`$STACK_WORKDIR/t3/*` (T3 accepted + harvested: delete), `$STACK_WORKDIR/p369/fork-1cce312f` (keep through the full runs),
+worktrees `stack-p426-s2-{off,on}` + branch `p426-on-s2` (keep until Wave 2's freeze; never push), worktree `stack-p369-full-off` +
+branch `p369-full-off` (keep through the four full runs; never push), `$STACK_WORKDIR/b2/*` scratch (harvest at Accept, then delete;
+`b2/arm-rebased` is the live B2 base, `b2/eval-s7` the s7 eval copy, `b2/selfexcl-s7` scratch, `b2/tw2-backup-20261029` the pre-rebase
+test-writer copy backup).
 
-## Rules learned (session 9)
+## Rules learned (session 11)
+
+- A resumed helper's CLI JSON `total_cost_usd` is cumulative for the session; per-job cost is the difference.
+- The P369 orchestrator's OFF arm is `<stack-root>/main_models.yaml`: once an entry is ON on `main`, full / smoke runs need an all-OFF
+  stack-root worktree (P527).
+- A helper copy's test runner must not see the real `$STACK_WORKDIR` (`env -u STACK_WORKDIR`); s7 locks live under it.
+- The test-writer's eval wrapper unsets `STACK_WORKDIR`: a self-exclusion check must set it explicitly.
+- `--plan-only` stops after preflight; the registry byte-state check runs at the start of the real run.
+- No process during a P369 run — tests, helpers or git hooks.
+
+## Rules learned (sessions 9–10, still apply)
 
 - Write a helper's brief in one call and launch it in another; never put brief text on a launcher's command line (P454).
-- Never run a suite in a copy a helper is editing.
-- Check the stack's and the forks' GitHub state before any merge.
+- Never run a suite in a copy a helper is editing; check GitHub state before any merge.
 - A spec change after a freeze invalidates tests: only the test-writer amends them; tag post-reveal amendments.
-- Frozen-test fixtures and the code must agree on names the spec leaves open: pin every record field the designer writes.
+- Pin every format the spec leaves open before the test-writer's first delivery.
+- An eval copy needs its submodules checked out; a frozen worktree needs `.venv`, `.venv-bench` and `src/mlx-vlm/.venv`.
+- Never commit with `--no-verify` (or hooks disabled); use the per-line `allow-shorthand` marker.
+- In zsh never name a loop variable `path`; split lists with `${=var}`.
+- Never run anything while a gate runs; tests never read the live registry state (P518 / P531).
 
-## Rules learned (session 10)
-
-- Every format the spec leaves open (record fields, restore bytes, value encodings) is pinned by the designer before the test-writer's first delivery; three such mismatches (P510, P511, the record names) cost a delivery each.
-- cursor-agent briefs: pass a one-line argv pointing at the brief file (P454), even when the text is BUSY-free.
-- An eval copy needs its submodules checked out (tests read the fork's `pins.json`).
-- A frozen worktree needs `.venv`, `.venv-bench` and `src/mlx-vlm/.venv` (fork lock) — `qualify` runs from the fork venv (P514).
-- Never commit with `--no-verify`; use the per-line `allow-shorthand` marker (the pre-push scan re-checks every commit, C245).
-- In zsh never name a loop variable `path` (it is tied to `PATH`); split lists with `${=var}`.
-- Never run anything (tests, helpers) while a gate runs; a gate FAILs on any BUSY-named process, incl. test fakes.
-- Tests never read the live registry state; pin a fixture (P518) — the registry flips with every certification.
-
-Next decision id C247; discussion ids continue from P519.
+Next decision id C252; discussion ids continue from P534.
