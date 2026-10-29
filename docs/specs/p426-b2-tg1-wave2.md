@@ -652,3 +652,9 @@ flag, file or field, and exits 2.
 - **Other email addresses (§11.3)** are written to a local review file `$STACK_WORKDIR/p426/review/<attempt>.emails.json`
   (`{address, sources}`; never published); `HARVEST.json` carries only `review.emails_count` and that file's portable path. Absent
   credential sources stay listed by label in `HARVEST.json` (no values).
+- (after delivery 3f) **An email address in a `main`-bound file** other than the RFC 2606 reserved names (`example.com` / `.net` /
+  `.org`, `*.example`, `*.test`, `*.invalid`, `localhost`) quarantines that file and fails the harvest for the operator (a public `main`
+  carries no address); in `evidence`-bound files the review-file rule above applies. **An empty operator-email set** (unset
+  `user.email`, a failing read) is `REFUSED:` rc 2 — never "no operator address". The sequencer logs the harvest's `REFUSED:` / `ERROR:`
+  line (no values) on an rc-4 stop. A VALID / VALID_WITH_DNF leg without `watch.jsonl` fails the harvest. `$HOME/…` is a fourth
+  portable token (no user name).
