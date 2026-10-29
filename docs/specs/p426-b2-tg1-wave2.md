@@ -611,3 +611,35 @@ flag, file or field, and exits 2.
   with the per-invocation keys (receipt path, nonce, cancel / ack files) recorded by name only; there is no probe process at the
   after-load checkpoint. In P426 mode a ChainOps seam the checks need that is missing is systemic (never a skip); identities use
   `ChainOps.create_time(pid)`. The worker argv equals the expected argv exactly (no tolerated leading tokens).
+
+### 16.8 Names pinned after delivery 3c (the s8 review) [d3]
+- **Sequencer ops** (in addition to §16.6): `ops.operator_emails() -> list[str]` (the main checkout's `git config user.email`, read by
+  the box ops only; tests fake it); `ops.worktree_state(path)` (as §16.4); `ops.identity(path) -> dict` (the worktree's
+  `--print-identity`); `ops.harvest_path(attempt) -> Path` (`<main-root>/benchmark/results/p426/wave2/<attempt>/`). **Freeze ops**:
+  `ops.identity(path)`, `ops.historical_walls() -> {w_python_s, w_go_s, max_request_elapsed_s}` (the M63 / P456 / P499 rows; the box ops
+  read the operator's `--historical-walls` JSON), `ops.build_inputs()` (§16.7). Every other precondition, the restore diff included, goes
+  through `checks(kind, **inputs)`; a missing seam is a refusal (`REFUSED:`, rc 2), never a traceback.
+- **Settle bound (§4.2), derived, never typed**: v8 `settle_bound_s = max(900, 2 × max(R1's largest single-request elapsed,
+  historical_walls.max_request_elapsed_s))`; the amendment `= max(v8's, 2 × the largest single-request elapsed over both pilots)`.
+  Elapsed = the item records' request `elapsed_s`.
+- **Production tree (§10.1)**: v8 checks both the `p426_plan.EXPECTED_BUILDS` gitlinks / production ref AND that the fork tree at the
+  gitlink equals the production ref's tree under `mlx_vlm/` excluding `mlx_vlm/tests/` (`git diff --quiet <ref> <gitlink> -- mlx_vlm
+  ':!mlx_vlm/tests'` in the worktree's `src/mlx-vlm`).
+- **Planned slots**: the sequencer reads each leg's plan from its `chain.json` frozen schedule, never a constant.
+- **Exit codes** of `p426_wave2`: 0 done, 1 stopped (leg / gate / pair / drift), 2 refused, 3 overrun pause, 4 harvest failure; none of
+  1 / 3 / 4 loses or deletes a leg.
+- **OVERRUN**: a leg that runs past `T` and then ends by itself is classified normally (§5.1) and its leg record carries `overrun: true`;
+  the state `OVERRUN` is a leg that did not end by itself (the operator stopped it during `OVERRUN_PAUSED`) — never paired.
+- **Occurrences (§5.5)**: `occurrence` = the 0-based position of the item in its (session, language) order in that leg's frozen schedule
+  (`chain.json`); canonical order = s1 then s2, languages in the session's original order, then `occurrence`; records are de-duplicated
+  per (session, language, item, seed) with `arm_of_dnf` merged into a sorted list (a slot DNF'd in both arms runs once per make-up leg).
+- **Make-up out-roots** are flat like every attempt (§1): `<out-base>/tg1-p426-{off,on}-makeup.a<n>`; only the occurrences files live
+  under `<out-base>/makeup/` (§16.7).
+- **Injections (rehearsal only)**: `--inject reconcile-mismatch` makes the chain perturb the first item's reconciliation so that it
+  invalidates with the exact reason `reconciliation mismatch (injected)` (v8 matches it exactly); `--inject stall-kill` makes the chain
+  pass `--inject-stall-item <lang>/<item> --inject-stall-s 30` to the probe invocation holding the first Python item of the rehearsal
+  schedule, and the probe applies that stall limit to that item only. Both flags refuse without `--rehearsal`.
+- **Rehearsal inputs**: `p426_wave2 rehearsal` requires `--frozen-prompt-date`; the rehearsal manifest records it and
+  `ops.identity(off_worktree)`.
+- **Topology test (§13)**: in-process — the real `Sequencer` whose `launch` runs the real `run_tg1_chain.main(argv, ops=FakeOps)` on a
+  thread with the fake probe: real argv, locks, records, `chain.json`, `LAST_LEG_END` and watcher contract; no router, worker or model.
