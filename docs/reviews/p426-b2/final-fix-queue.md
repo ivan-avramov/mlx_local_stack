@@ -18,3 +18,5 @@
 - s6 P51: derive the planned slots from `chain.json`'s frozen schedule; `--planned` only overrides.
 - s6 P52: tick `t` pinned to epoch seconds; the exit line drops `speed_valid` / `speed_reason` (the verdict is `speed_verdict(journal)`, called by the sequencer).
 - P530 (test-writer 3a): the chain fixture deletes `MLX_SERVE_CONFIG` from the fake probe environment (`FakeOps.env_base()` copies `os.environ`).
+- s1 (test-writer 3b): `--rehearsal` must select the §16.3 smoke shape (one pilot item + two full items of s1's Python order); the candidate runs the full s1 shape (frozen s7 `the_rehearsal_runs_the_smoke_shape_of_s1s_p426_python_order`).
+- P532 (session 11): the full suite leaves an empty `benchmark/control/` in the tree (`bench.workqueue` or its tests); write it under `tmp_path`.
