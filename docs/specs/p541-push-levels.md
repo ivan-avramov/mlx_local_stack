@@ -25,3 +25,24 @@ No "smoke" level; no change to `run`, `release`, receipts, the policy digest or 
 ## Acceptance
 - Tests (hermetic: tiny local git repos under `tmp_path`, an injected `gate_dir` and `digest_for`) cover: each level for stack and fork; a code push without a receipt refuses; a receipt for another sha, a FAIL receipt or a receipt under another policy digest refuses; mixed docs + code is full; mixed docs + data is full; an empty-diff commit (no paths) is full; evidence unchanged (orphan rule, PII-only); tags unchanged; the printed level lines; none-new.
 - The full stack suite passes; the gate passes on the change.
+
+## v1.1 — designer rulings after the independent tests (2026-10-29)
+- The problem text is `REFUSED: <repo> <sha8>: no PASS gate receipt …` (as in Levels); `main` prefixes `[pre-push] `.
+- `detail` = the receipt file name for **full**, `""` otherwise.
+- Scan problems are reported by `check_lines` (as today); `push_level` returns only level problems.
+- When one ref refuses, the level lines of the refs that passed are still printed; the push exits 1.
+- **Fork tags** (`refs/tags/*` on `../mlx-vlm` / `../mlx-serve`) are no longer scan-only: a fork tag push needs a level exactly like a branch push (a tag uploads its commits). Stack tags keep the P448 release rule unchanged.
+- Merges: as written — a merge contributes its diff against its first parent, so code merged in makes the push **full**.
+- A docs commit plus an empty-diff commit: P is non-empty and all docs → **docs-only** (the empty commit adds nothing); a push whose P is empty → **full**.
+- An `evidence` push sharing history with `<remote>/main` stays refused (as today).
+- Paths are case-sensitive: `docs/**` needs the `docs/` prefix (a file named `docs` is not docs), top-level `*.md` is lower-case `.md` only, data needs the `benchmark/results/` prefix.
+- The existing `test_local_gate.py::test_a_branch_push_needs_no_receipt_only_the_scans` asserts the pre-P541 behaviour; the implementer replaces it with the P541 expectation (a code branch push without a receipt refuses).
+- (v1.2) A tag resolves to its commit (`<local_sha>^{commit}`, as `check_lines` already does): the receipt a fork tag push needs, and the sha its refusal and level lines name, are the tagged commit's.
+
+## v1.3 — after the cold review round 1 (sol / glm / Claude Sonnet)
+- **Paths are read losslessly**: the `-z` path list is split on NUL with nothing stripped (a path ` docs/x.py` — a top-level directory named ` docs` — is code, not docs; ` benchmark/results/x.py` is not data).
+- **C for a non-`evidence` push** excludes from the `--not` set the remote's `evidence` ref (`refs/remotes/<remote>/evidence`): a commit reachable only from `evidence` counts as new, so pointing a code branch at a data commit is classified by its paths (normally **full**).
+- **`push_level` owns the evidence rule**: it resolves `<local_sha>^{commit}` itself, and for the stack's `refs/heads/evidence` returns `data-only` only for an orphan (no merge base with `<remote>/main`); otherwise a level problem `REFUSED: stack <sha8>: pushed to refs/heads/evidence shares history with <remote>/main: not an orphan data commit`. `check_lines` relies on it (no duplicate check).
+- **A failing policy digest** (`digest_for` raising) is a level problem `REFUSED: <repo> <sha8>: cannot compute the policy digest (<reason>)`; the other refs still get their lines.
+- **A ref with any problem** (level or scan) prints no `level:` line; only refs with no problems at all print theirs.
+- (v1.4) Any exception raised by `digest_for` becomes the v1.3 digest problem (`<reason>` = `type: message`); `push_level` returns level `full` with the not-orphan problem; the `<remote>/evidence` exclusion from the `--not` set applies to every repository that has such a ref.

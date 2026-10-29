@@ -346,19 +346,81 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
 
 
 # ------------------------------------------------------------------ check (pre-push)
-def has_pass(gate_dir, repo, sha, digest):
-    for p in Path(gate_dir).glob(f"{repo}-{sha}-{digest[:12]}*.json"):
+def pass_receipt(gate_dir, repo, sha, digest):
+    """The file name of a PASS receipt for exactly `sha` under `digest`, else None."""
+    for p in sorted(Path(gate_dir).glob(f"{repo}-{sha}-{digest[:12]}*.json")):
         try:
             doc = json.loads(p.read_text())
         except (OSError, ValueError):
             continue
         if doc.get("verdict") == "PASS" and doc.get("sha") == sha and doc.get("policy_digest") == digest:
-            return True
-    return False
+            return p.name
+    return None
 
 
-def introduced(repo_dir, remote, sha):
-    return _git(repo_dir, "rev-list", sha, "--not", f"--remotes={remote}").split()
+def has_pass(gate_dir, repo, sha, digest):
+    return pass_receipt(gate_dir, repo, sha, digest) is not None
+
+
+# P541: a push passes a named level
+def is_docs_path(path):
+    return path.startswith("docs/") or ("/" not in path and path.endswith(".md"))
+
+
+def is_data_path(path):
+    return path.startswith("benchmark/results/")
+
+
+def _git_raw(cwd, *a):
+    """`git` stdout as bytes, nothing stripped (NUL-separated path lists; git paths are byte strings)."""
+    r = subprocess.run(["git", "-C", str(cwd), *a], capture_output=True)
+    if r.returncode != 0:
+        raise GateError(f"git {' '.join(a)} in {cwd}: {r.stderr.decode('utf-8', 'replace').strip()[:300]}")
+    return r.stdout
+
+
+def _touched(repo_dir, commit):
+    """Paths a commit touches, read losslessly (`-z`, split on NUL, nothing stripped); a merge contributes its diff against
+    its first parent."""
+    parents = _git(repo_dir, "rev-list", "--parents", "-n", "1", commit).split()[1:]
+    if len(parents) > 1:
+        raw = _git_raw(repo_dir, "diff-tree", "-r", "-z", "--name-only", parents[0], commit)
+    else:
+        raw = _git_raw(repo_dir, "diff-tree", "-r", "-z", "--no-commit-id", "--name-only", "--root", commit)
+    return [p.decode("utf-8", "surrogateescape") for p in raw.split(b"\0") if p]
+
+
+def push_level(repo, repo_dir, remote, local_ref, local_sha, remote_ref, *, gate_dir, digest_for):
+    """P541: (level, detail, problems) for one pushed ref update; detail = the receipt file name for `full`."""
+    sha = _git(repo_dir, "rev-parse", f"{local_sha}^{{commit}}")
+    local_sha = sha
+    if repo == "stack" and remote_ref == EVIDENCE_REF:  # P447: the orphan data branch (no merge base with <remote>/main)
+        if subprocess.run(["git", "-C", str(repo_dir), "merge-base", sha, f"{remote}/main"], capture_output=True).returncode == 0:
+            return "full", "", [f"REFUSED: {repo} {sha[:8]}: pushed to {EVIDENCE_REF} shares history with {remote}/main: "
+                                f"not an orphan data commit"]
+        return "data-only", "", []
+    commits = introduced(repo_dir, remote, sha, exclude_evidence=remote_ref != EVIDENCE_REF)
+    if not commits:
+        return "none-new", "", []
+    paths = {p for c in commits for p in _touched(repo_dir, c)}
+    if paths and repo == "stack" and all(is_data_path(p) for p in paths):
+        return "data-only", "", []
+    if paths and all(is_docs_path(p) for p in paths):
+        return "docs-only", "", []
+    try:
+        name = pass_receipt(gate_dir, repo, local_sha, digest_for(repo, local_sha))
+    except Exception as exc:  # v1.4: any failure computing the digest refuses this ref only
+        return "full", "", [f"REFUSED: {repo} {local_sha[:8]}: cannot compute the policy digest ({type(exc).__name__}: {exc})"]
+    if name:
+        return "full", name, []
+    return "full", "", [f"REFUSED: {repo} {local_sha[:8]}: no PASS gate receipt for a code push (level full required; "
+                        f"run: bench.local_gate run --repo {repo} --sha {local_sha})"]
+
+
+def introduced(repo_dir, remote, sha, exclude_evidence=False):
+    """v1.3: for a non-evidence push `exclude_evidence` leaves `refs/remotes/<remote>/evidence` out of the `--not` set."""
+    ex = [f"--exclude={remote}/evidence"] if exclude_evidence else []  # git: the pattern is relative to refs/remotes/
+    return _git(repo_dir, "rev-list", sha, "--not", *ex, f"--remotes={remote}").split()
 
 
 def _scan(repo_dir, commits, naming=True):
@@ -401,9 +463,11 @@ def _gitlinks_at(repo_dir, sha):
     return links, out
 
 
-def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=None):
-    """P448: a branch push needs only the per-commit scans; a stack TAG must be SemVer `vX.Y.Z` and carries the release rule
-    (PASS receipt for the tagged commit under the current policy + both gitlinks' receipts and reachability); P447 evidence."""
+def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=None, levels=None):
+    """P541: every pushed ref (branch, or fork tag) passes a level (`push_level`, which also owns the P447 evidence orphan
+    rule) and the per-commit scans; a stack TAG must be SemVer `vX.Y.Z` and carries the release rule (P448: PASS receipt for
+    the tagged commit under the current policy + both gitlinks' receipts and reachability). `levels`, when a list, receives
+    one `level: …` line per ref that has no problem at all (level or scan)."""
     if subprocess.run(["git", "-C", str(repo_dir), "fetch", "--quiet", "--prune", remote], capture_output=True).returncode:
         return [f"git fetch --prune {remote} failed: cannot tell what is new (refused)"]
     out = []
@@ -415,26 +479,31 @@ def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=No
         if local_sha == ZERO:
             continue
         sha = _git(repo_dir, "rev-parse", f"{local_sha}^{{commit}}")
-        if repo == "stack" and remote_ref == EVIDENCE_REF:  # P447: the orphan data branch — no code to gate, PII still scanned
-            if subprocess.run(["git", "-C", str(repo_dir), "merge-base", sha, f"{remote}/main"], capture_output=True).returncode == 0:
-                out.append(f"{sha[:8]} pushed to {EVIDENCE_REF} shares history with {remote}/main: not an orphan data commit")
-                continue
-            out += _scan(repo_dir, introduced(repo_dir, remote, sha), naming=False)
-            continue
-        out += _scan(repo_dir, introduced(repo_dir, remote, sha))
+        ref_out, shown = [], None
+        evidence = repo == "stack" and remote_ref == EVIDENCE_REF  # P447: data — PII only
+        ref_out += _scan(repo_dir, introduced(repo_dir, remote, sha, exclude_evidence=remote_ref != EVIDENCE_REF),
+                         naming=not evidence)
         if repo == "stack" and remote_ref.startswith("refs/tags/"):
             name = remote_ref[len("refs/tags/"):]
             if not SEMVER_TAG.match(name):
-                out.append(f"tag {name}: a stack tag must be SemVer vMAJOR.MINOR.PATCH (refused)")
-                continue
-            if not has_pass(gate_dir, repo, sha, digest_for(repo, sha)):
-                out.append(f"tag {name} {sha[:8]}: no PASS release receipt under the current gate policy "
-                           f"(run: bench.local_gate release --version {name[1:]})")
-            links, missing = _gitlinks_at(repo_dir, sha)
-            out += missing
-            if links:
-                out += gitlink_problems(links, forks or {p: Path(repo_dir).parent / r for p, r in GITLINKS.items()},
-                                        gate_dir=gate_dir, digest_for=digest_for)
+                ref_out.append(f"tag {name}: a stack tag must be SemVer vMAJOR.MINOR.PATCH (refused)")
+            else:
+                if not has_pass(gate_dir, repo, sha, digest_for(repo, sha)):
+                    ref_out.append(f"tag {name} {sha[:8]}: no PASS release receipt under the current gate policy "
+                                   f"(run: bench.local_gate release --version {name[1:]})")
+                links, missing = _gitlinks_at(repo_dir, sha)
+                ref_out += missing
+                if links:
+                    ref_out += gitlink_problems(links, forks or {p: Path(repo_dir).parent / r for p, r in GITLINKS.items()},
+                                                gate_dir=gate_dir, digest_for=digest_for)
+        else:
+            level, detail, problems = push_level(repo, repo_dir, remote, local_ref, sha, remote_ref, gate_dir=gate_dir,
+                                                 digest_for=digest_for)
+            ref_out += problems
+            shown = f"full (receipt {detail})" if level == "full" else level
+        out += ref_out
+        if shown and not ref_out and levels is not None:
+            levels.append(f"level: {shown} {remote_ref} {sha[:8]}")
     return out
 
 
@@ -578,11 +647,14 @@ def main(argv=None):
             print(json.dumps({k: doc.get(k) for k in ("repo", "sha", "verdict", "problems")}, indent=1), f"\n{path}")
             return 0 if doc["verdict"] == "PASS" else 1
         repo = identity(_git(args.repo_dir, "remote", "get-url", "origin"))
+        levels = []
         problems = check_lines(repo, args.repo_dir, args.remote, sys.stdin.read().splitlines(), gate_dir=gate_dir,
-                               digest_for=lambda rp, sha: digest_for(rp, sha, live[rp], _baselines()))
+                               digest_for=lambda rp, sha: digest_for(rp, sha, live[rp], _baselines()), levels=levels)
     except GateError as exc:
         print(f"[local_gate] REFUSED: {exc}", file=sys.stderr)
         return 1
+    for lv in levels:
+        print(f"[pre-push] {lv}", file=sys.stderr)
     for p in problems:
         print(f"[pre-push] {p}", file=sys.stderr)
     return 1 if problems else 0

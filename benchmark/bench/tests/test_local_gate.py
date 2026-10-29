@@ -243,10 +243,12 @@ def _check(p, lines, digest="d" * 64, repo="mlx-serve", **kw):
     return G.check_lines(repo, p["work"], "origin", lines, gate_dir=p["gate"], digest_for=lambda repo, sha: digest, **kw)
 
 
-def test_a_branch_push_needs_no_receipt_only_the_scans(pushed):
-    """P448: the gate runs at releases; pushing a branch (main, topic) needs no receipt — the per-commit scans still run."""
-    assert _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"]) == []
-    assert _check(pushed, [f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"], repo="stack") == []
+def test_a_code_branch_push_without_a_receipt_refuses(pushed):
+    """P541: a branch push passes a level; a code push (neither data-only nor docs-only) needs a PASS receipt."""
+    line = f"refs/heads/main {pushed['head']} refs/heads/main {pushed['base']}"
+    for repo in ("mlx-serve", "stack"):
+        out = _check(pushed, [line], repo=repo)
+        assert len(out) == 1 and out[0].startswith(f"REFUSED: {repo} {pushed['head'][:8]}: no PASS gate receipt for a code push")
 
 
 def _tag(p, name):
@@ -295,7 +297,9 @@ def test_check_scans_every_introduced_commit_not_just_the_endpoints(pushed):
 
 
 def test_check_scans_a_new_branch_against_the_remote_refs(pushed):
-    assert _check(pushed, [f"refs/heads/topic {pushed['head']} refs/heads/topic {ZERO}"]) == []
+    out = _check(pushed, [f"refs/heads/topic {pushed['head']} refs/heads/topic {ZERO}"])
+    # the scans find nothing; P541: a code push without a receipt is the only (level) problem
+    assert len(out) == 1 and "no PASS gate receipt" in out[0], out
     assert G.introduced(pushed["work"], "origin", pushed["head"]) == [pushed["head"]]
 
 
