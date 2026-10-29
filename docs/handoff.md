@@ -6,11 +6,11 @@ incl. §16) with `docs/reviews/p426-b2/` (newest: `final-fix-queue.md`, `test-wr
 registry names only, always (chat included). Skills: four-eyes 0.7.0, review-panel (updated 2026-10-27). Review rounds were reset by
 the operator: AGENTS.md's 3 per artifact (C238); both specs have used rounds 1–2, round 3 is in reserve.
 
-## Goal and path (C218, C232, C234, C235, C236)
+## Goal and path (C218, C232, C234, C235, C236, C244)
 
-MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` first, on the new serving build S′ (C236: fork `c688e722`, mlx-serve
-v0.3.0 `e6a7a5a`, mlx 0.32.4): **T3 accepted → push (P509) → S′ cut + two committed arm worktrees → Wave-1 rerun on S′** (label `s2`,
-≈ 18–23 h GPU) while B2 finishes → B2 R1–R3 → v8 base → pilots → amendment → Wave 2 → B8 / B6 → ship call. P475 / P475a PARKED.
+MTP blessing for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on the serving build S′ (C236 / C242: fork `1c7c8fa1`, mlx-serve
+`1ddf6f84`, mlx 0.32.4). Done: T3, Wave 1 on S′ (30 / 30 VALID), MTP ON as the PROVISIONAL default (C244). Remaining: **B2 (s7 → s9,
+verify, fix, Accept) → v8 freeze → pilots → amendment → Wave 2 → B8 / B6 → the ship call (CERTIFIED or back OFF)**. P475 / P475a PARKED.
 
 ## State — session 10, 2026-10-29 ~00:30Z
 
