@@ -1,0 +1,5 @@
+# Delivery 1g (same session): §16.7 pins your ten open names — tighten the tests, then the set is frozen
+
+`.b2-spec-16-7.diff` (the copy's spec is updated) answers your P1–P10: the R1 subset check (`--r1-off` / `--r1-on`, the `differences` entry format), `pair_problems(first, second)`, `write_dossier(..., off=…, on=…, differences, verdict)`, the pair labels and `arms.<arm>.attempt` as `<leg>.a<n>`, `sequence.json` `previous_sha256`, the canonical occurrences path, the module-level `publish_dossier` / `publish_run_files`, `P426Hooks` with `context=None` raising `HookInfrastructureError`, credential keys absent from `env`.
+
+Tighten every test that accepted either form to the pinned one, add the R1 subset-check tests (v8 refuses an R1 difference outside §6.5's closed list) and the module-level `publish_*` tests. Same rules. Run everything on the baseline (every support check must pass). Do not run the candidate (the designer installs the set there after freezing). Report as before, with the list of tests changed in this delivery.

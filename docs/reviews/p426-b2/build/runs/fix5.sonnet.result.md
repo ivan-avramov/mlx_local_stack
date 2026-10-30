@@ -1,0 +1,1 @@
+That notification is only my own waiting loop for the second check batch. That batch had already exited with code 0, as reported above, so nothing changes. Nothing is running now, and nothing is committed or pushed.

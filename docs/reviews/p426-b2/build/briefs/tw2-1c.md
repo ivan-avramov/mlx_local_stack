@@ -1,0 +1,11 @@
+# Delivery 1c (same session): §16.4 names the seams your gaps asked for — complete the frozen set
+
+The designer added §16.4 to the specification and fixed the contradictions you listed; the change since your last delivery is `.b2-spec-v3.2-16b.diff` in this directory (the copy's spec is updated). Rulings on your §4 items: (1) A4 window — the 3 `anon:*` requests come from the A4 run's `gate.json`, the `ses_*` session from the A4 receipt; (2) two linked records — the `p426_dnf` record (chain.json + sidecar) names the DNF's item record `items/<slot_file>.dnf.json`; (3) `v8_base_sha256` is v8's self-hash field; (4) destinations are `<leg>.a<n>/`; (5) the HMAC is the stated exception in §11.3; (6) the seams are in §16.4. Your G5 choices are adopted as written in §16.4 except: `parse_log` returns nothing for a trailing partial line and raises `ValueError` on an unparseable complete line; log `fields` values are strings. The abort manifest's shape (§16.1) is now the s2 one: `transport_abort.gate.request_usage`, `transport_abort.session_id`, `transport_abort.in_flight.{in_flight, message_id, requests_started}`.
+
+Do:
+1. Write the chain-level `--p426` tests your G1 listed (ready record before `.go`; `invalidate` at ready / done through `P426Hooks`; DNF then the remaining items in order; the third DNF systemic; a changed worker with a DNF stamp systemic; the per-item ledger and `check_realized`; s2 Go first; the chain passes `--evidence p426` and refuses a manifest without it; the pair comparison before item one; the busy census; the chain side of the locks and the gate-vs-chain race; a spawned child holds no lock), using FakeOps with the §16.2 / §16.4 seams, the fake probe, and records written with the §16.1 recipe.
+2. Add the hook (G2), receipt (G3), s8 sequencer (G7/G8: speed-valid verdict, pair rule, watcher-death poll, `OVERRUN_PAUSED`, PAUSE, resume, the pilot gate) and harvest (G9) tests §16.4 now makes possible.
+3. Revise any test where §16.4 or the rulings above differ from what you assumed.
+4. Same rules as before; s0 stays the baseline fixture check, every fixture validated there.
+
+Run all your files on the baseline and report as before (per file: test, class, baseline outcome, first failure line; commands and summary lines verbatim; remaining gaps; anything wrong or contradictory). This is the delivery the designer will freeze.

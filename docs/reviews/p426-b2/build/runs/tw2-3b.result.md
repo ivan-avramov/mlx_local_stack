@@ -1,0 +1,1 @@
+The scratch lock holder (PID 17425) has now exited on its own (exit 0). The flock is released and none of my processes are still running. Its scratch directory was already removed, so the s7 review stands as reported.
