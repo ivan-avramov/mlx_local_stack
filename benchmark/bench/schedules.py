@@ -120,24 +120,42 @@ def blocks(arms, names, *, picks=(PICK1, PICK2), sessions=("s1", "s2"), langs=("
 
 
 # ---------------------------------------------------------------- tg1
-def _tg1_legs_table(picks, langs):
-    p1, p2 = picks
-    return {"s1": [(p, l) for p in (p1, p2) for l in langs],
-            "s2": [(p, l) for p in (p2, p1) for l in langs],
-            "reload": [(p1, langs[0])]}
+def tg1_legs_table(picks, langs, p426=False):
+    """Per session the (model, language) legs: s1 the picks in the given order, s2 the picks reversed, reload the first pick's
+    first language (any number of picks >= 1). P426 mode (spec 7): s2 also reverses the LANGUAGE order (Go before Python)."""
+    picks, langs = tuple(picks), tuple(langs)
+    if not picks or len(set(picks)) != len(picks):
+        raise ValueError(f"picks must be a nonempty list of distinct models, got {picks!r}")
+    s2_langs = tuple(reversed(langs)) if p426 else langs
+    return {"s1": [(p, l) for p in picks for l in langs],
+            "s2": [(p, l) for p in reversed(picks) for l in s2_langs],
+            "reload": [(picks[0], langs[0])]}
 
 
-def _tg1_leg(session, model, lang, seed_base, names, *, reload_ctl, smoke, predictor, first_leg, pilot_only):
+REHEARSAL_PILOT_N, REHEARSAL_FULL_N = 1, 3        # spec 16.3: one pilot item, then two full items (the smoke shape of the P426 order)
+
+
+def _tg1_leg(session, model, lang, seed_base, names, *, reload_ctl, smoke, predictor, first_leg, pilot_only, p426=False,
+             rehearsal=False):
     pool = sorted(names[lang])
-    pilot = random.Random(seed_base).sample(pool, SMOKE_PILOT_N if smoke else PILOT_N)
-    if reload_ctl:
-        full = sorted(pilot)
-    elif smoke:
-        rest = [x for x in pool if x not in pilot]
-        full = sorted(pilot + random.Random(seed_base).sample(rest, SMOKE_FULL_N - len(pilot)))
+    if p426:
+        # C223: the seeded order IS the run order (no later sort); the pilot phase and the reload are its first 5
+        full = random.Random(seed_base).sample(pool, len(pool))
+        pilot = full[:PILOT_N]
+        if rehearsal:
+            pilot, full = full[:REHEARSAL_PILOT_N], full[:REHEARSAL_FULL_N]
+        elif reload_ctl:
+            full = list(pilot)
     else:
-        full = pool
-    pilot = sorted(pilot)
+        pilot = random.Random(seed_base).sample(pool, SMOKE_PILOT_N if smoke else PILOT_N)
+        if reload_ctl:
+            full = sorted(pilot)
+        elif smoke:
+            rest = [x for x in pool if x not in pilot]
+            full = sorted(pilot + random.Random(seed_base).sample(rest, SMOKE_FULL_N - len(pilot)))
+        else:
+            full = pool
+        pilot = sorted(pilot)
     stem = f"{model}.{session}.opencode_{lang}"
 
     def inv(phase, items):
@@ -155,14 +173,23 @@ def _tg1_leg(session, model, lang, seed_base, names, *, reload_ctl, smoke, predi
                 full_names=full, draft_kind=predictor, invocations=invocations)
 
 
-def tg1(mode, sessions, names, *, smoke=False, predictor="off", picks=(PICK1, PICK2), langs=("python", "go")):
-    """The tg1 chain schedule (blocks of one model within one session, legs = languages) with disjoint invocations."""
-    langs = tuple(langs)
-    table = _tg1_legs_table(picks, langs)
+def tg1(mode, sessions, names, *, picks, smoke=False, predictor="off", langs=("python", "go"), p426=False, rehearsal=False):
+    """The tg1 chain schedule (blocks of one model within one session, legs = languages) with disjoint invocations. `picks`
+    (the chain's required `--models`, C221) has no default. `p426=True` (spec 7): each language's items in the seeded
+    `random.Random(seed).sample(sorted(pool), len(pool))` order, s2 Go before Python; never with `smoke`. `rehearsal=True`
+    (spec 16.3, P426 only): s1's first language (Python) only, one pilot item then two full items."""
+    langs, picks = tuple(langs), tuple(picks)
+    if p426 and smoke:
+        raise ValueError("a P426 schedule has no smoke shape")
+    if rehearsal:
+        if not p426 or smoke or mode != "chain" or list(sessions) != ["s1"]:
+            raise ValueError("the rehearsal shape is one P426 `chain s1` leg (no smoke, no other session)")
+        langs = langs[:1]
+    table = tg1_legs_table(picks, langs, p426)
     out = []
     if mode == "pilot":
         leg = _tg1_leg("pilot", picks[0], langs[0], TG1_SEEDS["s1"], names, reload_ctl=False, smoke=False,
-                       predictor=predictor, first_leg=True, pilot_only=True)
+                       predictor=predictor, first_leg=True, pilot_only=True, p426=p426)
         out.append(dict(session="pilot", model=picks[0], seed_base=TG1_SEEDS["s1"], legs=[leg], pilot_only=True))
     else:
         for s in sessions:
@@ -174,11 +201,66 @@ def tg1(mode, sessions, names, *, smoke=False, predictor="off", picks=(PICK1, PI
                     grouped.append((model, [lang]))
             for model, ls in grouped:
                 legs_ = [_tg1_leg(s, model, lang, TG1_SEEDS[s], names, reload_ctl=(s == "reload"), smoke=smoke,
-                                  predictor=predictor, first_leg=(i == 0), pilot_only=False)
+                                  predictor=predictor, first_leg=(i == 0), pilot_only=False, p426=p426, rehearsal=rehearsal)
                          for i, lang in enumerate(ls)]
                 out.append(dict(session=s, model=model, seed_base=TG1_SEEDS[s], legs=legs_, pilot_only=False))
-    return dict(schema=SCHEMA, builder="tg1", mode=mode, smoke=bool(smoke), predictor=predictor,
-                picks=list(picks), blocks=out)
+    doc = dict(schema=SCHEMA, builder="tg1", mode=mode, smoke=bool(smoke), predictor=predictor,
+               picks=list(picks), blocks=out)
+    if p426:
+        doc["p426"] = True                       # only P426 schedules carry the key: the legacy dict (and its sha) is unchanged
+    if rehearsal:
+        doc["rehearsal"] = True
+    return doc
+
+
+# ---------------------------------------------------------------- the P426 make-up plan (spec 5.5, 16.8)
+MAKEUP_SESSION_ORDER = ("s1", "s2")
+MAKEUP_LANG_ORDER = {"s1": ("python", "go"), "s2": ("go", "python")}      # spec 7: s2 reverses the language order
+
+
+def makeup_canonical(occurrences):
+    """The union of the occurrences, one record per (session, language, item, seed) with the DNF'd arms merged into a sorted list,
+    in the canonical order: s1 then s2, the session's language order, `occurrence` (the item's 0-based position in its
+    (session, language) order of that leg's frozen schedule), item."""
+    merged = {}
+    for o in occurrences:
+        session, lang = o["session"], o["language"]
+        if session not in MAKEUP_SESSION_ORDER or lang not in MAKEUP_LANG_ORDER[session]:
+            raise ValueError(f"occurrence {o!r}: unknown session / language")
+        arms = [o["arm_of_dnf"]] if isinstance(o["arm_of_dnf"], str) else list(o["arm_of_dnf"])
+        m = merged.setdefault((session, lang, o["item"], o["seed"]),
+                              dict(session=session, language=lang, item=o["item"], seed=o["seed"], arm_of_dnf=set(),
+                                   occurrence=o["occurrence"]))
+        m["arm_of_dnf"].update(arms)
+        m["occurrence"] = min(m["occurrence"], o["occurrence"])
+    out = sorted(merged.values(), key=lambda m: (MAKEUP_SESSION_ORDER.index(m["session"]),
+                                                 MAKEUP_LANG_ORDER[m["session"]].index(m["language"]), m["occurrence"], m["item"]))
+    return [dict(m, arm_of_dnf=sorted(m["arm_of_dnf"])) for m in out]
+
+
+def tg1_makeup(occurrences, names, *, picks, predictor="off"):
+    """The make-up leg's schedule: ONE load of the entry (a fresh-load leg); inside it one leg (= one probe invocation) per
+    (session, seed, language) group in the canonical order, the items in `occurrence` order. The plan is the union."""
+    picks = tuple(picks)
+    if len(picks) != 1:
+        raise ValueError("a make-up leg runs exactly one model")
+    canon = makeup_canonical(occurrences)
+    if not canon:
+        raise ValueError("a make-up leg needs at least one occurrence")
+    groups = {}
+    for m in canon:
+        if m["item"] not in set(names.get(m["language"], ())):
+            raise ValueError(f"occurrence item {m['language']}/{m['item']} is not in the corpus")
+        groups.setdefault((m["session"], m["seed"], m["language"]), []).append(m["item"])
+    model = picks[0]
+    legs = []
+    for (session, seed, lang), items in groups.items():
+        legs.append(dict(session=session, model=model, lang=lang, seed_base=seed, stem=f"{model}.makeup.opencode_{session}_{lang}",
+                         pilot_names=[], full_names=list(items), draft_kind=predictor,
+                         invocations=[dict(phase="full", names=list(items), limit=None, expect=[f"{lang}/{n}" for n in items])]))
+    block = dict(session="makeup", model=model, seed_base=legs[0]["seed_base"], legs=legs, pilot_only=False)
+    return dict(schema=SCHEMA, builder="tg1", mode="makeup", smoke=False, predictor=predictor, picks=list(picks), blocks=[block],
+                p426=True, makeup=True)
 
 
 # ---------------------------------------------------------------- tg2

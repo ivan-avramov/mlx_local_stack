@@ -143,6 +143,10 @@ ALLOWED = {
       for m in ("start_router", "worker_ident", "load", "_alive")},
     ("benchmark/bench/chain_ops.py", "ChainOps.start_router", "self", "parents"),
     ("benchmark/bench/chain_core.py", "Chain.run_invocation", "self.ops", "create_time"),     # P371: moved with the code
+    # B2 (P426, spec 16.6 / 16.7): owned identities are `(pid, ChainOps.create_time(pid))` - the same effect hook (its default is
+    # `default_create_time`, i.e. proc_guard.start_time), read where the identity is taken and compared
+    ("benchmark/bench/chain_core.py", "Chain.p426_bind_router", "self.ops", "create_time"),
+    ("benchmark/bench/p426_hooks.py", "same_identity", "ops", "create_time"),
     # M64 shell watchdog: the wall-clock start is compared with client tool windows (epoch times); identity stays
     # proc_guard.start_time (the same call lists both)
     ("benchmark/chains/m64/run_m64_chain.py", "ArmChain.run_step", "self.ops", "create_time"),   # as Chain.run_step

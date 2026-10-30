@@ -93,6 +93,37 @@ def require_mtp(registry, names):
         raise ChainAbort(f"M63 overlay: registry lacks the mtp predictor for {missing}")
 
 
+C177_KEYS = ("draft_kind", "draft_model", "mtp_verify_scan")      # the three registry keys an MTP-ON entry carries (B2 spec 6.2)
+
+
+def require_served_entries(registry, models, predictor):
+    """C221 (B2 spec 6.1 / 6.2): every model in `models` is a `models:` entry of the served committed registry, and
+    `--predictor` is an ASSERTION of that entry's committed state: `mtp` = all three C177 keys (draft_kind mtp, a draft_model,
+    an mtp_verify_scan), `off` = none of them. Nothing is generated or rewritten; a mismatch raises ChainAbort."""
+    import yaml
+    try:
+        doc = yaml.safe_load(Path(registry).read_text()) or {}
+    except (OSError, yaml.YAMLError) as e:
+        raise ChainAbort(f"the served registry {Path(registry).name} is unreadable ({type(e).__name__})") from None
+    by_name = {m.get("name"): m for m in doc.get("models") or [] if isinstance(m, dict)}
+    unknown = [m for m in models if m not in by_name]
+    if unknown:
+        raise ChainAbort(f"unknown model(s) {unknown}: not a models: entry of the served registry {Path(registry).name}")
+    problems = []
+    for model in models:
+        entry = by_name[model]
+        kind = entry.get("draft_kind")
+        have = {"draft_kind": kind not in (None, "", "none", "off"), "draft_model": bool(entry.get("draft_model")),
+                "mtp_verify_scan": bool(entry.get("mtp_verify_scan"))}
+        if predictor == "mtp" and not (all(have.values()) and kind == "mtp"):
+            problems.append(f"{model}: lacks {[k for k in C177_KEYS if not have[k]] or ['draft_kind: mtp']} of the C177 keys")
+        elif predictor != "mtp" and any(have.values()):
+            problems.append(f"{model}: carries {[k for k in C177_KEYS if have[k]]}")
+    if problems:
+        raise ChainAbort(f"--predictor {predictor} asserts the committed entry state ("
+                         f"{'all three C177 keys' if predictor == 'mtp' else 'none of the C177 keys'}): " + "; ".join(problems))
+
+
 def make_overlay(src, dst, predictor="off", require=()):
     """Draft-OFF bench overlay. Recipe copied from benchmark/chains/m59/make_overlay.py (M59): the registry with
     every draft_*/moe_expand/mtp_verify_scan field removed. NEVER commit; never point the daily driver at it.
@@ -421,6 +452,229 @@ class ChainOps:
         except Exception:  # noqa: BLE001
             return False
         return file_sha(self.overlay) == getattr(self, "router_config_sha", None)
+
+    def worktree_state(self, path):
+        """B2 (P426, spec 16.4): the worktree at `path`'s `{head, clean, gitlinks: {path: sha}}`: HEAD, `git status --porcelain`
+        empty (submodules included: a submodule off its gitlink shows as modified) and the two fork gitlinks."""
+        def git(*args):
+            res = self.sh(["git", "-C", str(path), *args], timeout=60)
+            if getattr(res, "returncode", 0) != 0:
+                raise ChainAbort(f"worktree state: git {args[0]} failed in {Path(path).name}")
+            return res.stdout
+        gitlinks = {}
+        for line in git("ls-tree", "HEAD", "src/mlx-vlm", "src/mlx-serve").splitlines():
+            meta, path = line.split("\t", 1)
+            gitlinks[path] = meta.split()[2]
+        return dict(head=git("rev-parse", "HEAD").strip(), clean=git("status", "--porcelain").strip() == "", gitlinks=gitlinks)
+
+    def last_leg_end(self):
+        """B2 (P426, spec 1 / 16.4): the epoch seconds the Wave-2 sequencer recorded for the end of the previous leg in
+        `$STACK_WORKDIR/p426/LAST_LEG_END`; None before any leg. An unreadable record is `ChainAbort`, never "no previous leg"."""
+        from bench import p426_locks
+        try:
+            return p426_locks.read_last_leg_end(self.wd)
+        except ValueError as exc:
+            raise ChainAbort(str(exc)) from None
+
+    def server_log_path(self):
+        """B2 (P426): the worker log of the served worktree (`<WT>/logs/mlx_vlm.log`, append-only across legs)."""
+        return Path(self.repo) / "logs" / "mlx_vlm.log"
+
+    def read_log(self, path, start, end=None):
+        """B2 (P426): the bytes `[start, end)` of the log file (`end=None`: to the end); empty past the end."""
+        with open(path, "rb") as f:
+            f.seek(start)
+            return f.read() if end is None else f.read(max(0, end - start))
+
+    # -- B2 (P426) receipt seams (spec 16.2 / 16.4 / 16.5): what a process IS. Values returned here (an environment) are
+    # handed to `p426_receipt`, which records key names and non-secret values only; nothing here logs or writes them.
+    def proc_argv(self, pid):
+        import psutil
+        try:
+            return list(psutil.Process(int(pid)).cmdline())
+        except psutil.Error as exc:
+            raise ChainAbort(f"process {pid}: its command line is unreadable ({type(exc).__name__})") from None
+
+    def proc_environ(self, pid):
+        import psutil
+        try:
+            return dict(psutil.Process(int(pid)).environ())
+        except psutil.Error as exc:
+            raise ChainAbort(f"process {pid}: its environment is unreadable ({type(exc).__name__})") from None
+
+    def descendants(self, pid):
+        """The pids of every (transitive) child of `pid`; empty when it is gone."""
+        import psutil
+        try:
+            return {c.pid for c in psutil.Process(int(pid)).children(recursive=True)}
+        except psutil.NoSuchProcess:
+            return set()
+
+    def expected_worker_argv(self, registry_path, model):
+        """The worker command line mlx-serve builds from `model`'s entry of `registry_path`: mlx-serve's own `_build_command`,
+        run in the worktree's serving venv with the router's environment."""
+        code = ("import json, sys\nfrom mlx_serve import config, process_manager as pm\n"
+                "print(json.dumps(pm._build_command(config._load()[0][sys.argv[1]])))\n")
+        env = dict(self.env_base(), MLX_SERVE_CONFIG=str(registry_path))
+        try:
+            r = self.sh([str(self.repo / ".venv/bin/python"), "-I", "-c", code, model], cwd=str(self.repo), env=env, timeout=120)
+            argv = json.loads(r.stdout) if r.returncode == 0 else None
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            argv = None
+        if not isinstance(argv, list) or not all(isinstance(t, str) for t in argv):
+            raise ChainAbort(f"the mlx-serve command builder failed for {model} (the expected worker argv is unknown)")
+        return argv
+
+    def interpreter_inventory(self, pid, *, site_packages=None):
+        """{path, inventory_sha256, editables} of the interpreter process `pid` runs (spec 16.2: a pid, never a path; an
+        interpreter without a process is `interpreter_inventory_at`): for every non-editable distribution its name, version and
+        each RECORD entry re-verified against the installed bytes (a mismatch or a missing file is `ChainAbort`, systemic),
+        hashed as sorted (path, digest); editable distributions are reported by resolved source tree, gitlink and cleanliness,
+        their metadata excluded. `site_packages` is the test seam."""
+        if isinstance(pid, bool) or not isinstance(pid, int):
+            raise ChainAbort("interpreter_inventory takes a process id (an interpreter path is interpreter_inventory_at)")
+        if site_packages is None:
+            path = self.proc_argv(pid)[0]
+            if not os.path.isabs(path):
+                import psutil
+                path = psutil.Process(pid).exe()
+        return self._inventory(path if site_packages is None else None, site_packages)
+
+    def interpreter_inventory_at(self, exe):
+        """The same inventory for the interpreter at `exe`, for a process that does not exist yet (the probe's launch
+        interpreter at the after-load checkpoint)."""
+        return self._inventory(str(exe), None)
+
+    def _inventory(self, path, site_packages):
+        if site_packages is not None:
+            site = Path(site_packages)
+            path = str(site.parents[2] / "bin" / "python")
+        else:
+            r = self.sh([path, "-I", "-c", "import sysconfig; print(sysconfig.get_paths()['purelib'])"], timeout=60)
+            if r.returncode != 0 or not r.stdout.strip():
+                raise ChainAbort(f"interpreter {Path(path).name}: its site-packages cannot be determined")
+            site = Path(r.stdout.strip())
+        dists, editables = [], {}
+        for info in sorted(site.glob("*.dist-info")):
+            meta = {}
+            try:
+                for line in (info / "METADATA").read_text(errors="replace").splitlines():
+                    k, _, v = line.partition(":")
+                    if k in ("Name", "Version") and k not in meta:
+                        meta[k] = v.strip()
+                    if not line.strip():
+                        break
+            except OSError:
+                raise ChainAbort(f"distribution {info.name}: METADATA unreadable") from None
+            name = re.sub(r"[-_.]+", "-", meta.get("Name", info.name.split("-")[0])).lower()
+            direct = info / "direct_url.json"
+            if direct.is_file() and (json.loads(direct.read_text()).get("dir_info") or {}).get("editable"):
+                editables[name] = self._editable_state(name, json.loads(direct.read_text())["url"])
+                continue
+            dists.append([name, meta.get("Version", ""), self._verify_record(name, site, info / "RECORD")])
+        dists.sort(key=lambda d: (d[0], d[1]))
+        digest = hashlib.sha256(json.dumps(dists, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return dict(path=path, inventory_sha256=digest, editables=dict(sorted(editables.items())))
+
+    @staticmethod
+    def _verify_record(name, site, record):
+        import base64
+        import csv
+        try:
+            rows = list(csv.reader(record.read_text().splitlines()))
+        except OSError:
+            raise ChainAbort(f"distribution {name}: its RECORD is unreadable") from None
+        entries = []
+        for row in rows:
+            if len(row) < 2 or not row[1]:
+                continue                                    # RECORD itself, .pyc files: listed without a hash
+            algo, _, want = row[1].partition("=")
+            f = Path(os.path.normpath(site / row[0]))
+            try:
+                h = hashlib.new(algo)
+                with open(f, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+            except (OSError, ValueError):
+                raise ChainAbort(f"RECORD of {name}: {row[0]} is missing or unreadable (systemic)") from None
+            if base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode() != want:
+                raise ChainAbort(f"RECORD of {name}: {row[0]} differs from its recorded digest (systemic)")
+            entries.append([row[0], row[1]])
+        return sorted(entries)
+
+    def _editable_state(self, name, url):
+        from urllib.parse import unquote, urlparse
+        tree = unquote(urlparse(url).path)
+
+        def git(*args):
+            r = self.sh(["git", "-C", tree, *args], timeout=60)
+            return r.stdout.strip() if r.returncode == 0 else None
+        head, dirty = git("rev-parse", "HEAD"), git("status", "--porcelain")
+        clean = head is not None and dirty == ""
+        try:                                                # "at the gitlink": the checkout is what the worktree's commit records
+            rel = Path(tree).relative_to(self.repo).as_posix()
+        except ValueError:
+            rel = None
+        if clean and rel is not None:
+            r = self.sh(["git", "-C", str(self.repo), "rev-parse", f"HEAD:{rel}"], timeout=60)
+            clean = r.returncode == 0 and r.stdout.strip() == head
+        return dict(tree=tree, gitlink=head, clean=clean)
+
+    def loaded_images(self, pid):
+        """[{path, sha256}] of the native libraries the process actually loaded (`vmmap`: `lsof` lists descriptors, not loaded
+        images): `libmlx.dylib` and `mlx.metallib`, each hashed."""
+        r = self.sh(["vmmap", "-w", str(pid)], timeout=120)
+        if r.returncode != 0:
+            raise ChainAbort(f"vmmap of process {pid} failed (the loaded images are unknown)")
+        paths = sorted({m.group(1) for line in r.stdout.splitlines()
+                        if (m := re.search(r"(/\S*(?:libmlx\.dylib|mlx\.metallib))\s*$", line))})
+        out = []
+        for p in paths:
+            try:
+                h = hashlib.sha256()
+                with open(p, "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 20), b""):
+                        h.update(chunk)
+            except OSError:
+                raise ChainAbort(f"the loaded image {p} cannot be hashed (systemic)") from None
+            out.append(dict(path=p, sha256=h.hexdigest()))
+        return out
+
+    def snapshot_hashes(self, model):
+        """{target, drafter} of the served entry `model`: `{hf_path, revision, files: {rel: sha256}}` (the shape of the fork's
+        `pins.json`), the drafter only for an entry that serves one; the revision is the hub cache's `refs/main`."""
+        import yaml
+        try:
+            entry = next(m for m in (yaml.safe_load(Path(self.overlay).read_text()) or {}).get("models") or [] if m.get("name") == model)
+        except (OSError, StopIteration, yaml.YAMLError):
+            raise ChainAbort(f"snapshot hashes: {model} is not an entry of the served registry") from None
+        env = self.env_source
+        cache = next((Path(env[k]) for k in ("HF_HUB_CACHE", "HUGGINGFACE_HUB_CACHE") if env.get(k)), None)
+        if cache is None:
+            cache = (Path(env["HF_HOME"]) / "hub" if env.get("HF_HOME") else
+                     Path(env["XDG_CACHE_HOME"]) / "huggingface" / "hub" if env.get("XDG_CACHE_HOME") else
+                     Path.home() / ".cache" / "huggingface" / "hub")
+
+        def record(hf_path):
+            repo = cache / ("models--" + hf_path.replace("/", "--"))
+            try:
+                rev = (repo / "refs" / "main").read_text().strip()
+            except OSError:
+                raise ChainAbort(f"snapshot {hf_path}: not in the hub cache (no refs/main)") from None
+            snap = repo / "snapshots" / rev
+            files = {}
+            for p in sorted(snap.rglob("*")):
+                rel = p.relative_to(snap).as_posix()
+                if not p.is_file() or rel in ("README.md", ".gitattributes") or rel.startswith("evaluation/"):
+                    continue
+                h = hashlib.sha256()
+                with open(p.resolve(), "rb") as fh:
+                    for chunk in iter(lambda: fh.read(1 << 22), b""):
+                        h.update(chunk)
+                files[rel] = h.hexdigest()
+            return dict(hf_path=hf_path, revision=rev, files=files)
+        drafter = entry.get("draft_model") if entry.get("draft_kind") == "mtp" else None
+        return dict(target=record(entry["hf_path"]), drafter=record(drafter) if drafter else None)
 
     def _reap_spawned(self, spawned):
         """Refusal path: stop the process WE spawned (own session, start_new_session=True), never a foreign pid."""

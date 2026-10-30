@@ -29,6 +29,14 @@ import pytest
 from bench import paths, workqueue
 
 
+@pytest.fixture(autouse=True)
+def _workdir_under_tmp(tmp_path, monkeypatch):
+    """P532: a run that is given no `control_dir` / `status_dir` resolves them under `$STACK_WORKDIR`; without this the default is
+    the repo's `benchmark/control` and every suite run leaves an empty directory in the tree. The tests that pin the unset-env
+    defaults delete the variable themselves."""
+    monkeypatch.setenv("STACK_WORKDIR", str(tmp_path / "stack-workdir"))
+
+
 def _q(tmp_path, entries):
     p = tmp_path / "queue.json"
     p.write_text(json.dumps(entries, indent=1))

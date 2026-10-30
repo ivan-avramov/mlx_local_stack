@@ -28,12 +28,13 @@ INJECT_POLICY = {
     "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
     "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024**2}},
 }
-TRANSPORT_POLICIES = ("abort_restart", "incident_retry")
+TRANSPORT_POLICIES = ("abort_restart", "incident_retry", "p426_continue")
 RESUME_POLICIES = ("restart_load", "new_segment")
 ARM_SWITCH_OPS = ("search_restart", "cache_reset", "warmup")
 ARM_IDS = ("oc", "pi", "dsh")
 WORKER_RECEIPTS = ("absent", "required")
 ITEM_BARRIER = ("off", "on")
+P426_CONFIG_ID = "tg1-p426"                      # B2 spec 2: the P426 mode's ChainConfig (distinct from `tg1`, flat record layout)
 
 
 def canonical(value):
@@ -289,6 +290,12 @@ class ChainConfig:
             raise ValueError(f"arm_switch_ops must be drawn from {ARM_SWITCH_OPS}")
         if not (isinstance(self.schedule, dict) and self.schedule.get("builder") and "params" in self.schedule):
             raise ValueError("schedule needs a builder and params")
+        if self.config_id == P426_CONFIG_ID:
+            params = self.schedule["params"]
+            if self.schedule["builder"] != "tg1" or params.get("p426") is not True or len(params.get("models") or ()) != 1:
+                raise ValueError(f"{P426_CONFIG_ID} is the tg1 builder in P426 mode with exactly one model")
+        if self.transport_policy == "p426_continue" and self.config_id != P426_CONFIG_ID:
+            raise ValueError(f"p426_continue is the transport policy of {P426_CONFIG_ID} only")
         arm_ids = {b.arm for b in self.arms}
         for art in self.contract_artifacts:
             if art.arm not in arm_ids:

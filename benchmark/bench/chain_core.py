@@ -56,6 +56,7 @@ from . import chain_ops as co
 from . import chain_rows as cr
 from . import contract_artifact as ca
 from . import datefreeze
+from . import run_config
 from . import schedules
 from . import web_evidence as we
 from .chain_incident import (CLEANUP_KEYS, INCIDENT_CAUSES, classify_incident_cause, cleanup_problems, dnf_row,  # noqa: F401
@@ -63,16 +64,37 @@ from .chain_incident import (CLEANUP_KEYS, INCIDENT_CAUSES, classify_incident_ca
 
 PICK1, PICK2 = co.PICK1, co.PICK2
 SCAFFOLD = co.SCAFFOLD
-PRED_S = {("python", PICK1): 244, ("go", PICK1): 300, ("python", PICK2): 267, ("go", PICK2): 360}   # M59 table
+PRED_S = {("python", PICK1): 244, ("go", PICK1): 300, ("python", PICK2): 267, ("go", PICK2): 360}   # M59 table (M64 / tg2 only)
+GENERIC_PRED_S = 250       # C221: the tg1 chain's per-item prediction for a model with no pilot mean yet (recorded in its ChainConfig)
 PILOT_N = 5
 # P279 --smoke: a short live rehearsal of the real schedule (rows are rehearsal evidence only, never graded or pooled)
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = 1, 2, 60.0
 NAMED_LIFECYCLE = ("runner", "chain_ops", "gate", "launcher", "launch_tg1")     # the pre-P371 chain.json lifecycle names
 TG1_SEEDS_ORDER = ("s1", "s2", "reload")
+# B2 spec 3: the manifest of every invocation of `tg1-p426` carries exactly this evidence policy (= the probe's
+# `tg1_runner.TG1_P426_EVIDENCE`; a test pins the equality, the chain never imports a probe module)
+P426_SETTLE_BOUND_S = 900.0     # B2 spec 4.2: the floor of the settle bound (v8 base raises it from the rehearsal walls)
+# B2 s5: the ChainOps seams the receipt, the pair gate, the snapshot checks and the busy census need (spec 16.2 / 16.5)
+P426_SEAMS = ("proc_argv", "proc_environ", "interpreter_inventory", "loaded_images", "snapshot_hashes", "expected_worker_argv",
+              "busy_procs", "descendants", "create_time", "worktree_state",
+              "interpreter_inventory_at")      # spec 16.2 / 16.4 / 16.6 (+ the path form for an interpreter without a process)
+P426_ENTRY_SEAMS = ("last_leg_end", "power_state", "start_state", "listeners")   # B2 s7: the ChainOps seams of the Entry row (spec 16.4); never skipped
+P426_POWER = dict(watts=140, volts=28, batt_above=20)                  # spec 8 / AGENTS: 140 W / 28 V, battery > 20 %
+P426_EVIDENCE_POLICY = run_config.EvidencePolicy(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
+                                                 worker_receipts="absent", item_barrier="on").as_dict()
 
 
 class RecordInvalid(co.ChainAbort):
     """An existing chain.json is not a complete valid record: refuse and leave it untouched (L4)."""
+
+
+class EntryRefused(co.ChainAbort):
+    """B2 (P426): an entry check failed before the router started (NOT_STARTED, spec 5.1): logged as `REFUSED: <reason>`
+    (spec 16), rc 2, nothing launched."""
+
+
+class LegInvalid(co.ChainAbort):
+    """B2 (P426): an `invalidate` disposition (or a systemic hook error) stopped the leg: it is INVALID, rc 2."""
 
 
 class Stopped(Exception):
@@ -159,6 +181,44 @@ def sha_file(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
+_PORTABLE_TOKENS = re.compile(r"<OUT>|<WT>|\$STACK_WORKDIR|\$HOME")
+
+
+def portable_doc(obj, *, out_root, workdir, worktree, home=None):
+    """B2 spec 16.8 (portable `chain.json`): `obj` with every string's `out_root` / `worktree` / `workdir` / `home` path replaced by
+    `<OUT>` / `<WT>` / `$STACK_WORKDIR` / `$HOME` (longest root first, at a path boundary), so a `main` record carries no absolute
+    path of this box. Paths and other path-likes become strings; other scalars pass unchanged."""
+    from bench.p426_receipt import Canon
+    canon = Canon(worktree, out_root, workdir=workdir, home=home)
+
+    def walk(v):
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        if isinstance(v, (list, tuple)):
+            return [walk(x) for x in v]
+        if isinstance(v, os.PathLike):
+            v = os.fspath(v)
+        return canon.text(v) if isinstance(v, str) else v
+    return walk(obj)
+
+
+def expand_doc(obj, *, out_root, workdir, worktree, home=None):
+    """The inverse of `portable_doc` for a resumed chain: the tokens back to this box's paths."""
+    roots = {"<OUT>": out_root, "<WT>": worktree, "$STACK_WORKDIR": workdir, "$HOME": home}
+
+    def sub(m):
+        root = roots[m.group(0)]
+        return str(root) if root else m.group(0)
+
+    def walk(v):
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return _PORTABLE_TOKENS.sub(sub, v) if isinstance(v, str) else v
+    return walk(obj)
+
+
 def fsync_json(path, obj):
     """Atomic JSON write with the file and its directory fsynced: the progress inventory is durable before the next action."""
     import tempfile
@@ -211,9 +271,12 @@ def probe_rel(repo, given):
 
 
 # --------------------------------------------------------------------------- probe command
+INJECT_STALL_S = 30             # spec 16.8: the lowered stall limit of the rehearsal's `stall-kill` injection
+
+
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=None, frozen=None, out=None, attempt=None,
-              rerun_index=None, epoch=None, nonce=None):
-    ids = [f"{leg['lang']}/{n}" for n in step["names"]]
+              rerun_index=None, epoch=None, nonce=None, evidence=None, inject_stall=None):
+    ids =[f"{leg['lang']}/{n}" for n in step["names"]]
     cmd = [str(py), str(probe), "--model", leg["model"], "--items", ",".join(step["names"]), "--lang", leg["lang"],
            "--seed-base", str(leg["seed_base"]), "--out", str(out if out is not None else leg["out"]),
            "--scaffold", scaffold, "--expect-items", ",".join(ids), "--a4-v2-receipt", str(receipt),
@@ -230,6 +293,10 @@ def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=
         cmd += ["--invocation-nonce", nonce]
     if attempt is not None:                         # P371 A8: the invocation's attempt number (worker receipt attempt id)
         cmd += ["--attempt", str(attempt), "--attempt-rerun-index", str(rerun_index or 0)]
+    if evidence:                                    # B2: the probe's evidence policy (P426 mode only)
+        cmd += ["--evidence", evidence]
+    if inject_stall:                                # B2 spec 16.8: `--inject stall-kill`: (`<lang>/<item>`, seconds), one item only
+        cmd += ["--inject-stall-item", inject_stall[0], "--inject-stall-s", str(inject_stall[1])]
     return cmd
 
 
@@ -257,7 +324,7 @@ class Chain:
         self.a, self.ops, self.tm, self.log = args, ops, timers, log
         self.lifecycle_files = dict(lifecycle_files)
         self.campaign = campaign
-        self.hooks = hooks or chain_hooks.ChainHooks()
+        self.hooks = hooks or self.default_hooks(config, args, ops, out_root)
         self.needs_docker = needs_docker or (lambda lang: lang == "go")
         self.builder = config.schedule["builder"]
         self.per_arm = self.builder == "blocks"                 # per-arm record layout (M64); tg1 / tg2 keep the flat one
@@ -296,11 +363,13 @@ class Chain:
         self.attempt_no, self.seen_run_ids, self.block_workers = {}, set(), []
         self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[], abort_evidence=[])
         self.incidents, self.dnf, self.realized = [], [], []
+        self.p426_dnf, self.p426_ledger, self.p426_invalid = [], [], []      # `p426_continue`: DNF records, ledger, INVALID records
         self.schedule, self.schedule_sha = None, None
         self.loads, self.snapshot_tools = [], {}
         self.loaded = None
         self.rc = None
-        self.pred, self.explicit_pred = dict(PRED_S), {}
+        # C221: the tg1 chain has no per-model table (models come from --models): the pilot mean, else GENERIC_PRED_S
+        self.pred, self.explicit_pred = ({} if self.builder == "tg1" else dict(PRED_S)), {}
         for spec in args.pred_s or []:
             key, val = spec.rsplit("=", 1)
             lang, model = key.split(":", 1)
@@ -425,9 +494,325 @@ class Chain:
             return "artifacts.campaign_core absent"
         return None
 
+    @staticmethod
+    def default_hooks(config, args, ops, out_root):
+        """B2: `tg1-p426` installs the P426 reconciliation hooks (spec 16.2); every other chain keeps the no-op hooks."""
+        if config.transport_policy != "p426_continue":
+            return chain_hooks.ChainHooks()
+        from bench import p426_hooks              # lazy: only P426 mode needs it
+        arm = "ON" if str(getattr(args, "predictor", "off")).lower() in ("on", "mtp") else "OFF"
+        return p426_hooks.P426Hooks(ops=ops, out_root=out_root, arm=arm, settle_bound_s=Chain.p426_settle_bound(args),
+                                    inject=getattr(args, "inject", None))
+
+    @staticmethod
+    def p426_settle_bound(args):
+        """Spec 4.2: the settle bound of the frozen record the leg runs under: the timeout amendment's, else the v8 base's; a
+        rehearsal manifest (or no readable record) carries none, so the 900 s floor holds."""
+        path = getattr(args, "frozen_record", None)
+        if path:
+            from bench import p426_record
+            try:
+                rec = p426_record.load(path, mode=args.mode, rehearsal=bool(getattr(args, "rehearsal", False)))
+            except p426_record.RecordError as exc:           # a bad record refuses, never the 900 s floor (P41)
+                raise Refused(f"REFUSED: --frozen-record {exc}") from None
+            bound = rec["doc"].get("settle_bound_s") or rec["base"].get("settle_bound_s")      # the amendment, else v8 base
+            if bound:
+                return float(bound)
+        return getattr(args, "settle_bound_s", None) or P426_SETTLE_BOUND_S
+
+    # -- B2 whole-leg log boundaries (spec 4.2)
+    def p426_open_log_bounds(self):
+        """`log_bounds.json`, exclusive-created BEFORE the router starts: path, device, inode and byte offset of the worker
+        log and the main-model log (an absent file is created empty so its identity is fixed before the router appends)."""
+        from bench.p426_hooks import portable_log
+        path = Path(self.ops.server_log_path())
+        files = []
+        self.p426_bound_paths = {}
+        for p in (path, path.with_name("main_model.log")):
+            p.parent.mkdir(parents=True, exist_ok=True)
+            p.touch()
+            st = p.stat()
+            portable = portable_log(p)                       # a `main` record: `<WT>/logs/<name>` (spec 16.7)
+            self.p426_bound_paths[portable] = p
+            files.append(dict(path=portable, device=st.st_dev, inode=st.st_ino, offset_start=st.st_size, offset_end=None))
+        target = self.out_root / "log_bounds.json"
+        try:
+            with open(target, "x") as f:
+                json.dump(dict(files=files, created=co.utc_stamp(), finalized=None), f, indent=1)
+        except FileExistsError:
+            raise co.ChainAbort(f"{target.name} exists: a leg runs on a fresh out-root (log boundaries are exclusive-created)") from None
+        self.p426_bounds_open = True
+
+    def p426_close_log_bounds(self):
+        """Finalize `log_bounds.json` after teardown: `offset_end` per file, or null + `problems` for a truncated or replaced
+        file (the leg is then INVALID, rc 2; the harvest refuses it)."""
+        if not getattr(self, "p426_bounds_open", False):
+            return
+        target = self.out_root / "log_bounds.json"
+        doc, problems = json.loads(target.read_text()), []
+        for entry in doc["files"]:
+            try:
+                st = os.stat(self.p426_bound_paths[entry["path"]])
+            except OSError as exc:
+                entry["offset_end"] = None
+                problems.append(f"{entry['path']} is gone: {exc}")
+                continue
+            if (st.st_dev, st.st_ino) != (entry["device"], entry["inode"]) or st.st_size < entry["offset_start"]:
+                entry["offset_end"] = None
+                problems.append(f"{entry['path']} was replaced or truncated during the leg")
+            else:
+                entry["offset_end"] = st.st_size
+        doc["finalized"] = co.utc_stamp()
+        if problems:
+            doc["problems"] = problems
+        co.atomic_json(target, doc)
+        if problems:
+            self.log("LOG BOUNDS: " + "; ".join(problems))
+            if not self.rc:
+                self.rc = 2
+
+    # -- B2 receipt, pair gate, snapshot checks and busy census (spec 3, 6.3 - 6.5, 16.5); every failure is systemic (ChainAbort)
+    def p426_require_seams(self):
+        """In P426 mode a ChainOps seam the checks need that is missing is systemic, never a skip (spec 16.7)."""
+        missing = [n for n in P426_SEAMS if not callable(getattr(self.ops, n, None))]
+        if missing:
+            raise co.ChainAbort(f"TRIPWIRE: P426 mode needs the ChainOps seams {missing}; a missing seam is systemic, never skipped")
+
+    def p426_log_offset(self):
+        return os.stat(self.ops.server_log_path()).st_size
+
+    def p426_check_a4_window(self, start, receipt_path):
+        """Spec 4.3: the worker-log window of the A4 gate run (3 `anon:*` requests + its own 4-request `ses_*` session) equals
+        the A4 run's `gate.json` (`<STACK_WORKDIR>/c102a/gate.json`, the gate's default workdir) and its A4 receipt."""
+        from bench import p426_reconcile as prc
+        try:
+            path = self.ops.server_log_path()
+            window = self.ops.read_log(path, start, os.stat(path).st_size)
+            receipt = json.loads(Path(receipt_path).read_text())
+            gate = json.loads((Path(self.ops.wd) / "c102a" / "gate.json").read_text())
+            problems = prc.a4_window_problems(prc.parse_log(window), receipt, gate)
+        except (OSError, ValueError) as exc:             # includes the log parse error: an unparseable line is systemic
+            raise co.ChainAbort(f"A4 window: its evidence is unreadable ({type(exc).__name__}: {exc})") from None
+        if problems:
+            raise co.ChainAbort("A4 window: " + "; ".join(problems))
+
+    def p426_roots(self):
+        return dict(out_root=self.out_root, workdir=getattr(self.ops, "wd", None),
+                    worktree=getattr(self.ops, "repo", None) or getattr(self, "repo", None), home=Path.home())
+
+    def p426_persist(self, doc):
+        """A record the chain writes under the out-root: portable in P426 mode (spec 16.8; a `main` record), as is otherwise."""
+        return portable_doc(doc, **self.p426_roots()) if self.p426 else doc
+
+    def p426_worktree(self):
+        """The served worktree: the one the ops serve (`ChainOps.repo`), never the chain's own checkout under injected ops."""
+        return Path(getattr(self.ops, "repo", None) or self.repo)
+
+    def p426_bind_router(self, pid):
+        """The owned router's identity `(pid, ChainOps.create_time(pid))`, taken when this process starts it (spec 3 / 16.6)
+        and compared at every checkpoint; the hooks compare the same identity at each barrier."""
+        if type(pid) is not int:
+            raise co.ChainAbort("TRIPWIRE: start_router gave no owned router pid (P426 needs it for the identity checks)")
+        self.p426_router = dict(pid=pid, start=self.ops.create_time(pid))
+        bind = getattr(self.hooks, "bind_router", None)
+        if bind is not None:
+            bind(pid, self.p426_router["start"])
+        bind_ready = getattr(self.hooks, "bind_ready_checks", None)
+        if bind_ready is not None:
+            bind_ready(self.p426_ready_problems)
+
+    def p426_router_problems(self):
+        from bench.p426_hooks import same_identity
+        r = getattr(self, "p426_router", None)
+        if r is None:
+            return ["no owned router identity was recorded"]
+        return [] if same_identity(self.ops, r["pid"], r["start"]) else ["owned router identity changed or the router is gone"]
+
+    def p426_state_problems(self, entry=False):
+        """The entry checks that hold for the life of the leg (spec 3, 'Before every invocation'): the frozen record's kind and
+        self-hash, the worktree at the record's arm commit, clean and with the fork gitlinks the record names, the registry sha,
+        the probe's live identity. At `entry` nothing is pinned yet: the registry only has to be readable (it is pinned next)."""
+        from bench import p426_record
+        try:
+            rec = p426_record.load(self.a.frozen_record, mode=self.a.mode, rehearsal=bool(getattr(self.a, "rehearsal", False)))
+        except p426_record.RecordError as exc:
+            return [f"frozen record: {exc}"]
+        base, problems = rec["base"], []
+        want = base.get(f"{self.p426_arm_name()}_commit")
+        st = self.ops.worktree_state(self.p426_worktree())
+        if want and st.get("head") != want:
+            problems.append(f"worktree HEAD {str(st.get('head'))[:12]} != the record's {self.p426_arm_name()} commit {want[:12]}")
+        if st.get("clean") is not True:
+            problems.append("worktree is not clean (git status, submodules at their gitlinks)")
+        links, have = base.get("gitlinks"), st.get("gitlinks") or {}
+        for key, path in (("mlx_vlm", "src/mlx-vlm"), ("mlx_serve", "src/mlx-serve")):
+            if isinstance(links, dict) and links.get(key) and have.get(path) != links[key]:
+                problems.append(f"gitlink {path} {str(have.get(path))[:12]} != the record's {str(links[key])[:12]}")
+        sha = self.ops.overlay_sha()
+        if entry:
+            if not (isinstance(sha, str) and co.HEX64.match(sha)):
+                problems.append("the served registry is unreadable (no sha256)")
+        elif sha != self.pinned.get("registry_sha256"):
+            problems.append("the served registry's sha256 changed since the chain started")
+        ident = self.print_identity(self.arm_ids[0])
+        for key in ("probe_code_sha256", "scaffold_policy_sha256", "generation_identity_sha256"):
+            if base.get(key) and ident.get(key) != base[key]:
+                problems.append(f"probe identity {key} differs from the record's")
+        return problems
+
+    def p426_arm_name(self):
+        return "on" if getattr(self.a, "predictor", "off") == "mtp" else "off"
+
+    def p426_snapshot_checks(self, snapshots, where):
+        from bench import p426_receipt as pr
+        try:
+            problems = pr.snapshot_problems(snapshots, pr.load_pins(self.p426_worktree()), self.a.models[0], self.p426_arm_name())
+        except pr.ReceiptError as exc:
+            problems = [str(exc)]
+        if problems:
+            raise co.ChainAbort(f"snapshots {where}: " + "; ".join(problems))
+
+    def p426_entry_row(self):
+        """Spec 3 Entry row, before anything starts (the CLI calls it before `run`, holding `LEG.lock`): every seam exists (never a
+        skip), the frozen record (kind, self-hash), the worktree (HEAD == the record's arm commit, clean, gitlinks), the registry
+        sha, the probe's live identity, >= 600 s since `LAST_LEG_END`, no foreign busy process (that includes `session_cache_probe` /
+        `opencode run` survivors), no :8000 listener, power. Any failure is `EntryRefused` (NOT_STARTED, rc 2) naming every problem.
+        The snapshots against the pins and the log boundaries stay in `run` (`p426_entry_checks`, `p426_open_log_bounds`)."""
+        from bench import p426_locks
+        try:
+            self.p426_require_seams()
+            absent = [n for n in P426_ENTRY_SEAMS if not callable(getattr(self.ops, n, None))]
+            if absent:
+                raise co.ChainAbort(f"TRIPWIRE: P426 mode needs the ChainOps seams {absent}; a missing seam is systemic, never skipped")
+            problems = self.p426_state_problems(entry=True)
+            gap = p426_locks.idle_gap_problem(self.ops.last_leg_end(), time.time())
+            if gap:
+                problems.append(gap)
+            busy = list((self.ops.start_state() or {}).get("busy") or [])
+            if busy:
+                problems.append("foreign busy process before the router: " + "; ".join(busy)[:300])
+            listening = list(self.ops.listeners() or [])
+            if listening:
+                problems.append(f":8000 already has a listener {listening}")
+            ps = self.ops.power_state() or {}
+            if not (ps.get("watts") == P426_POWER["watts"] and ps.get("volts") == P426_POWER["volts"]
+                    and ps.get("batt") is not None and ps["batt"] > P426_POWER["batt_above"]):
+                problems.append(f"power: adapter {ps.get('watts')} W / {ps.get('volts')} V, battery {ps.get('batt')} % "
+                                f"(needs {P426_POWER['watts']} W / {P426_POWER['volts']} V, battery > {P426_POWER['batt_above']} %)")
+        except EntryRefused:
+            raise
+        except co.ChainAbort as exc:
+            raise EntryRefused(str(exc)) from None
+        if problems:
+            raise EntryRefused("; ".join(problems))
+
+    def p426_ready_problems(self):
+        """Spec 3, Item `ready` row (besides the owned identities, which the hooks check): the registry sha equals the one pinned
+        at entry, the lifecycle hash (the chain's code and ChainConfig) has not drifted, the worktree is still clean."""
+        problems = []
+        if self.ops.overlay_sha() != self.pinned.get("registry_sha256"):
+            problems.append("the served registry's sha256 changed since the chain started")
+        problems += [f"lifecycle: {p}" for p in self.lifecycle_problems()]
+        if self.ops.worktree_state(self.p426_worktree()).get("clean") is not True:
+            problems.append("worktree is not clean (git status, submodules at their gitlinks)")
+        return problems
+
+    def p426_entry_checks(self):
+        """Entry (before the router): every seam the P426 checks need exists (never a skip); the target (and, ON, drafter)
+        snapshot revisions and file hashes equal the fork's pins."""
+        try:
+            self.p426_require_seams()
+            self.p426_snapshot_checks(self.ops.snapshot_hashes(self.a.models[0]), "at entry")
+        except EntryRefused:
+            raise
+        except co.ChainAbort as exc:
+            raise EntryRefused(str(exc)) from None
+
+    def p426_census(self, where, load=None):
+        """No foreign busy process: the owned router / worker are exempt by (pid, start), the chain's own descendants by
+        `ChainOps.descendants`; a worker process is exempt ONLY as the owned worker (a descendant `mlx_vlm.server` is foreign)."""
+        from bench.p426_hooks import same_identity
+        owned = {}
+        router = getattr(self, "p426_router", None)
+        if router and same_identity(self.ops, router["pid"], router["start"]):
+            owned[router["pid"]] = "router"
+        worker = (load or {}).get("worker")
+        if worker and same_identity(self.ops, worker["pid"], worker["create_time"]):
+            owned[worker["pid"]] = "worker"
+        kids = set(self.ops.descendants(os.getpid()))
+        foreign = []
+        for line in self.ops.busy_procs():
+            head = line.split(None, 1)
+            pid = int(head[0]) if head and head[0].isdigit() else None
+            is_worker = "mlx_vlm.server" in line or "mlx_vlm/server" in line
+            if pid in owned and (owned[pid] == "worker") == is_worker:
+                continue
+            if pid in kids and not is_worker:
+                continue
+            marker = next((m for m in co.BUSY if m in line), "busy")
+            foreign.append(f"pid {pid} ({marker})")
+        if foreign:
+            raise co.ChainAbort(f"TRIPWIRE: foreign busy process {where}: " + "; ".join(foreign))
+
+    def p426_after_load(self, load, ident):
+        """After load (spec 3), before the A4 gate: the foreign-process census, the worker argv exact (6.3), the arm-equality
+        receipt (6.4, exclusive-created at `<out-root>/receipt.json`), the receipt's snapshots against the pins, and for the
+        second leg of a pair the comparison with the first leg's receipt (6.5)."""
+        from bench import p426_hooks as ph
+        from bench import p426_receipt as pr
+        arm = self.p426_arm_name()
+        router = getattr(self, "p426_router", None)
+        if not router or self.p426_router_problems():
+            raise co.ChainAbort("owned router identity changed or missing after load (systemic)")
+        self.p426_census("after load", load)
+        problems = pr.worker_argv_problems(self.ops.proc_argv(ident["pid"]),
+                                           self.ops.expected_worker_argv(self.ops.overlay, load["model"]), arm)
+        if problems:
+            raise co.ChainAbort("worker argv: " + "; ".join(problems))
+        launch = dict(argv=[str(self.py), str(self.probe_of(self.arm_ids[0]))], env=self.ops.env_base())
+        try:
+            receipt = pr.arm_receipt(self.ops, worktree=self.p426_worktree(), out_root=self.out_root, model=load["model"], probe_launch=launch,
+                                     pids=dict(router=router["pid"], worker=ident["pid"], probe=None))
+        except pr.ReceiptError as exc:
+            raise co.ChainAbort(f"arm-equality receipt: {exc}") from None
+        try:
+            ph.write_exclusive(self.out_root / "receipt.json", receipt)
+        except FileExistsError:
+            raise co.ChainAbort("receipt.json exists: a leg runs on a fresh out-root (the receipt is exclusive-created)") from None
+        self.log(f"RECEIPT {arm} sha256={receipt['sha256'][:16]} credential keys={ {p: len(k) for p, k in receipt['credential_keys'].items()} }")
+        self.p426_snapshot_checks(receipt["snapshots"], "after load")
+        first_path = getattr(self.a, "pair_receipt", None)
+        if first_path:
+            try:
+                first = json.loads(Path(first_path).read_text())
+            except (OSError, ValueError):
+                raise co.ChainAbort("pair gate: the first leg's receipt is unreadable") from None
+            diff = pr.pair_problems(first, receipt)
+            if diff:
+                raise co.ChainAbort("pair gate: " + "; ".join(diff))
+            self.log(f"PAIR GATE passed (observed differences: {pr.observed_differences(first, receipt)})")
+
+    def p426_before_invocation(self, load):
+        """Before every invocation (spec 3): the entry checks except router absence, the idle gap and power - the frozen record's
+        kind and self-hash, the worktree HEAD and cleanliness, the registry sha, the probe's identity, the snapshots against
+        the pins - the owned router / worker identities `(pid, create_time(pid))`, and no foreign busy process."""
+        problems = self.p426_state_problems() + self.p426_router_problems()
+        cur = self.ops.worker_ident(load["model"])
+        if not cur or (cur["pid"], cur["create_time"]) != (load["worker"]["pid"], load["worker"]["create_time"]):
+            problems.append("owned worker identity changed or the worker is gone")
+        if problems:
+            raise co.ChainAbort("before launch (systemic): " + "; ".join(problems))
+        self.p426_census("before launch", load)
+        self.p426_snapshot_checks(self.ops.snapshot_hashes(self.a.models[0]), "before launch")
+
+    @property
+    def p426(self):
+        """The `p426_continue` transport policy (only `tg1-p426` uses it): its own flat-layout leg loop, DNF records, ledger."""
+        return self.config.transport_policy == "p426_continue"
+
     @property
     def freezes_schedule(self):
-        return self.builder in ("blocks", "tg2_tier")
+        return self.builder in ("blocks", "tg2_tier") or self.config.config_id == run_config.P426_CONFIG_ID
 
     def resolve_frozen(self, previous):
         """P364: the epoch's frozen prompt date. A new epoch takes it from the reference epoch's chain.json
@@ -475,6 +860,8 @@ class Chain:
                 previous = json.loads(path.read_text())
             except (OSError, ValueError) as exc:
                 raise RecordInvalid(f"existing chain.json unreadable ({type(exc).__name__}); use a new out-root")
+            if self.p426:
+                previous = expand_doc(previous, **self.p426_roots())          # written portable (spec 16.8): back to this box's paths
             problem = self.record_problem(previous)
             if problem:
                 raise RecordInvalid(f"existing chain.json is not a complete valid record ({problem}); use a new out-root")
@@ -525,6 +912,9 @@ class Chain:
                 self.pinned["generation_identity_sha256"] = composite
         if self.config.transport_policy == "incident_retry":
             self.incidents, self.dnf = list(previous.get("incidents") or []), list(previous.get("dnf") or [])
+        elif self.p426:
+            self.p426_dnf, self.p426_ledger = list(previous.get("p426_dnf") or []), list(previous.get("p426_ledger") or [])
+            self.p426_invalid = list(previous.get("p426_invalid") or [])
         for rec in self.progress["invocations"]:
             stem, n = self.stem_attempt(rec)
             if stem is not None:
@@ -708,6 +1098,11 @@ class Chain:
             out = dict(policy_sha256=self.expected_policy, pinned=self.pinned, probe=str(self.probe))
             if self.freezes_schedule:
                 out.update(schedule_sha256=self.schedule_sha, realized=self.realized)
+            if self.p426:
+                out.update(p426_dnf=self.p426_dnf, p426_ledger=self.p426_ledger, p426_invalid=self.p426_invalid,
+                           frozen_record=self.p426_frozen_record_ref(), inject=getattr(self.a, "inject", None))
+                if getattr(getattr(self, "a", None), "mode", None) == "makeup":
+                    out["p426_not_run"] = self.p426_not_run()
             return out
         gens = {arm: p["generation_identity_sha256"] for arm, p in self.pinned_by_arm.items()
                 if p.get("generation_identity_sha256")}
@@ -727,7 +1122,7 @@ class Chain:
                    predictor=getattr(self.a, "predictor", "off"), chain_config=self.config.as_dict(),
                    progress=self.progress, epoch_id=self.epoch_id, snapshots=self.snapshots,
                    artifacts=dict(campaign_core=self.campaign_core, contract=self.contract_refs()), **self.record_layout())
-        fsync_json(self.out_root / "chain.json", doc)
+        fsync_json(self.out_root / "chain.json", self.p426_persist(doc))
 
     # -- STOP
     def stop_requested(self):
@@ -746,7 +1141,8 @@ class Chain:
     # -- schedule: frozen and hashed before the first launch (blocks, tg2_tier), then normalized into loads -> legs
     def freeze_schedule(self):
         """Hash the schedule BEFORE launch; a resumed chain must regenerate exactly the frozen one. `blocks` (M64) and
-        `tg2_tier` (the frozen draw artifact) only; tg1 / pilot schedules depend on the run selection and are not frozen."""
+        `tg2_tier` (the frozen draw artifact) and the tg1 chain in P426 mode (B2 spec 7: one leg = one session, its whole order);
+        the legacy tg1 / pilot schedules depend on the run selection and are not frozen."""
         if not self.freezes_schedule:
             return
         sched = self.build_schedule()
@@ -762,8 +1158,50 @@ class Chain:
         self.schedule = sched
         self.write_json("schedule-frozen")
 
+    def tg1_schedule(self):
+        """The tg1 schedule of THIS invocation over the recorded `--models` (C221); P426 mode: the seeded order (spec 7)."""
+        params = self.config.schedule["params"]
+        try:
+            if self.a.mode == "makeup":                       # spec 5.5: the occurrences file IS the plan (one fresh-load leg)
+                return schedules.tg1_makeup(self.occurrence_records(), self.names, picks=tuple(params["models"]),
+                                            predictor=getattr(self.a, "predictor", "off"))
+            return schedules.tg1(self.a.mode, self.a.sessions, self.names, smoke=getattr(self.a, "smoke", False),
+                                 predictor=getattr(self.a, "predictor", "off"), picks=tuple(params["models"]),
+                                 p426=params.get("p426") is True, rehearsal=bool(getattr(self.a, "rehearsal", False)))
+        except ValueError as exc:
+            raise co.ChainAbort(f"the schedule cannot be built: {exc}") from None
+
+    def p426_inject_stall(self, leg, step):
+        """`--inject stall-kill` (rehearsal only, spec 16.8): the probe flags go to the ONE invocation holding the first Python item
+        of the rehearsal schedule; every other invocation runs without them."""
+        if not (self.p426 and getattr(self.a, "inject", None) == "stall-kill" and leg.get("lang") == "python"):
+            return None
+        first = next((l["full_names"][0] for b in (self.schedule or {}).get("blocks", []) for l in b["legs"]
+                      if l["lang"] == "python" and l["full_names"]), None)
+        return (f"python/{first}", INJECT_STALL_S) if first is not None and first in step["names"] else None
+
+    def occurrence_records(self):
+        """The make-up leg's occurrences (JSON lines, spec 16.7); an unreadable file aborts before anything launches."""
+        try:
+            records = [json.loads(x) for x in Path(self.a.occurrences).read_text().splitlines() if x.strip()]
+        except (OSError, ValueError, TypeError):
+            raise co.ChainAbort("the occurrences file is missing, unreadable or not JSON lines") from None
+        if not records or not all(isinstance(r, dict) for r in records):
+            raise co.ChainAbort("the occurrences file holds no occurrence records")
+        return records
+
+    def p426_not_run(self):
+        """A make-up leg's slots with no entry in the realized ledger (a row or a DNF both count as run), in the frozen schedule's
+        order: what an early stop leaves unrun (spec 5.5)."""
+        done = {tuple(e["slot"].split("|")[3:6]) for e in self.p426_ledger}
+        return [dict(session=leg["session"], language=leg["lang"], item=item, seed=leg["seed_base"])
+                for block in (self.schedule or {}).get("blocks", []) for leg in block["legs"] for item in leg["full_names"]
+                if (leg["session"], leg["lang"], item) not in done]
+
     def build_schedule(self):
         params = self.config.schedule["params"]
+        if self.builder == "tg1":
+            return self.tg1_schedule()
         if self.builder == "blocks":
             sessions = list(self.a.sessions)
             return schedules.blocks(
@@ -806,8 +1244,7 @@ class Chain:
         raise NotImplementedError(f"schedule builder {self.builder!r}")
 
     def plan_tg1(self):
-        sched = schedules.tg1(self.a.mode, self.a.sessions, self.names, smoke=getattr(self.a, "smoke", False),
-                              predictor=getattr(self.a, "predictor", "off"))
+        sched = self.schedule if self.freezes_schedule else self.tg1_schedule()       # P426: the FROZEN schedule
         loads = []
         for idx, block in enumerate(sched["blocks"]):
             legs = []
@@ -817,6 +1254,9 @@ class Chain:
                     slot_base=f"{self.config.config_id}|{self.arm.arm}|{leg['model']}|{leg['session']}|{leg['lang']}",
                     invocations=[dict(kind=i["phase"], phase=i["phase"], names=list(i["names"]), limit=i["limit"],
                                       expect=list(i["expect"])) for i in leg["invocations"]]))
+                if self.freezes_schedule:        # P426: the leg-level ledger key (the per-item ledger is a later slice)
+                    legs[-1]["realized_key"] = schedules.leg_key(dict(block=idx, lang=leg["lang"], model=block["model"],
+                                                                      session=block["session"], items=leg["full_names"]))
             loads.append(dict(idx=idx, key=f"{block['session']}|{block['model']}", session=block["session"],
                               model=block["model"], seed_base=block["seed_base"], legs=legs,
                               pilot_only=block.get("pilot_only", False)))
@@ -904,7 +1344,8 @@ class Chain:
             self.rc = 3
             return 3
         try:
-            self.ops.ensure_overlay()
+            if self.builder != "tg1":                    # C221: the tg1 chain serves the committed registry verbatim, no overlay
+                self.ops.ensure_overlay()
             (self.pinned_shared if self.per_arm else self.pinned)["registry_sha256"] = self.ops.overlay_sha()
             if not self.ops.power_ok():
                 raise co.ChainAbort("power gate FAIL")
@@ -915,7 +1356,12 @@ class Chain:
                 raise co.ChainAbort("docker gate FAIL: grading needs a reachable docker daemon")   # P290
             if self.config.arm_switch_ops:
                 self.ops.require_arm_ops()
-            self.ops.start_router()
+            if self.p426:
+                self.p426_entry_checks()                 # B2 spec 3: the snapshots against the fork's pins, before the router
+                self.p426_open_log_bounds()              # B2 spec 4.2: BEFORE the router starts
+            router_pid = self.ops.start_router()
+            if self.p426:
+                self.p426_bind_router(router_pid)        # B2 spec 3: the owned identity `(pid, create_time(pid))`
             if self.per_arm:
                 self.log(f"START chain arms={self.arm_ids} epoch={str(self.epoch_id)[:12]} loads="
                          f"{[(b['session'], b['model']) for b in loads]}")
@@ -927,6 +1373,8 @@ class Chain:
                 if self.loaded and not self.ops.unload(self.loaded):
                     raise co.ChainAbort("final unload failed")
                 self.loaded = None
+                if self.p426 and self.p426_router_problems():
+                    raise co.ChainAbort("exit (systemic): " + "; ".join(self.p426_router_problems()))
                 self.verify_snapshots("exit")
                 self.check_realized()
                 self.verify_lifecycle("exit")
@@ -937,14 +1385,20 @@ class Chain:
                 self.log(f"STOP honoured at {self.stop_info['where']}: exit 3")
                 self.rc = 3
         except co.ChainAbort as e:
-            self.log(f"CHAIN ABORT: {e}")
+            self.log(f"{'REFUSED' if isinstance(e, EntryRefused) else 'CHAIN ABORT'}: {e}")
+            if isinstance(e, EntryRefused):                   # spec 16: every refusal prints one stderr line `REFUSED: <reason>`
+                print(f"REFUSED: {e}", file=sys.stderr, flush=True)
             self.rc = e.code
         finally:
             self.write_json("finished")
             try:
                 self.ops.stop_stack()
             finally:
-                self.write_json("finished")
+                try:
+                    if self.p426:
+                        self.p426_close_log_bounds()     # B2 spec 4.2: finalized after teardown, also when teardown raised
+                finally:
+                    self.write_json("finished")
         return self.rc
 
     def check_realized(self):
@@ -960,6 +1414,22 @@ class Chain:
                                  f"{sum(len(load['legs']) for load in self.loads)} scheduled)")
         except ValueError as exc:
             raise co.ChainAbort(str(exc)) from None
+        if self.p426:
+            self.check_p426_ledger()
+
+    def check_p426_ledger(self):
+        """B2 spec 7: the per-item realized ledger (slot -> row | DNF, in order) equals the plan slot for slot; every DNF entry
+        is a recorded `p426_dnf` and the other way round."""
+        want = [s for load in self.loads for leg in load["legs"] for s in self.leg_slots(leg)]
+        got = [e.get("slot") for e in self.p426_ledger]
+        if got != want:
+            missing = [s for s in want if s not in got]
+            extra = sorted({s for s in got if got.count(s) > 1 or s not in want})
+            raise co.ChainAbort(f"per-item ledger differs from the plan ({len(got)} entries, {len(want)} planned; "
+                                f"missing {missing[:3]}, duplicated/unplanned {extra[:3]}, or reordered)")
+        ledger_dnf = [e["slot"] for e in self.p426_ledger if e.get("kind") == "dnf"]
+        if sorted(ledger_dnf) != sorted(d["slot"] for d in self.p426_dnf):
+            raise co.ChainAbort("per-item ledger: its DNF entries differ from the p426_dnf records")
 
     def record_realized(self, leg):
         """Appended ONCE per leg key, in schedule order, when the leg's slots are all accounted."""
@@ -1108,6 +1578,8 @@ class Chain:
                                        session=load["session"], model=load["model"]))
         load["worker"], load["manifest_worker"], load["last_arm"] = (
             dict(pid=ident["pid"], create_time=ident["create_time"]), None, None)
+        if self.p426:
+            self.p426_after_load(load, ident)            # B2 spec 3: census, worker argv, arm-equality receipt, pair gate - before A4
         rec = load["rec"]
         wn = len(rec["workers"])
         receipts, refs = {}, {}
@@ -1119,8 +1591,11 @@ class Chain:
         self.write_json("worker-reserved")
         for arm in self.arm_ids:
             tag = f"{load['session']}_{n}_{load['model']}" + (f"_{arm}" if self.per_arm else "")
+            a4_from = self.p426_log_offset() if self.p426 else None
             latest = (self.ops.a4_gate(load["model"], tag, scaffold=self.label_of(arm)) if self.per_arm
                       else self.ops.a4_gate(load["model"], tag))
+            if self.p426:
+                self.p426_check_a4_window(a4_from, latest)      # B2 spec 4.3: per load, before the first item
             path, sha = self.bind_receipt(latest, load, wn, arm)
             receipts[arm], refs[arm] = str(path), dict(path=self._relpath(path), sha256=sha)
             self.write_json("a4-bound")                  # the reference is durable before the next arm's gate
@@ -1202,6 +1677,11 @@ class Chain:
             self.require_load_complete(load)
             return "ok"
         for leg in load["legs"]:
+            if self.p426:
+                if self.run_p426_leg(load, leg) != "ok":
+                    return "incomplete"
+                self.record_realized(leg)
+                continue
             for inv in leg["invocations"]:
                 self.check_stop("before launch")
                 load["rec"]["cursor"] = dict(leg_index=leg["li"], phase=inv["phase"])
@@ -1230,6 +1710,9 @@ class Chain:
         table = self.slot_table()
         expected = [s for leg in load["legs"] for s in self.leg_slots(leg)]
         missing = table.unscored(expected)
+        if self.p426:                                    # a recorded item DNF accounts for its slot (not a row)
+            dnf = {d["slot"] for d in self.p426_dnf}
+            missing = [s for s in missing if s not in dnf]
         if missing:
             raise co.ChainAbort(f"load {load['session']}/{load['model']} complete but {len(missing)} slots are unscored: "
                                 f"{missing[:3]}")
@@ -1315,6 +1798,8 @@ class Chain:
             rec = next(r for r in self.progress["loads"] if r["load"] == op["load"])
             if rec["load_gen"] != op["gen"]:
                 return                                   # already advanced (an idempotent replay)
+            if op.get("dnf_slots") is not None and self.p426:
+                raise co.ChainAbort("p426_continue: an advance_load op never carries dnf_slots (no load rerun)")
             if op.get("dnf_slots") is not None:          # incident_retry: the load reruns from scratch
                 self.dnf = [r for r in self.dnf if r["slot"] not in set(op["dnf_slots"])]
                 self.realized = [r for r in self.realized if r[0] != op["sched_idx"]]
@@ -1337,6 +1822,9 @@ class Chain:
         chain.json (fsynced) BEFORE the first file moves; the moves are one transaction (F4); the load's records are marked
         `archived` (paths rewritten to the archive, shas kept), they leave the active inventory, and the load's generation
         advances."""
+        if self.p426:
+            raise co.ChainAbort("p426_continue never archives or reloads a load (an item DNF continues on the same load; "
+                                "anything else is systemic)")
         rec = load["rec"]
         sdir = self.session_dir(load)
         dest = sdir / "incomplete" / f"{load['model']}.{self._stamp()}"
@@ -1487,6 +1975,8 @@ class Chain:
         cur = self.ops.worker_ident(leg["model"])
         if not cur or (cur["pid"], cur["create_time"]) != (load["worker"]["pid"], load["worker"]["create_time"]):
             raise co.ChainAbort("worker identity changed before launch")
+        if self.p426:
+            self.p426_before_invocation(load)            # B2 spec 3: router identity, foreign-process census, snapshots
         if not self.ops.power_ok():
             raise co.ChainAbort("power gate FAIL before launch")
         if self.needs_docker(leg["lang"]) and not self.ops.docker_ok():
@@ -1499,7 +1989,9 @@ class Chain:
         nonce = secrets.token_hex(32)                    # P384: persisted in the invocation record BEFORE the launch
         cmd = build_cmd(self.py, self.probe_of(arm), view, step, load["receipts"][arm], cancel, ack, scaffold=leg["label"],
                         universe=self.universe, frozen=self.frozen, attempt=n, rerun_index=inv.get("rerun_index", 0),
-                        epoch=self.epoch_arg(), nonce=nonce)
+                        epoch=self.epoch_arg(), nonce=nonce,
+                        evidence="p426" if self.config.config_id == run_config.P426_CONFIG_ID else None,
+                        inject_stall=self.p426_inject_stall(leg, step))
         att = dict(attempt=n, step=inv["phase"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(load["worker"]), started=co.utc_stamp(), rc=None,
                    cleanup_status=None, run_id=None, probe_pid=None, probe_create_time=None, outcome=None)
@@ -1518,13 +2010,13 @@ class Chain:
             att["probe_create_time"] = self.ops.create_time(proc.pid)
         except Exception:  # noqa: BLE001
             pass
-        co.atomic_json(ajson, att)
+        co.atomic_json(ajson, self.p426_persist(att))
         self.write_json("running")
         sup = self.supervise(att, proc, view, step, load, rec=rec, inv=inv, base=base)
         att["rc"] = proc.returncode
         self.hydrate_from_manifest(att, view, out, rec)
         att["outcome"] = sup["state"]
-        co.atomic_json(ajson, att)
+        co.atomic_json(ajson, self.p426_persist(att))
         self.log(f"END {leg['stem']} attempt {n} rc={att['rc']} state={sup['state']}")
         self.write_json("attempt-ended")
         if sup["state"] == "barrier_mismatch":
@@ -1543,7 +2035,7 @@ class Chain:
         if not why:
             self.pin_from(view)
             att["outcome"] = "validated"
-            co.atomic_json(ajson, att)
+            co.atomic_json(ajson, self.p426_persist(att))
             return self.accept_invocation(load, leg, inv, rec, out, hook, att=att, view=view)
         for w in why:
             self.log(f"INCOMPLETE {leg['stem']} attempt {n}: {w}")
@@ -1770,7 +2262,13 @@ class Chain:
         self.after_invocation(load, leg, inv, rec, rows)
         if not hook:
             return "ok"
+        if hook.get("disposition") == "invalidate":          # B2: a barrier check failed; the cleanup is verified, the leg INVALID
+            self.require_certain_cleanup(att, view, "invalidate")
+            raise LegInvalid(f"leg INVALID at {hook['slot']}: {hook.get('reason')}")
         if hook["kind"] == "before":
+            if self.p426:
+                raise co.ChainAbort("p426_continue: a before_attempt pre-spawn incident cannot occur (a hook "
+                                    "infrastructure error is systemic)")
             if self.config.transport_policy != "incident_retry":
                 self.require_certain_cleanup(att, view, "restart")
                 return "incomplete"                       # abort_restart: the load restarts
@@ -1903,7 +2401,7 @@ class Chain:
                 why.append("cleanup uncertain: containers remaining")
             if cs.get("uncertain") is not False:
                 why.append("cleanup uncertain: uncertain flag set")
-            if self.config.transport_policy == "incident_retry":
+            if self.config.transport_policy in ("incident_retry", "p426_continue"):
                 # A7 (F5): the M64 layout's every retry / restart takes the EXACT receipt; tg1 (`abort_restart`) keeps the
                 # C147 rule (a receipt's `orphans_unattributed` are diagnostics there, and its probe predates the six keys)
                 why += [f"cleanup receipt not exact / certain / complete: {p}" for p in cleanup_problems(cs)]
@@ -1996,7 +2494,10 @@ class Chain:
     def handle_incomplete(self, load, leg, inv, rec, att, why, sup=None, view=None):
         """`abort_restart` (tg1): the whole load is archived once and rerun, then the chain aborts. `incident_retry` (M64):
         a classified transport incident is recorded, its partial rows accepted, the worker recovered and the same slot
-        retried; anything else restarts the load once like tg1."""
+        retried; anything else restarts the load once like tg1. `p426_continue` (tg1-p426): an item DNF is recorded and the
+        leg continues on the same load; everything else is systemic (the chain aborts, the leg is INVALID)."""
+        if self.p426:
+            return self.handle_p426_incomplete(load, leg, inv, rec, att, sup, view)
         if self.config.transport_policy == "abort_restart" or view is None:
             self.check_restart_eligible(att, view, load)
             return "incomplete"
@@ -2007,6 +2508,174 @@ class Chain:
         self.record_incident(load, leg, inv, rec, att, view, cause)
         self.recover(load, leg, cause)
         return "incident"
+
+    # -- B2 `p426_continue` (spec 5.1 - 5.3)
+    def p426_accounted(self, slots):
+        """The planned `slots` that are a scored row (`chain_rows`) or a recorded item DNF."""
+        table, dnf = self.slot_table(), {d["slot"] for d in self.p426_dnf}
+        return {s for s in slots if s in table.scored or s in dnf}
+
+    def run_p426_leg(self, load, leg):
+        """The flat-layout leg loop of `p426_continue` (the shape of `run_block_leg`): per planned invocation (the in-load
+        pilot phase, then the rest), derive the unaccounted slots from the per-item ledger state, run ONE invocation over them
+        on the same loaded instance (no reload), re-derive. An item DNF is accounted by `handle_incomplete`."""
+        for inv in leg["invocations"]:
+            while True:
+                self.check_stop("before launch")
+                slots = {e: cr.slot_for(leg["slot_base"], e) for e in inv["expect"]}
+                done = self.p426_accounted(slots.values())
+                todo = [e for e in inv["expect"] if slots[e] not in done]
+                if not todo:
+                    break
+                step = dict(inv, names=[e.split("/", 1)[1] for e in todo], expect=todo,
+                            limit=len(todo) if inv.get("limit") is not None else None)
+                load["rec"]["cursor"] = dict(leg_index=leg["li"], phase=step["phase"])
+                res = self.run_invocation(load, leg, step)
+                if res not in ("ok", "dnf"):
+                    raise co.ChainAbort(f"p426_continue: the invocation ended {res!r}")
+                if len(self.p426_accounted(slots.values())) <= len(done):
+                    raise co.ChainAbort(f"p426_continue: the invocation of {leg['stem']} accounted for no slot")
+        return "ok"
+
+    def p426_dnf_eligible(self, att, load, leg, cause, slot=None):
+        """None when the abort is an eligible item DNF, else the reason it is systemic: the owned worker identity is
+        unchanged, the cleanup certain and, when the hooks reconcile (`dnf_problems`, spec 4.3's DNF rows), the DNF
+        window of `slot` settled and reconciled against the abort manifest (its item record is kept in `p426_dnf_item`)."""
+        problems = cleanup_problems((att or {}).get("cleanup_status"))
+        if problems:
+            return "cleanup is not certain and complete: " + "; ".join(problems)
+        cur = self.ops.worker_ident(leg["model"])
+        if not cur or (cur["pid"], cur["create_time"]) != (load["worker"]["pid"], load["worker"]["create_time"]):
+            return "owned worker identity changed or worker gone"
+        self.p426_dnf_item = None
+        reconcile = getattr(self.hooks, "dnf_problems", None)
+        if reconcile is None:
+            return None
+        if slot is None:
+            return "the DNF slot is unknown: section 4.3 cannot be reconciled"
+        try:
+            manifest = json.loads(Path(leg["out"]).with_suffix(".manifest.json").read_text())
+        except (OSError, ValueError) as exc:
+            return f"the abort manifest is unreadable: {exc}"
+        try:
+            found, record = reconcile(slot, manifest)
+        except chain_hooks.HookInfrastructureError as exc:
+            return f"hook infrastructure error: {exc.cause}"
+        self.p426_dnf_item = record
+        if found:
+            return "section 4.3 DNF row does not hold: " + "; ".join(found)[:600]
+        return None
+
+    def handle_p426_incomplete(self, load, leg, inv, rec, att, sup, view):
+        if self.p426_invalid:
+            raise LegInvalid(f"leg INVALID: {self.p426_invalid[-1]['reason']}")
+        if view is None:
+            raise co.ChainAbort("p426_continue: an incomplete invocation without its leg view is systemic")
+        cur = self.ops.worker_ident(view["model"])
+        worker_ok = bool(cur) and (cur["pid"], cur["create_time"]) == (load["worker"]["pid"], load["worker"]["create_time"])
+        router_ok = not self.p426_router_problems()          # `(pid, create_time(pid))`, not liveness or a config sha
+        stamp = att.get("transport_abort") or {}
+        if not (worker_ok and router_ok):
+            self.listing(att, view)
+            raise co.ChainAbort("p426_continue: owned router / worker identity changed at the incident (systemic)")
+        cause = ci.classify_p426_dnf_cause(stamp_cause=stamp.get("cause"), worker_ok=worker_ok, router_ok=router_ok)
+        if cause is None:
+            self.listing(att, view)
+            raise co.ChainAbort(f"p426_continue: an abort without a DNF cause is systemic (stamp cause "
+                                f"{stamp.get('cause')!r}, not one of {ci.P426_DNF_CAUSES})")
+        if len(self.p426_dnf) >= ci.MAX_P426_DNF:            # the limit is per LEG (both languages), spec 5.1
+            raise co.ChainAbort(f"p426_continue: more than {ci.MAX_P426_DNF} DNF in the leg is systemic")
+        tentative = list(inv["expect"])[len(self.partial_ids(Path(view["out"])))] if len(
+            self.partial_ids(Path(view["out"]))) < len(inv["expect"]) else None
+        why = self.p426_dnf_eligible(att, load, view, cause,
+                                     slot=cr.slot_for(rec["slot_base"], tentative) if tentative is not None else None)
+        if why:
+            self.listing(att, view)
+            raise co.ChainAbort(f"p426_continue: the abort is not an eligible item DNF: {why}")
+        fl = co.in_flight(self.ops.worker_metrics() or {})
+        if fl != 0:
+            raise co.ChainAbort(f"p426_continue: the worker did not settle (in_flight={fl}); systemic")
+        out = Path(view["out"])
+        ids = self.partial_ids(out)
+        expected = list(inv["expect"])
+        if ids != expected[:len(ids)] or len(ids) >= len(expected):
+            raise co.ChainAbort(f"p426_continue: the aborted attempt's rows {ids} are not a proper prefix of {expected}")
+        self.validate_partial(view, out, ids, who="DNF")
+        rec["accepted_slots"] = [cr.slot_for(rec["slot_base"], i) for i in ids]
+        rec["sha256"] = sha_file(out) if out.exists() else None
+        rec["status"] = "partial_incident"
+        failing = cr.slot_for(rec["slot_base"], expected[len(ids)])
+        after = self.ops.worker_ident(view["model"])
+        owned = dict(worker=dict(cur), router_ok=router_ok)
+        record = dict(slot=failing, item=failing.split("|")[-1], session=view["session"], language=view["lang"],
+                      seed=view["seed_base"], arm=self.p426_arm_name(), pick=view["model"],     # the predictor arm (spec 16.8)
+                      load=load["idx"], load_gen=load["rec"]["load_gen"], attempt=self.p426_attempt_no(att),
+                      invocation=next(n for n, r in enumerate(self.progress["invocations"]) if r is rec),     # §16.1: its index
+                      invocation_file=rec["file"],
+                      abort=dict(cause=cause, error=str(stamp.get("error"))[:200],
+                                 evidence=(att.get("abort_evidence") or {}).get("evidence")),
+                      owned_at_incident=owned, owned_after=dict(worker=dict(after or {}),
+                                                                router_ok=not self.p426_router_problems()),
+                      settle=dict(in_flight=fl, settled=True), item_record=self.p426_item_pointer(failing), at=co.utc_stamp())
+        from bench import p426_hooks as ph
+        record = ph.seal(self.p426_persist(record))       # an immutable record (spec 16): the self-hash covers the portable form
+        self.p426_dnf.append(record)                      # chain.json first (with the ledger entry), then the sidecar
+        self.p426_ledger.append(dict(slot=failing, kind="dnf", invocation=rec["file"], index=len(self.p426_ledger)))
+        self.write_json("p426-dnf")
+        side = self.out_root / view["session"] / "p426_dnf" / (cr.slot_file(failing) + ".json")
+        ph.write_exclusive(side, record)                  # exclusive-created, the same sealed record
+        self.log(f"DNF {failing}: cause={cause}; the leg continues on the same load")
+        self.after_invocation(load, leg, inv, rec, cr.rows_if_present(out))
+        return "dnf"
+
+    def p426_frozen_record_ref(self):
+        """`{path, sha256}` of the frozen record this leg runs under (what a rehearsal / v8 binding checks, fix round 3 item 7);
+        the path is persisted portably with the rest of `chain.json`."""
+        ref = getattr(self, "_frozen_record_ref", None)
+        if ref is None:
+            try:
+                from bench import p426_record
+                ref = dict(path=str(self.a.frozen_record), sha256=p426_record.read_sealed(self.a.frozen_record)["sha256"])
+            except Exception:  # noqa: BLE001 — a bare chain / an unreadable record: the leg records none (and then binds to nothing)
+                return None
+            self._frozen_record_ref = ref
+        return ref
+
+    def p426_attempt_no(self, att):
+        """§16.1: the `n` of the out-root's name `<leg>.a<n>` (the chain requires that name in P426 mode); the per-stem probe
+        counter only when a bare chain has no such name. (The invocation records keep the per-stem counter: it names their
+        immutable rows files and restores the counters at resume.)"""
+        m = re.search(r"\.a([1-9][0-9]*)$", Path(self.out_root).name)
+        return int(m.group(1)) if m else att["attempt"]
+
+    def p426_item_pointer(self, slot):
+        """The DNF record's `item_record`: the path string `items/<slot_file>.dnf.json` of the reconciled DNF item record
+        (None without hooks that reconcile)."""
+        rec = getattr(self, "p426_dnf_item", None)
+        if not rec:
+            return None
+        return f"items/{cr.slot_file(slot)}.dnf.json"
+
+    def p426_hook_context(self, bar, slot, name, stage, row=None):
+        """What a P426 hook receives besides the slot (and, at `done`, the payload): the item's ready record, its full row
+        (done) and the load context."""
+        load = bar["load"]
+        return dict(stage=stage, slot=slot, item=name, k=bar["k"], ready=bar.get("ready_record") or {}, row=row,
+                    load=dict(idx=load["idx"], load_gen=load["rec"]["load_gen"], worker=dict(load["worker"]),
+                              session=bar["view"]["session"], model=bar["view"]["model"], arm=bar["view"]["arm"]))
+
+    def p426_invalidate(self, bar, slot, name, stage, reason):
+        """`invalidate`: persisted in chain.json BEFORE the `.stop`; the probe exits cleanup-only, the invocation is accepted
+        for its prefix, the cleanup verified and the leg is INVALID (`accept_invocation` raises `LegInvalid`, rc 2)."""
+        self.p426_invalid.append(dict(stage=stage, slot=slot, reason=reason, at=co.utc_stamp()))
+        if isinstance(bar.get("rec"), dict):                 # a ready-stage stop has no `hook_stop.disposition`: persist it here
+            bar["rec"]["hook_disposition"] = "invalidate"
+        self.write_json("invalidated")
+        barrier_signal(self.barrier_path(bar, "stop"), {"disposition": "invalidate"})
+        bar["stage"] = "stopped"
+        bar["stop"] = dict(kind="before" if stage == "ready" else "after", k=bar["k"], name=name, slot=slot,
+                           disposition="invalidate", reason=reason)
+        self.log(f"INVALIDATE {slot} at {stage}: {reason}")
 
     def classify_incident(self, att, sup, load, leg):
         """A6: the router and the worker are checked INDEPENDENTLY first, then the probe's own cause."""
@@ -2036,7 +2705,8 @@ class Chain:
                                           policy_sha=self.policy_for(leg["arm"]), frozen_prompt_date=self.frozen,
                                           spec=self.spec_of(leg["arm"]))
                if not w.startswith(("manifest_abort", "rc_nonzero"))]
-        bad += self.arm_row_problems(leg, out)
+        if self.per_arm:                                   # a flat (tg1) leg's rows carry no `arm` / `epoch_id`
+            bad += self.arm_row_problems(leg, out)
         if bad:
             raise co.ChainAbort(f"{who} refused: the rows of the failed attempt do not validate: " + "; ".join(bad[:3]))
 
@@ -2118,7 +2788,19 @@ class Chain:
         if bar["stage"] == "ready":
             if not self.barrier_path(bar, "ready").exists():
                 return
-            disp = self.hooks.run_before(slot)
+            if self.p426:
+                bar["ready_record"] = self.p426_read_json(self.barrier_path(bar, "ready"))
+                try:
+                    disp = self.hooks.run_before(slot, context=self.p426_hook_context(bar, slot, name, "ready"),
+                                                 systemic=True)
+                except chain_hooks.HookInfrastructureError as exc:   # B2: systemic, never a `pre_spawn_incident`
+                    self.p426_invalidate(bar, slot, name, "ready", f"hook infrastructure error: {exc.cause}")
+                    return
+                if disp.kind == "invalidate":
+                    self.p426_invalidate(bar, slot, name, "ready", disp.reason)
+                    return
+            else:
+                disp = self.hooks.run_before(slot)
             if disp.kind == "pre_spawn_incident":
                 self.persist_pre_spawn(bar, slot, name, disp.cause)
                 barrier_signal(self.barrier_path(bar, "stop"), {"disposition": "pre_spawn_incident"})
@@ -2138,7 +2820,17 @@ class Chain:
         web = self.web_record(row, self.web_rules(view["arm"]),
                               path.with_name(path.stem + ".web.jsonl") if path is not None else None)
         done = dict(done, web_evidence=web)
-        disp = self.hooks.run_after(slot, done)
+        if self.p426:
+            try:
+                disp = self.hooks.run_after(slot, done, context=self.p426_hook_context(bar, slot, name, "done", row=row))
+            except chain_hooks.HookInfrastructureError as exc:       # B2: systemic
+                self.p426_invalidate(bar, slot, name, "done", f"hook infrastructure error: {exc.cause}")
+                return
+            if disp.kind == "invalidate":
+                self.p426_invalidate(bar, slot, name, "done", disp.reason)
+                return
+        else:
+            disp = self.hooks.run_after(slot, done)
         rindex = bar["rindex"]
         if disp.kind != "accept" and not self.per_arm:
             raise co.ChainAbort(f"{disp.kind} for {slot}: this configuration has no same-slot re-run (tg2 step)")
@@ -2153,12 +2845,24 @@ class Chain:
         self.progress["slot_attempts"].append(att_rec)
         self.write_json("slot-disposition")
         if disposition in ("accepted", "exhausted"):
+            if self.p426:                       # B2 spec 7: the ledger is persisted at the barrier answer, BEFORE `.continue`
+                self.p426_ledger.append(dict(slot=slot, kind="row", invocation=rec["file"], index=len(self.p426_ledger)))
+                self.write_json("ledger")
             barrier_signal(self.barrier_path(bar, "continue"))
             bar["k"], bar["stage"] = bar["k"] + 1, "ready"
         else:
             barrier_signal(self.barrier_path(bar, "stop"), {"disposition": disposition})
             bar["stage"], bar["stop"] = "stopped", dict(kind="after", k=bar["k"], name=name, slot=slot,
                                                          disposition=disposition, reason=disp.reason)
+
+    @staticmethod
+    def p426_read_json(path):
+        """The probe's `.ready` payload (the ready record's probe-side part); `{}` when it carries none."""
+        try:
+            doc = json.loads(Path(path).read_text() or "{}")
+        except (OSError, ValueError):
+            return {}
+        return doc if isinstance(doc, dict) else {}
 
     def persist_pre_spawn(self, bar, slot, name, cause):
         """R13: a `before_attempt` failure is a transport incident of the slot (no tokens): the pre-spawn record AND the
@@ -2318,10 +3022,20 @@ class Chain:
                 why.append("worker identity differs from the block's first manifest")
             if wk["registry_sha256"] != self.ops.overlay_sha():
                 why.append("worker registry_sha256 differs from the overlay")
+        why += self.evidence_policy_problems(man)
         if man.get("transport_abort"):
             why.append("manifest already records transport_abort")
         why += [f"{f}_invalid" for f in co.malformed_identity(man, spec)]
         return why
+
+    def evidence_policy_problems(self, man):
+        """B2 spec 3: in `tg1-p426` the manifest of every invocation states exactly `TG1_P426_EVIDENCE` (unconditional; the
+        per-arm layout compares its arm spec's policy instead)."""
+        if not self.p426:
+            return []
+        got = (man.get("runtime") or {}).get("evidence_policy")
+        return [] if got == P426_EVIDENCE_POLICY else [
+            f"evidence_policy: {got!r} != {P426_EVIDENCE_POLICY!r} (tg1-p426 requires TG1_P426_EVIDENCE)"]
 
     def probe_code_arg(self, arm):
         return self.arm_arg("probe_code_sha", arm) if self.per_arm else self.a.probe_code_sha
@@ -2493,7 +3207,10 @@ class Chain:
     # -- watcher
     def watch_rows(self, leg, step):
         """(rows, ids) the watch log counts: the leg's earlier validated invocations plus this one's file."""
-        ids = list(leg.get("prior_ids") or []) + [f"{leg['lang']}/{x}" for x in step["names"]]
+        # P469: `prior_rows` keeps the bare item names while row ids are `lang/item`; unprefixed, the earlier invocations'
+        # rows were filtered out (a validated pilot of 1 row beside a running full invocation read 0)
+        prior = [x if "/" in x else f"{leg['lang']}/{x}" for x in leg.get("prior_ids") or []]
+        ids = prior + [f"{leg['lang']}/{x}" for x in step["names"]]
         rows = []
         for f in leg.get("prior_files") or []:
             try:
@@ -2506,18 +3223,21 @@ class Chain:
             pass
         return [r for r in rows if r.get("id") in ids], ids
 
+    def prediction_s(self, key, walls):
+        """Per-item seconds predicted for `key` = (lang, model): an explicit `--pred-s`, else the pilot mean once >= 5 rows
+        exist, else the builder's table entry, else GENERIC_PRED_S."""
+        if key in self.explicit_pred:
+            return self.explicit_pred[key]
+        if len(walls) >= PILOT_N:
+            return sum(walls[:PILOT_N]) / PILOT_N
+        return self.pred.get(key, GENERIC_PRED_S)
+
     def watch_tick(self, att, leg, step, block, hb, st, t0):
         rows, ids = self.watch_rows(leg, step)
         n, total = len(rows), len(ids)
         walls = [r.get("wall_s") or 0 for r in rows]
         mean = sum(walls) / n if n else None
-        key = (leg["lang"], leg["model"])
-        if key in self.explicit_pred:
-            pred = self.explicit_pred[key]
-        elif n >= PILOT_N:
-            pred = sum(walls[:PILOT_N]) / PILOT_N       # default: the pilot mean once >= 5 rows exist
-        else:
-            pred = self.pred.get(key, 250)
+        pred = self.prediction_s((leg["lang"], leg["model"]), walls)
         m = mean if mean is not None else pred
         remaining = total - n
         eta = remaining * m

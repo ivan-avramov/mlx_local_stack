@@ -139,14 +139,15 @@ def test_a_changed_input_changes_the_hash_and_realized_order_is_checked():
 
 # ---------------------------------------------------------------- tg1 builder (semantics of run_tg1_chain, disjoint invocations)
 TG1_NAMES = {"python": [f"p{i:02d}" for i in range(22)], "go": [f"g{i:02d}" for i in range(21)]}
+PAIR = (PICK1, PICK2)                     # C221: the tg1 builder / runner schedule take their models (no default pair)
 
 
 @pytest.mark.parametrize("mode,sessions,smoke", [("chain", ("s1", "s2", "reload"), False),
                                                  ("chain", ("s1", "reload"), True), ("pilot", ("s1",), False),
                                                  ("chain", ("s2",), False)])
 def test_tg1_blocks_and_legs_match_run_tg1_chain_schedule(mode, sessions, smoke):
-    old = C147.schedule(mode, sessions, TG1_NAMES, "/out", smoke=smoke, predictor="mtp")
-    new = sch.tg1(mode, sessions, TG1_NAMES, smoke=smoke, predictor="mtp")
+    old = C147.schedule(mode, sessions, TG1_NAMES, "/out", models=PAIR, smoke=smoke, predictor="mtp")
+    new = sch.tg1(mode, sessions, TG1_NAMES, picks=PAIR, smoke=smoke, predictor="mtp")
     assert new["builder"] == "tg1" and len(new["blocks"]) == len(old)
     for ob, nb in zip(old, new["blocks"]):
         assert (nb["session"], nb["model"], nb["seed_base"], nb["pilot_only"]) == (
@@ -160,8 +161,8 @@ def test_tg1_blocks_and_legs_match_run_tg1_chain_schedule(mode, sessions, smoke)
 @pytest.mark.parametrize("mode,sessions,smoke", [("chain", ("s1", "s2", "reload"), False),
                                                  ("chain", ("s1", "reload"), True), ("pilot", ("s1",), False)])
 def test_tg1_invocations_are_the_old_steps_made_disjoint(mode, sessions, smoke):
-    old = C147.schedule(mode, sessions, TG1_NAMES, "/out", smoke=smoke)
-    new = sch.tg1(mode, sessions, TG1_NAMES, smoke=smoke)
+    old = C147.schedule(mode, sessions, TG1_NAMES, "/out", models=PAIR, smoke=smoke)
+    new = sch.tg1(mode, sessions, TG1_NAMES, picks=PAIR, smoke=smoke)
     for ob, nb in zip(old, new["blocks"]):
         for i, (ol, nl) in enumerate(zip(ob["legs"], nb["legs"])):
             steps = C147.steps_for(ob, i)
@@ -183,7 +184,7 @@ def test_tg1_invocations_are_the_old_steps_made_disjoint(mode, sessions, smoke):
 
 
 def test_tg1_phase_shapes_pilot_only_pilot_plus_full_full_only_and_smoke():
-    s = sch.tg1("chain", ("s1", "reload"), TG1_NAMES)
+    s = sch.tg1("chain", ("s1", "reload"), TG1_NAMES, picks=PAIR)
     s1p1, s1p2 = s["blocks"][0], s["blocks"][1]
     py, go = s1p1["legs"]
     assert [v["phase"] for v in py["invocations"]] == ["pilot", "full"]                  # (b)
@@ -191,13 +192,13 @@ def test_tg1_phase_shapes_pilot_only_pilot_plus_full_full_only_and_smoke():
     assert [v["phase"] for v in go["invocations"]] == ["full"] and len(go["invocations"][0]["names"]) == 21   # (c)
     reload = s["blocks"][-1]["legs"][0]
     assert [v["phase"] for v in reload["invocations"]] == ["pilot"]                       # (a) pilot == full
-    assert sch.tg1("pilot", ("s1",), TG1_NAMES)["blocks"][0]["legs"][0]["invocations"][0]["phase"] == "pilot"
-    smoke = sch.tg1("chain", ("s1",), TG1_NAMES, smoke=True)["blocks"][0]["legs"][0]["invocations"]   # (d)
+    assert sch.tg1("pilot", ("s1",), TG1_NAMES, picks=PAIR)["blocks"][0]["legs"][0]["invocations"][0]["phase"] == "pilot"
+    smoke = sch.tg1("chain", ("s1",), TG1_NAMES, picks=PAIR, smoke=True)["blocks"][0]["legs"][0]["invocations"]   # (d)
     assert [(v["phase"], len(v["names"])) for v in smoke] == [("pilot", 1), ("full", 1)]
 
 
 def test_tg1_keeps_the_seeded_pilot_draw_and_order():
-    s = sch.tg1("chain", ("s1",), TG1_NAMES)
+    s = sch.tg1("chain", ("s1",), TG1_NAMES, picks=PAIR)
     leg = s["blocks"][0]["legs"][0]
     assert leg["pilot_names"] == sorted(random.Random(1001).sample(sorted(TG1_NAMES["python"]), 5))
     assert leg["full_names"] == sorted(TG1_NAMES["python"])
@@ -206,15 +207,15 @@ def test_tg1_keeps_the_seeded_pilot_draw_and_order():
 
 
 def test_tg1_legs_and_realized_order():
-    s = sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES)
+    s = sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES, picks=PAIR)
     legs = sch.legs(s)
     assert [l["index"] for l in legs] == list(range(len(legs))) and len(legs) == 9
     assert (legs[0]["session"], legs[0]["lang"], legs[0]["model"]) == ("s1", "python", PICK1)
     sch.check_realized(s, [sch.leg_key(l) for l in legs])
     with pytest.raises(ValueError):
         sch.check_realized(s, [sch.leg_key(l) for l in legs][:-1])
-    assert sch.schedule_sha256(s) == sch.schedule_sha256(sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES))
-    assert sch.schedule_sha256(s) != sch.schedule_sha256(sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES,
+    assert sch.schedule_sha256(s) == sch.schedule_sha256(sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES, picks=PAIR))
+    assert sch.schedule_sha256(s) != sch.schedule_sha256(sch.tg1("chain", ("s1", "s2", "reload"), TG1_NAMES, picks=PAIR,
                                                                predictor="mtp"))
     assert "/out" not in json.dumps(s)                    # a schedule holds no paths
 

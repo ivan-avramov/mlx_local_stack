@@ -171,6 +171,44 @@ def build_row(model, item, seed_base, worker, wd, out, run_id, wall_s=1.0, event
     }
 
 
+FAKE_REQUESTS = ((100, 5), (110, 6))            # (prompt, generated) of the two requests every P426 item makes
+
+
+def server_work(env, item):
+    """B2 (P426): what the server does for an item: when `FAKE_SERVER_LOG` and `FAKE_METRICS_FILE` are set, append the fork's
+    `Request started` / `Request completed` lines and move the worker counters; returns the row fields that match them
+    (`session_id`, `request_usage`). `FAKE_DRAFT=1` adds the MTP draft counters (the ON arm)."""
+    session = "ses_" + item.replace("/", "_")
+    usage = [[str(i + 1), g, p, 81920] for i, (p, g) in enumerate(FAKE_REQUESTS)]
+    log, mf = env.get("FAKE_SERVER_LOG"), env.get("FAKE_METRICS_FILE")
+    if log and mf:
+        m = json.loads(Path(mf).read_text())["summary"] if Path(mf).exists() else dict(
+            requests_started=0, requests_completed=0, requests_failed=0, in_flight=0, prompt_tokens_total=0,
+            generated_tokens_total=0, avg_decode_tok_s=0.0, decode_s=0.0)
+        lines = []
+        for p, g in FAKE_REQUESTS:
+            lines.append("INFO Request started: endpoint=/v1/chat/completions model=%s stream=True in_flight=1" % FAKE_MODEL)
+            tail = " draft_kind=mtp draft_n=6 draft_n_accepted=4 draft_rounds=2" if env.get("FAKE_DRAFT") == "1" else ""
+            lines.append(f"INFO Request completed: endpoint=/v1/chat/completions model={FAKE_MODEL} stream=True "
+                         f"backend=cached_session session={session} cached_tokens=0 prompt_tokens={p} generated_tokens={g} "
+                         f"elapsed=1.000s prefill=900.0 tok/s decode=50.0 tok/s finish_reason=stop in_flight=0" + tail)
+            m["requests_started"] += 1
+            m["requests_completed"] += 1
+            m["prompt_tokens_total"] += p
+            m["generated_tokens_total"] += g
+            m["decode_s"] += g / 50.0
+            m["avg_decode_tok_s"] = m["generated_tokens_total"] / m["decode_s"]
+        with open(log, "ab") as f:
+            f.write(("\n".join(lines) + "\n").encode())
+        _atomic(mf, json.dumps({"summary": m}).encode())
+    return dict(session_id=session, request_usage=usage, gate=dict(requests_completed=len(usage),
+                                                                    requests_completed_at_kill=None,
+                                                                    output_tokens_completed=sum(g for _, g in FAKE_REQUESTS)))
+
+
+FAKE_MODEL = "fake-model"
+
+
 def write_leg(out, model, lang, seed_base, ids, worker, wd, run_id="fixture-run", override=None):
     """Complete, valid rows + manifest for tests (the same builders the probe uses)."""
     man = build_manifest(model, lang, seed_base, worker, run_id, override)
@@ -221,7 +259,13 @@ def main(argv=None):
     ap.add_argument("--attempt", type=int, default=1)
     ap.add_argument("--attempt-rerun-index", type=int, default=0)
     ap.add_argument("--invocation-nonce")
+    ap.add_argument("--evidence")                   # B2: the real probe's `--evidence p426` (parsed, not modelled here)
+    ap.add_argument("--inject-stall-item")          # B2 spec 16.8: the one item scored as a stall kill (the real probe lowers its limit)
+    ap.add_argument("--inject-stall-s", type=int)
     a = ap.parse_args(argv)
+    if (a.inject_stall_item is None) != (a.inject_stall_s is None):
+        print("REFUSED: --inject-stall-item and --inject-stall-s are given together", flush=True)
+        return 2
     env = os.environ
     state = Path(env["FAKE_PROBE_STATE"]) if env.get("FAKE_PROBE_STATE") else None
     behaviour = env.get("FAKE_PROBE_BEHAVIOUR", "normal")
@@ -293,6 +337,12 @@ def main(argv=None):
         while not cancel.exists():
             time.sleep(tick)
         return abort("cancelled by runner")
+    if a.evidence == "p426":                       # B2: the real probe's `--evidence p426` policy (item barrier on)
+        man["runtime"]["evidence_policy"] = dict(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
+                                                 worker_receipts="absent", item_barrier="on")
+        if "runtime.generation_identity_sha256" not in overrides:       # the composite covers every runtime field
+            man["runtime"]["generation_identity_sha256"] = chain_ops.composite_sha(
+                {k: v for k, v in man["runtime"].items() if k != "generation_identity_sha256"})
     save()
     deadline = time.time() + float(env.get("FAKE_PROBE_ACK_WAIT", "300"))
     while not ack.exists():
@@ -323,9 +373,28 @@ def main(argv=None):
         items = items[:a.limit]
     item_s, hb_s = float(env.get("FAKE_ITEM_S", "0.1")), float(env.get("FAKE_HB_S", "0.05"))
     done_here = 0
-    for item in items:
+    p426 = a.evidence == "p426"
+    barrier_base = str(out.with_suffix(""))
+
+    def barrier(k, kind, answer, payload=None):
+        """B2 (P426): the probe's side of the item barrier: write `<run>.item<k>.<kind>`, wait for `.<answer>` (or `.stop`)."""
+        Path(f"{barrier_base}.item{k}.{kind}").write_text(json.dumps(payload or {}))
+        while True:
+            if Path(f"{barrier_base}.item{k}.stop").exists():
+                return "stop"
+            if Path(f"{barrier_base}.item{k}.{answer}").exists():
+                return answer
+            if cancelled():
+                return "cancel"
+            time.sleep(tick)
+
+    for k, item in enumerate(items):
         if cancelled():
             return abort("cancelled by runner")
+        if p426 and barrier(k, "ready", "go") != "go":
+            man["cleanup_status"] = cleanup
+            save()
+            return 0 if (Path(f"{barrier_base}.item{k}.stop").exists()) else abort("cancelled by runner")
         ev = _evidence_dir(wd, a.model, out, run_id, item)
         ev.mkdir(parents=True, exist_ok=True)
         evf = ev / "events.jsonl"
@@ -349,11 +418,27 @@ def main(argv=None):
                 heartbeat(item)
                 last_hb = time.time()
             time.sleep(tick)
-        rows.append(build_row(a.model, item, a.seed_base, worker, wd, out, run_id, wall_s=time.time() - start,
-                              runtime=man["runtime"]))
+        row = build_row(a.model, item, a.seed_base, worker, wd, out, run_id, wall_s=time.time() - start,
+                        runtime=man["runtime"])
+        if p426:
+            row.update(server_work(env, item))
+        if item == a.inject_stall_item:             # the stall limit fired on this item: a probe KILL at a request boundary
+            n = len(row.get("request_usage") or []) or row["gate"].get("requests_completed") or 0      # (a scored fail, never an abort)
+            row.update(passed=False, converged=False, nonconv_kind="stalled", nonconv_flags=["stalled"], stop_reason="stalled")
+            row["gate"] = dict(row["gate"], requests_completed_at_kill=n, stop_reason="stalled")
+            row["termination"] = dict(                                # the real kill path's record (P371 golden `item_stall_kill`)
+                reason="stalled", requests_at_kill=n, in_flight_at_kill=0, client_stop="sigterm", killed_verified=True,
+                killed=[dict(role="client", pid=os.getpid(), create_time=1.0, argv="opencode run")],
+                cancel_wait_s=0.0, graceful_wait_s=0.0, inflight_s_at_stop=0.0,
+                worker_summary_before=dict(in_flight=0), worker_summary_after=dict(in_flight=0))
+        rows.append(row)
         _atomic(out, "".join(json.dumps(r) + "\n" for r in rows).encode())
         print(f"{item}: passed=True nonconv=None", flush=True)
         done_here += 1
+        if p426 and barrier(k, "done", "continue", {"id": item}) != "continue":
+            man["cleanup_status"] = cleanup
+            save()
+            return 0
         if behaviour == "abort_after_n" and done_here >= int(env.get("FAKE_N", "1")):
             return abort("injected transport failure")
     expected = [x for x in a.expect_items.split(",") if x]

@@ -10,7 +10,7 @@ from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
     FAP_PATH, M, REPO, SMOKE, chain_json, env, log_has, run)
 from bench.tests.test_c147_chain_runner import C147, R
 
-TG1 = ["chain", "s1", "--probe-code-sha", "9" * 64]
+TG1 = ["chain", "s1", "--probe-code-sha", "9" * 64, "--models", "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"]   # C221: required
 FAKE_TG1 = str(C147 / "fake_probe.py")
 
 

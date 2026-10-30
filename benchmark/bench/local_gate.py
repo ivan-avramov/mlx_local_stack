@@ -7,6 +7,8 @@ push, so every push of the stack, `../mlx-vlm` or `../mlx-serve` needs a PASS re
 
 `run` works in a disposable local CLONE at the exact sha (never the live tree, never a linked worktree), refuses while the box
 is busy (any live `bench.p426_wave1` sequencer, a `chain_ops.BUSY` process, a :8000 listener), re-checks before every step,
+holds `$STACK_WORKDIR/gate/RUNNING` while `run` / `release` work and refuses while `p426/SEQUENCER.lock` or `p426/LEG.lock` is held
+(B2 spec 9, `bench.p426_locks`),
 and writes `$STACK_WORKDIR/gate/<repo>-<sha>-<policy12>[-n].json` (exclusive create; a FAIL is kept). `check` fetches
 (`--prune`) the remote, requires a PASS receipt under the CURRENT policy digest for every pushed sha, scans every introduced
 commit (added lines: PII + naming; message: naming), and for the stack requires PASS receipts for both gitlinks and their
@@ -161,6 +163,17 @@ def steps_for(repo, scratch, parity, audits=None):
             Step("build", ["uv", "build", "--out-dir", str(s / ".gate-dist")], s, check="artifacts"),
         ]
     raise GateError(f"unknown repo {repo!r}")
+
+
+def _hold_running(wd):
+    """B2 spec 9: own `gate/RUNNING` under the arbiter, held while the gate works; `p426/SEQUENCER.lock` / `p426/LEG.lock` held
+    (a Wave-2 sequencer or a P426 chain leg is running) is a refusal."""
+    from bench import p426_locks
+
+    try:
+        return p426_locks.acquire("gate", wd)
+    except p426_locks.LockRefused as exc:
+        raise GateError(str(exc)) from None
 
 
 def _workdir_or_placeholder():
@@ -610,6 +623,7 @@ def main(argv=None):
     rel.add_argument("--version", required=True, help="MAJOR.MINOR.PATCH (the tag is v<version>, on the stack HEAD)")
     args = ap.parse_args(argv)
     stack = _stack_repo()
+    lock = None
     try:
         if args.cmd == "install-hooks":
             print(install_hooks(stack))
@@ -618,6 +632,8 @@ def main(argv=None):
             print(f"[pre-push] REFUSED: unknown origin for {args.repo_dir}", file=sys.stderr)
             return 1
         gate_dir = Path(_workdir()) / "gate"
+        if args.cmd in ("run", "release"):          # B2 spec 9: a test window excludes the Wave-2 sequencer and its chain legs
+            lock = _hold_running(Path(_workdir()))
         live = {"stack": stack, "mlx-vlm": stack.parent / "mlx-vlm", "mlx-serve": stack.parent / "mlx-serve"}
         if args.cmd == "release":
             if _git(stack, "status", "--porcelain", "--untracked-files=no"):
@@ -653,6 +669,9 @@ def main(argv=None):
     except GateError as exc:
         print(f"[local_gate] REFUSED: {exc}", file=sys.stderr)
         return 1
+    finally:
+        if lock is not None:
+            lock.release()
     for lv in levels:
         print(f"[pre-push] {lv}", file=sys.stderr)
     for p in problems:

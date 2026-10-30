@@ -215,5 +215,5 @@ def test_the_tg1_chain_is_unaffected_by_the_contract_check():
         "run_tg1_chain_for_contract", Path(__file__).resolve().parents[2] / "chains/c147/run_tg1_chain.py")
     entry = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(entry)
-    assert entry.tg1_config(type("A", (), {"predictor": "off"})()).contract_artifacts == ()
+    assert entry.tg1_config(type("A", (), {"predictor": "off", "models": ["m"]})()).contract_artifacts == ()   # C221: models
     assert core.Chain.contract_problems is not None

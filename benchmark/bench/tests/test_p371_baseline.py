@@ -613,7 +613,7 @@ def test_chain_differential(name):
     from bench.tests.p371_baseline import new_side
     scenario = run_mod.load_scenario(name)
     new = run_mod.run_new_side(scenario)                 # phase 3: runs the same scenario on the new chain core
-    old = run_mod.load_golden(name)
+    old = run_mod.load_refreshed_golden(name)            # C221: the recorded old -> new refresh (golden_refresh_c221.json)
     res = cmp_mod.compare(old, new, cmp_mod.TABLE, rederive=new_side.chain_rederive(new))
     assert res.ok, res.failures
 

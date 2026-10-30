@@ -78,6 +78,13 @@ def _parser():
                     help="same-slot re-run index of this invocation's attempt ids (the chain sets it)")
     ap.add_argument("--invocation-nonce", type=_nonce,
                     help="P384: the chain's per-invocation nonce, written into the manifest as runtime.invocation_nonce")
+    ap.add_argument("--evidence", choices=("p426",),
+                    help="B2: the evidence policy (default: the tg1 one); p426 = the item barrier on, the transport-cause stamp "
+                    "and the request evidence in the abort manifest")
+    ap.add_argument("--inject-stall-item", metavar="LANG/ITEM",
+                    help="B2 rehearsal (spec 16.8, with --evidence p426): the one item that runs with the lowered stall limit")
+    ap.add_argument("--inject-stall-s", type=int, metavar="SECONDS",
+                    help="B2 rehearsal: the lowered stall (client silence) limit of --inject-stall-item, in seconds")
     ap.add_argument("--print-identity", action="store_true", help="print the probe identity JSON and exit")
     # Legacy v2 flags: parsed only so that `tg1_runner.main` refuses them with its own message.
     for flag, kind in (("--extra-deny-file", Path), ("--rerun-of", str), ("--rerun-index", int), ("--tick-s", int),

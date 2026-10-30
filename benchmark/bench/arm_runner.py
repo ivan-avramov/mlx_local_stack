@@ -50,6 +50,31 @@ CLEAN_STATUS = dict(survivors=[], containers_remaining=[], uncertain=False, orph
 DEFAULT_UNIVERSE = REPO / "benchmark/m62/universe.json"
 
 
+def inject_stall_problem(a, names):
+    """B2 rehearsal (spec 16.8): the refusal text of an incomplete or misplaced `--inject-stall-item` / `--inject-stall-s`, else None.
+    Both or neither; only with `--evidence p426`; a positive limit; the item must be one of this invocation's items."""
+    item, seconds = getattr(a, "inject_stall_item", None), getattr(a, "inject_stall_s", None)
+    if item is None and seconds is None:
+        return None
+    if item is None or seconds is None:
+        return "--inject-stall-item and --inject-stall-s are given together"
+    if getattr(a, "evidence", None) != "p426":
+        return "--inject-stall-item / --inject-stall-s need --evidence p426 (a rehearsal-only injection)"
+    if seconds <= 0:
+        return "--inject-stall-s must be positive"
+    if item not in {f"{a.lang}/{n}" for n in names}:
+        return f"--inject-stall-item {item!r} is not among this invocation's items"
+    return None
+
+
+def silence_limit_s(a, item):
+    """The client-silence (stall) limit of `item` (`<lang>/<name>`): the lowered rehearsal limit for the one injected item, the
+    policy's `silence_s` for every other."""
+    if getattr(a, "inject_stall_item", None) == item and getattr(a, "inject_stall_s", None) is not None:
+        return a.inject_stall_s
+    return pg.POLICY["silence_s"]
+
+
 def effective_policy(kind=None):
     """(gate, hygiene) dicts in force: the campaign constants, with the inject kind's single override applied (C147 2)."""
     gate, hygiene = dict(tg.POLICY), dict(pg.POLICY)
@@ -366,7 +391,7 @@ def run_item(p, adapter, *, ctx=None, **kwargs):
 def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evidence, limit, private, router, base,
               protected_pids=(), policy=None, cancel=None, ctx=None, frozen_date=None, gate_overrides=None,
               watchdog=None, compaction=False, join_timeout_s, receipts=None, attempt=None, header_sent=False,
-              controls=None, expected_worker=None):
+              controls=None, expected_worker=None, silence_s=None):
     work, entry = prepared.work, prepared.entry
     gate_policy, hygiene = policy if policy is not None else effective_policy()
     if gate_overrides:
@@ -598,7 +623,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                 with lock:
                     if guard.client_resource:
                         gate.stop("client_resource")
-                    if (now - stream.last_event >= pg.POLICY["silence_s"]
+                    if (now - stream.last_event >= (silence_s if silence_s is not None else pg.POLICY["silence_s"])
                             and now - last_silence >= pg.POLICY["silence_sample_s"]):
                         metrics = worker_json("metrics")
                         descendant = guard.descendants_alive()
@@ -784,6 +809,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     finally:
         if ctx is not None:
             ctx["gate_report"] = gate.report()           # spec 8.3: a failed attempt's tokens count toward its task
+            ctx["request_evidence"] = dict(              # B2 spec 2 [r3]: the client-side request evidence of an aborted item
+                request_usage=[list(r) for r in gate.request_usage], session_id=stream.session_id,
+                in_flight=dict(in_flight=stream.active is not None, message_id=stream.active,
+                               requests_started=len(stream.starts)))
         try:
             with pg.defer_signals():
                 try:
@@ -972,6 +1001,9 @@ def main(p, adapter, a, *, template, evidence, corpus, receipts=None):
         if a.limit <= 0:
             sys.exit("REFUSED: limit must be positive")
         names = names[: a.limit]
+    stall = inject_stall_problem(a, names)
+    if stall:
+        sys.exit("REFUSED: " + stall)
     if a.sampling_profile not in (None, "deployed"):
         sys.exit("REFUSED: --sampling-profile accepts only 'deployed'")
     frozen = getattr(a, "frozen_prompt_date", None)
@@ -1142,6 +1174,9 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             item = a.lang + "/" + name
             ctx.update(id=None)                          # F19: between items no item is current (a cancel here is a boundary)
             ctx.pop("evidence_paths", None)              # never a previous item's evidence in this item's abort stamp
+            if getattr(adapter, "report_requests_on_abort", False):
+                ctx.pop("gate_report", None)             # P426: nor a previous item's gate report or request evidence
+                ctx.pop("request_evidence", None)
             if cancel is not None and cancel():
                 raise RunnerCancelled()
             ctx.update(id=item)
@@ -1175,7 +1210,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     p, adapter, corpus=corpus, prepared=prepared, model=a.model, prompt=prompt, env=env,
                     binary=binary, evidence=item_evidence, limit=limit, private=private, router=router, base=base,
                     protected_pids=(before["pid"],), policy=(policy.gate, policy.hygiene), cancel=cancel, ctx=ctx,
-                    frozen_date=frozen, gate_overrides=getattr(a, "gate_overrides", None),
+                    frozen_date=frozen, gate_overrides=getattr(a, "gate_overrides", None), silence_s=silence_limit_s(a, item),
                     watchdog=policy.watchdog, compaction=policy.compaction == "on_accounted",
                     join_timeout_s=policy.grade_join_timeout_s, receipts=receipt_source, attempt=attempt,
                     header_sent=header_ctx is not None,
@@ -1244,6 +1279,14 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                      termination=ctx.get("termination"))
         if adapter.report_gate_on_abort:
             stamp["gate"] = ctx.get("gate_report")     # spec 8.3: a failed attempt's tokens count toward its task
+        if getattr(adapter, "report_requests_on_abort", False):
+            # B2 spec 2 [r3]: the gate report WITH the full request_usage, the session, whether a request was in flight
+            # (its message id); the termination evidence is the `termination` key above. None: no item had reached its gate.
+            evidence_of = ctx.get("request_evidence")
+            if evidence_of is not None:
+                stamp["gate"] = dict(stamp["gate"] or {}, request_usage=evidence_of["request_usage"])
+            stamp["session_id"] = evidence_of["session_id"] if evidence_of else None
+            stamp["in_flight"] = evidence_of["in_flight"] if evidence_of else None
         if ctx.get("receipt_tokens") is not None:
             stamp["receipts"] = ctx["receipt_tokens"]  # P371 3b: the fenced worker receipts' totals (the better count)
         if ctx.get("id") is None and ctx.get("boundary_after", False) is not False:

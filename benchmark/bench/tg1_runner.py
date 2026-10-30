@@ -41,6 +41,9 @@ effective_policy = core.effective_policy
 TG1_POLICY = rc.PolicyTemplate(config_id="tg1", langs=("python", "go"))
 TG1_EVIDENCE = rc.EvidencePolicy(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
                                  worker_receipts="absent", item_barrier="off")
+# B2 spec 2: the P426 mode's policy = TG1_EVIDENCE with the item barrier on (the chain answers it); selected by `--evidence p426`.
+TG1_P426_EVIDENCE = rc.EvidencePolicy(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
+                                      worker_receipts="absent", item_barrier="on")
 
 
 def inject_label(kind):
@@ -70,6 +73,7 @@ def print_identity(p, a):
 
 
 def main(p, a):
-    return core.main(p, ao.OpencodeArm(p, mode="tg1"), a, template=TG1_POLICY, evidence=TG1_EVIDENCE,
-                     corpus=_corpus(p, a))
+    p426 = getattr(a, "evidence", None) == "p426"
+    return core.main(p, ao.OpencodeArm(p, mode="tg1", p426=p426), a, template=TG1_POLICY,
+                     evidence=TG1_P426_EVIDENCE if p426 else TG1_EVIDENCE, corpus=_corpus(p, a))
 

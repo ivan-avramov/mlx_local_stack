@@ -10,9 +10,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-KINDS = ("accept", "rerun_same_slot", "block", "pre_spawn_incident")
-BEFORE_KINDS = ("accept", "pre_spawn_incident")
-AFTER_KINDS = ("accept", "rerun_same_slot", "block")
+KINDS = ("accept", "rerun_same_slot", "block", "pre_spawn_incident", "invalidate")
+BEFORE_KINDS = ("accept", "pre_spawn_incident", "invalidate")
+AFTER_KINDS = ("accept", "rerun_same_slot", "block", "invalidate")
 _SLOT_DISPOSITION = {"accept": "accepted", "rerun_same_slot": "cheat", "block": "unclear"}
 
 
@@ -27,13 +27,14 @@ class HookInfrastructureError(Exception):
 @dataclass(frozen=True)
 class Disposition:
     kind: str
-    reason: str | None = None            # rerun_same_slot / block
+    reason: str | None = None            # rerun_same_slot / block / invalidate
     cause: str | None = None             # pre_spawn_incident
 
     def __post_init__(self):
         if self.kind not in KINDS:
             raise ValueError(f"disposition kind must be one of {KINDS}, got {self.kind!r}")
-        need = {"rerun_same_slot": "reason", "block": "reason", "pre_spawn_incident": "cause"}.get(self.kind)
+        need = {"rerun_same_slot": "reason", "block": "reason", "pre_spawn_incident": "cause",
+                "invalidate": "reason"}.get(self.kind)
         for name in ("reason", "cause"):
             value = getattr(self, name)
             if name == need and not (isinstance(value, str) and value):
@@ -56,6 +57,11 @@ class Disposition:
     @classmethod
     def pre_spawn_incident(cls, cause):
         return cls("pre_spawn_incident", cause=cause)
+
+    @classmethod
+    def invalidate(cls, reason):
+        """B2 (P426): a barrier check failed; the leg is INVALID (persisted, `.stop`, rc 2)."""
+        return cls("invalidate", reason=reason)
 
     @property
     def stops_probe(self):
@@ -86,10 +92,10 @@ def slot_disposition(disposition):
 class ChainHooks:
     """Default: no-op `accept`. Subclasses override the two hooks; the chain calls `run_before` / `run_after`."""
 
-    def before_attempt(self, slot):
+    def before_attempt(self, slot, context=None):
         return Disposition.accept()
 
-    def after_attempt(self, slot, done):
+    def after_attempt(self, slot, done, context=None):
         return Disposition.accept()
 
     @staticmethod
@@ -100,12 +106,17 @@ class ChainHooks:
             raise ValueError(f"{hook} may only return {allowed}, got {result.kind}")
         return result
 
-    def run_before(self, slot):
+    def run_before(self, slot, context=None, systemic=False):
+        """`context` (P426: ready record, row, load context) is passed only when given: a legacy hook keeps `(slot)`.
+        `systemic`: a `HookInfrastructureError` propagates (the chain stops the leg) instead of a `pre_spawn_incident`."""
         try:
-            result = self.before_attempt(slot)
+            result = self.before_attempt(slot) if context is None else self.before_attempt(slot, context)
         except HookInfrastructureError as exc:
+            if systemic:
+                raise
             return Disposition.pre_spawn_incident(exc.cause)
         return self._checked(result, BEFORE_KINDS, "before_attempt")
 
-    def run_after(self, slot, done):
-        return self._checked(self.after_attempt(slot, done), AFTER_KINDS, "after_attempt")
+    def run_after(self, slot, done, context=None):
+        result = self.after_attempt(slot, done) if context is None else self.after_attempt(slot, done, context)
+        return self._checked(result, AFTER_KINDS, "after_attempt")

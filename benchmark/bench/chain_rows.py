@@ -94,6 +94,11 @@ def dnf_path(root, session, stem):
     return Path(root) / session / dnf_name(stem)
 
 
+def slot_file(slot):
+    """B2 spec 16.1: the file-name form of a slot: `|` -> `__`, `/` -> `--`."""
+    return str(slot).replace("|", "__").replace("/", "--")
+
+
 def slot_for(base, row_id):
     """`base` = `epoch|arm|pick|session|lang`; the slot is that + the bare item name (M64 spec 8.3)."""
     if not isinstance(row_id, str):

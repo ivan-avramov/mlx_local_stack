@@ -226,10 +226,13 @@ class OpencodeArm(aa.ArmAdapter):
     receipt_class_rules = dict(task="required", compaction="required", auxiliary="forbidden")   # 2.0.20 sends tools always
     supports_attempt_header = True          # `providers.<id>.settings.headers` reaches every request (verified on 2.0.20)
 
-    def __init__(self, p=None, *, mode="m64", search=None):
+    def __init__(self, p=None, *, mode="m64", search=None, p426=False):
         if mode not in ("tg1", "m64"):
             raise aa.ArmContractError(f"unknown opencode arm mode {mode!r}")
+        if p426 and mode != "tg1":
+            raise aa.ArmContractError("p426 is a tg1 mode (the M64 arm already stamps its transport cause)")
         self.p, self.mode = p, mode
+        self.p426 = bool(p426)             # B2 spec 2: tg1 under the P426 evidence policy (cause stamp, request evidence on abort)
         self.search = search if search is not None else aa.UnavailableSearchService()
         self.m64 = mode == "m64"
         self.plugin_names = PLUGINS_M64 if self.m64 else PLUGINS
@@ -238,7 +241,8 @@ class OpencodeArm(aa.ArmAdapter):
         self.account_compaction = self.m64
         self.scaffold_outcomes = ("compaction_failed",) if self.m64 else ()
         self.watchdog_enabled = self.m64
-        self.report_gate_on_abort = self.m64
+        self.report_gate_on_abort = self.m64 or self.p426
+        self.report_requests_on_abort = self.p426      # the abort stamp adds `request_usage`, `session_id`, `in_flight`
         self._pinned = {}
 
     @property
@@ -688,8 +692,9 @@ class OpencodeArm(aa.ArmAdapter):
                 summary["compaction_receipts"] == reconciliation.compaction_count)
 
     def transport_cause(self, exc):
-        """Incident classification belongs to the M64 chain policy (incident_retry); tg1 aborts and restarts the load."""
-        return exc.cause if self.m64 and isinstance(exc, TransportFailure) else None
+        """Incident classification belongs to the M64 chain policy (incident_retry) and the P426 one (p426_continue); plain
+        tg1 aborts and restarts the load."""
+        return exc.cause if (self.m64 or self.p426) and isinstance(exc, TransportFailure) else None
 
     def tmp_escapes(self, transcript, env):
         return pg.tmp_escapes(transcript.doc, env)

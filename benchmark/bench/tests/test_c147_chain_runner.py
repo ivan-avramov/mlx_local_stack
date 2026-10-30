@@ -1,5 +1,6 @@
 """C147 chain runner end-to-end against the fake probe (contract implementation) with a fake ChainOps.
 The runner never starts a real router/worker here: every chain_ops call is injected."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -17,6 +18,17 @@ from bench import chain_ops as co
 REPO = Path(__file__).resolve().parents[3]
 C147 = REPO / "benchmark/chains/c147"
 PICK1, PICK2 = co.PICK1, co.PICK2
+
+# P531 / P518 / C246: a harness's served registry is the sha256-pinned copy of commit 10014b4a's OFF `main_models.yaml`, never the live
+# tree (whose entry state moves with the shipped MTP default, C244). A test that needs an MTP-ON entry writes a synthetic one under tmp_path.
+OFF_REGISTRY_FIXTURE = Path(__file__).resolve().parent / "fixtures" / "p426_off" / "main_models.yaml"
+OFF_REGISTRY_SHA256 = "7739900f0f7ffe501af1e0b7c6a6b517265c2761f45420c7e9e7133f7c1cf572"
+
+
+def pinned_off_registry():
+    got = hashlib.sha256(OFF_REGISTRY_FIXTURE.read_bytes()).hexdigest()
+    assert got == OFF_REGISTRY_SHA256, f"pinned OFF registry fixture changed: sha256 {got}, expected {OFF_REGISTRY_SHA256}"
+    return OFF_REGISTRY_FIXTURE
 
 
 def _load(name):
@@ -36,6 +48,7 @@ class FakeOps:
 
     def __init__(self, wd):
         self.wd = Path(wd)
+        self.overlay = str(pinned_off_registry())       # C221: `ChainOps.overlay` IS the served registry (the pinned OFF copy)
         self.tmpdir = self.wd / "c147/tmp"
         self.state = self.wd / "fakestate"
         self.state.mkdir(parents=True, exist_ok=True)
@@ -43,7 +56,7 @@ class FakeOps:
         self.pid = 1000
         self.ident = None
         self.loaded = None
-        self.metrics = {"summary": {"in_flight": 0}}
+        self.metrics = self.fake_server_metrics     # B2 (P426): the fake probe's fake server moves these counters
         self.extra_env = {}
         self.on_unload = None
         self.power = True
@@ -87,6 +100,10 @@ class FakeOps:
         if isinstance(self.docker, list):
             return self.docker.pop(0) if len(self.docker) > 1 else self.docker[0]
         return self.docker
+
+    def listeners(self, port=8000):
+        self._check()
+        return []                                   # B2 s7: the Entry row's `:8000` seam (nothing listens before the router starts)
 
     def power_state(self):
         self._check()
@@ -144,6 +161,20 @@ class FakeOps:
         m = self.metrics
         return m() if callable(m) else m
 
+    def fake_server_metrics(self):
+        """The worker /metrics the fake probe's `server_work` maintains (P426 mode); idle counters until it ran."""
+        f = self.state / "fake_metrics.json"
+        return json.loads(f.read_text()) if f.exists() else {"summary": dict(
+            requests_started=0, requests_completed=0, requests_failed=0, in_flight=0, prompt_tokens_total=0,
+            generated_tokens_total=0, avg_decode_tok_s=0.0, decode_s=0.0)}
+
+    def server_log_path(self):
+        """B2 (P426) seam: the worker log the chain bounds in `log_bounds.json` (a scratch file; the fake probe writes none)."""
+        return self.wd / "fakelogs" / "mlx_vlm.log"
+
+    def read_log(self, path, start, end=None):
+        return co.ChainOps.read_log(self, path, start, end)
+
     def worker_ident(self, model):
         if not self.loaded:
             return None
@@ -155,13 +186,19 @@ class FakeOps:
     def env_base(self):
         self._check()
         env = dict(os.environ)
+        env.pop("MLX_SERVE_CONFIG", None)              # P530: the fake probe's environment never inherits the test runner's
         env.update(STACK_WORKDIR=str(self.wd), FAKE_PROBE_STATE=str(self.state), FAKE_ITEM_S="0.03",
-                   FAKE_HB_S="0.02", FAKE_TICK_S="0.01")
+                   FAKE_HB_S="0.02", FAKE_TICK_S="0.01", FAKE_SERVER_LOG=str(self.server_log_path()),
+                   FAKE_METRICS_FILE=str(self.state / "fake_metrics.json"))
         env.update(self.extra_env)
         return env
 
     def rows(self, path):
         return co.ChainOps.rows(self, path)
+
+    def interpreter_inventory_at(self, exe):
+        """B2: an interpreter without a process; the world's `interpreter_inventory` answers for every interpreter."""
+        return self.interpreter_inventory(0)
 
     def leftovers(self, roots, run_ids=()):
         self.leftover_calls.append((list(roots), list(run_ids)))
@@ -191,7 +228,7 @@ EPOCH_DATE = "Mon Jan 05 2026"       # P364: a past date, so a row that showed t
 
 
 def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeout=90, helper=None, universe=True,
-        lifecycle=None, frozen=EPOCH_DATE, campaign=None):
+        lifecycle=None, frozen=EPOCH_DATE, campaign=None, registry=None):
     ops = env["ops"]
     if plan is not None:
         ops.extra_env["FAKE_PROBE_PLAN"] = json.dumps(plan)
@@ -200,6 +237,8 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
     ops.extra_env.update(extra_env or {})
     full = list(argv) + ["--probe", str(C147 / "fake_probe.py"), "--python", sys.executable, "--out-root",
                          str(env["out"]), "--arm-idle-s", "0"]
+    if "--models" not in argv:                  # C221: required; the helper's default is the pre-C221 pair
+        full += MODELS_ARG
     if universe:
         full += ["--universe", str(env["uni"])]
     if frozen and not any(x in argv for x in ("--frozen-prompt-date", "--frozen-date-from")):
@@ -210,7 +249,7 @@ def run(env, argv, timers=None, plan=None, behaviour=None, extra_env=None, timeo
     def target():
         try:
             res["rc"] = R.main(full, ops=ops, timers=tm, log_out=env["lines"].append, lifecycle_files=lifecycle,
-                               campaign=campaign)
+                               campaign=campaign, **({"registry": registry} if registry is not None else {}))
         except BaseException as e:  # noqa: BLE001
             res["exc"] = e
 
@@ -254,8 +293,9 @@ def chain_json(env):
     return json.loads((env["out"] / "chain.json").read_text())
 
 
-CHAIN = ["chain", "s1", "--probe-code-sha", "9" * 64]
-PILOT = ["pilot"]
+MODELS_ARG = ["--models", f"{PICK1},{PICK2}"]          # C221: `--models` is required in every tg1 mode (the pre-C221 pair)
+CHAIN = ["chain", "s1", "--probe-code-sha", "9" * 64] + MODELS_ARG
+PILOT = ["pilot"] + MODELS_ARG
 
 
 # --------------------------------------------------------------------------- schedule
@@ -266,7 +306,7 @@ def test_universe_is_22_python_21_go():
 
 def test_schedule_order_blocks_seeds_reload():
     names = R.load_universe()
-    blocks = R.schedule("chain", ["s1", "s2", "reload"], names, "/o")
+    blocks = R.schedule("chain", ["s1", "s2", "reload"], names, "/o", models=[PICK1, PICK2])
     assert [(b["session"], b["model"], [leg["lang"] for leg in b["legs"]]) for b in blocks] == [
         ("s1", PICK1, ["python", "go"]), ("s1", PICK2, ["python", "go"]),
         ("s2", PICK2, ["python", "go"]), ("s2", PICK1, ["python", "go"]),
@@ -284,14 +324,14 @@ def test_schedule_order_blocks_seeds_reload():
 
 
 def test_pilot_mode_schedule_is_one_pick1_python_pilot_step():
-    b = R.schedule("pilot", [], R.load_universe(), "/o")
+    b = R.schedule("pilot", [], R.load_universe(), "/o", models=[PICK1, PICK2])
     assert len(b) == 1 and b[0]["model"] == PICK1 and b[0]["legs"][0]["lang"] == "python" and b[0]["pilot_only"]
     assert [s["kind"] for s in R.steps_for(b[0], 0)] == ["pilot"]
 
 
 def test_steps_pilot_then_full_first_leg_only():
     names = R.load_universe()
-    blk = R.schedule("chain", ["s1"], names, "/o")[0]
+    blk = R.schedule("chain", ["s1"], names, "/o", models=[PICK1, PICK2])[0]
     assert [s["kind"] for s in R.steps_for(blk, 0)] == ["pilot", "full"]
     assert [s["kind"] for s in R.steps_for(blk, 1)] == ["full"]
 
@@ -311,9 +351,9 @@ def test_build_cmd_exact_vectors():
 
 def test_chain_requires_probe_code_sha(env):
     with pytest.raises(SystemExit) as e:
-        R.parse_args(["chain"])
+        R.parse_args(["chain"] + MODELS_ARG)
     assert e.value.code == 2
-    assert R.parse_args(["pilot"]).probe_code_sha is None
+    assert R.parse_args(["pilot"] + MODELS_ARG).probe_code_sha is None
 
 
 # --------------------------------------------------------------------------- end to end
@@ -333,7 +373,8 @@ def test_pilot_mode_end_to_end(env):
     assert att["rc"] == 0 and att["run_id"] and att["worker"]["pid"] == 1001 and att["cancel"] and att["ack"] and att["argv"]
     assert att["cleanup_status"]["uncertain"] is False and att["probe_pid"] > 0
     names = [c[0] for c in env["ops"].calls]
-    assert names[:1] == ["ensure_overlay"] and "start_router" in names and names[-2:] == ["unload", "stop_stack"]
+    assert "ensure_overlay" not in names and names[:1] == ["power_ok"]           # C221: no overlay is generated
+    assert "start_router" in names and names[-2:] == ["unload", "stop_stack"]
     cj = chain_json(env)
     assert cj["rc"] == 0 and cj["status"] == "finished" and len(cj["attempts"]) == 1
     assert all(len(cj["sha256"][k]) == 64 for k in ("runner", "chain_ops", "gate", "overlay"))
@@ -950,7 +991,7 @@ def _real_ops_with_foreign_listener(tmp_path):
             return co.Result("p4242\n")
         return co.Result("")
     ov = tmp_path / "ov.yaml"
-    ov.write_text("mlx_port: 8091\nmodels: []\n")
+    ov.write_text("mlx_port: 8091\nmodels:\n" + "".join(f"- name: {m}\n  hf_path: caslca/{m}\n" for m in (PICK1, PICK2)))   # C221: `ops.overlay` is the served registry
     lines = []
     ops = co.ChainOps(REPO, tmp_path, ov, co.RunLog(tmp_path / "RL.md", out=lines.append), sh=sh,
                       http=lambda *a, **k: b"{}", popen=lambda *a, **k: pytest.fail("router must not be spawned"),
@@ -1150,7 +1191,7 @@ def test_p340_relative_out_root_is_made_absolute_before_ops(tmp_path, monkeypatc
     elsewhere = tmp_path / "launch"
     elsewhere.mkdir()
     monkeypatch.chdir(elsewhere)
-    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--out-root", "rel-root"])
+    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--out-root", "rel-root"] + MODELS_ARG)
     root = R.resolve_out_root(a, wd)
     assert root.is_absolute() and root == elsewhere / "rel-root"
     ops = R.make_ops("off", wd, root, "overlay.yaml", log=lambda m: None)
@@ -1159,7 +1200,7 @@ def test_p340_relative_out_root_is_made_absolute_before_ops(tmp_path, monkeypatc
 
 def test_p340_default_off_smoke_keeps_a4_logs_in_its_smoke_root(tmp_path):
     wd = tmp_path / "wd"
-    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--smoke"])
+    a = R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--smoke"] + MODELS_ARG)
     root = R.resolve_out_root(a, wd)
     assert root == wd / "c147-smoke"
     assert R.make_ops("off", wd, root, "overlay.yaml", log=lambda m: None).a4_log_dir == root

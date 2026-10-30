@@ -14,7 +14,9 @@ INCIDENT_CAUSES = ("server_error", "connection", "dropped_stream", "timeout", "c
                    "router_error")
 CLEANUP_KEYS = ("survivors", "containers_remaining", "uncertain", "orphans_unattributed", "unknown", "completed")
 CLEANUP_LISTS = ("survivors", "containers_remaining", "orphans_unattributed", "unknown")
-MAX_INCIDENTS = 2                      # the second incident of a slot is a `transport_dnf` row (spec 8.3)
+P426_DNF_CAUSES = ("connection", "dropped_stream", "timeout", "client_timeout")      # B2 spec 5.1: an item DNF's stamp
+MAX_P426_DNF = 2                       # B2 spec 5.1: more than two DNF in a leg is systemic
+MAX_INCIDENTS = 2                     # the second incident of a slot is a `transport_dnf` row (spec 8.3)
 
 
 def classify_incident_cause(*, stamp_cause, cancelled_idle, worker_ok, router_ok):
@@ -28,6 +30,11 @@ def classify_incident_cause(*, stamp_cause, cancelled_idle, worker_ok, router_ok
     if cancelled_idle:
         return "client_timeout"
     return None
+
+
+def classify_p426_dnf_cause(*, stamp_cause, worker_ok, router_ok):
+    """B2 spec 5.1: the stamped cause of an item DNF, or None (systemic: no DNF cause, a changed worker or router)."""
+    return stamp_cause if (worker_ok and router_ok and stamp_cause in P426_DNF_CAUSES) else None
 
 
 def cleanup_problems(receipt):

@@ -109,7 +109,7 @@ def tg2(tmp_path, monkeypatch):
 def tg2_chain(tg2, doc=None, draw=None, tier="screen"):
     a = T.R.parse_args(["chain", "s1", "--probe-code-sha", "9" * 64, "--probe", str(REPO / "benchmark/chains/c147/fake_probe.py"),
                         "--python", sys.executable, "--out-root", str(tg2["out"]), "--arm-idle-s", "0",
-                        "--frozen-prompt-date", "Mon Jan 05 2026"])
+                        "--frozen-prompt-date", "Mon Jan 05 2026"] + T.MODELS_ARG)
     a.tg2_draw = str(draw or tg2["draw"])
     return core.Chain(tg2_config(doc or tg2["doc"], tier), a, tg2["ops"], T.R.Timers(**T.TIMERS), tg2["lines"].append,
                       repo=REPO, out_root=tg2["out"], names={}, lifecycle_files=T.R.lifecycle_files(REPO),

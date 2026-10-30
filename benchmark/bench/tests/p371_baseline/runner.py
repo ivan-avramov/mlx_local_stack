@@ -42,6 +42,29 @@ def load_golden(name):
     return json.loads((GOLDEN_DIR / f"{name}.json").read_text())
 
 
+def golden_text(result):
+    return json.dumps(result, indent=1, sort_keys=True) + "\n"
+
+
+def load_refreshed_golden(name):
+    """The golden the NEW chain is compared with. A golden listed in `golden_refresh_c221.json` is the old golden with the one
+    recorded change applied (C221: no `ensure_overlay` ops call); the old bytes must hash to the recorded `old_sha256` and the
+    result to the recorded `new_sha256`, so the refresh is a recorded old -> new, never an ad-hoc filter in a test."""
+    import hashlib
+    old_raw = (GOLDEN_DIR / f"{name}.json").read_bytes()
+    doc = json.loads(old_raw)
+    rec = json.loads((HERE / "golden_refresh_c221.json").read_text())
+    entry = rec["goldens"].get(f"{name}.json")
+    if entry is None:
+        return doc
+    if hashlib.sha256(old_raw).hexdigest() != entry["old_sha256"]:
+        raise AssertionError(f"golden {name} no longer matches the old hash recorded in golden_refresh_c221.json")
+    doc["ops_calls"] = [c for c in doc["ops_calls"] if c != rec["removed_ops_call"]]
+    if hashlib.sha256(golden_text(doc).encode()).hexdigest() != entry["new_sha256"]:
+        raise AssertionError(f"refreshed golden {name} does not hash to the new value recorded in golden_refresh_c221.json")
+    return doc
+
+
 def write_golden(name, result):
     GOLDEN_DIR.mkdir(parents=True, exist_ok=True)
     (GOLDEN_DIR / f"{name}.json").write_text(json.dumps(result, indent=1, sort_keys=True) + "\n")

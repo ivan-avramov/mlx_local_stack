@@ -10,7 +10,8 @@ import pytest
 import yaml
 
 from bench import chain_ops as co
-from bench.tests.test_c147_chain_runner import CHAIN, R, chain_json, env, log_has, run   # noqa: F401  (fixture)
+from bench.tests.test_c147_chain_runner import (  # noqa: F401  (fixture)
+    CHAIN, R, chain_json, env, log_has, pinned_off_registry, run)
 from bench.tests.test_chain_ops import _codes, _mut_man, _router, _worker_ps, leg_env, ops  # noqa: F401
 
 PICK1, PICK2 = co.PICK1, co.PICK2
@@ -18,6 +19,15 @@ SHIPPED = (f"mlx_port: 8091\nmodels:\n- name: {PICK1}\n  hf_path: caslca/{PICK1}
            f"  mtp_verify_scan: joint_v1\n  draft_kind: mtp\n"
            f"  draft_model: caslca/{PICK1}-mtp-drafter\n  keep: 1\n- name: {PICK2}\n  hf_path: caslca/{PICK2}\n"
            f"  type: vision\n  draft_kind: mtp\n  draft_model: caslca/{PICK2}-mtp-drafter\n")
+
+
+def _committed_mtp_registry(path):
+    """C221: an arm worktree's committed registry: both entries carry all three C177 keys (SHIPPED's second entry predates
+    the verify-scan key)."""
+    path.write_text(SHIPPED.replace(f"  type: vision\n  draft_kind: mtp\n  draft_model: caslca/{PICK2}-mtp-drafter\n",
+                                    f"  type: vision\n  mtp_verify_scan: joint_v1\n  draft_kind: mtp\n"
+                                    f"  draft_model: caslca/{PICK2}-mtp-drafter\n"))
+    return path
 
 
 # --------------------------------------------------------------------------- arguments / out-root
@@ -43,10 +53,11 @@ def test_out_roots_are_separate_per_predictor(tmp_path):
 
 def test_schedule_legs_carry_the_predictor():
     names = R.load_universe()
-    assert {x["draft_kind"] for b in R.schedule("chain", ["s1"], names, "/o") for x in b["legs"]} == {"off"}
-    on = R.schedule("chain", ["s1", "s2", "reload"], names, "/o", predictor="mtp")
+    pair = [PICK1, PICK2]
+    assert {x["draft_kind"] for b in R.schedule("chain", ["s1"], names, "/o", models=pair) for x in b["legs"]} == {"off"}
+    on = R.schedule("chain", ["s1", "s2", "reload"], names, "/o", models=pair, predictor="mtp")
     assert {x["draft_kind"] for b in on for x in b["legs"]} == {"mtp"}
-    off = R.schedule("chain", ["s1", "s2", "reload"], names, "/o")
+    off = R.schedule("chain", ["s1", "s2", "reload"], names, "/o", models=pair)
     strip = lambda bs: [[{k: v for k, v in x.items() if k != "draft_kind"} for x in b["legs"]] for b in bs]  # noqa: E731
     assert strip(on) == strip(off)                       # same items, seeds and order: the arms pair
 
@@ -138,16 +149,17 @@ def test_validate_leg_expects_the_legs_predictor(leg_env):
 
 # --------------------------------------------------------------------------- end to end (fake probe)
 def _on_env(env, served="mtp"):
-    ov = Path(env["wd"]) / "served_overlay.yaml"
+    ov = Path(env["wd"]) / "served_overlay.yaml"                  # what the (fake) worker reports serving
     ov.write_text(SHIPPED.replace("draft_kind: mtp", f"draft_kind: {served}"))
     env["ops"].extra_env["FAKE_SERVED_REGISTRY"] = str(ov)
+    env["registry"] = _committed_mtp_registry(Path(env["wd"]) / "committed_main_models.yaml")   # C221: what `--predictor mtp` asserts
     env["out"] = Path(env["wd"]) / "m63"
     Path(env["out"]).mkdir(parents=True, exist_ok=True)
 
 
 def test_mtp_chain_runs_end_to_end_against_the_fake_probe(env):
     _on_env(env)
-    assert run(env, CHAIN + ["--predictor", "mtp"]) == 0
+    assert run(env, CHAIN + ["--predictor", "mtp"], registry=env["registry"]) == 0
     doc = chain_json(env)
     assert doc["predictor"] == "mtp" and doc["status"] == "finished"
     assert log_has(env, "predictor=mtp")
@@ -155,7 +167,7 @@ def test_mtp_chain_runs_end_to_end_against_the_fake_probe(env):
 
 def test_mtp_chain_aborts_at_the_barrier_when_the_worker_serves_off(env):
     _on_env(env, served="off")
-    assert run(env, CHAIN + ["--predictor", "mtp"]) == 2
+    assert run(env, CHAIN + ["--predictor", "mtp"], registry=env["registry"]) == 2
     assert log_has(env, "draft_kind")
 
 
@@ -236,6 +248,9 @@ def test_m2_overlay_override_inside_the_other_arm_is_refused(tmp_path, monkeypat
 def test_m3_production_wiring_selects_the_mtp_overlay_out_root_and_child_env(tmp_path, monkeypatch):
     monkeypatch.setenv("STACK_WORKDIR", str(tmp_path))
     monkeypatch.delenv("C147_OVERLAY", raising=False)
+    served = tmp_path / "arm/main_models.yaml"                       # an arm worktree's registry that ships the MTP entries
+    served.parent.mkdir()
+    _committed_mtp_registry(served)
     built = {}
     real = co.ChainOps
 
@@ -248,9 +263,10 @@ def test_m3_production_wiring_selects_the_mtp_overlay_out_root_and_child_env(tmp
 
     monkeypatch.setattr(R.co, "ChainOps", capture)
     with pytest.raises(Stop):
-        R.main(CHAIN + ["--predictor", "mtp"])
+        R.main(CHAIN + ["--predictor", "mtp"], registry=served)
     o = built["ops"]
-    assert o.predictor == "mtp" and o.overlay == str(tmp_path / "m63/overlay_m63_mtp.yaml")
+    # C221: no overlay file; the served (committed) registry itself is the router's config
+    assert o.predictor == "mtp" and o.overlay == str(served)
     assert o.a4_log_dir == tmp_path / "m63" and o.tmpdir == tmp_path / "m63/tmp"
     env = o.env_base()                                   # what every probe child and the router inherit (M50/C35)
     assert env["MLX_SERVE_CONFIG"] == o.overlay and env["TMPDIR"] == str(tmp_path / "m63/tmp")
@@ -271,9 +287,10 @@ def test_m3_production_wiring_off_is_the_c147_layout(tmp_path, monkeypatch):
 
     monkeypatch.setattr(R.co, "ChainOps", capture)
     with pytest.raises(Stop):
-        R.main(CHAIN)
+        R.main(CHAIN, registry=pinned_off_registry())
     o = built["ops"]
-    assert o.predictor == "off" and o.overlay == str(tmp_path / "c147/overlay_c147_draft_off.yaml")
+    # C221: the served registry (the pinned OFF copy, standing for the committed OFF state) is served verbatim; no overlay is generated
+    assert o.predictor == "off" and o.overlay == str(pinned_off_registry())
     assert o.tmpdir == tmp_path / "c147/tmp" and o.env_base()["MLX_SERVE_CONFIG"] == o.overlay
 
 

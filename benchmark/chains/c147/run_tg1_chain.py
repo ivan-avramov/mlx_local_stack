@@ -2,10 +2,16 @@
 `bench/chain_core.py`, this file is the CLI, the out-root rules (P340, ON / OFF predictor separation) and the tg1
 `ChainConfig`).
 
-  run_tg1_chain.py pilot                      one block: pick 1 python, first 5 seeded-random items, s1 seed
-  run_tg1_chain.py chain [s1 s2 reload] --probe-code-sha <sha>
+  run_tg1_chain.py pilot --models a[,b...]    one block: the first model's python, first 5 seeded-random items, s1 seed
+  run_tg1_chain.py chain [s1 s2 reload] --models a[,b...] --probe-code-sha <sha>
   run_tg1_chain.py chain ... --predictor mtp  M63 ON arm (spec docs/specs/m63-mtp-on-tg1-arm.md): out-root m63/
   run_tg1_chain.py chain ... --campaign-core <tag>   C179: refuse unless the core closures equal the closures at <tag>
+  run_tg1_chain.py {pilot|chain <session>} --p426 ...   B2 (docs/specs/p426-b2-tg1-wave2.md): one model, one leg, a fresh out-root
+
+C221 (every mode): `--models` is REQUIRED (each a `models:` entry of the served registry; s1 runs them in the given order, s2
+reversed, reload the first); the worktree's committed `main_models.yaml` is served verbatim (no overlay is generated; a
+`C147_OVERLAY` environment override is refused) and `--predictor` ASSERTS the entries' committed state (mtp: all three C177 keys,
+off: none).
 
 P311-lite: the probe is `benchmark/run_tg1_probe.py` (generation only; `--print-identity` prints its closure identity).
 The shared generation composite is pinned at the first manifest (or `--generation-sha`), one arm identity per
@@ -22,6 +28,7 @@ Detached launch: drive_chain.sh. Tests inject `ops` (chain_ops.ChainOps-shaped),
 """
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -36,13 +43,9 @@ from bench import schedules  # noqa: E402
 
 Timers, RecordInvalid, Stopped, Refused = core.Timers, core.RecordInvalid, core.Stopped, core.Refused
 Heartbeat, dir_bytes, receipt_from_manifest, quantile = core.Heartbeat, core.dir_bytes, core.receipt_from_manifest, core.quantile
-PICK1, PICK2 = co.PICK1, co.PICK2
 SCAFFOLD = co.SCAFFOLD
 SEEDS = {"s1": 1001, "s2": 2002, "reload": 1001}
-LEGS = {"s1": [(PICK1, "python"), (PICK1, "go"), (PICK2, "python"), (PICK2, "go")],
-        "s2": [(PICK2, "python"), (PICK2, "go"), (PICK1, "python"), (PICK1, "go")],
-        "reload": [(PICK1, "python")]}
-PRED_S = core.PRED_S
+LANGS = ("python", "go")
 PILOT_N = core.PILOT_N
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = core.SMOKE_PILOT_N, core.SMOKE_FULL_N, core.SMOKE_ARM_IDLE_S
 
@@ -78,17 +81,22 @@ def lifecycle_files(repo):
 def tg1_config(a):
     """The tg1 `ChainConfig` (plan 3.2): abort_restart / restart_load, no arm switches, no contract artifacts. Run
     selection (`pilot` / `chain`, the session list, `--smoke`) is NOT part of it, so a pilot and the chain after it share
-    one frozen record; the predictor is (ON and OFF never share an out-root)."""
+    one frozen record; the predictor is (ON and OFF never share an out-root). C221: it records the `--models` list and the
+    generic prediction default. `--p426` selects the distinct `tg1-p426` config (one model, the seeded schedule, spec 2)."""
     predictor = getattr(a, "predictor", "off")
+    models, p426 = list(a.models), bool(getattr(a, "p426", False))
+    params = dict(seeds=SEEDS, legs={k: [list(x) for x in v] for k, v in schedules.tg1_legs_table(models, LANGS, p426).items()},
+                  pilot_n=PILOT_N, smoke_pilot_n=SMOKE_PILOT_N, smoke_full_n=SMOKE_FULL_N, models=models,
+                  generic_pred_s=core.GENERIC_PRED_S)       # spec 2 / 16.1: recorded in chain.json via the ChainConfig
+    if p426:
+        params["p426"] = True
     return rc.ChainConfig(
-        config_id="tg1",
+        config_id=rc.P426_CONFIG_ID if p426 else "tg1",
         arms=(rc.ArmBinding(arm="oc", probe=probe_entry(a), label=SCAFFOLD, arm_spec="oc",
                             probe_data=CORE_SPECS["probe_data"]),),
-        schedule={"builder": "tg1", "params": dict(seeds=SEEDS, legs={k: [list(x) for x in v] for k, v in LEGS.items()},
-                                                   pilot_n=PILOT_N, smoke_pilot_n=SMOKE_PILOT_N,
-                                                   smoke_full_n=SMOKE_FULL_N)},
+        schedule={"builder": "tg1", "params": params},
         out_root_family="m63" if predictor == "mtp" else "c147", predictor=predictor, arm_switch_ops=(),
-        transport_policy="abort_restart", resume_policy="restart_load", snapshot_complete_required=False,
+        transport_policy="p426_continue" if p426 else "abort_restart", resume_policy="restart_load", snapshot_complete_required=False,
         contract_artifacts=())
 
 
@@ -112,10 +120,11 @@ def load_universe(path=None):
     return {k: sorted(v) for k, v in names.items()}
 
 
-def schedule(mode, sessions, names, out_root, smoke=False, predictor="off"):
+def schedule(mode, sessions, names, out_root, *, models, smoke=False, predictor="off", p426=False):
     """List of blocks: {session, model, seed_base, legs}. A block = one model within one session (both languages). Thin
-    wrapper over `schedules.tg1`; each leg also carries its pre-P371 shared `out` path (informational)."""
-    sched = schedules.tg1(mode, sessions, names, smoke=smoke, predictor=predictor)
+    wrapper over `schedules.tg1` (`models` = the required `--models` list); each leg also carries its pre-P371 shared `out`
+    path (informational)."""
+    sched = schedules.tg1(mode, sessions, names, picks=tuple(models), smoke=smoke, predictor=predictor, p426=p426)
     return [dict(session=b["session"], model=b["model"], seed_base=b["seed_base"], pilot_only=b["pilot_only"],
                  legs=[dict(leg, out=str(Path(out_root) / b["session"] / (leg["stem"] + ".jsonl"))) for leg in b["legs"]])
             for b in sched["blocks"]]
@@ -135,15 +144,85 @@ def steps_for(block, idx):
 
 
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, universe=None, frozen=None, out=None, attempt=None,
-              rerun_index=None):
+              rerun_index=None, evidence=None):
     return core.build_cmd(py, probe, leg, step, receipt, cancel, ack, scaffold=SCAFFOLD, universe=universe, frozen=frozen,
-                          out=out, attempt=attempt, rerun_index=rerun_index)
+                          out=out, attempt=attempt, rerun_index=rerun_index, evidence=evidence)
 
 
 # --------------------------------------------------------------------------- entry
+def parse_models(ap, a):
+    """C221 / B2 6.1: `--models` -> a list; empty names and duplicates are refused (usage error, exit 2)."""
+    names = a.models.split(",")
+    if any(not n.strip() or n != n.strip() for n in names):
+        ap.error("--models must be comma-separated model names, none empty or padded with whitespace")
+    if len(set(names)) != len(names):
+        ap.error("--models must not repeat a model")
+    a.models = names
+
+
+def check_p426(ap, a):
+    """B2 spec 2: the refusals of `--p426` that need only the arguments (the out-root, environment, registry and record checks
+    run in `main`, before anything is written)."""
+    excluded = [flag for flag, given in (("--smoke", a.smoke), ("--pred-s", a.pred_s), ("--generation-sha", a.generation_sha),
+                                         ("--frozen-date-from", a.frozen_date_from)) if given]
+    if excluded:
+        ap.error(f"--p426 refuses {', '.join(excluded)}")
+    missing = [flag for flag, given in (("--out-root", a.out_root), ("--campaign-core", a.campaign_core),
+                                        ("--frozen-prompt-date", a.frozen_prompt_date), ("--probe-code-sha", a.probe_code_sha),
+                                        ("--policy-sha", a.policy_sha), ("--frozen-record", a.frozen_record)) if not given]
+    if missing:
+        ap.error(f"--p426 requires {', '.join(missing)}")
+    if len(a.models) != 1:
+        ap.error("--models: --p426 runs exactly one model")
+    if a.mode == "chain" and len(a.sessions) != 1:
+        ap.error("--p426 chain runs exactly one session leg (s1, s2 or reload)")
+    if a.mode == "makeup" and a.sessions:
+        ap.error("--p426 makeup takes no session (the occurrences file is its plan)")
+    if a.mode == "makeup" and not a.occurrences:
+        ap.error("--p426 makeup requires --occurrences")
+    if a.rehearsal and a.mode != "chain":
+        ap.error("--rehearsal is for chain mode")
+
+
+ATTEMPT_NAME = re.compile(r"^.+\.a[1-9][0-9]*$")
+
+
+def check_frozen_record(a):
+    """B2 spec 16.1: `--frozen-record` is read once at entry; its `kind` must fit the mode (`--rehearsal` -> p426_rehearsal,
+    `pilot` -> p426_v8_base, `chain` -> p426_timeout_amendment, whose `v8_base_sha256` must equal the self-hash of the
+    `v8_base.json` beside it); a missing file, a bad self-hash, a wrong kind or a mismatched amendment refuses. The chain
+    re-reads it through the same `p426_record.load` before every invocation."""
+    from bench import p426_record
+    try:
+        return p426_record.load(a.frozen_record, mode=a.mode, rehearsal=a.rehearsal)
+    except p426_record.RecordError as e:
+        raise Refused(f"REFUSED: --frozen-record {e}") from None
+
+
+def check_pair_receipt(path):
+    """B2 spec 6.5: the first leg's receipt must exist, parse and verify its self-hash, or the leg is refused before anything is
+    written. Only the shape is checked here; the comparison runs in the chain after load."""
+    import json
+    from bench import p426_hooks
+    try:
+        doc = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        raise Refused(f"REFUSED: --pair-receipt {Path(path).name} is missing, unreadable or not JSON") from None
+    if not p426_hooks.sealed_ok(doc):
+        raise Refused(f"REFUSED: --pair-receipt {Path(path).name}: its sha256 does not verify (not an arm-equality receipt)")
+
+
+class RefusingParser(argparse.ArgumentParser):
+    """Spec 16: every refusal, argparse's own included, prints one stderr line `REFUSED: <reason>` and exits 2."""
+
+    def error(self, message):
+        print(f"REFUSED: {message}", file=sys.stderr)
+        sys.exit(2)
+
+
 def parse_args(argv):
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("mode", choices=["pilot", "chain"])
+    ap = RefusingParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("mode", choices=["pilot", "chain", "makeup"])
     ap.add_argument("sessions", nargs="*")
     ap.add_argument("--pred-s", action="append", default=[], metavar="LANG:MODEL=SECONDS")
     ap.add_argument("--arm-idle-s", type=float, default=None)
@@ -170,7 +249,38 @@ def parse_args(argv):
                     help="C179 / P377: the campaign's frozen core. The chain refuses unless the probe and chain entry "
                          "closures equal their closures at this git tag / commit (at creation, every launch, resume and "
                          "exit); recorded in chain.json artifacts.campaign_core")
+    ap.add_argument("--models", required=True, metavar="NAME[,NAME...]",
+                    help="C221: the models to run (>= 1, comma-separated, no duplicates, each a `models:` entry of the served "
+                         "committed registry); s1 runs them in this order, s2 reversed, reload the first")
+    ap.add_argument("--p426", action="store_true",
+                    help="B2 (docs/specs/p426-b2-tg1-wave2.md): one model, one session leg, a fresh out-root, the seeded "
+                         "frozen schedule; refuses --smoke / --pred-s / --generation-sha / --frozen-date-from / C147_OVERLAY")
+    ap.add_argument("--frozen-record", default=None, metavar="PATH", help="--p426 only: the frozen record this leg runs under")
+    ap.add_argument("--rehearsal", action="store_true",
+                    help="--p426 only: a pre-freeze rehearsal leg (accepts only a rehearsal manifest; behaviour: spec 1)")
+    ap.add_argument("--inject", choices=["reconcile-mismatch", "stall-kill"], default=None,
+                    help="--rehearsal only: the R2 / R3 rehearsal injection (spec 1)")
+    ap.add_argument("--occurrences", default=None, metavar="FILE",
+                    help="makeup mode only (spec 5.5): the JSON-lines occurrences this fresh-load leg re-runs (its plan)")
+    ap.add_argument("--pair-receipt", default=None, metavar="PATH",
+                    help="--p426 only: the first leg's arm-equality receipt; this leg's receipt is compared with it after load, "
+                         "before item one (spec 6.5); any difference outside the closed allowed list is systemic")
     a = ap.parse_args(argv)
+    if a.inject is not None and not a.rehearsal:
+        ap.error("--inject exists only with --rehearsal")
+    if a.occurrences is not None and a.mode != "makeup":
+        ap.error("--occurrences is for makeup mode")
+    if a.mode == "makeup" and not a.p426:
+        ap.error("makeup mode is for --p426")
+    parse_models(ap, a)
+    if a.p426:
+        check_p426(ap, a)
+    elif a.frozen_record is not None:
+        ap.error("--frozen-record is for --p426")
+    elif a.rehearsal:
+        ap.error("--rehearsal is for --p426")
+    elif a.pair_receipt is not None:
+        ap.error("--pair-receipt is for --p426")
     if a.policy_sha is not None and not co.HEX64.match(a.policy_sha):
         ap.error("--policy-sha must be 64 lowercase hex")
     if a.frozen_prompt_date is not None and not datefreeze.valid(a.frozen_prompt_date):
@@ -183,11 +293,12 @@ def parse_args(argv):
         ap.error("--smoke is for chain mode")
     if a.arm_idle_s is None:
         a.arm_idle_s = SMOKE_ARM_IDLE_S if a.smoke else 600.0
-    if a.mode == "chain":
+    if a.mode in ("chain", "makeup"):
         if not a.probe_code_sha:
-            ap.error("--probe-code-sha is required for chain")
+            ap.error(f"--probe-code-sha is required for {a.mode}")
+    if a.mode == "chain":
         a.sessions = a.sessions or ["s1", "s2", "reload"]
-        bad = [s for s in a.sessions if s not in LEGS]
+        bad = [s for s in a.sessions if s not in SEEDS]
         if bad:
             ap.error(f"unknown session {bad}")
     return a
@@ -218,38 +329,80 @@ def inside_other_arm(path, wd, on):
     return False
 
 
-def make_ops(predictor, wd, out_root, overlay, log):
+def make_ops(predictor, wd, out_root, served, log):
     """M63: the ON arm keeps its router TMPDIR and A4 logs under its out-root. P340: so does an OFF arm whose out-root
-    is not the default `$STACK_WORKDIR/c147` (it used to write into P223's c147/ dir); the default OFF chain is unchanged."""
+    is not the default `$STACK_WORKDIR/c147` (it used to write into P223's c147/ dir); the default OFF chain is unchanged.
+    C221: `served` is the committed registry the router serves verbatim (`MLX_SERVE_CONFIG`); nothing is generated."""
     wd, out_root = Path(wd), Path(out_root)
     if predictor == "mtp":
-        return co.ChainOps(REPO, wd, overlay, log, predictor="mtp", out_root=out_root)
+        return co.ChainOps(REPO, wd, served, log, predictor="mtp", out_root=out_root, registry=served)
     if out_root.resolve() != (wd / "c147").resolve():
-        return co.ChainOps(REPO, wd, overlay, log, out_root=out_root)
-    return co.ChainOps(REPO, wd, overlay, log)
+        return co.ChainOps(REPO, wd, served, log, out_root=out_root, registry=served)
+    return co.ChainOps(REPO, wd, served, log, registry=served)
 
 
-def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None, campaign=None):
+def take_leg_lock(wd):
+    """B2 spec 9: the chain's own `p426/LEG.lock` under the arbiter; an opposing `gate/RUNNING` (or a second leg) is a refusal,
+    taken before anything is created."""
+    from bench import p426_locks
+    try:
+        return p426_locks.acquire("chain", wd)
+    except p426_locks.LockRefused as e:
+        raise Refused(f"REFUSED: {e}") from None
+
+
+def served_registry(registry, ops):
+    """The registry the router serves: `ChainOps.overlay` (spec 3: in tg1 mode it IS the worktree's committed
+    `main_models.yaml`, served verbatim); without ops, the worktree's file."""
+    return Path(registry or getattr(ops, "overlay", None) or REPO / "main_models.yaml")
+
+
+def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None, campaign=None, registry=None):
     a = parse_args(sys.argv[1:] if argv is None else argv)
     wd = Path(ops.wd) if ops is not None else Path(os.environ["STACK_WORKDIR"])
     out_root = resolve_out_root(a, wd)
-    on = a.predictor == "mtp"
-    if ops is None:
-        overlay = os.environ.get("C147_OVERLAY") or str(
-            out_root / "overlay_m63_mtp.yaml" if on else wd / "c147/overlay_c147_draft_off.yaml")
-        if inside_other_arm(overlay, wd, on):       # refused before anything is created (M6)
-            raise Refused(f"REFUSED: predictor {a.predictor} overlay {overlay} lies in the other arm's directory")
-    out_root.mkdir(parents=True, exist_ok=True)
-    log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
-    if ops is None:
-        ops = make_ops(a.predictor, wd, out_root, overlay, log)
-    chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root, lifecycle_files, campaign)
+    # every refusal below happens before anything is created (M6)
+    if os.environ.get("C147_OVERLAY"):
+        raise Refused("REFUSED: the C147_OVERLAY override is retired (C221): the committed main_models.yaml is served verbatim")
+    if a.p426 and not ATTEMPT_NAME.match(out_root.name):
+        raise Refused(f"REFUSED: --out-root {out_root.name} must be named <leg>.a<n> (n from 1)")
+    if a.p426 and out_root.exists():
+        raise Refused(f"REFUSED: --out-root {out_root.name} exists (a --p426 leg runs on a fresh out-root)")
+    if a.rehearsal:                                                  # spec 1 / 16.3: a rehearsal writes only under the rehearsal directory
+        reh = (Path(wd) / "p426" / "rehearsal").resolve()
+        if reh not in out_root.resolve().parents:
+            raise Refused(f"REFUSED: --rehearsal writes only under $STACK_WORKDIR/p426/rehearsal/ (--out-root {out_root.name})")
+    if a.p426:
+        check_frozen_record(a)
+    if a.pair_receipt:
+        check_pair_receipt(a.pair_receipt)
+    served = served_registry(registry, ops)
     try:
-        return chain.run()
-    except BaseException:
-        chain.rc = 1
-        chain.write_json("crashed")
-        raise
+        co.require_served_entries(served, a.models, a.predictor)
+    except co.ChainAbort as e:
+        raise Refused(f"REFUSED: {e}") from None
+    lock = take_leg_lock(wd) if a.p426 else None                   # B2 spec 9: `p426/LEG.lock`, held for the leg's lifetime
+    try:
+        out_root.mkdir(parents=True, exist_ok=not a.p426)
+        log = co.RunLog(out_root / "RUNLOG.md", out=log_out)
+        if ops is None:
+            ops = make_ops(a.predictor, wd, out_root, served, log)
+        chain = Chain(a, ops, timers or Timers(), log, load_universe(a.universe), out_root, lifecycle_files, campaign)
+        if a.p426:
+            try:
+                chain.p426_entry_row()                             # B2 spec 3 Entry: refuses (NOT_STARTED, rc 2) before the router
+            except core.EntryRefused as e:
+                log(f"REFUSED: {e}")
+                raise Refused(f"REFUSED: {e}") from None
+        try:
+            return chain.run()
+        except BaseException:
+            chain.rc = 1
+            chain.write_json("crashed")
+            raise
+    finally:
+        if lock is not None:
+            lock.release()
 
 
 if __name__ == "__main__":

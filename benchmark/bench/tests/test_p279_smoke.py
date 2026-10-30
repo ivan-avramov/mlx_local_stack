@@ -9,15 +9,16 @@ from pathlib import Path
 
 import pytest
 
-from bench.tests.test_c147_chain_runner import CHAIN, R, chain_json, env, run   # noqa: F401  (fixture)
+from bench.tests.test_c147_chain_runner import CHAIN, MODELS_ARG, PICK1, PICK2, R, chain_json, env, run   # noqa: F401  (fixture)
 
-SMOKE = ["chain", "s1", "reload", "--probe-code-sha", "9" * 64, "--smoke"]
+SMOKE = ["chain", "s1", "reload", "--probe-code-sha", "9" * 64, "--smoke"] + MODELS_ARG
+PAIR = [PICK1, PICK2]                                  # C221: the models list is an input of every schedule
 
 
 def test_smoke_schedule_shrinks_every_leg_and_keeps_the_real_order():
     names = R.load_universe()
-    real = R.schedule("chain", ["s1", "reload"], names, "/o")
-    smoke = R.schedule("chain", ["s1", "reload"], names, "/o", smoke=True)
+    real = R.schedule("chain", ["s1", "reload"], names, "/o", models=PAIR)
+    smoke = R.schedule("chain", ["s1", "reload"], names, "/o", models=PAIR, smoke=True)
     assert [(b["session"], b["model"], [x["lang"] for x in b["legs"]]) for b in smoke] == \
         [(b["session"], b["model"], [x["lang"] for x in b["legs"]]) for b in real]
     for b in smoke:
@@ -32,10 +33,10 @@ def test_smoke_schedule_shrinks_every_leg_and_keeps_the_real_order():
 
 def test_real_schedule_unchanged_by_the_smoke_option():
     names = R.load_universe()
-    for b in R.schedule("chain", ["s1", "s2", "reload"], names, "/o"):
+    for b in R.schedule("chain", ["s1", "s2", "reload"], names, "/o", models=PAIR):
         for leg in b["legs"]:
             assert len(leg["pilot_names"]) == R.PILOT_N
-    assert [s["limit"] for s in R.steps_for(R.schedule("chain", ["s1"], names, "/o")[0], 0)] == [R.PILOT_N, None]
+    assert [s["limit"] for s in R.steps_for(R.schedule("chain", ["s1"], names, "/o", models=PAIR)[0], 0)] == [R.PILOT_N, None]
 
 
 def test_smoke_arguments_and_out_root(tmp_path):
@@ -47,7 +48,7 @@ def test_smoke_arguments_and_out_root(tmp_path):
     with pytest.raises(SystemExit):
         R.resolve_out_root(R.parse_args(SMOKE + ["--out-root", str(tmp_path / "c147")]), tmp_path)
     with pytest.raises(SystemExit):
-        R.parse_args(["pilot", "--smoke"])
+        R.parse_args(["pilot", "--smoke"] + MODELS_ARG)
 
 
 def test_smoke_chain_runs_end_to_end_against_the_fake_probe(env):
