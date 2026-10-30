@@ -25,7 +25,7 @@ So this answers AGENTS.md's four questions on its own, every tick, into a file t
 
 Reads only persisted results, so it never perturbs the run.
 
-  nohup .venv-bench/bin/python benchmark/m1/bench_watch.py \
+  PYTHONPATH=benchmark nohup .venv-bench/bin/python benchmark/m1/bench_watch.py \
       --models Ornith-1.0-35B-mlx-uniform-4bit,Qwen3.6-27B-Opus-Distill-OptiQ-4bit \
       --bench ifeval --total 541 --driver-pattern ifeval_run \
       --out /tmp/ifeval_watch.log &

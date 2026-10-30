@@ -33,6 +33,25 @@ def _assess(rows, prev, flat=0, rates=None, total=100, monkeypatch=None):
     return BW.assess("M", "ifeval", total, prev, flat, rates or [])
 
 
+def test_the_documented_usage_line_starts_the_watcher():
+    """P547: C249 part (2) ran six arms with no monitor — the documented invocation died on `import bench`."""
+    import os
+    import shlex
+    import subprocess
+    import sys
+    repo = Path(__file__).resolve().parents[3]
+    line = next(l for l in BW.__doc__.splitlines() if "bench_watch.py" in l)
+    words = [w for w in shlex.split(line) if w not in ("nohup", "\\")]
+    env = {k: v for k, v in os.environ.items() if k != "PYTHONPATH"}
+    while "=" in words[0]:
+        k, v = words.pop(0).split("=", 1)
+        env[k] = v
+    assert words[0].endswith("/python") and words[1].endswith("bench_watch.py")
+    r = subprocess.run([sys.executable, words[1], "--help"], cwd=repo, env=env, capture_output=True, text=True,
+                       timeout=60)
+    assert r.returncode == 0, r.stderr[-400:]
+
+
 def test_progress_is_measured_against_the_counters_OWN_previous_value():
     rep, n, flat, _ = _assess([_row()] * 10, prev=7)
     assert "+3 since last tick" in rep and n == 10 and flat == 0
