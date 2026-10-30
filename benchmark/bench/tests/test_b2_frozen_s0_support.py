@@ -23,6 +23,18 @@ COMMITTED_SMOKE = S.BENCH / "results/p426/wave1/reasoning-p426-on-smoke/server_l
 GENERATION_PY = S.REPO / "src/mlx-vlm/mlx_vlm/server/generation.py"
 
 
+def _baseline_shaped():
+    import inspect
+    from bench import schedules
+    picks = inspect.signature(schedules.tg1).parameters.get("picks")
+    return picks is None or picks.default is not inspect.Parameter.empty   # C221: `picks` has no default after the base
+
+
+# Landing edit (C259, designer): the legacy-argv validations run on the base commit only; after C221 (`picks` / `--models`
+# required) they cannot apply, so they skip instead of failing on every later tree.
+BASELINE_ONLY = pytest.mark.skipif(not _baseline_shaped(), reason="baseline-only: C221 requires picks / --models after the B2 base")
+
+
 def _lines(path, needle):
     return [ln for ln in Path(path).read_text().splitlines() if needle in ln]
 
@@ -120,6 +132,7 @@ def test_the_fixture_ops_run_the_legacy_pilot_and_reproduce_the_golden_order(tmp
         env["ops"].cancel()
 
 
+@BASELINE_ONLY
 def test_the_legacy_chain_goldens_hold_on_the_base_commit(tmp_path, monkeypatch):
     from bench import schedules
     R = S.runner_module()
@@ -167,6 +180,7 @@ def test_the_smoke_shape_watch_line_of_the_full_invocation_is_observable(tmp_pat
 
 
 # ------------------------------------------------------------------------------------------------ the item-barrier fake probe
+@BASELINE_ONLY
 def test_the_item_barrier_fake_probe_completes_under_the_baseline_chain_with_consistent_log_and_metrics(tmp_path, monkeypatch):
     from bench import p426_leg
     env = S.chain_env(tmp_path, monkeypatch)
