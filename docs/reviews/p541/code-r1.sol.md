@@ -1,0 +1,9 @@
+<!-- first attempt aborted: `Error: [aborted] read ECONNRESET`; this is the retry -->
+
+P1 — Location: `local_gate.py.txt:171-175, 375-381`; severity: major; evidence: confirmed (source trace). `_git()` calls `.strip()` on NUL-delimited path output, removing leading whitespace from the first filename. A sole file named ` docs/runner.py` becomes `docs/runner.py`, is misclassified `docs-only`, and pushes code without a receipt. Likewise ` benchmark/results/code.py` becomes `data-only` for stack. Preserve raw `-z` output without trimming—prefer bytes or lossless decoding—and add leading-whitespace path tests.
+
+P2 — Location: `local_gate.py.txt:447-453, 477-480`; severity: minor; evidence: confirmed. A ref with scan violations still gets a success-style level line because `_level_of()` considers only level problems, not preceding `_scan()` results. A docs-only push containing PII prints both `level: docs-only` and a refusal, ambiguously advertising success. Accumulate problems per ref and emit its level only when that ref has no problems.
+
+P3 — Location: `test_p541_push_level.py.txt:170-178`; severity: minor; evidence: confirmed. The “another-sha” and “another-digest” cases use filenames containing those wrong values, so `glob()` rejects them before receipt JSON validation is exercised. Regressions removing the exact `sha` or full `policy_digest` checks could go undetected. Name each file with the expected lookup prefix while placing the wrong value in its JSON.
+
+P4 — Location: `test_p541_push_level.py.txt:323-330, 434-440`; severity: minor; evidence: confirmed. The fork-tag tests retain the superseded v1.1 allowance and do not assert v1.2’s requirement that refusals and level lines name the tagged commit. A regression displaying the annotated-tag object SHA could pass. Assert the exact tagged commit’s `sha[:8]` in both outputs.

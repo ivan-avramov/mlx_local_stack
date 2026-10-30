@@ -67,3 +67,17 @@ either predictor state, so it serves the current picks and new candidate models.
 - **`mtp_off` removal** locates the entry's top-level MTP keys through the YAML node marks of the strict parse (any quoting / indentation the strict parser accepts) and removes their complete source lines; the semantic-equality guard stays; a failure names the key and its line.
 - **Filesystem names**: per-entry files and directories use a safe id (`[A-Za-z0-9._-]` kept, everything else `_`, plus the first 8 hex of sha256(name)); every resolved output path must lie under `--out`, else refuse.
 - `arm_for` refuses a restore when `name` is not in `registry_state`.
+
+## v1.3 — rulings after the second independent delivery
+- The single registry snapshot is read right after the run lock is taken, before preflight.
+- The safe id is `<name with every character outside [A-Za-z0-9._-] replaced by _>-<first 8 hex of sha256(name UTF-8)>`, one path component under `--out`.
+- An `mtp_off` removal failure names the key and its 1-based line number in the registry.
+- A flow-style entry block (`{...}`) cannot be edited by line removal: refuse naming the entry.
+- "First differing flag": walk the certified argv in order and report the first flag whose presence or value differs; if none, the first flag present only in the derived argv.
+
+## v1.4 — after the verify pass
+- `--p369-summary name=path`: the text before the first `=` is a name when it is one of the `--entry` names (a name may contain `/`); otherwise the value is a bare path.
+- The MTP-ON argv binding is checked before the run (`SystemExit("refused: [...]")`), not as a per-entry FAILED; the certified argv is read once into the snapshot and that value is used by the gate and the binding; a missing / unreadable certified argv refuses with `<name>: its P369 manifest.json has no picks[<name>].argv_on`.
+- MTP keys inherited through a YAML merge key (`<<:`) cannot be removed line-wise: refuse naming the key and its source line.
+- A registry value that `expected_config` cannot convert (e.g. `null` for an integer key) refuses that entry (`<name>: <error>`), never a traceback.
+- Refusals happen after the run lock is taken (the snapshot is read under it, v1.3); a second invocation while a qualification runs fails at the lock with its existing message.

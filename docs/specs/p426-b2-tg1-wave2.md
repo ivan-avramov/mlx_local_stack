@@ -658,3 +658,35 @@ flag, file or field, and exits 2.
   `user.email`, a failing read) is `REFUSED:` rc 2 — never "no operator address". The sequencer logs the harvest's `REFUSED:` / `ERROR:`
   line (no values) on an rc-4 stop. A VALID / VALID_WITH_DNF leg without `watch.jsonl` fails the harvest. `$HOME/…` is a fourth
   portable token (no user name).
+- (after the final fix round) **`p426_dnf.arm`** (§5.3) is the predictor arm, `off` or `on` (the arm of the leg, §1) — not the scaffold arm label (`oc`).
+- (after the strict verify round 1) **Records**: every immutable record (§16 intro) carries a present `sha256` equal to its self-hash;
+  a missing hash fails the harvest like a wrong one; `chain.json`'s `p426_dnf` entries equal their sidecars. The item record's
+  `ready_sha256` is the ready record's self-hash (§4.5). `p426_dnf` carries `load` and `attempt` = the `n` of `<leg>.a<n>`.
+- **Pairs and the amendment**: a pair dossier found on resume is re-verified against the current receipts / harvests (never its stored
+  verdict); `write_amendment` (and `p426_freeze amend`) runs the complete pilot gate itself and records `pilot_dossier_sha256`; an
+  existing amendment is re-verified before use. A failure to publish the run files is exit 4.
+- **Rehearsal binding**: each R1-off / R1-on / R2 / R3 root is a leg run under this rehearsal manifest (`chain.json` records
+  `frozen_record: {path, sha256}` and `inject`) with its expected leg name and injection; the manifest's commits are not compared with
+  the v8 arms.
+- **Engagement**: DNF item records are engagement-checked and re-validated; an ON item or leg with no judgeable request is
+  `unengaged`. The in-flight DNF cases need the abort manifest's structured in-flight marker; a kill derives it from the kill evidence.
+- **Harvest**: a manifest run id resolving to no run / evidence directory, or to more than one, fails; non-UTF-8 evidence files are
+  scrubbed and scanned via `surrogateescape` and marked `lossy_decode`.
+- **Secrets**: `KV_*` / `TQ_*` names are non-secret only by an exact committed allowlist; config assignments are parsed shell-style
+  (an unparseable credential-keyed line refuses); the bearer format also matches the quoted / JSON header form.
+- (after the strict verify round 2) **Publication** (`publish_dossier`, `publish_run_files`) runs the same gate as the leg harvest,
+  including the exact in-memory credential values (the sequencer passes them; free operator text such as `--rerun-reason` is scanned);
+  every published immutable run file (v8 base, amendment, rehearsal manifest, dossiers) needs a valid self-hash — only `sequence.json`
+  is exempt. A dossier is published before the pair state records it, republished idempotently on resume, and a publication failure
+  is exit 4. Every command that consumes an existing amendment (`run`, `makeup`) re-verifies it first. A credential-keyed config value
+  containing an unquoted `$` or a backtick refuses (`SecretsError`: it cannot be matched exactly). The per-item `unengaged` rule applies
+  to completed items; a DNF item is covered by the leg-level rule.
+- (after the strict verify round 3, C256) **Republication**: a recorded dossier is re-verified (`verify_dossier`, against the current
+  receipts / harvests of its two attempts) before any republication; amendment verification requires that freshly verified dossier
+  (its `sha256` = `pilot_dossier_sha256`), for `run` and `makeup` alike. **Ready records**: every ledger entry, DNF included, requires
+  `items/<slot>.ready.json` with a valid self-hash, and its item record's `ready_sha256` equals it (classification and harvest).
+  **Staging**: a record is staged with `O_CREAT | O_EXCL | O_NOFOLLOW`; an existing stage path refuses (never followed or reused);
+  after the rename the destination is `lstat`ed and must be a regular file. **Exit**: any attempted run-file publication that fails
+  makes the exit 4, whatever the earlier stop code; the log keeps the original stop reason and adds the publication failure.
+  **Credential sources**: publication takes the arm worktrees' `.env` paths from the frozen `v8_base.json`, like the leg harvest,
+  not from the sequencer's `--worktree-*` arguments.
