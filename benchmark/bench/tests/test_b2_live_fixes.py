@@ -133,3 +133,52 @@ def test_a_sibling_path_that_merely_starts_with_the_worktree_root_is_not_canonic
         dist(site, "tool", {"../../../bin/tool": script})
         out.append(ops_for(wt).interpreter_inventory(1, site_packages=site)["inventory_sha256"])
     assert out[0] != out[1]                                                  # `<wt>-cache` names two different directories
+
+
+# ---- P581: the worker argv of a console-script server (its shebang interpreter leads the OS-reported argv) ---------------------
+from bench import p426_harvest as ph
+from bench import p426_receipt as pr
+
+
+def script(tmp_path, first_line):
+    s = tmp_path / "venv" / "bin" / "mlx_vlm.server"
+    s.parent.mkdir(parents=True, exist_ok=True)
+    s.write_text(first_line + "\nimport sys\n")
+    return s
+
+
+def test_the_shebang_interpreter_of_the_built_script_is_the_one_tolerated_leading_token_P581(tmp_path):
+    py = str(tmp_path / "venv" / "bin" / "python")
+    s = script(tmp_path, f"#!{py}")
+    expected = [str(s), "--model", "m", "--port", "8091"]
+    interp = pr.shebang_interpreter(expected[0])
+    assert interp == py
+    assert pr.worker_argv_problems([py] + expected, expected, "off", interpreter=interp) == []
+    assert pr.worker_argv_problems(expected, expected, "off", interpreter=interp) == []
+    assert pr.worker_argv_problems(["/other/python"] + expected, expected, "off", interpreter=interp)        # another interpreter
+    assert pr.worker_argv_problems([py, "-X", "dev"] + expected, expected, "off", interpreter=interp)       # extra tokens
+    assert pr.worker_argv_problems([py] + expected, expected, "off")                                        # no interpreter given: exact
+
+
+@pytest.mark.parametrize("line", ["#!/usr/bin/env python3", "#!/venv/bin/python -X dev", "# not a shebang", "#!relative/python"])
+def test_only_a_bare_absolute_shebang_names_an_interpreter_P581(tmp_path, line):
+    assert pr.shebang_interpreter(str(script(tmp_path, line))) is None
+
+
+def test_a_missing_script_names_no_interpreter_P581(tmp_path):
+    assert pr.shebang_interpreter(str(tmp_path / "nope")) is None
+
+
+# ---- P582: the files the router and uv write into the leg's TMPDIR -------------------------------------------------------------
+def test_the_routers_per_model_log_in_the_leg_tmpdir_goes_to_evidence_P582():
+    assert ph.classify("leg", "tmp/mlx-manager-logs/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.log") == ("evidence", None)
+
+
+def test_uvs_lock_file_in_the_leg_tmpdir_is_excluded_with_a_reason_P582():
+    dest, reason = ph.classify("leg", "tmp/uv-bc3d4fc6a874ab9b.lock")
+    assert dest == "excluded" and reason
+
+
+@pytest.mark.parametrize("rel", ["tmp/other.txt", "tmp/mlx-manager-logs/nested/x.log", "tmp/mlx-manager-logs/x.txt", "tmp/uv-x.lock.bak"])
+def test_any_other_tmpdir_file_still_has_no_rule_P582(rel):
+    assert ph.classify("leg", rel) is None

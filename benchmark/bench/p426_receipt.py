@@ -9,6 +9,7 @@ the closed pair gate: the only differences it allows are the three MTP flag pair
 field. Anything else is a problem (systemic in the chain)."""
 from __future__ import annotations
 
+import os
 import json
 import re
 from pathlib import Path
@@ -140,12 +141,27 @@ def arm_receipt(ops, *, worktree, out_root, pids, model=None, probe_launch=None)
 
 
 # -- argv and snapshot checks (spec 6.3, 3)
-def worker_argv_problems(actual, expected, arm) -> list:
-    """The worker's argv equals the one mlx-serve builds from the served entry EXACTLY (no tolerated leading tokens, spec
-    16.7), and the arm's predictor flags are exactly its own: OFF none of the three, ON each exactly once."""
+def shebang_interpreter(script):
+    """P581: the interpreter a console script's shebang names — only a bare absolute path (`#!/abs/python`, no arguments, no
+    `env`); None otherwise or when the script cannot be read."""
+    try:
+        with open(script, "rb") as f:
+            line = f.readline(4096).rstrip(b"\r\n").decode()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not line.startswith("#!"):
+        return None
+    path = line[2:].strip()
+    return path if path and os.path.isabs(path) and len(path.split()) == 1 and os.path.basename(path) != "env" else None
+
+
+def worker_argv_problems(actual, expected, arm, interpreter=None) -> list:
+    """The worker's argv equals the one mlx-serve builds from the served entry EXACTLY (spec 16.7); the only tolerated leading
+    token is `interpreter`, the shebang interpreter of the built argv's script (P581: the OS reports a console script's process
+    as `[interpreter, script, …]`). The arm's predictor flags are exactly its own: OFF none of the three, ON each exactly once."""
     problems = []
     actual, expected = [str(t) for t in actual], [str(t) for t in expected]
-    if actual != expected:
+    if actual != expected and not (interpreter and actual == [str(interpreter)] + expected):
         problems.append("argv.worker: the worker command line differs from the one mlx-serve builds from the served entry")
     for flag in MTP_FLAGS:
         n = sum(t == flag for t in actual)

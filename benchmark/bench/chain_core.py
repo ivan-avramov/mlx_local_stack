@@ -765,8 +765,9 @@ class Chain:
         if not router or self.p426_router_problems():
             raise co.ChainAbort("owned router identity changed or missing after load (systemic)")
         self.p426_census("after load", load)
-        problems = pr.worker_argv_problems(self.ops.proc_argv(ident["pid"]),
-                                           self.ops.expected_worker_argv(self.ops.overlay, load["model"]), arm)
+        expected = self.ops.expected_worker_argv(self.ops.overlay, load["model"])
+        problems = pr.worker_argv_problems(self.ops.proc_argv(ident["pid"]), expected, arm,
+                                           interpreter=pr.shebang_interpreter(expected[0]) if expected else None)   # P581
         if problems:
             raise co.ChainAbort("worker argv: " + "; ".join(problems))
         launch = dict(argv=[str(self.py), str(self.probe_of(self.arm_ids[0]))], env=self.ops.env_base())

@@ -240,6 +240,12 @@ def classify(kind, rel):
                 return "evidence", None
             return None
         top = parts[0]
+        if top == "tmp":                                          # P582: the router's TMPDIR (ChainOps.env_base) inside the leg root
+            if len(parts) == 3 and parts[1] == "mlx-manager-logs" and name.endswith(".log"):
+                return "evidence", None                           # mlx-serve's per-model log
+            if len(parts) == 2 and re.fullmatch(r"uv-[0-9a-f]+\.lock", name):
+                return "excluded", "uv run's lock file (empty, regenerated)"
+            return None                                           # nothing else of the TMPDIR has a rule
         if top in ("quarantine", "archive"):
             return "evidence", None
         if top == "items":
