@@ -1,0 +1,6 @@
+- Location: `benchmark/bench/p426_receipt.py:158–166`, caller at `benchmark/bench/chain_core.py:768–770`
+- Severity: major
+- Evidence: confirmed — traced through both accepted execution paths under A1
+- Problem: The check cannot distinguish the kernel-added interpreter from an explicitly injected identical interpreter. Both produce `actual == [shebang_interpreter] + expected`.
+- Concrete failure scenario: mlx-serve is altered from executing `[script, "--model", …]` to explicitly executing `[python, script, "--model", …]`. The OS-reported argv matches the newly tolerated form and passes, although the exact rule caught this alteration.
+- Proposed change: Post-exec argv alone cannot enforce the stated provenance requirement. Either capture and compare the pre-exec spawn request, or explicitly weaken the requirement to accept both launch mechanisms and document that identical-interpreter injection is undetectable.

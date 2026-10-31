@@ -662,19 +662,42 @@ class ChainOps:
         r = self.sh(["vmmap", "-w", str(pid)], timeout=120)
         if r.returncode != 0:
             raise ChainAbort(f"vmmap of process {pid} failed (the loaded images are unknown)")
-        paths = sorted({m.group(1) for line in r.stdout.splitlines()
-                        if (m := re.search(r"(/\S*(?:libmlx\.dylib|mlx\.metallib))\s*$", line))})
-        out = []
-        for p in paths:
-            try:
-                h = hashlib.sha256()
-                with open(p, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1 << 20), b""):
-                        h.update(chunk)
-            except OSError:
-                raise ChainAbort(f"the loaded image {p} cannot be hashed (systemic)") from None
-            out.append(dict(path=p, sha256=h.hexdigest()))
-        return out
+        paths = {m.group(1) for line in r.stdout.splitlines()
+                 if (m := re.search(r"(/\S*(?:libmlx\.dylib|mlx\.metallib))\s*$", line))}
+        # P583: Metal reads mlx.metallib through a descriptor it keeps open (never mapped as an image): take it from lsof — a
+        # numbered descriptor, opened for reading, of a regular file, exactly one, beside the mapped libmlx.dylib (MLX loads its
+        # colocated metallib); anything else is systemic (review: an inherited or unrelated descriptor never counts)
+        if any(p.endswith("/mlx.metallib") for p in paths):
+            paths = sorted(paths)                           # a mapped metallib (spec 6.4's first source) needs no descriptor
+            return [dict(path=p, sha256=self._sha256_file(p)) for p in paths]
+        r = self.sh(["lsof", "-Ffatn", "-p", str(pid)], timeout=120)
+        if r.returncode != 0:
+            raise ChainAbort(f"lsof of process {pid} failed (the loaded metallib is unknown)")
+        files, cur = [], None
+        for line in r.stdout.splitlines():
+            if line[:1] == "f":
+                cur = dict(f=line[1:])
+                files.append(cur)
+            elif cur is not None and line[:1] in "atn":
+                cur[line[0]] = line[1:]
+        metals = sorted({x["n"] for x in files if x.get("n", "").endswith("/mlx.metallib") and x["f"].isdigit()
+                         and x.get("a", "").strip() in ("r", "u") and x.get("t") == "REG"})
+        libs = [p for p in paths if p.endswith("/libmlx.dylib")]
+        if len(metals) != 1 or len(libs) != 1 or Path(metals[0]).parent != Path(libs[0]).parent:
+            raise ChainAbort(f"process {pid}: no single readable mlx.metallib descriptor beside its libmlx.dylib "
+                             f"({len(metals)} candidate(s)) — the loaded metallib is unknown")
+        return [dict(path=p, sha256=self._sha256_file(p)) for p in sorted(paths | set(metals))]
+
+    @staticmethod
+    def _sha256_file(p):
+        try:
+            h = hashlib.sha256()
+            with open(p, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+        except OSError:
+            raise ChainAbort(f"the loaded image {p} cannot be hashed (systemic)") from None
+        return h.hexdigest()
 
     def snapshot_hashes(self, model):
         """{target, drafter} of the served entry `model`: `{hf_path, revision, files: {rel: sha256}}` (the shape of the fork's

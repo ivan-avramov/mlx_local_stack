@@ -182,3 +182,71 @@ def test_uvs_lock_file_in_the_leg_tmpdir_is_excluded_with_a_reason_P582():
 @pytest.mark.parametrize("rel", ["tmp/other.txt", "tmp/mlx-manager-logs/nested/x.log", "tmp/mlx-manager-logs/x.txt", "tmp/uv-x.lock.bak"])
 def test_any_other_tmpdir_file_still_has_no_rule_P582(rel):
     assert ph.classify("leg", rel) is None
+
+
+# ---- P583: Metal reads mlx.metallib through an open descriptor; vmmap shows only the mapped libmlx.dylib --------------------
+from types import SimpleNamespace
+
+
+def test_loaded_images_takes_libmlx_from_vmmap_and_the_metallib_from_the_open_descriptors_P583(tmp_path):
+    lib, metal = tmp_path / "mlx/lib/libmlx.dylib", tmp_path / "mlx/lib/mlx.metallib"
+    lib.parent.mkdir(parents=True)
+    lib.write_bytes(b"dylib")
+    metal.write_bytes(b"metallib")
+    vm = f"__TEXT  109ba8000-10ab10000 [ 15.4M] r-x/rwx SM=COW          {lib}\n__DATA 10ab40000-10ab44000 [16K] rw-/rwx SM=PRV {lib}\n"
+    ls = f"p4242\nfcwd\na \ntDIR\nn{tmp_path}\nf3\nar\ntREG\nn{metal}\nftxt\na \ntREG\nn{lib}\n"
+
+    def sh(argv, **kw):
+        return SimpleNamespace(returncode=0, stdout=vm if argv[0] == "vmmap" else ls if argv[0] == "lsof" else "")
+    ops = co.ChainOps(tmp_path, tmp_path, tmp_path / "x.yaml", lambda m: None, sh=sh)
+    got = ops.loaded_images(4242)
+    assert [i["path"] for i in got] == [str(lib), str(metal)]
+    assert got[1]["sha256"] == hashlib.sha256(b"metallib").hexdigest()
+
+
+def test_a_failing_lsof_is_systemic_not_a_missing_metallib_P583(tmp_path):
+    def sh(argv, **kw):
+        return SimpleNamespace(returncode=0 if argv[0] == "vmmap" else 1, stdout="")
+    with pytest.raises(co.ChainAbort, match="lsof"):
+        co.ChainOps(tmp_path, tmp_path, tmp_path / "x.yaml", lambda m: None, sh=sh).loaded_images(4242)
+
+
+def lsof_case(tmp_path, records):
+    lib = tmp_path / "mlx/lib/libmlx.dylib"
+    lib.parent.mkdir(parents=True, exist_ok=True)
+    lib.write_bytes(b"dylib")
+    vm = f"__TEXT  109ba8000-10ab10000 [ 15.4M] r-x/rwx SM=COW          {lib}\n"
+    ls = "p4242\n" + "".join(f"f{f}\na{a}\nt{ty}\nn{n}\n" for f, a, ty, n in records)
+
+    def sh(argv, **kw):
+        return SimpleNamespace(returncode=0, stdout=vm if argv[0] == "vmmap" else ls)
+    return lib, co.ChainOps(tmp_path, tmp_path, tmp_path / "x.yaml", lambda m: None, sh=sh)
+
+
+@pytest.mark.parametrize("where, fd, access, kind", [
+    ("elsewhere", "3", "r", "REG"),           # an inherited metallib not beside the loaded libmlx.dylib
+    ("beside", "txt", " ", "REG"),            # not a numbered descriptor
+    ("beside", "3", "w", "REG"),              # not opened for reading
+    ("beside", "3", "r", "DIR"),              # not a regular file
+])
+def test_only_a_readable_descriptor_of_the_colocated_metallib_counts_P583_review(tmp_path, where, fd, access, kind):
+    other = tmp_path / "common/mlx.metallib"
+    other.parent.mkdir(parents=True)
+    other.write_bytes(b"other")
+    lib, ops = lsof_case(tmp_path, [])
+    metal = lib.parent / "mlx.metallib"
+    metal.write_bytes(b"metallib")
+    _, ops = lsof_case(tmp_path, [(fd, access, kind, other if where == "elsewhere" else metal)])
+    with pytest.raises(co.ChainAbort, match="metallib"):
+        ops.loaded_images(4242)
+
+
+def test_two_open_metallibs_are_ambiguous_P583_review(tmp_path):
+    lib, _ = lsof_case(tmp_path, [])
+    a, b = lib.parent / "mlx.metallib", tmp_path / "x/mlx.metallib"
+    b.parent.mkdir(parents=True)
+    for f in (a, b):
+        f.write_bytes(b"m")
+    _, ops = lsof_case(tmp_path, [("3", "r", "REG", a), ("4", "r", "REG", b)])
+    with pytest.raises(co.ChainAbort, match="metallib"):
+        ops.loaded_images(4242)
