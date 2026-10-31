@@ -111,3 +111,25 @@ def test_console_scripts_that_differ_only_by_their_worktree_shebang_inventory_eq
 def test_any_other_difference_in_a_console_script_still_differs_P580(tmp_path):
     off, on = two_worktrees(tmp_path, tweak=b"# edited\n")
     assert off["inventory_sha256"] != on["inventory_sha256"]
+
+
+def test_claimants_with_different_record_algorithms_are_each_compared_with_their_own_P579_review(tmp_path):
+    site = venv_site(tmp_path)
+    old = "sha512=" + base64.urlsafe_b64encode(hashlib.sha512(b"version A").digest()).rstrip(b"=").decode()
+    info = site / "first-1.0.dist-info"
+    info.mkdir(parents=True)
+    (info / "METADATA").write_text("Name: first\nVersion: 1.0\n\n")
+    (info / "RECORD").write_text(f"shared/lib.so,{old},9\n")
+    dist(site, "second", {"shared/lib.so": b"version B"})                    # on disk: B, which `second` records in sha256
+    ops_for(tmp_path).interpreter_inventory(1, site_packages=site)           # passes: `second` matches exactly
+
+
+def test_a_sibling_path_that_merely_starts_with_the_worktree_root_is_not_canonicalized_P580_review(tmp_path):
+    out = []
+    for name in ("off", "on"):
+        wt = tmp_path / f"stack-p426-{name}"
+        site = venv_site(wt)
+        script = b"#!" + str(wt / "v/bin/python").encode() + b"\nCACHE = '" + str(wt).encode() + b"-cache/tool'\n"
+        dist(site, "tool", {"../../../bin/tool": script})
+        out.append(ops_for(wt).interpreter_inventory(1, site_packages=site)["inventory_sha256"])
+    assert out[0] != out[1]                                                  # `<wt>-cache` names two different directories

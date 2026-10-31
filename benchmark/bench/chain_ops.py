@@ -576,11 +576,11 @@ class ChainOps:
         for name, _, rows in plain:
             for rel, digest in rows:
                 claims.setdefault(os.path.normpath(site / rel), []).append((name, digest))
-        actual = {}
+        actual = {}                                         # (path, algorithm) -> the installed bytes' digest (review P2)
         for name, version, rows in plain:
             dists.append([name, version, self._verify_record(name, site, rows, claims, actual)])
         shared = [dict(path=os.path.relpath(f, site), claimants=sorted(n for n, _ in c),
-                       matches=next(n for n, d in sorted(c) if d.partition("=")[2] == actual[f]))
+                       matches=next(n for n, d in sorted(c) if self._matches(f, d, actual)))
                   for f, c in sorted(claims.items()) if len(c) > 1]
         dists.sort(key=lambda d: (d[0], d[1]))
         digest = hashlib.sha256(json.dumps([dists, shared], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -595,33 +595,45 @@ class ChainOps:
             raise ChainAbort(f"distribution {name}: its RECORD is unreadable") from None
         return [(row[0], row[1]) for row in rows if len(row) >= 2 and row[1]]   # RECORD itself, .pyc files: listed without a hash
 
+    CANON_MAX_BYTES = 1 << 20                               # P580: larger files outside site-packages keep their RECORD digest
+    WT_TOKEN = b"\x00<WT>\x00"                             # cannot occur in a text file, so never collides with literal content
+
+    @staticmethod
+    def _matches(f, recorded, actual):
+        """Does the file at `f` hold the bytes `recorded` (`algo=digest`) names? Digests cached per (path, algorithm)."""
+        import base64
+        algo, _, want = recorded.partition("=")
+        if (f, algo) not in actual:
+            h = hashlib.new(algo)
+            with open(f, "rb") as fh:
+                for chunk in iter(lambda: fh.read(1 << 20), b""):
+                    h.update(chunk)
+            actual[(f, algo)] = base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode()
+        return actual[(f, algo)] == want
+
+    def _canonical(self, data):
+        """`data` with the worktree root replaced only where it is a whole path prefix (followed by `/`, a quote, whitespace,
+        NUL or the end), never inside a longer name such as `<WT>-cache` (review P3)."""
+        roots = sorted({str(self.repo), str(Path(self.repo).resolve())}, key=len, reverse=True)
+        pattern = re.compile(b"(?:" + b"|".join(re.escape(r.encode()) for r in roots) + b")(?=[/\\s'\"\x00]|$)")
+        return pattern.sub(lambda m: self.WT_TOKEN, data)
+
     def _verify_record(self, name, site, rows, claims, actual):
         """Every RECORD entry re-verified against the installed bytes; a file another distribution also lists passes when its
-        bytes equal one claimant's digest (P579). An entry outside site-packages (a console script, whose shebang names the
-        worktree) enters the inventory as the sha256 of its content with the worktree root canonicalized to `<WT>` (P580)."""
-        import base64
-        roots = sorted({str(self.repo), str(Path(self.repo).resolve())}, key=len, reverse=True)
+        bytes equal one claimant's digest, each compared with its own algorithm (P579). An entry outside site-packages (a
+        console script, whose shebang names the worktree) of at most `CANON_MAX_BYTES` enters the inventory as the sha256 of
+        its content with the worktree root canonicalized (P580); a larger one keeps its RECORD digest."""
         entries = []
         for rel, recorded in rows:
-            algo, _, want = recorded.partition("=")
             f = os.path.normpath(site / rel)
             try:
-                h, data = hashlib.new(algo), (Path(f).read_bytes() if rel.startswith("..") else None)
-                if data is not None:
-                    h.update(data)
-                else:
-                    with open(f, "rb") as fh:
-                        for chunk in iter(lambda: fh.read(1 << 20), b""):
-                            h.update(chunk)
+                ok = self._matches(f, recorded, actual) or any(self._matches(f, d, actual) for n, d in claims.get(f, ()) if n != name)
             except (OSError, ValueError):
                 raise ChainAbort(f"RECORD of {name}: {rel} is missing or unreadable (systemic)") from None
-            got = actual.setdefault(f, base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode())
-            if got != want and not any(d.partition("=")[2] == got for n, d in claims.get(f, ()) if n != name):
+            if not ok:
                 raise ChainAbort(f"RECORD of {name}: {rel} differs from its recorded digest (systemic)")
-            if rel.startswith(".."):
-                for root in roots:
-                    data = data.replace(root.encode(), b"<WT>")
-                entries.append([rel, "wt-canonical-sha256=" + hashlib.sha256(data).hexdigest()])
+            if rel.startswith("..") and os.path.getsize(f) <= self.CANON_MAX_BYTES:
+                entries.append([rel, "wt-canonical-sha256=" + hashlib.sha256(self._canonical(Path(f).read_bytes())).hexdigest()])
             else:
                 entries.append([rel, recorded])
         return sorted(entries)
