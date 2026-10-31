@@ -39,6 +39,38 @@ POLICY = dict(
 )
 
 
+def _cmdline(p):
+    """`p.cmdline()`; psutil's macOS `proc_cmdline` can raise SystemError ("returned a result with an exception set") for a
+    process mid-exec / mid-exit — the same unreadable state C148 sees as AccessDenied, so it is raised as AccessDenied (P585)."""
+    try:
+        return p.cmdline()
+    except SystemError as exc:
+        import psutil
+
+        raise psutil.AccessDenied(getattr(p, "pid", None), msg=f"cmdline: {exc}") from None
+
+
+def _lookup(psutil, pid):
+    """`psutil.Process(pid)`; its construction reads the start time, so a SystemError there is AccessDenied (P585)."""
+    try:
+        return psutil.Process(pid)
+    except SystemError as exc:
+        raise psutil.AccessDenied(pid, msg=f"lookup: {exc}") from None
+
+
+def _scan(psutil):
+    """Every live process as a fresh `psutil.Process` (never psutil's shared `process_iter` cache, which a SystemError raised
+    inside its generator would end for the whole tick): a process that vanishes or cannot even be constructed is skipped for
+    this tick, as a process mid-exit (P585); the next tick sees it again."""
+    out = []
+    for pid in psutil.pids():
+        try:
+            out.append(psutil.Process(pid))
+        except (psutil.NoSuchProcess, psutil.AccessDenied, SystemError):
+            continue
+    return out
+
+
 def start_time(proc):
     """Process identity start time. On macOS psutil's create_time() shifts by INIT_BOOT_TIME - boot_time() once a
     wall-clock correction moves whole-second boot time (C151), so read the unadjusted kernel value; objects without
@@ -50,7 +82,10 @@ def start_time(proc):
             impl = getattr(proc, "_proc", None)
             if impl is None or not hasattr(impl, "create_time"):
                 raise TransportAbort("psutil lost the unadjusted start-time path (C151); refusing identity")
-            return impl.create_time(monotonic=True)
+            try:
+                return impl.create_time(monotonic=True)
+            except SystemError as exc:                                    # P585: an unreadable identity, as AccessDenied
+                raise psutil.AccessDenied(proc.pid, msg=f"create_time: {exc}") from None
     return proc.create_time()
 
 
@@ -310,7 +345,10 @@ class ProcessGuard:
         self.psutil = psutil
         # A process mid-exit can raise AccessDenied on macOS (sysctl KERN_PROCARGS2 -> EINVAL) instead of
         # NoSuchProcess; either way the monitor skips it for that tick (C148).
-        self._transient = (psutil.NoSuchProcess, psutil.AccessDenied)
+        self._transient = (psutil.NoSuchProcess, psutil.AccessDenied, SystemError)
+        # P585: psutil's macOS C extension can raise SystemError ("returned a result with an exception set") for a process
+        # mid-exec / mid-exit — the same unreadable state; every handler of a denied read takes it as AccessDenied.
+        self._denied = (psutil.AccessDenied, SystemError)
         self.excluded_pids = {os.getpid(), os.getppid()}
         self.excluded_pids.update(p.pid for p in psutil.Process().parents())
         self.excluded_pids.update(protected_pids)
@@ -321,11 +359,11 @@ class ProcessGuard:
         for pid in self.excluded_pids:
             try:
                 self._excluded_identity[pid] = start_time((get or psutil.Process)(pid))
-            except (psutil.NoSuchProcess, psutil.AccessDenied, TransportAbort, StopIteration):
+            except (psutil.NoSuchProcess, psutil.AccessDenied, SystemError, TransportAbort, StopIteration):
                 pass
         self.probe_session = os.getsid(0)
-        self.scan = scan or psutil.process_iter
-        self.get = get or psutil.Process
+        self.scan = scan or (lambda: _scan(psutil))                                  # P585
+        self.get = get or (lambda pid: _lookup(psutil, pid))
         self.roots = [str(Path(p).resolve()) for p in roots]
         self.per_process = per_process
         self.aggregate = aggregate
@@ -399,7 +437,7 @@ class ProcessGuard:
             return "same" if start_time(self.get(pid)) == created else "other"
         except (self.psutil.NoSuchProcess, StopIteration):
             return "unknown"
-        except (self.psutil.AccessDenied, TransportAbort):
+        except (*self._denied, TransportAbort):
             return "unknown"
 
     def _live(self, process):
@@ -418,20 +456,20 @@ class ProcessGuard:
             try:
                 if p.uids().real != os.getuid():
                     continue
-            except (self.psutil.NoSuchProcess, self.psutil.AccessDenied):
+            except (self.psutil.NoSuchProcess, *self._denied):
                 continue
             try:
                 if self._live(p):
                     found.append(p)
             except self.psutil.NoSuchProcess:
                 continue
-            except self.psutil.AccessDenied:
+            except self._denied:
                 found.append(p)
                 self._live_denied.add(p.pid)
         return found
 
     def _attributed_path(self, p):
-        values = [p.cwd(), *p.cmdline()]
+        values = [p.cwd(), *_cmdline(p)]
         return any(
             v == root or v.startswith(root + "/") or ("=" + root + "/") in v
             for root in self.roots
@@ -449,7 +487,7 @@ class ProcessGuard:
                 try:
                     try:
                         protected = self._protected(p)
-                    except self.psutil.AccessDenied:
+                    except self._denied:
                         # C157 (review round 1 P2): keep the identity and the listing's descendants, so a cleanup that
                         # runs after this process exits still knows who its children were
                         self._note_unreadable(self._unreadable_seen, p, edges)
@@ -462,14 +500,14 @@ class ProcessGuard:
                         # create_time) raises here and must never become an ancestry authority (V5a P13).
                         try:
                             ppids[p.pid] = p.ppid()
-                        except self.psutil.AccessDenied:
+                        except self._denied:
                             # G1 (round 3 P7): an eligible process whose parent cannot be read could be ours (its
                             # tracked parent may be killed next): recorded like any other denied read
                             self._note_unreadable(self._unreadable_seen, p, edges)
                             continue
                         try:
                             alive[p.pid] = (p, start_time(p), start_order(p))
-                        except self.psutil.AccessDenied:
+                        except self._denied:
                             # G1 (round 2 P1): the identity/order reads AFTER eligibility are recorded like the first
                             # one; only NoSuchProcess may vanish silently
                             ppids.pop(p.pid, None)
@@ -515,7 +553,7 @@ class ProcessGuard:
                             changed = True
                     if self.tracked.get(key) == "model":
                         try:
-                            argv = p.cmdline()
+                            argv = _cmdline(p)
                             is_shell = bool(
                                 argv
                                 and Path(argv[0]).name
@@ -553,7 +591,7 @@ class ProcessGuard:
 
     def _argv(self, p):
         try:
-            return [self.scrub(str(x)) for x in p.cmdline()]
+            return [self.scrub(str(x)) for x in _cmdline(p)]
         except self._transient:
             return []
 
@@ -712,7 +750,7 @@ class ProcessGuard:
             return "alive" if self._live(process) else "gone"
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone"
-        except (self.psutil.AccessDenied, TransportAbort):   # unreadable identity is never "gone" (C151 R16)
+        except (*self._denied, TransportAbort):   # unreadable identity is never "gone" (C151 R16)
             return "unknown"
 
     def verify_gone(self, killed, wait=0.0):
@@ -742,7 +780,7 @@ class ProcessGuard:
                     return True
             except self.psutil.NoSuchProcess:
                 continue
-            except (self.psutil.AccessDenied, TransportAbort):
+            except (*self._denied, TransportAbort):
                 # G1 (round 5 P19/P354): a denied identity read of a pid we recorded as a shell descendant is
                 # "possibly alive"; a denied stranger is not a recorded descendant
                 if any(k[0] == p.pid for k in self.shell_descendants):
@@ -859,7 +897,7 @@ class ProcessGuard:
         """True when `p` is parented to launchd; a denied ppid read is recorded (G1 round 3 P7), never skipped."""
         try:
             return p.ppid() == 1
-        except self.psutil.AccessDenied:
+        except self._denied:
             self._note_unreadable(store, p, edges, key=key)
             return False
 
@@ -902,7 +940,7 @@ class ProcessGuard:
             process = self.get(pid)
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone", None
-        except (self.psutil.AccessDenied, TransportAbort):
+        except (*self._denied, TransportAbort):
             return "present", None
         try:
             occupant = self._created_or_none(process)
@@ -917,7 +955,7 @@ class ProcessGuard:
             return "readable", occupant
         except self.psutil.NoSuchProcess:
             return "gone", None
-        except (self.psutil.AccessDenied, TransportAbort):
+        except (*self._denied, TransportAbort):
             return "present", None
 
     def _is_protected(self, p):
@@ -940,7 +978,7 @@ class ProcessGuard:
             process = self.get(pid)
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone", None
-        except (self.psutil.AccessDenied, TransportAbort):
+        except (*self._denied, TransportAbort):
             return "unresolved", None
         try:
             if not self._live(process):
@@ -968,7 +1006,7 @@ class ProcessGuard:
             return state, occupant
         except (self.psutil.NoSuchProcess, StopIteration):
             return "gone", None
-        except (self.psutil.AccessDenied, TransportAbort):
+        except (*self._denied, TransportAbort):
             return "unresolved", None
 
     def _reconcile_unreadable(self, unreadable):
@@ -1035,7 +1073,7 @@ class ProcessGuard:
                         try:
                             try:
                                 protected = self._protected(p)
-                            except (self.psutil.AccessDenied, TransportAbort):
+                            except (*self._denied, TransportAbort):
                                 # an eligible same-uid process whose start/order cannot be read could be ours: it is
                                 # resolved against the final process table, not frozen uncertain (C157; C151 R10). The
                                 # children of THIS listing are kept: a vanished parent proves nothing about them.
@@ -1048,7 +1086,7 @@ class ProcessGuard:
                                 continue
                             try:
                                 key = (p.pid, start_time(p))
-                            except self.psutil.AccessDenied:        # G1 (round 2 P1): every later denied read is recorded
+                            except self._denied:        # G1 (round 2 P1): every later denied read is recorded
                                 self._note_unreadable(unreadable, p, edges)
                                 continue
                             if key in self.tracked:
@@ -1057,18 +1095,18 @@ class ProcessGuard:
                             elif self._attributed_path(p):
                                 uncertain = True
                                 orphans[key] = dict(pid=p.pid, create_time=key[1],
-                                                    argv=p.cmdline(), reason="path-only attribution")
+                                                    argv=_cmdline(p), reason="path-only attribution")
                             elif self._sweep_excluded(p):
                                 continue
                             elif self._detached(p, unreadable, edges, key):
                                 try:
                                     young = not self._older_than_guard(p)
-                                except self.psutil.AccessDenied:    # G1 (round 2 P1)
+                                except self._denied:    # G1 (round 2 P1)
                                     self._note_unreadable(unreadable, p, edges, key=key)
                                     continue
                                 if young:
                                     orphans[key] = dict(
-                                        pid=p.pid, create_time=start_time(p), argv=p.cmdline()
+                                        pid=p.pid, create_time=start_time(p), argv=_cmdline(p)
                                     )
                         except self.psutil.NoSuchProcess:
                             continue
@@ -1077,7 +1115,7 @@ class ProcessGuard:
                             orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
                                                           reason="identity unreadable")
                             continue
-                        except self.psutil.AccessDenied:
+                        except self._denied:
                             # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
                             # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
                             if key is None and any(k[0] == p.pid for k in self.tracked):
