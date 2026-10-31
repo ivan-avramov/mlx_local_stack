@@ -250,3 +250,21 @@ def test_two_open_metallibs_are_ambiguous_P583_review(tmp_path):
     _, ops = lsof_case(tmp_path, [("3", "r", "REG", a), ("4", "r", "REG", b)])
     with pytest.raises(co.ChainAbort, match="metallib"):
         ops.loaded_images(4242)
+
+
+# ---- P584: R3's stall-kill must be a real `stalled` gate stop (the silence path never fires on a healthy item) ---------------
+from bench import arm_runner
+
+
+def test_the_injected_item_alone_gets_the_one_request_no_progress_limit_P584():
+    a = SimpleNamespace(inject_stall_item="python/beer-song", inject_stall_s=30, gate_overrides=None, evidence="p426", lang="python")
+    assert arm_runner.gate_overrides_for(a, "python/beer-song") == {"no_progress_requests": 1}
+    assert arm_runner.gate_overrides_for(a, "python/dominoes") is None
+
+
+def test_the_injection_keeps_any_existing_override_and_no_injection_changes_nothing_P584():
+    a = SimpleNamespace(inject_stall_item="python/x", inject_stall_s=30, gate_overrides={"requests": 99}, evidence="p426", lang="python")
+    assert arm_runner.gate_overrides_for(a, "python/x") == {"requests": 99, "no_progress_requests": 1}
+    assert arm_runner.gate_overrides_for(a, "python/y") == {"requests": 99}
+    plain = SimpleNamespace(inject_stall_item=None, inject_stall_s=None, gate_overrides=None)
+    assert arm_runner.gate_overrides_for(plain, "python/x") is None

@@ -75,6 +75,16 @@ def silence_limit_s(a, item):
     return pg.POLICY["silence_s"]
 
 
+def gate_overrides_for(a, item):
+    """The token-gate overrides of `item`: the run's own (`a.gate_overrides`) and, for the one injected rehearsal item (P584),
+    `no_progress_requests` 1 — the real `stalled` rule then kills it at its first request boundary without progress (a lowered
+    silence limit alone never fires on a healthy item: the silence stop needs an idle worker)."""
+    base = getattr(a, "gate_overrides", None)
+    if getattr(a, "inject_stall_item", None) == item and getattr(a, "inject_stall_s", None) is not None:
+        return {**(base or {}), "no_progress_requests": 1}
+    return base
+
+
 def effective_policy(kind=None):
     """(gate, hygiene) dicts in force: the campaign constants, with the inject kind's single override applied (C147 2)."""
     gate, hygiene = dict(tg.POLICY), dict(pg.POLICY)
@@ -1210,7 +1220,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     p, adapter, corpus=corpus, prepared=prepared, model=a.model, prompt=prompt, env=env,
                     binary=binary, evidence=item_evidence, limit=limit, private=private, router=router, base=base,
                     protected_pids=(before["pid"],), policy=(policy.gate, policy.hygiene), cancel=cancel, ctx=ctx,
-                    frozen_date=frozen, gate_overrides=getattr(a, "gate_overrides", None), silence_s=silence_limit_s(a, item),
+                    frozen_date=frozen, gate_overrides=gate_overrides_for(a, item), silence_s=silence_limit_s(a, item),
                     watchdog=policy.watchdog, compaction=policy.compaction == "on_accounted",
                     join_timeout_s=policy.grade_join_timeout_s, receipts=receipt_source, attempt=attempt,
                     header_sent=header_ctx is not None,
