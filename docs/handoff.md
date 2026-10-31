@@ -13,7 +13,7 @@ registry names only, always. Review rounds: 3 per artifact (AGENTS.md).
 3. The `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter` card shows the interval `1.74×[1.71,1.77]` (re-uploaded with the push; the
    first upload said 1.78, a hand-rounding the generated scoresheet corrected).
 4. `$STACK_WORKDIR` holds only the Keep set (`nltk_data`, `polyglot-benchmark`, `opencode-2.0.20`, `vision_gate_images`, `gate/`,
-   `locks/`); `git worktree list` shows only `main`; no local branches besides `main` / `evidence` (stack) and `main` (forks).
+   `locks/`, `scratch/` — the empty opencode temp root, P563); `git worktree list` shows only `main`; no local branches besides `main` / `evidence` (stack) and `main` (forks).
    If the cleanup stopped part-way, finish it per `docs/reviews/cleanup-2026-10/dispositions.md` (its preconditions first).
 
 ## State — 2026-10-31
