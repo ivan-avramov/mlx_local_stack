@@ -1,0 +1,55 @@
+"""Pick the best hand(s) from a list of poker hands."""
+
+_RANKS = {rank: value for value, rank in enumerate(
+    "23456789TJQKA", start=2)}
+_RANKS["10"] = 10
+
+
+def _card(card):
+    return _RANKS[card[:-1]]
+
+
+def _score(hand):
+    ranks = sorted((_card(card) for card in hand.split()), reverse=True)
+    flush = len({card[-1] for card in hand.split()}) == 1
+    straight = ranks == list(range(ranks[0], ranks[0] - 5, -1))
+    if not straight and set(ranks) == {14, 2, 3, 4, 5}:
+        # Ace can start a straight (A-2-3-4-5), scored as a 5-high straight.
+        straight = True
+        ranks = [5, 4, 3, 2, 1]
+
+    counts = {rank: ranks.count(rank) for rank in ranks}
+    ordered = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    shape = [count for _, count in ordered]
+    tiebreakers = [rank for rank, _ in ordered]
+
+    if straight and flush:
+        category = 8
+        tiebreakers = [ranks[0]]
+    elif shape == [4, 1]:
+        category = 7
+    elif shape == [3, 2]:
+        category = 6
+    elif flush:
+        category = 5
+        tiebreakers = ranks
+    elif straight:
+        category = 4
+        tiebreakers = [ranks[0]]
+    elif shape == [3, 1, 1]:
+        category = 3
+    elif shape == [2, 2, 1]:
+        category = 2
+    elif shape == [2, 1, 1, 1]:
+        category = 1
+    else:
+        category = 0
+        tiebreakers = ranks
+
+    return (category, *tiebreakers)
+
+
+def best_hands(hands):
+    scores = {hand: _score(hand) for hand in hands}
+    top = max(scores.values())
+    return [hand for hand in hands if scores[hand] == top]

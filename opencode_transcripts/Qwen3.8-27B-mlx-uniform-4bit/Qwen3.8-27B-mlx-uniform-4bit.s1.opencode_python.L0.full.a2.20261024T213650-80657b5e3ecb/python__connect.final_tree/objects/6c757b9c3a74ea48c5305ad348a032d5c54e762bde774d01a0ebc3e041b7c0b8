@@ -1,0 +1,62 @@
+from collections import deque
+
+
+class ConnectGame:
+    """Compute the winner of a game of Hex / Polygon (Connect).
+
+    The board is a parallelogram of hexagonal fields drawn as rows of
+    two-character cells, each row indented one space further than the
+    previous one.  Player ``X`` connects the left side to the right
+    side; player ``O`` connects the top side to the bottom side.
+    """
+
+    # Neighbours of cell (row, col) in the slanted parallelogram layout:
+    # west, east, upper-left, upper-right, lower-left, lower-right.
+    # Because each row is shifted one cell half-width to the right, the
+    # diagonals are (row +/- 1, col +/- 1) with *opposite* signs; a
+    # straight (row +/- 1, col +/- 1) staircase is not a legal move.
+    _NEIGHBOURS = ((0, -1), (0, 1), (-1, 0), (-1, 1), (1, -1), (1, 0))
+
+    def __init__(self, board):
+        self.rows = [line.split() for line in board.strip().splitlines()]
+
+    def get_winner(self):
+        if self._connects("X"):
+            return "X"
+        if self._connects("O"):
+            return "O"
+        return ""
+
+    def _connects(self, player):
+        rows = self.rows
+        if not rows:
+            return False
+
+        if player == "X":
+            # X plays from left to right.
+            start = [
+                (r, 0) for r, row in enumerate(rows) if row and row[0] == player
+            ]
+            goal = lambda r, c: c == len(rows[r]) - 1
+        else:
+            # O plays from top to bottom.
+            start = [(0, c) for c, cell in enumerate(rows[0]) if cell == player]
+            goal = lambda r, c: r == len(rows) - 1
+
+        seen = set(start)
+        queue = deque(start)
+        while queue:
+            r, c = queue.popleft()
+            if goal(r, c):
+                return True
+            for dr, dc in self._NEIGHBOURS:
+                nr, nc = r + dr, c + dc
+                if (
+                    0 <= nr < len(rows)
+                    and 0 <= nc < len(rows[nr])
+                    and rows[nr][nc] == player
+                    and (nr, nc) not in seen
+                ):
+                    seen.add((nr, nc))
+                    queue.append((nr, nc))
+        return False

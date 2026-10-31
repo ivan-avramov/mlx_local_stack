@@ -1,0 +1,97 @@
+
+WHITE = "W"
+BLACK = "B"
+NONE = ""
+
+
+class Board:
+    """Count territories of each player in a Go game
+
+    Args:
+        board (list[str]): A two-dimensional Go board
+    """
+
+    def __init__(self, board):
+        self._board = board
+        self._height = len(board)
+        self._width = len(board[0]) if board else 0
+
+    def territory(self, x, y):
+        """Find the owner and the territories given a coordinate on
+           the board
+
+        Args:
+            x (int): Column on the board
+            y (int): Row on the board
+
+        Returns:
+            (str, set): A tuple, the first element being the owner
+                        of that area.  One of "W", "B", "".  The
+                        second being a set of coordinates, representing
+                        the owner's territories.
+        """
+        if not (0 <= x < self._width and 0 <= y < self._height):
+            raise ValueError("Invalid coordinate")
+
+        if self._board[y][x] != " ":
+            # A stone is not part of any territory.
+            return NONE, set()
+
+        region, owners = self._region(x, y)
+        owner = owners.pop() if len(owners) == 1 else NONE
+        return owner, region
+
+    def territories(self):
+        """Find the owners and the territories of the whole board
+
+        Args:
+            none
+
+        Returns:
+            dict(str, set): A dictionary whose key being the owner
+                        , i.e. "W", "B", "".  The value being a set
+                        of coordinates owned by the owner.
+        """
+        result = {BLACK: set(), WHITE: set(), NONE: set()}
+        visited = set()
+
+        for y in range(self._height):
+            for x in range(self._width):
+                if (x, y) in visited or self._board[y][x] != " ":
+                    continue
+                region, owners = self._region(x, y)
+                visited |= region
+                owner = owners.pop() if len(owners) == 1 else NONE
+                result[owner] |= region
+
+        return result
+
+    def _region(self, x, y):
+        """Flood-fill the empty region containing (x, y).
+
+        Returns:
+            (set, set): The region as a set of coordinates and the set
+                        of stone colors surrounding it.
+        """
+        region = set()
+        owners = set()
+        stack = [(x, y)]
+
+        while stack:
+            cx, cy = stack.pop()
+            if (cx, cy) in region:
+                continue
+            region.add((cx, cy))
+
+            for nx, ny in ((cx + 1, cy), (cx - 1, cy),
+                           (cx, cy + 1), (cx, cy - 1)):
+                if not (0 <= nx < self._width and 0 <= ny < self._height):
+                    continue
+                cell = self._board[ny][nx]
+                if cell == " ":
+                    if (nx, ny) not in region:
+                        stack.append((nx, ny))
+                else:
+                    owners.add(cell)
+
+        return region, owners

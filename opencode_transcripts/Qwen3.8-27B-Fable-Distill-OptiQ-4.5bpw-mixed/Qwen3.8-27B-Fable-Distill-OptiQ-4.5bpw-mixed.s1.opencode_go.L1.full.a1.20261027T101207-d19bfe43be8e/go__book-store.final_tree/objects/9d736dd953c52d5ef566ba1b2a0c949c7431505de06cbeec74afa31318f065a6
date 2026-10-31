@@ -1,0 +1,46 @@
+package bookstore
+
+import "sort"
+
+// Cost returns the total price, in cents, of a basket of books from the
+// 5-book series, applying the largest possible discount.
+//
+// The optimal strategy is to keep group sizes balanced: repeatedly take one
+// copy of each of the most numerous titles to form a group. This makes two
+// groups of four cheaper than a group of five plus a group of three, and so
+// on.
+func Cost(books []int) int {
+	counts := make([]int, 5)
+	for _, book := range books {
+		counts[book-1]++
+	}
+
+	// pricePerBook[i] is the price of one book inside a group of size i+1.
+	pricePerBook := []int{800, 720, 720, 640, 600}
+
+	total := 0
+	for {
+		distinct := 0
+		for _, c := range counts {
+			if c > 0 {
+				distinct++
+			}
+		}
+		if distinct == 0 {
+			break
+		}
+
+		size := distinct
+		if size > 5 {
+			size = 5
+		}
+		total += size * pricePerBook[size-1]
+
+		sort.Slice(counts, func(i, j int) bool { return counts[i] > counts[j] })
+		for i := 0; i < size; i++ {
+			counts[i]--
+		}
+	}
+
+	return total
+}

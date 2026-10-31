@@ -1,0 +1,78 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Matrix is a two-dimensional grid of integers.
+type Matrix [][]int
+
+// New parses s as a matrix of integers. Each line of s is one row, and the
+// entries within a row are separated by whitespace. It returns an error if a
+// row is empty, rows have uneven lengths, or an entry is not a valid integer.
+func New(s string) (Matrix, error) {
+	lines := strings.Split(s, "\n")
+	m := make(Matrix, 0, len(lines))
+	width := -1
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix: empty row")
+		}
+		if width == -1 {
+			width = len(fields)
+		} else if len(fields) != width {
+			return nil, errors.New("matrix: uneven rows")
+		}
+		row := make([]int, len(fields))
+		for j, f := range fields {
+			v, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, err
+			}
+			row[j] = v
+		}
+		m = append(m, row)
+	}
+	return m, nil
+}
+
+// Cols returns the columns of the matrix, each column read top-to-bottom.
+// The returned data is a copy and does not share storage with the matrix.
+func (m Matrix) Cols() [][]int {
+	if len(m) == 0 {
+		return nil
+	}
+	cols := make(Matrix, len(m[0]))
+	for c := range cols {
+		cols[c] = make([]int, len(m))
+	}
+	for r, row := range m {
+		for c, v := range row {
+			cols[c][r] = v
+		}
+	}
+	return cols
+}
+
+// Rows returns the rows of the matrix. The returned data is a copy and does
+// not share storage with the matrix.
+func (m Matrix) Rows() [][]int {
+	rows := make(Matrix, len(m))
+	for i, row := range m {
+		rows[i] = append([]int(nil), row...)
+	}
+	return rows
+}
+
+// Set sets the element at row, col to val. It reports whether the position is
+// within the matrix.
+func (m Matrix) Set(row, col, val int) bool {
+	if row < 0 || row >= len(m) || col < 0 || col >= len(m[row]) {
+		return false
+	}
+	m[row][col] = val
+	return true
+}

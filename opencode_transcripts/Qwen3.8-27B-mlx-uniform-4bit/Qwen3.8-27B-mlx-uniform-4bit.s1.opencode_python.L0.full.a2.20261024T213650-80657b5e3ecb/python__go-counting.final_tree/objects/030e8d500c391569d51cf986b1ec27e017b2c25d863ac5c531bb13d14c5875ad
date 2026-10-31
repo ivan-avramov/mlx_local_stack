@@ -1,0 +1,101 @@
+WHITE = "W"
+BLACK = "B"
+NONE = ""
+
+
+class Board:
+    """Count territories of each player in a Go game
+
+    Args:
+        board (list[str]): A two-dimensional Go board
+    """
+
+    def __init__(self, board):
+        self.board = board
+
+    def _owner_of(self, region):
+        """Determine the owner of a region of empty cells.
+
+        Args:
+            region (set): A set of (x, y) coordinates of empty cells.
+
+        Returns:
+            str: The owner of the region: "W", "B" or "".
+        """
+        owners = set()
+        for x, y in region:
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = x + dx, y + dy
+                if 0 <= y + dy < len(self.board) and 0 <= x + dx < len(self.board[ny]):
+                    stone = self.board[ny][nx]
+                    if stone != " ":
+                        owners.add(stone)
+        if owners == {BLACK}:
+            return BLACK
+        if owners == {WHITE}:
+            return WHITE
+        return NONE
+
+    def _region(self, x, y):
+        """Flood-fill the region of empty cells containing (x, y).
+
+        Args:
+            x (int): Column on the board.
+            y (int): Row on the board.
+
+        Returns:
+            set: A set of (x, y) coordinates of the empty region.
+        """
+        region = {(x, y)}
+        stack = [(x, y)]
+        while stack:
+            cx, cy = stack.pop()
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                nx, ny = cx + dx, cy + dy
+                if 0 <= ny < len(self.board) and 0 <= nx < len(self.board[ny]):
+                    if self.board[ny][nx] == " " and (nx, ny) not in region:
+                        region.add((nx, ny))
+                        stack.append((nx, ny))
+        return region
+
+    def territory(self, x, y):
+        """Find the owner and the territories given a coordinate on
+           the board
+
+        Args:
+            x (int): Column on the board
+            y (int): Row on the board
+
+        Returns:
+            (str, set): A tuple, the first element being the owner
+                        of that area.  One of "W", "B", "".  The
+                        second being a set of coordinates, representing
+                        the owner's territories.
+        """
+        if not self.board or not (0 <= y < len(self.board)) or not (0 <= x < len(self.board[y])):
+            raise ValueError("Invalid coordinate")
+        if self.board[y][x] != " ":
+            return (NONE, set())
+        region = self._region(x, y)
+        return (self._owner_of(region), region)
+
+    def territories(self):
+        """Find the owners and the territories of the whole board
+
+        Args:
+            none
+
+        Returns:
+            dict(str, set): A dictionary whose key being the owner
+                        , i.e. "W", "B", "".  The value being a set
+                        of coordinates owned by the owner.
+        """
+        result = {WHITE: set(), BLACK: set(), NONE: set()}
+        seen = set()
+        for y, row in enumerate(self.board):
+            for x, cell in enumerate(row):
+                if cell == " " and (x, y) not in seen:
+                    region = self._region(x, y)
+                    seen.update(region)
+                    result[self._owner_of(region)].update(region)
+        return result

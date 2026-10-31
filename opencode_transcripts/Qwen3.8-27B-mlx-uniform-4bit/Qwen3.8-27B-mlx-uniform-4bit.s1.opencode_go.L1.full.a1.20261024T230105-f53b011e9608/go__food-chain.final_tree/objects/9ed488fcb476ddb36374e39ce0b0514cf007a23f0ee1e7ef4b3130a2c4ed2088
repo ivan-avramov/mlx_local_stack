@@ -1,0 +1,51 @@
+package foodchain
+
+import "strings"
+
+// animals is indexed by verse number (1-based).
+var animals = []string{"", "fly", "spider", "bird", "cat", "dog", "goat", "cow", "horse"}
+
+// comments holds the second line of each verse, keyed by verse number.
+var comments = map[int]string{
+	2: "It wriggled and jiggled and tickled inside her.",
+	3: "How absurd to swallow a bird!",
+	4: "Imagine that, to swallow a cat!",
+	5: "What a hog, to swallow a dog!",
+	6: "Just opened her throat and swallowed a goat!",
+	7: "I don't know how she swallowed a cow!",
+	8: "She's dead, of course!",
+}
+
+// catchSuffix holds extra text appended to an animal when it is
+// referenced as the one being caught, keyed by verse number.
+var catchSuffix = map[int]string{
+	2: " that wriggled and jiggled and tickled inside her",
+}
+
+const refrain = "I don't know why she swallowed the fly. Perhaps she'll die."
+
+func Verse(v int) string {
+	lines := []string{"I know an old lady who swallowed a " + animals[v] + "."}
+	if c, ok := comments[v]; ok {
+		lines = append(lines, c)
+	}
+	if v < 8 {
+		for k := v - 1; k >= 1; k-- {
+			lines = append(lines, "She swallowed the "+animals[k+1]+" to catch the "+animals[k]+catchSuffix[k]+".")
+		}
+		lines = append(lines, refrain)
+	}
+	return strings.Join(lines, "\n")
+}
+
+func Verses(start, end int) string {
+	verses := make([]string, 0, end-start+1)
+	for v := start; v <= end; v++ {
+		verses = append(verses, Verse(v))
+	}
+	return strings.Join(verses, "\n\n")
+}
+
+func Song() string {
+	return Verses(1, 8)
+}

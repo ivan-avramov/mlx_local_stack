@@ -1,0 +1,47 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+)
+
+// Encode normalizes the input (lower-casing and removing spaces and
+// punctuation), lays the result out in a rectangle as square as possible,
+// and reads it back down the columns, left to right, emitting c chunks of
+// r characters separated by spaces. Chunks that run past the end of the
+// message are padded with a single trailing space.
+func Encode(pt string) string {
+	s := normalize(pt)
+	n := len(s)
+	if n == 0 {
+		return ""
+	}
+
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := (n + c - 1) / c
+
+	chunks := make([]string, c)
+	for j := 0; j < c; j++ {
+		var b strings.Builder
+		for i := 0; i < r; i++ {
+			if idx := i*c + j; idx < n {
+				b.WriteByte(s[idx])
+			} else {
+				b.WriteByte(' ')
+			}
+		}
+		chunks[j] = b.String()
+	}
+	return strings.Join(chunks, " ")
+}
+
+// normalize lower-cases the input and keeps only letters and digits.
+func normalize(s string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(s) {
+		if ('a' <= r && r <= 'z') || ('0' <= r && r <= '9') {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}

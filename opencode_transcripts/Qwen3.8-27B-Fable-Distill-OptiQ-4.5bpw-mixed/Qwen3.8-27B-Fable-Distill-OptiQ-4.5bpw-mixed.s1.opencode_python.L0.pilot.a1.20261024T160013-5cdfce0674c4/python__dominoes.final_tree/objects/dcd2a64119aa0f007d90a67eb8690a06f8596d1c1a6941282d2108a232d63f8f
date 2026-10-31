@@ -1,0 +1,42 @@
+def can_chain(dominoes):
+    n = len(dominoes)
+    if n == 0:
+        return []
+
+    used = [False] * n
+    chain = []
+
+    def backtrack(end):
+        if len(chain) == n:
+            return chain[0][0] == end
+        for i in range(n):
+            if used[i]:
+                continue
+            a, b = dominoes[i]
+            if a == end:
+                used[i] = True
+                chain.append((a, b))
+                if backtrack(b):
+                    return True
+                chain.pop()
+                used[i] = False
+            elif b == end:
+                used[i] = True
+                chain.append((b, a))
+                if backtrack(a):
+                    return True
+                chain.pop()
+                used[i] = False
+        return False
+
+    for i in range(n):
+        a, b = dominoes[i]
+        for first in ((a, b), (b, a)):
+            used[i] = True
+            chain.append(first)
+            if backtrack(first[1]):
+                return chain
+            chain.pop()
+            used[i] = False
+
+    return None

@@ -1,0 +1,38 @@
+# Game status categories
+# Change the values as you see fit
+STATUS_WIN = 'win'
+STATUS_LOSE = 'lose'
+STATUS_ONGOING = 'ongoing'
+
+
+class Hangman:
+    MAX_GUESSES = 9
+
+    def __init__(self, word):
+        self.word = word.lower()
+        self.guessed = set()
+        self.remaining_guesses = self.MAX_GUESSES
+        self.status = STATUS_ONGOING
+
+    def guess(self, char):
+        if self.status != STATUS_ONGOING:
+            raise ValueError("The game has already ended.")
+
+        char = char.lower()
+        # A letter that is not in the word, or has already been guessed,
+        # counts as a failure.
+        if char not in self.word or char in self.guessed:
+            self.remaining_guesses -= 1
+
+        self.guessed.add(char)
+
+        if all(ch in self.guessed for ch in self.word):
+            self.status = STATUS_WIN
+        elif self.remaining_guesses < 0:
+            self.status = STATUS_LOSE
+
+    def get_masked_word(self):
+        return ''.join(ch if ch in self.guessed else '_' for ch in self.word)
+
+    def get_status(self):
+        return self.status

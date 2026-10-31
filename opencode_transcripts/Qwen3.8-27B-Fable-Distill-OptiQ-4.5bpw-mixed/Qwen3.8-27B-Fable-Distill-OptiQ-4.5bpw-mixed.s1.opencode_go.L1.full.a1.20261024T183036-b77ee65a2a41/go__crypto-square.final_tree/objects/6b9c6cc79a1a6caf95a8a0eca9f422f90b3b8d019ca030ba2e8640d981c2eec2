@@ -1,0 +1,42 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode normalizes the plaintext (lowercased, keeping only letters and
+// digits), lays it out in a rectangle as square as possible, and returns
+// the columns read left to right, joined by spaces.
+func Encode(pt string) string {
+	var b strings.Builder
+	for _, r := range pt {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(unicode.ToLower(r))
+		}
+	}
+	plain := b.String()
+	n := len(plain)
+	if n == 0 {
+		return ""
+	}
+
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := (n + c - 1) / c
+
+	chunks := make([]string, c)
+	for j := 0; j < c; j++ {
+		var sb strings.Builder
+		for i := 0; i < r; i++ {
+			pos := i*c + j
+			if pos < n {
+				sb.WriteByte(plain[pos])
+			} else {
+				sb.WriteByte(' ')
+			}
+		}
+		chunks[j] = sb.String()
+	}
+	return strings.Join(chunks, " ")
+}

@@ -1,0 +1,79 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+const maxBottles = 99
+
+func Song() string {
+	song, _ := Verses(maxBottles, 0)
+	return song
+}
+
+func Verses(start, stop int) (string, error) {
+	if start > maxBottles || stop < 0 || start < stop {
+		return "", errors.New("invalid verse range")
+	}
+
+	var sb strings.Builder
+	for n := start; n >= stop; n-- {
+		verse, err := Verse(n)
+		if err != nil {
+			return "", err
+		}
+		sb.WriteString(verse)
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+func Verse(n int) (string, error) {
+	if n < 0 || n > maxBottles {
+		return "", errors.New("invalid verse")
+	}
+
+	remaining := n - 1
+	if n == 0 {
+		remaining = maxBottles
+	}
+
+	return fmt.Sprintf("%s on the wall, %s.\n%s, %s on the wall.\n",
+		upper(n), lower(n), action(n), lower(remaining)), nil
+}
+
+// upper renders the first line's count with a capital letter.
+func upper(n int) string {
+	if n == 0 {
+		return "No more bottles of beer"
+	}
+	if n == 1 {
+		return "1 bottle of beer"
+	}
+	return fmt.Sprintf("%d bottles of beer", n)
+}
+
+// lower renders the count with a lowercase first letter.
+func lower(n int) string {
+	if n == 0 {
+		return "no more bottles of beer"
+	}
+	if n == 1 {
+		return "1 bottle of beer"
+	}
+	return fmt.Sprintf("%d bottles of beer", n)
+}
+
+// action renders the second line's action for the verse.
+func action(n int) string {
+	switch n {
+	case 1:
+		return "Take it down and pass it around"
+	case 0:
+		return "Go to the store and buy some more"
+	default:
+		return "Take one down and pass it around"
+	}
+}

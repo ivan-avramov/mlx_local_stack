@@ -1,0 +1,48 @@
+def grep(pattern, flags, files):
+    """Search files for lines matching *pattern* and return the output.
+
+    Supported flags:
+      -n  Prepend the line number and a colon to each output line.
+      -l  Output only the names of files that contain at least one match.
+      -i  Match using a case-insensitive comparison.
+      -v  Collect all lines that fail to match.
+      -x  Match only lines where the pattern matches the entire line.
+    """
+    flag_set = set(flags.split())
+    case_insensitive = "-i" in flag_set
+    show_line_numbers = "-n" in flag_set
+    show_file_names = "-l" in flag_set
+    invert = "-v" in flag_set
+    whole_line = "-x" in flag_set
+
+    prepend_file_name = len(files) > 1
+
+    output = []
+    for file_name in files:
+        with open(file_name) as handle:
+            lines = handle.readlines()
+
+        selected = []
+        for line_number, line in enumerate(lines, start=1):
+            text = line.rstrip("\n")
+            if case_insensitive:
+                haystack, needle = text.lower(), pattern.lower()
+            else:
+                haystack, needle = text, pattern
+
+            matched = needle == haystack if whole_line else needle in haystack
+            if matched != invert:
+                selected.append((line_number, line))
+
+        if show_file_names:
+            if selected:
+                output.append(file_name + "\n")
+        else:
+            prefix = file_name + ":" if prepend_file_name else ""
+            for line_number, line in selected:
+                line_prefix = prefix
+                if show_line_numbers:
+                    line_prefix = "{0}{1}:".format(line_prefix, line_number)
+                output.append(line_prefix + line)
+
+    return "".join(output)

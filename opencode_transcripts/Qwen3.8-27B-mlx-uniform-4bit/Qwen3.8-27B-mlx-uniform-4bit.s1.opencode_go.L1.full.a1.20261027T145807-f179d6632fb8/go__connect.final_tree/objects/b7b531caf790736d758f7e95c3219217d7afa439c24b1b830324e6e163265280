@@ -1,0 +1,102 @@
+package connect
+
+import (
+	"errors"
+)
+
+// ResultOf determines the winner of a game of Hex / Polygon.
+//
+// The board is supplied as a slice of strings, one per row, with the
+// readability spaces already stripped. In the original representation each
+// row is indented half a cell further than the row above it, which yields the
+// hexagonal adjacency used below (see neighbors).
+//
+// Player "O" wins by connecting the top and bottom edges of the board.
+// Player "X" wins by connecting the left and right edges of the board.
+// If neither player has such a connection the empty string is returned.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	grid := make([][]byte, len(lines))
+	for r, line := range lines {
+		grid[r] = []byte(line)
+	}
+
+	xWins := connects(grid, 'X',
+		func(r, c int) bool { return c == 0 },
+		func(r, c int) bool { return c == len(grid[r])-1 },
+	)
+	oWins := connects(grid, 'O',
+		func(r, c int) bool { return r == 0 },
+		func(r, c int) bool { return r == len(grid)-1 },
+	)
+
+	switch {
+	case xWins && oWins:
+		// In a real game of Hex both players can never complete a
+		// connection at the same time; treat it as an invalid board.
+		return "", errors.New("both players have a winning connection")
+	case xWins:
+		return "X", nil
+	case oWins:
+		return "O", nil
+	default:
+		return "", nil
+	}
+}
+
+// connects reports whether the given player has a connected path of its own
+// stones from any cell satisfying start to any cell satisfying goal.
+func connects(grid [][]byte, player byte, start, goal func(r, c int) bool) bool {
+	rows := len(grid)
+	visited := make([][]bool, rows)
+	queue := make([][2]int, 0, rows*len(grid[0]))
+
+	for r := 0; r < rows; r++ {
+		visited[r] = make([]bool, len(grid[r]))
+		for c := 0; c < len(grid[r]); c++ {
+			if grid[r][c] == player && start(r, c) {
+				visited[r][c] = true
+				queue = append(queue, [2]int{r, c})
+			}
+		}
+	}
+
+	for i := 0; i < len(queue); i++ {
+		r, c := queue[i][0], queue[i][1]
+		if goal(r, c) {
+			return true
+		}
+		for _, n := range neighbors(r, c) {
+			nr, nc := n[0], n[1]
+			if nr < 0 || nr >= rows || nc < 0 || nc >= len(grid[nr]) {
+				continue
+			}
+			if visited[nr][nc] || grid[nr][nc] != player {
+				continue
+			}
+			visited[nr][nc] = true
+			queue = append(queue, [2]int{nr, nc})
+		}
+	}
+	return false
+}
+
+// neighbors returns the six hexagonal neighbours of cell (r, c).
+//
+// Each row is shifted half a cell to the right relative to the row above, so
+// the cells up-left / up-right and down-left / down are the diagonal
+// neighbours. Diagonal cells that are not in this set (e.g. up at (r-1, c-1)
+// or down at (r+1, c+1)) are NOT adjacent.
+func neighbors(r, c int) [][2]int {
+	return [][2]int{
+		{r - 1, c},     // up-left
+		{r - 1, c + 1}, // up-right
+		{r, c - 1},     // left
+		{r, c + 1},     // right
+		{r + 1, c - 1}, // down-left
+		{r + 1, c},     // down
+	}
+}

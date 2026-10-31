@@ -1,0 +1,115 @@
+package markdown
+
+import (
+	"strconv"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//   - The original implementation scanned the input one byte at a time while
+//     juggling several interacting flags (header level, list count, whether a
+//     list item or a header was open, and a "header encountered" flag).
+//     The rewrite splits the input into lines and classifies each line as a
+//     header, a list item or a paragraph, which makes the control flow easy
+//     to follow.
+//   - Emphasis (__bold__ / _italic_) is handled by a small helper that
+//     replaces delimiter pairs with tags, instead of four hard-coded
+//     strings.Replace calls.
+//   - The emitted HTML is unchanged, so all existing tests still pass.
+func Render(markdown string) string {
+	markdown = emphasize(markdown)
+
+	var sb strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if item, ok := parseListItem(line); ok {
+			if inList {
+				sb.WriteString("</li><li>")
+			} else {
+				sb.WriteString("<ul><li>")
+				inList = true
+			}
+			sb.WriteString(item)
+			continue
+		}
+
+		if inList {
+			sb.WriteString("</li></ul>")
+			inList = false
+		}
+
+		if header, ok := parseHeader(line); ok {
+			sb.WriteString(header)
+			continue
+		}
+
+		sb.WriteString("<p>" + line + "</p>")
+	}
+
+	if inList {
+		sb.WriteString("</li></ul>")
+	}
+
+	return sb.String()
+}
+
+// parseHeader reports whether line is a markdown header — one to six leading
+// '#' characters — and returns the corresponding HTML. Lines with seven or
+// more '#' are treated as plain paragraph text.
+func parseHeader(line string) (string, bool) {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 {
+		return "", false
+	}
+	text := line[level:]
+	if strings.HasPrefix(text, " ") {
+		text = text[1:] // skip the space separating the hashes from the text
+	}
+	return "<h" + strconv.Itoa(level) + ">" + text + "</h" + strconv.Itoa(level) + ">", true
+}
+
+// parseListItem reports whether line is an unordered list item and returns
+// the item text without the leading "* ".
+func parseListItem(line string) (string, bool) {
+	if !strings.HasPrefix(line, "* ") {
+		return "", false
+	}
+	return line[2:], true
+}
+
+// emphasize converts __bold__ and _italic_ markers to HTML tags. Bold is
+// handled first so that "__" is not consumed by the italic rule.
+func emphasize(text string) string {
+	text = replacePairs(text, "__", "<strong>", "</strong>")
+	return replacePairs(text, "_", "<em>", "</em>")
+}
+
+// replacePairs replaces each pair of delim occurrences in text with the open
+// and close tags, alternating from left to right. A trailing unpaired delim
+// is left as-is.
+func replacePairs(text, delim, open, close string) string {
+	var sb strings.Builder
+	rest := text
+	openNext := true
+	for {
+		i := strings.Index(rest, delim)
+		if i < 0 {
+			sb.WriteString(rest)
+			return sb.String()
+		}
+		sb.WriteString(rest[:i])
+		if openNext {
+			sb.WriteString(open)
+		} else {
+			sb.WriteString(close)
+		}
+		openNext = !openNext
+		rest = rest[i+len(delim):]
+	}
+}

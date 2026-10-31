@@ -1,0 +1,33 @@
+def can_chain(dominoes):
+    """Return a valid chain of the given dominoes, or None if none exists.
+
+    A valid chain uses every stone exactly once, is ordered so that the
+    right half of each stone matches the left half of the next one, and
+    the left end of the first stone matches the right end of the last.
+    """
+    if not dominoes:
+        return []
+    return _chain(dominoes, None, None)
+
+
+def _chain(remaining, start, end):
+    """Build the rest of a chain from the stones in `remaining`.
+
+    `end` is the right end of the stone placed so far (None if nothing has
+    been placed yet) and `start` is the left end of the first stone.
+    Returns the remaining part of the chain, or None if it cannot be built.
+    """
+    for i, (a, b) in enumerate(remaining):
+        for x, y in ((a, b), (b, a)):
+            if end is not None and x != end:
+                continue
+            rest = remaining[:i] + remaining[i + 1:]
+            first = start if start is not None else x
+            if not rest:
+                if y == first:
+                    return [(x, y)]
+            else:
+                tail = _chain(rest, first, y)
+                if tail is not None:
+                    return [(x, y)] + tail
+    return None

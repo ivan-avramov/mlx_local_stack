@@ -1,0 +1,84 @@
+from json import dumps
+
+
+class Tree:
+    def __init__(self, label, children=None):
+        self.label = label
+        self.children = children if children is not None else []
+
+    def __dict__(self):
+        return {self.label: [c.__dict__() for c in sorted(self.children)]}
+
+    def __str__(self, indent=None):
+        return dumps(self.__dict__(), indent=indent)
+
+    def __lt__(self, other):
+        return self.label < other.label
+
+    def __eq__(self, other):
+        return self.__dict__() == other.__dict__()
+
+    def from_pov(self, from_node):
+        result = self._reroot(from_node, [])
+        if result is None:
+            raise ValueError("Tree could not be reoriented")
+        return result
+
+    def _reroot(self, from_node, ancestors):
+        """Return a copy of this subtree re-rooted at from_node, or None if absent.
+
+        ancestors is the list of nodes from the original root down to (but not
+        including) this node.
+        """
+        if self.label == from_node:
+            children = [c._copy_without(self.label) for c in self.children]
+            if ancestors:
+                children.append(self._build_ancestors(ancestors, self.label))
+            return Tree(self.label, children)
+        for child in self.children:
+            result = child._reroot(from_node, ancestors + [self])
+            if result is not None:
+                return result
+        return None
+
+    def _build_ancestors(self, ancestors, excluded):
+        """Build the ancestor chain as a subtree rooted at ancestors[-1].
+
+        excluded is the label of the child on the path to the new root, which
+        is omitted from the chain.
+        """
+        node = ancestors[-1]
+        children = [
+            c._copy_without(node.label)
+            for c in node.children
+            if c.label != excluded
+        ]
+        if len(ancestors) > 1:
+            children.append(self._build_ancestors(ancestors[:-1], node.label))
+        return Tree(node.label, children)
+
+    def _copy_without(self, parent_label):
+        children = [
+            c._copy_without(self.label)
+            for c in self.children
+            if c.label != parent_label
+        ]
+        return Tree(self.label, children)
+
+    def path_to(self, from_node, to_node):
+        rerooted = self.from_pov(from_node)
+
+        def find(node, path):
+            path = path + [node.label]
+            if node.label == to_node:
+                return path
+            for child in node.children:
+                result = find(child, path)
+                if result is not None:
+                    return result
+            return None
+
+        result = find(rerooted, [])
+        if result is None:
+            raise ValueError("No path found")
+        return result

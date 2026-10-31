@@ -1,0 +1,86 @@
+package dominoes
+
+// Domino represents a single domino tile, with two halves.
+type Domino [2]int
+
+// MakeChain computes a way to order the given dominoes so that they form a
+// correct closed domino chain: the dots on one half of a stone match the dots
+// on the neighboring half of an adjacent stone, and the two unpaired ends
+// (the first and last stone) match each other.
+//
+// It returns the chain and true if such an ordering exists, or nil and false
+// otherwise. Dominoes may be flipped to make the chain work.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	n := len(input)
+	if n == 0 {
+		return []Domino{}, true
+	}
+
+	chain := make([]Domino, 0, n)
+	used := make([]bool, n)
+
+	var backtrack func() bool
+	backtrack = func() bool {
+		if len(chain) == n {
+			// Every domino is placed; the chain is valid only if the
+			// two free ends match.
+			return chain[0][0] == chain[len(chain)-1][1]
+		}
+
+		// The value the next domino must connect to.
+		var next int
+		if len(chain) == 0 {
+			next = -1
+		} else {
+			next = chain[len(chain)-1][1]
+		}
+
+		for i := 0; i < n; i++ {
+			if used[i] {
+				continue
+			}
+			a, b := input[i][0], input[i][1]
+
+			if len(chain) == 0 {
+				// The first domino can go in either orientation.
+				for _, d := range [2]Domino{{a, b}, {b, a}} {
+					chain = append(chain, d)
+					used[i] = true
+					if backtrack() {
+						return true
+					}
+					used[i] = false
+					chain = chain[:len(chain)-1]
+				}
+				continue
+			}
+
+			// A subsequent domino must share its matching half with the
+			// current open end of the chain.
+			if a == next {
+				chain = append(chain, Domino{a, b})
+				used[i] = true
+				if backtrack() {
+					return true
+				}
+				used[i] = false
+				chain = chain[:len(chain)-1]
+			}
+			if b == next {
+				chain = append(chain, Domino{b, a})
+				used[i] = true
+				if backtrack() {
+					return true
+				}
+				used[i] = false
+				chain = chain[:len(chain)-1]
+			}
+		}
+		return false
+	}
+
+	if backtrack() {
+		return chain, true
+	}
+	return nil, false
+}

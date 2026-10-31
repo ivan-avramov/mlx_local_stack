@@ -1,0 +1,85 @@
+"""Pick the best hand(s) from a list of poker hands."""
+
+_FACE_RANKS = {"J": 11, "Q": 12, "K": 13, "A": 14}
+
+# Hand categories, ordered from weakest to strongest.
+_HIGH_CARD = 0
+_ONE_PAIR = 1
+_TWO_PAIR = 2
+_THREE_OF_A_KIND = 3
+_STRAIGHT = 4
+_FLUSH = 5
+_FULL_HOUSE = 6
+_FOUR_OF_A_KIND = 7
+_STRAIGHT_FLUSH = 8
+
+
+def best_hands(hands):
+    """Return the winning hand(s) from `hands`, in their original order."""
+    scored = [(_score_hand(hand), hand) for hand in hands]
+    top = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == top]
+
+
+def _score_hand(hand):
+    """Return a comparable score tuple for a hand.
+
+    The first element is the hand category; the remaining elements are
+    tie-breaker ranks, most significant first.
+    """
+    cards = hand.split()
+    ranks = sorted(_rank(card) for card in cards)
+    flush = len({card[-1] for card in cards}) == 1
+
+    counts = {rank: ranks.count(rank) for rank in ranks}
+    ordered = sorted(
+        counts.items(), key=lambda item: (item[1], item[0]), reverse=True
+    )
+
+    straight_high = _straight_high(ranks)
+    if straight_high is not None and flush:
+        return (_STRAIGHT_FLUSH, straight_high)
+    if straight_high is not None:
+        return (_STRAIGHT, straight_high)
+    if flush:
+        return (_FLUSH, *sorted(ranks, reverse=True))
+    if ordered[0][1] == 4:
+        return (_FOUR_OF_A_KIND, ordered[0][0], ordered[1][0])
+    if ordered[0][1] == 3 and ordered[1][1] == 2:
+        return (_FULL_HOUSE, ordered[0][0], ordered[1][0])
+    if ordered[0][1] == 3:
+        return (_THREE_OF_A_KIND, ordered[0][0], ordered[1][0], ordered[2][0])
+    if ordered[0][1] == 2 and ordered[1][1] == 2:
+        return (_TWO_PAIR, ordered[0][0], ordered[1][0], ordered[2][0])
+    if ordered[0][1] == 2:
+        return (
+            _ONE_PAIR,
+            ordered[0][0],
+            ordered[1][0],
+            ordered[2][0],
+            ordered[3][0],
+        )
+    return (_HIGH_CARD, *sorted(ranks, reverse=True))
+
+
+def _rank(card):
+    """Return the numeric value of a card, e.g. '10H' -> 10, 'AS' -> 14."""
+    value = card[:-1]
+    if value in _FACE_RANKS:
+        return _FACE_RANKS[value]
+    return int(value)
+
+
+def _straight_high(ranks):
+    """Return the highest card of a straight, or None if not a straight.
+
+    An ace-low straight (A 2 3 4 5) is treated as a 5-high straight.
+    """
+    unique = sorted(set(ranks), reverse=True)
+    if len(unique) != 5:
+        return None
+    if unique[0] - unique[-1] == 4:
+        return unique[0]
+    if unique == [14, 5, 4, 3, 2]:
+        return 5
+    return None

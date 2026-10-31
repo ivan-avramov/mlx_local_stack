@@ -1,0 +1,94 @@
+package connect
+
+// ResultOf determines the winner of a game of Hex from the given board.
+//
+// The board is a parallelogram of hexagonal cells given as rows of strings;
+// each character is 'X', 'O', or '.' (empty). Row r has len(lines[0])+r
+// cells. Player X connects the left and right edges and player O connects
+// the top and bottom edges. It returns "X", "O", or "" if nobody has won.
+func ResultOf(lines []string) (string, error) {
+	n := len(lines)
+	if n == 0 {
+		return "", nil
+	}
+
+	// cell returns the cell at row r, column c, or '.' if out of range.
+	cell := func(r, c int) byte {
+		if r < 0 || r >= n || c < 0 || c >= len(lines[r]) {
+			return '.'
+		}
+		return lines[r][c]
+	}
+
+	// The six neighbors of a cell in the hexagonal grid. Each row is
+	// shifted one cell to the right of the one above it, so the two
+	// upper neighbors share the column or are one to the right, and the
+	// two lower neighbors are one to the left or share the column.
+	neighbors := [6][2]int{
+		{-1, 0}, {-1, 1},
+		{0, -1}, {0, 1},
+		{1, -1}, {1, 0},
+	}
+
+	// connected reports whether the player has a chain of stones from the
+	// first edge to the opposite edge.
+	connected := func(player byte) bool {
+		visited := make([][]bool, n)
+		for r := range visited {
+			visited[r] = make([]bool, len(lines[r]))
+		}
+
+		startEdge := func(r, c int) bool {
+			if player == 'X' {
+				return c == 0
+			}
+			return r == 0
+		}
+
+		oppositeEdge := func(r, c int) bool {
+			if player == 'X' {
+				return c == len(lines[r])-1
+			}
+			return r == n-1
+		}
+
+		queue := [][2]int{}
+		for r := 0; r < n; r++ {
+			for c := 0; c < len(lines[r]); c++ {
+				if cell(r, c) == player && startEdge(r, c) {
+					if oppositeEdge(r, c) {
+						return true
+					}
+					visited[r][c] = true
+					queue = append(queue, [2]int{r, c})
+				}
+			}
+		}
+
+		for len(queue) > 0 {
+			r, c := queue[0][0], queue[0][1]
+			queue = queue[1:]
+			for _, d := range neighbors {
+				nr, nc := r+d[0], c+d[1]
+				if cell(nr, nc) != player || visited[nr][nc] {
+					continue
+				}
+				if oppositeEdge(nr, nc) {
+					return true
+				}
+				visited[nr][nc] = true
+				queue = append(queue, [2]int{nr, nc})
+			}
+		}
+
+		return false
+	}
+
+	if connected('X') {
+		return "X", nil
+	}
+	if connected('O') {
+		return "O", nil
+	}
+	return "", nil
+}

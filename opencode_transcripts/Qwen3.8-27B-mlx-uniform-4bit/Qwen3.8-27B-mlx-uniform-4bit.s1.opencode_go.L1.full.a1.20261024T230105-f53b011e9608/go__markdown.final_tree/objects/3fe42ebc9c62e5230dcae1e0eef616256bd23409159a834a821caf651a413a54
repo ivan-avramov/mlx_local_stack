@@ -1,0 +1,109 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//
+// The original implementation parsed the input one character at a time in a
+// single loop, juggling several intertwined state variables (header level,
+// a "header seen" flag, list depth and a "list opened" flag) and deriving
+// block structure from individual characters. That made the control flow
+// very hard to follow.
+//
+// The rewrite splits the work into two stages:
+//
+//  1. Emphasis markers (__bold__ and _italic_) are resolved up front,
+//     exactly as the original did.
+//  2. The remaining text is parsed line by line. Each line is classified as
+//     a header, a list item, or a paragraph, which maps directly onto the
+//     block-level HTML the original produced.
+//
+// The only state left to track is whether a <ul> is open and whether a <li>
+// inside it is still open; closing a list is handled in one place.
+func Render(markdown string) string {
+	markdown = renderEmphasis(markdown)
+
+	var html strings.Builder
+	inList := false   // a <ul> is open
+	itemOpen := false // a <li> inside the list is open
+
+	// closeList finishes any list that is still open, writing the matching
+	// </li> and </ul> tags.
+	closeList := func() {
+		if itemOpen {
+			html.WriteString("</li>")
+			itemOpen = false
+		}
+		if inList {
+			html.WriteString("</ul>")
+			inList = false
+		}
+	}
+
+	for _, line := range strings.Split(markdown, "\n") {
+		switch {
+		case headerLevel(line) > 0:
+			// A header cannot appear inside a list.
+			closeList()
+			html.WriteString(renderHeader(line))
+		case strings.HasPrefix(line, "* "):
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			if itemOpen {
+				html.WriteString("</li>")
+			}
+			html.WriteString("<li>" + strings.TrimPrefix(line, "* "))
+			itemOpen = true
+		default:
+			// Any other line is a paragraph.
+			closeList()
+			html.WriteString(fmt.Sprintf("<p>%s</p>", line))
+		}
+	}
+	closeList()
+	return html.String()
+}
+
+// renderEmphasis converts the first pair of "__" markers to <strong> tags
+// and the first pair of "_" markers to <em> tags. This mirrors the original
+// implementation, which resolved emphasis for the whole document before
+// parsing block structure.
+func renderEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// headerLevel returns the level of the leading run of '#' characters on the
+// line, or 0 if the line is not a header. Markdown defines six header
+// levels; a run of seven or more '#' characters is not a header (the
+// original implementation treated such lines as paragraphs too).
+func headerLevel(line string) int {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level > 6 {
+		return 0
+	}
+	return level
+}
+
+// renderHeader renders a header line, e.g. "## Title" -> "<h2>Title</h2>".
+// The single space following the '#' run is part of the header syntax and is
+// not included in the title (the original implementation skipped it as well).
+func renderHeader(line string) string {
+	level := headerLevel(line)
+	text := strings.TrimPrefix(line, strings.Repeat("#", level))
+	text = strings.TrimPrefix(text, " ")
+	return fmt.Sprintf("<h%d>%s</h%d>", level, text, level)
+}

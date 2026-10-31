@@ -1,0 +1,78 @@
+class BowlingGame:
+    def __init__(self):
+        self._rolls = []
+        self._frame = 0
+        self._frame_rolls = []
+        self._game_over = False
+
+    def roll(self, pins):
+        if pins < 0:
+            raise ValueError("Cannot roll a negative number of pins")
+        if pins > 10:
+            raise ValueError("Cannot roll more than 10 points")
+        if self._game_over:
+            raise ValueError("Cannot roll after the game is over")
+
+        if self._frame < 9:
+            if len(self._frame_rolls) == 1 and self._frame_rolls[0] + pins > 10:
+                raise ValueError(
+                    "Two rolls in a frame cannot score more than 10 points"
+                )
+            self._frame_rolls.append(pins)
+            self._rolls.append(pins)
+            if len(self._frame_rolls) == 2 or self._frame_rolls[0] == 10:
+                self._next_frame()
+        else:
+            self._validate_tenth_frame_roll(pins)
+            self._frame_rolls.append(pins)
+            self._rolls.append(pins)
+            if self._tenth_frame_complete():
+                self._game_over = True
+
+    def score(self):
+        if not self._game_over:
+            raise ValueError("Cannot score an incomplete game")
+        total = 0
+        i = 0
+        for frame in range(10):
+            if frame < 9:
+                if self._rolls[i] == 10:
+                    total += 10 + self._rolls[i + 1] + self._rolls[i + 2]
+                    i += 1
+                elif self._rolls[i] + self._rolls[i + 1] == 10:
+                    total += 10 + self._rolls[i + 2]
+                    i += 2
+                else:
+                    total += self._rolls[i] + self._rolls[i + 1]
+                    i += 2
+            else:
+                total += sum(self._rolls[i:])
+        return total
+
+    def _validate_tenth_frame_roll(self, pins):
+        rolls = self._frame_rolls
+        if len(rolls) == 1 and rolls[0] != 10 and rolls[0] + pins > 10:
+            raise ValueError(
+                "Two rolls in a frame cannot score more than 10 points"
+            )
+        if (
+            len(rolls) == 2
+            and rolls[0] == 10
+            and rolls[1] != 10
+            and rolls[1] + pins > 10
+        ):
+            raise ValueError("Bonus rolls cannot score more than 10 points")
+
+    def _tenth_frame_complete(self):
+        rolls = self._frame_rolls
+        if len(rolls) == 3:
+            return True
+        if len(rolls) == 2:
+            return rolls[0] != 10 and rolls[0] + rolls[1] != 10
+        return False
+
+    def _next_frame(self):
+        self._frame += 1
+        self._frame_rolls = []
+        if self._frame == 10:
+            self._game_over = True

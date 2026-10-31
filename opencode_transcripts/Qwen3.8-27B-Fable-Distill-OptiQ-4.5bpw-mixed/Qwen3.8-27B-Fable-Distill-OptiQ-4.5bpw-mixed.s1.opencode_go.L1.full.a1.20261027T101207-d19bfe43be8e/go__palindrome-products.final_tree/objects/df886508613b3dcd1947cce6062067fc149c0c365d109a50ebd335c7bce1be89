@@ -1,0 +1,63 @@
+package palindrome
+
+import (
+	"errors"
+	"fmt"
+)
+
+// Product is a palindromic product together with all of its factorizations
+// within the given range.
+type Product struct {
+	Value          int
+	Factorizations [][2]int
+}
+
+// Products finds the largest and smallest palindromic numbers that are
+// products of two numbers within the range [fmin, fmax] (inclusive),
+// along with all factor pairs of each within the range.
+func Products(fmin, fmax int) (Product, Product, error) {
+	if fmin > fmax {
+		return Product{}, Product{}, errors.New("fmin > fmax")
+	}
+
+	factors := make(map[int][][2]int)
+	min, max := 0, 0
+	found := false
+
+	for a := fmin; a <= fmax; a++ {
+		for b := a; b <= fmax; b++ {
+			p := a * b
+			if !isPalindrome(p) {
+				continue
+			}
+			factors[p] = append(factors[p], [2]int{a, b})
+			if !found || p < min {
+				min = p
+			}
+			if !found || p > max {
+				max = p
+			}
+			found = true
+		}
+	}
+
+	if !found {
+		return Product{}, Product{}, fmt.Errorf("no palindromes found for range %d-%d", fmin, fmax)
+	}
+
+	return Product{min, factors[min]}, Product{max, factors[max]}, nil
+}
+
+// isPalindrome reports whether n reads the same forwards and backwards.
+func isPalindrome(n int) bool {
+	if n < 0 {
+		return false
+	}
+	original := n
+	reversed := 0
+	for n > 0 {
+		reversed = reversed*10 + n%10
+		n /= 10
+	}
+	return reversed == original
+}

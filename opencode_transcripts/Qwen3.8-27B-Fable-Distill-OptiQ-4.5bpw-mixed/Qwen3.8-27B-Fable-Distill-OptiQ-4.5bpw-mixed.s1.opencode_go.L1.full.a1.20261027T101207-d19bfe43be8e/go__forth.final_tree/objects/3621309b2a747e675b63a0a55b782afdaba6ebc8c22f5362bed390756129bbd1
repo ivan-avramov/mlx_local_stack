@@ -1,0 +1,219 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+var (
+	errEmptyStack    = errors.New("empty stack")
+	errOneValue      = errors.New("only one value on the stack")
+	errDivideByZero  = errors.New("divide by zero")
+	errIllegalOp     = errors.New("illegal operation")
+	errUndefined     = errors.New("undefined operation")
+	errIncompleteDef = errors.New("incomplete word definition")
+)
+
+// instruction is one step of a resolved word body: either a push of a
+// number (op == "") or one of the built-in operations.
+type instruction struct {
+	op  string
+	num int
+}
+
+// builtins lists the built-in operations available to the evaluator.
+var builtins = map[string]bool{
+	"+":    true,
+	"-":    true,
+	"*":    true,
+	"/":    true,
+	"dup":  true,
+	"drop": true,
+	"swap": true,
+	"over": true,
+}
+
+// Forth evaluates the given lines of Forth source and returns the
+// remaining stack contents (bottom to top).
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	dict := map[string][]instruction{}
+
+	defining := false
+	expectName := false
+	defName := ""
+	defBody := []instruction{}
+
+	for _, line := range input {
+		for _, tok := range strings.Fields(line) {
+			word := strings.ToLower(tok)
+			switch {
+			case expectName:
+				expectName = false
+				if isNumber(tok) {
+					return nil, errIllegalOp
+				}
+				defName = word
+				defBody = []instruction{}
+				defining = true
+
+			case defining:
+				if word == ";" {
+					dict[defName] = defBody
+					defining = false
+					continue
+				}
+				if n, ok := parseNumber(tok); ok {
+					defBody = append(defBody, instruction{num: n})
+					continue
+				}
+				body, err := resolve(word, dict)
+				if err != nil {
+					return nil, err
+				}
+				defBody = append(defBody, body...)
+
+			case word == ":":
+				expectName = true
+
+			default:
+				if n, ok := parseNumber(tok); ok {
+					stack = append(stack, n)
+					continue
+				}
+				body, err := resolve(word, dict)
+				if err != nil {
+					return nil, err
+				}
+				for _, ins := range body {
+					if err := exec(&stack, ins); err != nil {
+						return nil, err
+					}
+				}
+			}
+		}
+	}
+	if defining || expectName {
+		return nil, errIncompleteDef
+	}
+	return stack, nil
+}
+
+// resolve returns the body of a word: user-defined words are looked up
+// first (so they may override built-ins), then built-in operations.
+// Bodies are expanded at definition time, so a word always executes the
+// definitions that were in effect when it was defined.
+func resolve(word string, dict map[string][]instruction) ([]instruction, error) {
+	if body, ok := dict[word]; ok {
+		return body, nil
+	}
+	if builtins[word] {
+		return []instruction{{op: word}}, nil
+	}
+	return nil, errUndefined
+}
+
+// exec executes a single instruction against the stack.
+func exec(stack *[]int, ins instruction) error {
+	switch ins.op {
+	case "":
+		*stack = append(*stack, ins.num)
+	case "+":
+		a, b, err := pop2(stack)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, a+b)
+	case "-":
+		a, b, err := pop2(stack)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, b-a)
+	case "*":
+		a, b, err := pop2(stack)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, a*b)
+	case "/":
+		a, b, err := pop2(stack)
+		if err != nil {
+			return err
+		}
+		if a == 0 {
+			return errDivideByZero
+		}
+		*stack = append(*stack, b/a)
+	case "dup":
+		v, err := pop(stack)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, v, v)
+	case "drop":
+		_, err := pop(stack)
+		return err
+	case "swap":
+		a, b, err := pop2(stack)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, a, b)
+	case "over":
+		if len(*stack) < 2 {
+			return errOneValue
+		}
+		*stack = append(*stack, (*stack)[len(*stack)-2])
+	}
+	return nil
+}
+
+// pop removes and returns the top of the stack.
+func pop(stack *[]int) (int, error) {
+	if len(*stack) == 0 {
+		return 0, errEmptyStack
+	}
+	v := (*stack)[len(*stack)-1]
+	*stack = (*stack)[:len(*stack)-1]
+	return v, nil
+}
+
+// pop2 removes and returns the top two values of the stack,
+// top first.
+func pop2(stack *[]int) (int, int, error) {
+	if len(*stack) < 2 {
+		return 0, 0, errOneValue
+	}
+	b := (*stack)[len(*stack)-2]
+	a := (*stack)[len(*stack)-1]
+	*stack = (*stack)[:len(*stack)-2]
+	return a, b, nil
+}
+
+// isNumber reports whether tok is a (possibly negative) integer literal.
+func isNumber(tok string) bool {
+	rest := tok
+	if rest[0] == '-' {
+		rest = rest[1:]
+	}
+	if rest == "" {
+		return false
+	}
+	for i := 0; i < len(rest); i++ {
+		if rest[i] < '0' || rest[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// parseNumber parses tok as an integer literal.
+func parseNumber(tok string) (int, bool) {
+	n, err := strconv.Atoi(tok)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}

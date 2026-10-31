@@ -1,0 +1,122 @@
+...F...F....F..........                                                  [100%]
+=================================== FAILURES ===================================
+_ SgfParsingTest.test_escaped_closing_bracket_within_property_value_becomes_just_a_closing_bracket _
+
+self = <sgf_parsing_test.SgfParsingTest testMethod=test_escaped_closing_bracket_within_property_value_becomes_just_a_closing_bracket>
+
+    def test_escaped_closing_bracket_within_property_value_becomes_just_a_closing_bracket(
+        self,
+    ):
+        input_string = "(;A[\\]])"
+        expected = SgfTree(properties={"A": ["]"]})
+>       self.assertEqual(parse(input_string), expected)
+                         ^^^^^^^^^^^^^^^^^^^
+
+sgf_parsing_test.py:106: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+sgf_parsing.py:34: in parse
+    tree, _ = _parse_tree(input_string, 0)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sgf_parsing.py:47: in _parse_tree
+    properties, i = _parse_node(s, i)
+                    ^^^^^^^^^^^^^^^^^
+sgf_parsing.py:65: in _parse_node
+    key, values, i = _parse_property(s, i)
+                     ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+s = '(;A[\\]])', i = 6
+
+    def _parse_property(s, i):
+        key = []
+        while i < len(s) and s[i].isalpha():
+            key.append(s[i])
+            i += 1
+        key = "".join(key)
+        if not re.fullmatch(r"[A-Z]+", key):
+>           raise ValueError("property must be in uppercase")
+E           ValueError: property must be in uppercase
+
+sgf_parsing.py:77: ValueError
+_ SgfParsingTest.test_mixing_various_kinds_of_whitespace_and_escaped_characters_in_property_value _
+
+self = <sgf_parsing_test.SgfParsingTest testMethod=test_mixing_various_kinds_of_whitespace_and_escaped_characters_in_property_value>
+
+    def test_mixing_various_kinds_of_whitespace_and_escaped_characters_in_property_value(
+        self,
+    ):
+        input_string = "(;A[\\]b\nc\\\nd\t\te\\\\ \\\n\\]])"
+        expected = SgfTree(properties={"A": ["]b\ncd  e\\ ]"]})
+>       self.assertEqual(parse(input_string), expected)
+                         ^^^^^^^^^^^^^^^^^^^
+
+sgf_parsing_test.py:157: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+sgf_parsing.py:34: in parse
+    tree, _ = _parse_tree(input_string, 0)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sgf_parsing.py:47: in _parse_tree
+    properties, i = _parse_node(s, i)
+                    ^^^^^^^^^^^^^^^^^
+sgf_parsing.py:65: in _parse_node
+    key, values, i = _parse_property(s, i)
+                     ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+s = '(;A[\\]b\nc\\\nd\t\te\\\\ \\\n\\]])', i = 7
+
+    def _parse_property(s, i):
+        key = []
+        while i < len(s) and s[i].isalpha():
+            key.append(s[i])
+            i += 1
+        key = "".join(key)
+        if not re.fullmatch(r"[A-Z]+", key):
+>           raise ValueError("property must be in uppercase")
+E           ValueError: property must be in uppercase
+
+sgf_parsing.py:77: ValueError
+_ SgfParsingTest.test_opening_bracket_within_property_value_doesn_t_need_to_be_escaped _
+
+self = <sgf_parsing_test.SgfParsingTest testMethod=test_opening_bracket_within_property_value_doesn_t_need_to_be_escaped>
+
+    def test_opening_bracket_within_property_value_doesn_t_need_to_be_escaped(self):
+        input_string = "(;A[x[y\\]z][foo]B[bar];C[baz])"
+        expected = SgfTree(
+            properties={"A": ["x[y]z", "foo"], "B": ["bar"]},
+            children=[SgfTree({"C": ["baz"]})],
+        )
+>       self.assertEqual(parse(input_string), expected)
+                         ^^^^^^^^^^^^^^^^^^^
+
+sgf_parsing_test.py:119: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+sgf_parsing.py:34: in parse
+    tree, _ = _parse_tree(input_string, 0)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+sgf_parsing.py:47: in _parse_tree
+    properties, i = _parse_node(s, i)
+                    ^^^^^^^^^^^^^^^^^
+sgf_parsing.py:65: in _parse_node
+    key, values, i = _parse_property(s, i)
+                     ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+s = '(;A[x[y\\]z][foo]B[bar];C[baz])', i = 10
+
+    def _parse_property(s, i):
+        key = []
+        while i < len(s) and s[i].isalpha():
+            key.append(s[i])
+            i += 1
+        key = "".join(key)
+        if not re.fullmatch(r"[A-Z]+", key):
+>           raise ValueError("property must be in uppercase")
+E           ValueError: property must be in uppercase
+
+sgf_parsing.py:77: ValueError
+=========================== short test summary info ============================
+FAILED sgf_parsing_test.py::SgfParsingTest::test_escaped_closing_bracket_within_property_value_becomes_just_a_closing_bracket
+FAILED sgf_parsing_test.py::SgfParsingTest::test_mixing_various_kinds_of_whitespace_and_escaped_characters_in_property_value
+FAILED sgf_parsing_test.py::SgfParsingTest::test_opening_bracket_within_property_value_doesn_t_need_to_be_escaped
+3 failed, 20 passed in 0.04s

@@ -1,0 +1,74 @@
+class ConnectGame:
+    """Compute the winner of a game of Hex / Polygon (connect).
+
+    The board is a parallelogram of hexagonal fields. Each row is indented
+    one cell further than the previous to depict the slanted sides. Cells are
+    separated by a single space and hold ``X``, ``O`` or ``.`` (empty).
+
+    Player ``X`` plays from left to right and player ``O`` plays from top to
+    bottom. A player wins as soon as their stones form a connected path
+    joining their two assigned sides.
+    """
+
+    # The six neighbours of a cell in the slanted grid, as (dr, dc) offsets.
+    _NEIGHBOURS = ((-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0))
+
+    def __init__(self, board):
+        # Split each row into its cells; leading/trailing whitespace is
+        # irrelevant because a cell's column is given by its position in the
+        # row, not by its absolute character offset.
+        self.board = [line.split() for line in board.splitlines() if line.strip()]
+
+    def get_winner(self):
+        if self._connects("X"):
+            return "X"
+        if self._connects("O"):
+            return "O"
+        return ""
+
+    def _connects(self, player):
+        rows = len(self.board)
+        if rows == 0:
+            return False
+        cols = len(self.board[0])
+        if cols == 0:
+            return False
+
+        if player == "X":
+            # X must connect the left side to the right side.
+            def is_start(r, c):
+                return c == 0
+
+            def is_target(r, c):
+                return c == cols - 1
+        else:
+            # O must connect the top side to the bottom side.
+            def is_start(r, c):
+                return r == 0
+
+            def is_target(r, c):
+                return r == rows - 1
+
+        visited = set()
+        stack = []
+        for r in range(rows):
+            for c in range(len(self.board[r])):
+                if self.board[r][c] == player and is_start(r, c):
+                    stack.append((r, c))
+                    visited.add((r, c))
+
+        while stack:
+            r, c = stack.pop()
+            if is_target(r, c):
+                return True
+            for dr, dc in self._NEIGHBOURS:
+                nr, nc = r + dr, c + dc
+                if (
+                    0 <= nr < rows
+                    and 0 <= nc < len(self.board[nr])
+                    and (nr, nc) not in visited
+                    and self.board[nr][nc] == player
+                ):
+                    visited.add((nr, nc))
+                    stack.append((nr, nc))
+        return False

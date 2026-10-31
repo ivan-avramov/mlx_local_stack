@@ -1,0 +1,120 @@
+package bowling
+
+import "fmt"
+
+// Game keeps track of the rolls of a bowling game and can calculate
+// the total score once the game is complete.
+type Game struct {
+	rolls []int
+}
+
+// NewGame returns a new, empty bowling game.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// Roll records a throw that knocked down pins pins.
+// It returns an error if the roll is negative, knocks down more than
+// ten pins, exceeds the pins remaining in the frame, or is made after
+// the game is already over.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 || pins > 10 {
+		return fmt.Errorf("invalid roll: %d pins knocked down, must be between 0 and 10", pins)
+	}
+	nr := g.nextRoll()
+	if nr.frame >= 10 {
+		return fmt.Errorf("cannot roll after game is over")
+	}
+	if nr.hasFirstRoll && nr.firstRoll+pins > 10 {
+		return fmt.Errorf("invalid roll: %d pins exceed the %d pins remaining in the frame", pins, 10-nr.firstRoll)
+	}
+	if nr.hasFirstBonus && nr.firstBonus+pins > 10 {
+		return fmt.Errorf("invalid roll: %d pins exceed the %d pins remaining after the first bonus roll", pins, 10-nr.firstBonus)
+	}
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+// Score returns the total score of the game.
+// It returns an error if the game is not yet complete.
+func (g *Game) Score() (int, error) {
+	if g.nextRoll().frame < 10 {
+		return 0, fmt.Errorf("score cannot be calculated until the game is complete")
+	}
+	rolls := g.rolls
+	total := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case rolls[i] == 10:
+			// Strike: ten plus the next two rolls.
+			total += 10 + rolls[i+1] + rolls[i+2]
+			i++
+		case rolls[i]+rolls[i+1] == 10:
+			// Spare: ten plus the next roll.
+			total += 10 + rolls[i+2]
+			i += 2
+		default:
+			// Open frame: just the pins knocked down.
+			total += rolls[i] + rolls[i+1]
+			i += 2
+		}
+	}
+	return total, nil
+}
+
+// nextRoll describes the frame the next roll belongs to and the
+// constraints that apply to it. A frame of 10 means the game is over.
+type nextRoll struct {
+	frame         int  // frame the next roll belongs to; 10 means the game is over
+	firstRoll     int  // first roll of the current frame, if the next roll is its second roll
+	hasFirstRoll  bool
+	firstBonus    int  // first bonus roll of the last frame, if the next roll is its second bonus
+	hasFirstBonus bool
+}
+
+func (g *Game) nextRoll() nextRoll {
+	rolls := g.rolls
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		if i >= len(rolls) {
+			return nextRoll{frame: frame}
+		}
+		if rolls[i] == 10 {
+			// Strike: the frame is complete with a single roll.
+			i++
+			if frame < 9 {
+				continue
+			}
+			// Last frame after a strike: one or two bonus rolls follow.
+			if i >= len(rolls) {
+				return nextRoll{frame: 9}
+			}
+			firstBonus := rolls[i]
+			i++
+			if firstBonus == 10 {
+				// A strike bonus roll earns another roll with no sum limit.
+				if i >= len(rolls) {
+					return nextRoll{frame: 9}
+				}
+				return nextRoll{frame: 10}
+			}
+			if i >= len(rolls) {
+				return nextRoll{frame: 9, firstBonus: firstBonus, hasFirstBonus: true}
+			}
+			return nextRoll{frame: 10}
+		}
+		if i+1 >= len(rolls) {
+			// First roll of an open frame: awaiting the second roll.
+			return nextRoll{frame: frame, firstRoll: rolls[i], hasFirstRoll: true}
+		}
+		i += 2
+		if frame == 9 && rolls[i-2]+rolls[i-1] == 10 {
+			// Spare in the last frame: one bonus roll is required.
+			if i >= len(rolls) {
+				return nextRoll{frame: 9}
+			}
+		}
+	}
+	return nextRoll{frame: 10}
+}

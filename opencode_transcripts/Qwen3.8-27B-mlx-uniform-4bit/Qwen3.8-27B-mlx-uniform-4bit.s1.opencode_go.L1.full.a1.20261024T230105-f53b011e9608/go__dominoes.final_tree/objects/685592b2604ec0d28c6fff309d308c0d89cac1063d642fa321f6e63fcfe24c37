@@ -1,0 +1,121 @@
+package dominoes
+
+// Domino represents a single stone as a pair of dot counts.
+type Domino [2]int
+
+// MakeChain orders the given dominoes into a closed chain: adjacent stones
+// share matching dot counts, and the free ends of the first and last stones
+// match each other. It reports whether such a chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+
+	// A closed chain is an Eulerian circuit, which exists only if every
+	// vertex has an even degree and all vertices with a nonzero degree form
+	// a single connected component. Reject inputs that fail these necessary
+	// conditions early (the even-degree test alone is not sufficient, as
+	// disconnected inputs can also have all-even degrees).
+	degree := make(map[int]int, 2*len(input))
+	adjacent := make(map[int][]int, 2*len(input))
+	for _, d := range input {
+		degree[d[0]]++
+		degree[d[1]]++
+		adjacent[d[0]] = append(adjacent[d[0]], d[1])
+		adjacent[d[1]] = append(adjacent[d[1]], d[0])
+	}
+	for _, v := range degree {
+		if v%2 != 0 {
+			return nil, false
+		}
+	}
+	if !connected(degree, adjacent) {
+		return nil, false
+	}
+
+	// Backtrack: build the chain stone by stone, always extending from the
+	// current end, and require the last stone to close the loop.
+	used := make([]bool, len(input))
+	chain := make([]Domino, 0, len(input))
+
+	var search func(end int) bool
+	search = func(end int) bool {
+		if len(chain) == len(input) {
+			return chain[0][0] == end
+		}
+		for i, d := range input {
+			if used[i] {
+				continue
+			}
+			if d[0] == end {
+				used[i] = true
+				chain = append(chain, d)
+				if search(d[1]) {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+			if d[1] == end && d[0] != end {
+				used[i] = true
+				chain = append(chain, Domino{d[1], d[0]})
+				if search(d[0]) {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+		}
+		return false
+	}
+
+	// The chain is a cycle, so it may start with any stone; the first input
+	// stone is a safe choice.
+	starts := []Domino{{input[0][0], input[0][1]}}
+	if input[0][0] != input[0][1] {
+		starts = append(starts, Domino{input[0][1], input[0][0]})
+	}
+	for _, start := range starts {
+		used[0] = true
+		chain = append(chain, start)
+		if search(start[1]) {
+			return chain, true
+		}
+		chain = chain[:0]
+		used[0] = false
+	}
+	return nil, false
+}
+
+// connected reports whether every vertex with a nonzero degree belongs to a
+// single connected component.
+func connected(degree map[int]int, adjacent map[int][]int) bool {
+	start := -1
+	for v, d := range degree {
+		if d > 0 {
+			start = v
+			break
+		}
+	}
+	if start < 0 {
+		return true
+	}
+	seen := map[int]bool{start: true}
+	stack := []int{start}
+	for len(stack) > 0 {
+		v := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, w := range adjacent[v] {
+			if !seen[w] {
+				seen[w] = true
+				stack = append(stack, w)
+			}
+		}
+	}
+	for v, d := range degree {
+		if d > 0 && !seen[v] {
+			return false
+		}
+	}
+	return true
+}

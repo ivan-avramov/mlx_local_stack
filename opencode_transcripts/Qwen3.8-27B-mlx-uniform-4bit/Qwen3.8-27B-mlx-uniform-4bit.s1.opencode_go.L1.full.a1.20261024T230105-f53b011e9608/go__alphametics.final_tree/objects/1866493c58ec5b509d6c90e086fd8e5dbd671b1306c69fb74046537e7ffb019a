@@ -1,0 +1,131 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Solve attempts to solve the alphametics puzzle described by puzzle.
+//
+// The puzzle is a string of one or more letter words separated by " + "
+// operators, followed by " == " and a single result word, for example
+// "SEND + MORE == MONEY". Each letter must map to a distinct digit, and
+// the first letter of a multi-letter word may not map to zero.
+//
+// On success Solve returns a map from every letter in the puzzle to its
+// digit. If the puzzle has no solution, an error is returned.
+func Solve(puzzle string) (map[string]int, error) {
+	sides := strings.Split(puzzle, " == ")
+	if len(sides) != 2 {
+		return nil, fmt.Errorf("invalid puzzle %q: expected exactly one \"==\" operator", puzzle)
+	}
+	addends := strings.Split(sides[0], " + ")
+	words := append(append([]string{}, addends...), sides[1])
+
+	// Build the linear equation sum(addends) - result = 0 as a coefficient
+	// for each letter: each occurrence contributes +/- 10^position.
+	coeff := make(map[string]int64)
+	noZero := make(map[string]bool)
+	for i, w := range words {
+		if len(w) > 1 {
+			noZero[string(w[0])] = true
+		}
+		sign := int64(1)
+		if i == len(words)-1 {
+			sign = -1
+		}
+		place := int64(1)
+		for j := len(w) - 1; j >= 0; j-- {
+			coeff[string(w[j])] += sign * place
+			place *= 10
+		}
+	}
+	if len(coeff) > 10 {
+		return nil, errors.New("no solution: more than ten distinct letters")
+	}
+
+	letters := make([]string, 0, len(coeff))
+	for l := range coeff {
+		letters = append(letters, l)
+	}
+	// Assign the most significant letters first: they prune the search
+	// tree fastest.
+	sort.Slice(letters, func(i, j int) bool {
+		return abs64(coeff[letters[i]]) > abs64(coeff[letters[j]])
+	})
+
+	// canReachZero reports whether the unassigned letters (from depth
+	// onward) could still bring the running sum to zero, given the digits
+	// already used. The bound is intentionally loose: each remaining
+	// letter is assumed to be able to take either the smallest or the
+	// largest still-available digit, so it never rejects a real solution.
+	used := 0
+	canReachZero := func(sum int64, depth int) bool {
+		minD, maxD := -1, -1
+		for d := 0; d <= 9; d++ {
+			if used&(1<<d) == 0 {
+				if minD < 0 {
+					minD = d
+				}
+				maxD = d
+			}
+		}
+		if minD < 0 {
+			return sum == 0
+		}
+		minTotal, maxTotal := int64(0), int64(0)
+		for i := depth; i < len(letters); i++ {
+			c := coeff[letters[i]]
+			switch {
+			case c > 0:
+				minTotal += c * int64(minD)
+				maxTotal += c * int64(maxD)
+			case c < 0:
+				minTotal += c * int64(maxD)
+				maxTotal += c * int64(minD)
+			}
+		}
+		return -sum >= minTotal && -sum <= maxTotal
+	}
+
+	assign := make([]int, len(letters))
+	var search func(depth int, sum int64) bool
+	search = func(depth int, sum int64) bool {
+		if depth == len(letters) {
+			return sum == 0
+		}
+		letter := letters[depth]
+		c := coeff[letter]
+		for d := 0; d <= 9; d++ {
+			if used&(1<<d) != 0 || (noZero[letter] && d == 0) {
+				continue
+			}
+			used |= 1 << d
+			assign[depth] = d
+			if canReachZero(sum+c*int64(d), depth+1) && search(depth+1, sum+c*int64(d)) {
+				return true
+			}
+			used &^= 1 << d
+		}
+		return false
+	}
+
+	if !search(0, 0) {
+		return nil, errors.New("no solution")
+	}
+
+	solution := make(map[string]int, len(letters))
+	for i, l := range letters {
+		solution[l] = assign[i]
+	}
+	return solution, nil
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}

@@ -1,0 +1,135 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Forth evaluates a very simple subset of the Forth language.
+// Each element of input is a line of source code. Words are
+// case-insensitive. The result is the final stack, bottom first.
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	defs := map[string][]string{}
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		if len(tokens) == 0 {
+			continue
+		}
+		if tokens[0] == ":" {
+			if err := define(defs, tokens); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		var err error
+		stack, err = execute(stack, defs, tokens)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return stack, nil
+}
+
+// define registers a new word from a ": name body ;" token sequence.
+func define(defs map[string][]string, tokens []string) error {
+	if len(tokens) < 3 || tokens[len(tokens)-1] != ";" {
+		return errors.New("malformed definition")
+	}
+	name := strings.ToLower(tokens[1])
+	if _, err := strconv.Atoi(tokens[1]); err == nil {
+		return errors.New("cannot redefine a number")
+	}
+	defs[name] = expand(tokens[2:len(tokens)-1], defs)
+	return nil
+}
+
+// expand replaces every user-defined word in tokens with its body,
+// so that a definition captures the meaning of words as they were
+// at the time the definition was read.
+func expand(tokens []string, defs map[string][]string) []string {
+	out := []string{}
+	for _, tok := range tokens {
+		if body, ok := defs[strings.ToLower(tok)]; ok {
+			out = append(out, expand(body, defs)...)
+			continue
+		}
+		out = append(out, tok)
+	}
+	return out
+}
+
+// execute runs a sequence of tokens (numbers and built-in words)
+// against the stack.
+func execute(stack []int, defs map[string][]string, tokens []string) ([]int, error) {
+	for _, tok := range tokens {
+		if body, ok := defs[strings.ToLower(tok)]; ok {
+			var err error
+			stack, err = execute(stack, defs, body)
+			if err != nil {
+				return nil, err
+			}
+			continue
+		}
+		if n, err := strconv.Atoi(tok); err == nil {
+			stack = append(stack, n)
+			continue
+		}
+		var err error
+		stack, err = runWord(stack, strings.ToLower(tok))
+		if err != nil {
+			return nil, err
+		}
+	}
+	return stack, nil
+}
+
+// runWord executes a single built-in word and returns the new stack.
+func runWord(stack []int, word string) ([]int, error) {
+	switch word {
+	case "+", "-", "*", "/":
+		if len(stack) < 2 {
+			return nil, errors.New("stack underflow")
+		}
+		a, b := stack[len(stack)-2], stack[len(stack)-1]
+		switch word {
+		case "+":
+			stack[len(stack)-2] = a + b
+		case "-":
+			stack[len(stack)-2] = a - b
+		case "*":
+			stack[len(stack)-2] = a * b
+		default:
+			if b == 0 {
+				return nil, errors.New("divide by zero")
+			}
+			stack[len(stack)-2] = a / b
+		}
+		return stack[:len(stack)-1], nil
+	case "dup":
+		if len(stack) < 1 {
+			return nil, errors.New("stack underflow")
+		}
+		return append(stack, stack[len(stack)-1]), nil
+	case "drop":
+		if len(stack) < 1 {
+			return nil, errors.New("stack underflow")
+		}
+		return stack[:len(stack)-1], nil
+	case "swap":
+		if len(stack) < 2 {
+			return nil, errors.New("stack underflow")
+		}
+		stack[len(stack)-2], stack[len(stack)-1] = stack[len(stack)-1], stack[len(stack)-2]
+		return stack, nil
+	case "over":
+		if len(stack) < 2 {
+			return nil, errors.New("stack underflow")
+		}
+		return append(stack, stack[len(stack)-2]), nil
+	default:
+		return nil, errors.New("undefined operation")
+	}
+}

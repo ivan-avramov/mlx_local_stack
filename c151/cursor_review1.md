@@ -1,0 +1,17 @@
+R1 — nit — `.venv-bench/lib/python3.12/site-packages/psutil/_psosx.py:271-296,475-479`; `psutil/__init__.py:390-394,775-785`. The diagnosis is sound and best fits the evidence. A fresh interpreter resets `INIT_BOOT_TIME`, explaining why it agrees with recorded identities; PID reuse, caching alone, and C150’s framework-Python issue do not explain both long-lived processes failing simultaneously. Add mismatch diagnostics recording `INIT_BOOT_TIME`, `boot_time()`, public and raw start times to conclusively identify recurrence.
+
+R2 — should-fix — `benchmark/bench/proc_guard.py:229,264,625`. Raw kernel start times are stable identities, but comparing them with a frozen `time.time()` boundary is not invariant across wall-clock correction. Before this change, psutil’s adjustment often preserved the comparison’s epoch, though caching made identity unstable. Separate identity from age/ownership: use explicit spawn/ancestry evidence, or a separately normalized temporal helper. Test corrections before and after guard creation in both directions.
+
+R3 — should-fix — `benchmark/bench/chain_ops.py:125-127`; `benchmark/bench/proc_guard.py:219`. Adjusted reads remain indirectly through `Process.parents()`, whose implementation calls public `create_time()`. These paths influence router ownership and protected ancestors. Replace them with explicit `ppid()` traversal that records `start_time()` and revalidates parent links. `provenance.py`, `inject_verify.py`, and the remaining C147 runner paths do not retain adjusted identity reads.
+
+R4 — should-fix — `benchmark/bench/tests/test_c151_start_time.py:24-56`. Changing `INIT_BOOT_TIME` is algebraically faithful, but assumes no adjustment was already active. Consequently, the premise and equality tests can fail in a long-lived pytest process after a real event. Mock `boot_time()` with a controlled mutable value, establish zero initial difference, then test ±1-second changes.
+
+R5 — should-fix — `benchmark/bench/tests/test_c151_start_time.py:18,97-102`. The static guard is skipped entirely off macOS, scans only three files, misses calls with arguments and indirect APIs such as `parents()`. Move it outside the platform skip and scan all non-test `benchmark/` and `scripts/` Python files using an AST or explicit allowlist.
+
+R6 — should-fix — `benchmark/bench/tests/test_c151_start_time.py:89-94`; `benchmark/bench/proc_guard.py:507-529`. Tests bite the pre-fix identity reads, but do not exercise the dangerous historical outcome: `_identity_state()` certifying a live owned process as gone. Add a real-child shift test asserting `_identity_state()=="alive"` and `verify_gone(...) is False`.
+
+R7 — nit — `benchmark/bench/proc_guard.py:46-49`; `benchmark/requirements-bench.lock:150`; `uv.lock:909-912`. `_proc.create_time(monotonic=True)` exactly returns the unadjusted kinfo timestamp and bypasses public caching. It may raise `NoSuchProcess`, `AccessDenied`, or `ZombieProcess`; it only caches inside `oneshot()`. Both operational locks pin psutil 7.2.2, so the private API is stable for this campaign, although `benchmark/requirements.txt:20` remains loose. On Darwin, fail closed if a real psutil object loses this private API rather than silently falling back.
+
+The prescribed suite passes: 157 tests. No new wrong-target kill was found; signal paths still require the recorded PID/start-time identity, and the helper removes the prior false-gone condition.
+
+cleared after fixes (R2, R3, R4, R5, R6)

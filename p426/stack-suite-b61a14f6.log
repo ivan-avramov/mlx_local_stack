@@ -1,0 +1,292 @@
+........................................................................ [  0%]
+........................................................................ [  1%]
+........................................................................ [  2%]
+........................................................................ [  3%]
+........................................................................ [  4%]
+........................................................................ [  5%]
+........................................................................ [  6%]
+........................................................................ [  7%]
+........................................................................ [  8%]
+........................................................................ [  9%]
+........................................................................ [ 10%]
+........................................................................ [ 11%]
+........................................................................ [ 12%]
+........................................................................ [ 13%]
+........................................................................ [ 14%]
+........................................................................ [ 15%]
+........................................................................ [ 16%]
+........................................................................ [ 17%]
+........................................................................ [ 18%]
+........................................................................ [ 19%]
+........................................................................ [ 20%]
+........................................................................ [ 21%]
+........................................................................ [ 22%]
+........................................................................ [ 23%]
+........................................................................ [ 24%]
+........................................................................ [ 25%]
+..........................ss............................................ [ 26%]
+........................................................................ [ 27%]
+........................................................................ [ 28%]
+........................................................................ [ 29%]
+........................................................................ [ 30%]
+........................................................................ [ 31%]
+........................................................................ [ 32%]
+........................................................................ [ 33%]
+........................................................................ [ 34%]
+........................................................................ [ 35%]
+.............................x.......................................... [ 36%]
+........................................................................ [ 37%]
+........................................................................ [ 38%]
+........................................................................ [ 39%]
+........................................................................ [ 40%]
+...............................................sss...................... [ 41%]
+........................................................................ [ 42%]
+........................................................................ [ 43%]
+........................................................................ [ 44%]
+........................................................................ [ 45%]
+........................................................................ [ 46%]
+........................................................................ [ 47%]
+........................................................................ [ 48%]
+........................................................................ [ 49%]
+........................................................................ [ 50%]
+........................................................................ [ 51%]
+........................................................................ [ 52%]
+........................................................................ [ 53%]
+........................................................................ [ 54%]
+........................................................................ [ 55%]
+........................................................................ [ 56%]
+........................................................................ [ 57%]
+........................................................................ [ 58%]
+........................................................................ [ 59%]
+........................................................................ [ 60%]
+........................................................................ [ 61%]
+........................................................................ [ 62%]
+........................................................................ [ 63%]
+........................................................................ [ 64%]
+........................................................................ [ 65%]
+......................................................................s. [ 66%]
+........................................................................ [ 67%]
+........................................................................ [ 68%]
+........................................................................ [ 69%]
+........................................................................ [ 70%]
+........................................................................ [ 71%]
+........................................................................ [ 72%]
+........................................................................ [ 73%]
+........................................................................ [ 74%]
+........................................................................ [ 75%]
+........................................................................ [ 76%]
+........................................................................ [ 77%]
+........................................................................ [ 78%]
+........................................................................ [ 79%]
+........................................................................ [ 80%]
+........................................................................ [ 81%]
+........................................................................ [ 82%]
+........................................................................ [ 83%]
+........................................................................ [ 84%]
+........................................................................ [ 85%]
+........................................................................ [ 86%]
+........................................................................ [ 87%]
+........................................................................ [ 88%]
+........................................................................ [ 89%]
+................................F..FFF.................................. [ 90%]
+........................................................................ [ 91%]
+........................................................................ [ 92%]
+............................................ssssssssssssssssssss.s...... [ 93%]
+........................................................................ [ 94%]
+........................................................................ [ 95%]
+........................................................................ [ 96%]
+........................................................................ [ 97%]
+........................................................................ [ 98%]
+........................................................................ [ 99%]
+.....                                                                    [100%]
+=================================== FAILURES ===================================
+_ test_s12_vendored_versions_keep_build_metadata_and_count_only_crates_io_registry_packages _
+
+tmp_path = PosixPath('$STACK_REPO/.tg2-test-tmp/t-7ed1fde822')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x138127470>
+
+    def test_s12_vendored_versions_keep_build_metadata_and_count_only_crates_io_registry_packages(tmp_path, monkeypatch):
+        reg = "registry+https://github.com/rust-lang/crates.io-index"
+        lock = "".join('[[package]]\nname = "%s"\nversion = "%s"\n%s\n' % (n, v, ('source = "%s"\n' % src) if src else "")
+                       for n, v, src in [("wasi", "0.11.1+wasi-snapshot-preview1", reg), ("pre", "1.0.0-rc.1", reg),
+                                         ("gitdep", "2.0.0", "git+https://example.invalid/x#abc"), ("local", "0.1.0", None),
+                                         ("other", "3.0.0", "registry+https://example.invalid/index"),
+                                         ("sparse", "4.0.0", "sparse+https://index.crates.io/")])
+        d = _locks_dir(tmp_path, {"c/Cargo.lock": lock})
+>       _pin(tmp_path, monkeypatch, d)
+
+bench/tests/test_tg2_grade.py:911: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+bench/tests/test_tg2_grade.py:897: in _pin
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+bench/tg2_grade.py:128: in cargo_locks_sha256
+    for rel in rust_lock_files(root))
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('$STACK_REPO/.tg2-test-tmp/t-7ed1fde822/locks')
+
+    def rust_lock_files(root=None):
+        """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+        tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+        root = Path(root or RUST_LOCKS_DIR)
+        walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+        try:
+            inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                    text=True).stdout.strip() == "true"
+        except OSError:
+            inside = False
+        if inside:
+            listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                    check=True).stdout.split("\0")
+            tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+            if tracked != walked:
+>               raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                     % sorted(set(tracked) ^ set(walked)))
+E               bench.token_turn_gate.TransportAbort: tg2 Cargo.lock set is not the tracked set (untracked / missing locks): ['a/Cargo.lock', 'b/nested/deeper/Cargo.lock', 'c/Cargo.lock']
+
+bench/tg2_grade.py:118: TransportAbort
+___ test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock ___
+
+tmp_path = PosixPath('$STACK_REPO/.tg2-test-tmp/t-5ccfcd2fd6')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x138126d50>
+
+    def test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock(tmp_path, monkeypatch):
+        d = _locks_dir(tmp_path)
+>       _pin(tmp_path, monkeypatch, d)
+
+bench/tests/test_tg2_grade.py:929: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+bench/tests/test_tg2_grade.py:897: in _pin
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+bench/tg2_grade.py:128: in cargo_locks_sha256
+    for rel in rust_lock_files(root))
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('$STACK_REPO/.tg2-test-tmp/t-5ccfcd2fd6/locks')
+
+    def rust_lock_files(root=None):
+        """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+        tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+        root = Path(root or RUST_LOCKS_DIR)
+        walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+        try:
+            inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                    text=True).stdout.strip() == "true"
+        except OSError:
+            inside = False
+        if inside:
+            listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                    check=True).stdout.split("\0")
+            tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+            if tracked != walked:
+>               raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                     % sorted(set(tracked) ^ set(walked)))
+E               bench.token_turn_gate.TransportAbort: tg2 Cargo.lock set is not the tracked set (untracked / missing locks): ['a/Cargo.lock', 'b/nested/deeper/Cargo.lock']
+
+bench/tg2_grade.py:118: TransportAbort
+__________ test_s6_a_lock_that_differs_from_the_image_pin_is_refused ___________
+
+tmp_path = PosixPath('$STACK_REPO/.tg2-test-tmp/t-029192eda0')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1382f7950>
+
+    def test_s6_a_lock_that_differs_from_the_image_pin_is_refused(tmp_path, monkeypatch):
+        d = _locks_dir(tmp_path)
+>       _pin(tmp_path, monkeypatch, d)
+
+bench/tests/test_tg2_grade.py:936: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+bench/tests/test_tg2_grade.py:897: in _pin
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+bench/tg2_grade.py:128: in cargo_locks_sha256
+    for rel in rust_lock_files(root))
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('$STACK_REPO/.tg2-test-tmp/t-029192eda0/locks')
+
+    def rust_lock_files(root=None):
+        """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+        tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+        root = Path(root or RUST_LOCKS_DIR)
+        walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+        try:
+            inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                    text=True).stdout.strip() == "true"
+        except OSError:
+            inside = False
+        if inside:
+            listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                    check=True).stdout.split("\0")
+            tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+            if tracked != walked:
+>               raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                     % sorted(set(tracked) ^ set(walked)))
+E               bench.token_turn_gate.TransportAbort: tg2 Cargo.lock set is not the tracked set (untracked / missing locks): ['a/Cargo.lock', 'b/nested/deeper/Cargo.lock']
+
+bench/tg2_grade.py:118: TransportAbort
+_______ test_s6_an_added_or_removed_lock_changes_the_hash_and_is_refused _______
+
+tmp_path = PosixPath('$STACK_REPO/.tg2-test-tmp/t-8fc66e81dd')
+monkeypatch = <_pytest.monkeypatch.MonkeyPatch object at 0x1381fda30>
+
+    def test_s6_an_added_or_removed_lock_changes_the_hash_and_is_refused(tmp_path, monkeypatch):
+        d = _locks_dir(tmp_path)
+>       _pin(tmp_path, monkeypatch, d)
+
+bench/tests/test_tg2_grade.py:946: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+bench/tests/test_tg2_grade.py:897: in _pin
+    pin.write_text("sha256:" + "0" * 64 + "\ncargo_locks_sha256=%s\n" % tg.cargo_locks_sha256(d))
+                                                                        ^^^^^^^^^^^^^^^^^^^^^^^^
+bench/tg2_grade.py:128: in cargo_locks_sha256
+    for rel in rust_lock_files(root))
+               ^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+root = PosixPath('$STACK_REPO/.tg2-test-tmp/t-8fc66e81dd/locks')
+
+    def rust_lock_files(root=None):
+        """Sorted repo-relative paths of every `Cargo.lock` under the locks directory: the full recursive walk, which in a git
+        tree must equal `git ls-files` (an untracked or ignored lock is refused, never silently included)."""
+        root = Path(root or RUST_LOCKS_DIR)
+        walked = sorted(p.relative_to(root).as_posix() for p in root.rglob("Cargo.lock") if p.is_file())
+        try:
+            inside = subprocess.run(["git", "-C", str(root), "rev-parse", "--is-inside-work-tree"], capture_output=True,
+                                    text=True).stdout.strip() == "true"
+        except OSError:
+            inside = False
+        if inside:
+            listed = subprocess.run(["git", "-C", str(root), "ls-files", "-z", "--", "."], capture_output=True, text=True,
+                                    check=True).stdout.split("\0")
+            tracked = sorted(f for f in listed if f and PurePosixPath(f).name == "Cargo.lock")
+            if tracked != walked:
+>               raise TransportAbort("tg2 Cargo.lock set is not the tracked set (untracked / missing locks): %s"
+                                     % sorted(set(tracked) ^ set(walked)))
+E               bench.token_turn_gate.TransportAbort: tg2 Cargo.lock set is not the tracked set (untracked / missing locks): ['a/Cargo.lock', 'b/nested/deeper/Cargo.lock']
+
+bench/tg2_grade.py:118: TransportAbort
+=============================== warnings summary ===============================
+benchmark/bench/tests/test_p371_hermetic_scan.py::test_the_real_guard_reports_no_orphans_in_process_while_spotlight_like_processes_churn
+benchmark/bench/tests/test_p371_hermetic_scan.py::test_the_four_item_scenarios_match_their_goldens_on_both_sides_three_times_under_ambient_churn
+  $STACK_REPO/benchmark/bench/tests/test_p371_hermetic_scan.py:42: DeprecationWarning: This process (pid=60046) is multi-threaded, use of fork() may lead to deadlocks in the child.
+    if os.fork() == 0:
+
+benchmark/bench/tests/test_provenance.py::test_session_retention_state_reads_the_worker_cmdline_then_the_fork_default
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyPacked has no __module__ attribute
+
+benchmark/bench/tests/test_provenance.py::test_session_retention_state_reads_the_worker_cmdline_then_the_fork_default
+  <frozen importlib._bootstrap>:488: DeprecationWarning: builtin type SwigPyObject has no __module__ attribute
+
+-- Docs: https://docs.pytest.org/en/stable/how-to/capture-warnings.html
+=========================== short test summary info ============================
+FAILED bench/tests/test_tg2_grade.py::test_s12_vendored_versions_keep_build_metadata_and_count_only_crates_io_registry_packages
+FAILED bench/tests/test_tg2_grade.py::test_s6_the_walk_is_recursive_and_the_vendored_set_comes_from_every_lock
+FAILED bench/tests/test_tg2_grade.py::test_s6_a_lock_that_differs_from_the_image_pin_is_refused
+FAILED bench/tests/test_tg2_grade.py::test_s6_an_added_or_removed_lock_changes_the_hash_and_is_refused
+4 failed, 7173 passed, 27 skipped, 1 xfailed, 4 warnings in 1847.15s (0:30:47)
+sys:1: DeprecationWarning: builtin type swigvarlink has no __module__ attribute

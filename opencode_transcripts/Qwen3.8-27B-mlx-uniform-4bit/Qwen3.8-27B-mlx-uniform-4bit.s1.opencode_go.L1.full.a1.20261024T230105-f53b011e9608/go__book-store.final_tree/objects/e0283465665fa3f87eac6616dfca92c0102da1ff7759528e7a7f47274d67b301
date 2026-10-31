@@ -1,0 +1,71 @@
+package bookstore
+
+import "sort"
+
+// groupPrice[k] is the total price, in cents, of a group of k different
+// books. One copy of any book costs 800 cents; groups of 2, 3, 4 and 5
+// different books get discounts of 5%, 10%, 20% and 25% respectively.
+var groupPrice = [6]int{0, 800, 1520, 2160, 2560, 3000}
+
+// Cost returns the total price, in cents, of the books in the basket,
+// grouped so that the discount is as large as possible.
+//
+// The basket is expected to contain only books 1-5 of the series; anything
+// else is ignored.
+func Cost(books []int) int {
+	counts := [5]int{}
+	for _, b := range books {
+		if b >= 1 && b <= 5 {
+			counts[b-1]++
+		}
+	}
+	sort.Slice(counts[:], func(i, j int) bool { return counts[i] > counts[j] })
+	return minCost(counts, make(map[[5]int]int))
+}
+
+// minCost returns the cheapest way to buy the books described by counts,
+// where counts[i] is the number of copies of title i, sorted in
+// non-increasing order. Results are memoized in memo.
+//
+// A group may contain at most one copy of each title, so the first group of
+// any partition of the basket is some subset of the titles that still have
+// copies left. Trying every such subset and taking the cheapest option is
+// exact: the optimum is the cheapest first group plus the optimum for the
+// sorted remainder, which is what the recursion (and memo) computes.
+func minCost(counts [5]int, memo map[[5]int]int) int {
+	if counts[0] == 0 {
+		return 0
+	}
+	if cost, ok := memo[counts]; ok {
+		return cost
+	}
+
+	best := -1
+	for mask := 1; mask < 1<<5; mask++ {
+		next := counts
+		size := 0
+		ok := true
+		for i := 0; i < 5; i++ {
+			if mask&(1<<i) == 0 {
+				continue
+			}
+			if counts[i] == 0 {
+				ok = false
+				break
+			}
+			next[i]--
+			size++
+		}
+		if !ok {
+			continue
+		}
+		sort.Slice(next[:], func(i, j int) bool { return next[i] > next[j] })
+		cost := groupPrice[size] + minCost(next, memo)
+		if best < 0 || cost < best {
+			best = cost
+		}
+	}
+
+	memo[counts] = best
+	return best
+}

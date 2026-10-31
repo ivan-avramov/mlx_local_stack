@@ -1,0 +1,31 @@
+PRICE_PER_BOOK = 800
+DISCOUNTS = {1: 0, 2: 5, 3: 10, 4: 20, 5: 25}
+GROUP_PRICES = {
+    size: size * PRICE_PER_BOOK * (100 - DISCOUNTS[size]) // 100
+    for size in DISCOUNTS
+}
+
+
+def total(basket):
+    """Return the lowest possible price (in cents) for the given basket."""
+    counts = [basket.count(title) for title in range(1, 6)]
+    if not any(counts):
+        return 0
+
+    # Group the books level by level: at each level, every title that still
+    # has a copy forms one group. This yields the largest possible groups.
+    groups = [
+        sum(1 for count in counts if count >= level)
+        for level in range(1, max(counts) + 1)
+    ]
+
+    # A group of five plus a group of three (3000 + 2160 = 5160) costs more
+    # than two groups of four (2560 + 2560 = 5120), so trade each (5, 3)
+    # pair for two 4-groups to get the biggest discount.
+    swaps = min(groups.count(5), groups.count(3))
+    for _ in range(swaps):
+        groups.remove(5)
+        groups.remove(3)
+        groups.extend((4, 4))
+
+    return sum(GROUP_PRICES[size] for size in groups)

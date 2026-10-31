@@ -1,0 +1,65 @@
+package bookstore
+
+import "sort"
+
+// Cost returns the lowest possible price, in cents, for a basket of books.
+//
+// Books are grouped into sets of 1-5 different titles, where a set of k
+// books costs k * 800 * (1 - discount[k]). Every set size is optimal on
+// its own except one trade-off: two sets of 4 (2 * 2560 = 5120) are
+// cheaper than a set of 5 plus a set of 3 (3000 + 2160 = 5160), so such
+// pairs are converted.
+func Cost(books []int) int {
+	// Total price of a set, in cents: k books at the discounted rate.
+	price := []int{0, 800, 1520, 2160, 2560, 3000}
+
+	counts := [5]int{}
+	for _, b := range books {
+		counts[b-1]++
+	}
+	sort.Slice(counts[:], func(i, j int) bool { return counts[i] > counts[j] })
+
+	// Row r holds one copy of each book that has at least r copies.
+	// Row sizes are non-increasing, so every 5-row precedes every 3-row.
+	rows := make([]int, 0, counts[0])
+	for r := 1; r <= counts[0]; r++ {
+		size := 0
+		for _, c := range counts {
+			if c >= r {
+				size++
+			}
+		}
+		rows = append(rows, size)
+	}
+
+	// Count how many (5, 3) row pairs can become (4, 4) pairs.
+	fives, threes := 0, 0
+	for _, size := range rows {
+		switch size {
+		case 5:
+			fives++
+		case 3:
+			threes++
+		}
+	}
+	convert := fives
+	if threes < convert {
+		convert = threes
+	}
+
+	// Convert `convert` 5-rows and `convert` 3-rows into 4-rows.
+	convert5, convert3 := convert, convert
+	total := 0
+	for _, size := range rows {
+		switch {
+		case size == 5 && convert5 > 0:
+			convert5--
+			size = 4
+		case size == 3 && convert3 > 0:
+			convert3--
+			size = 4
+		}
+		total += price[size]
+	}
+	return total
+}

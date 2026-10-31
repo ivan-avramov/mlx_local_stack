@@ -1,0 +1,100 @@
+
+WHITE = "W"
+BLACK = "B"
+NONE = ""
+
+
+class Board:
+    """Count territories of each player in a Go game
+
+    Args:
+        board (list[str]): A two-dimensional Go board
+    """
+
+    def __init__(self, board):
+        self.board = board
+        self.rows = len(board)
+        self.cols = len(board[0]) if board else 0
+
+    def _in_bounds(self, x, y):
+        return 0 <= x < self.cols and 0 <= y < self.rows
+
+    def _neighbors(self, x, y):
+        for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            nx, ny = x + dx, y + dy
+            if self._in_bounds(nx, ny):
+                yield nx, ny
+
+    def _region(self, x, y):
+        """Breadth-first search over empty intersections.
+
+        Returns the set of coordinates of the connected empty region
+        containing (x, y), or an empty set if (x, y) is a stone.
+        """
+        if self.board[y][x] != " ":
+            return set()
+        region = set()
+        stack = [(x, y)]
+        while stack:
+            cx, cy = stack.pop()
+            if (cx, cy) in region:
+                continue
+            region.add((cx, cy))
+            for nx, ny in self._neighbors(cx, cy):
+                if (nx, ny) not in region and self.board[ny][nx] == " ":
+                    stack.append((nx, ny))
+        return region
+
+    def _owner(self, region):
+        """Determine the owner of a region of empty intersections."""
+        owners = set()
+        for x, y in region:
+            for nx, ny in self._neighbors(x, y):
+                owners.add(self.board[ny][nx])
+        owners.discard(" ")
+        if owners == {WHITE}:
+            return WHITE
+        if owners == {BLACK}:
+            return BLACK
+        return NONE
+
+    def territory(self, x, y):
+        """Find the owner and the territories given a coordinate on
+           the board
+
+        Args:
+            x (int): Column on the board
+            y (int): Row on the board
+
+        Returns:
+            (str, set): A tuple, the first element being the owner
+                        of that area.  One of "W", "B", "".  The
+                        second being a set of coordinates, representing
+                        the owner's territories.
+        """
+        if not self._in_bounds(x, y):
+            raise ValueError("Invalid coordinate")
+        region = self._region(x, y)
+        return self._owner(region), region
+
+    def territories(self):
+        """Find the owners and the territories of the whole board
+
+        Args:
+            none
+
+        Returns:
+            dict(str, set): A dictionary whose key being the owner
+                        , i.e. "W", "B", "".  The value being a set
+                        of coordinates owned by the owner.
+        """
+        result = {WHITE: set(), BLACK: set(), NONE: set()}
+        seen = set()
+        for y in range(self.rows):
+            for x in range(self.cols):
+                if (x, y) in seen or self.board[y][x] != " ":
+                    continue
+                region = self._region(x, y)
+                seen.update(region)
+                result[self._owner(region)].update(region)
+        return result

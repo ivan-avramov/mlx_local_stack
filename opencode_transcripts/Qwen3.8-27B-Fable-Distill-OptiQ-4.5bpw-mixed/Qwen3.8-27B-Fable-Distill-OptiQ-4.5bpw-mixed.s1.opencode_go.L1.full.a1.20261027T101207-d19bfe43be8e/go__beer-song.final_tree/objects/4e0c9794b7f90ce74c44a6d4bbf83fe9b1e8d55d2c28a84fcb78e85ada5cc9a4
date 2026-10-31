@@ -1,0 +1,67 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// Song returns the entire song, verses 99 down to 0.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}
+
+// Verses returns the verses from start down to stop, inclusive.
+func Verses(start, stop int) (string, error) {
+	if start < stop || start > 99 || stop < 0 {
+		return "", errors.New("invalid verse range")
+	}
+
+	var b strings.Builder
+	for n := start; n >= stop; n-- {
+		verse, err := Verse(n)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(verse)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
+// Verse returns the verse for the given number of bottles.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", errors.New("invalid verse")
+	}
+
+	if n == 0 {
+		return "No more bottles of beer on the wall, no more bottles of beer.\n" +
+			"Go to the store and buy some more, 99 bottles of beer on the wall.\n", nil
+	}
+
+	return fmt.Sprintf("%s on the wall, %s.\n"+
+		"Take %s down and pass it around, %s on the wall.\n",
+		bottle(n), bottle(n), take(n), bottle(n-1)), nil
+}
+
+// bottle formats the number of bottles, e.g. "8 bottles" or "1 bottle".
+func bottle(n int) string {
+	switch n {
+	case 0:
+		return "no more bottles of beer"
+	case 1:
+		return "1 bottle of beer"
+	default:
+		return fmt.Sprintf("%d bottles of beer", n)
+	}
+}
+
+// take returns the verb for the second line, e.g. "one" or "it".
+func take(n int) string {
+	if n == 1 {
+		return "it"
+	}
+	return "one"
+}

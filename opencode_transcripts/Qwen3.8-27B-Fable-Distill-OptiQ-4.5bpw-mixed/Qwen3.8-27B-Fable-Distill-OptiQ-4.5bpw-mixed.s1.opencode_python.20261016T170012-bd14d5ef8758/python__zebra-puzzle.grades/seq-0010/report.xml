@@ -1,0 +1,255 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="2" skipped="0" tests="2" time="1.981" timestamp="2026-10-16T17:32:10.271751-07:00" hostname="localhost"><testcase classname="zebra_puzzle_test.ZebraPuzzleTest" name="test_resident_who_drinks_water" time="0.927"><failure message="ValueError: the puzzle has no solution">self = &lt;zebra_puzzle_test.ZebraPuzzleTest testMethod=test_resident_who_drinks_water&gt;
+
+    def test_resident_who_drinks_water(self):
+&gt;       self.assertEqual(drinks_water(), "Norwegian")
+                         ^^^^^^^^^^^^^^
+
+zebra_puzzle_test.py:15: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+zebra_puzzle.py:203: in drinks_water
+    for house in _solution_houses():
+                 ^^^^^^^^^^^^^^^^^^
+zebra_puzzle.py:197: in _solution_houses
+    _solution = _solve()
+                ^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _solve():
+        """Return the unique solution as a list of per-house dicts."""
+        solution = [dict.fromkeys(CATEGORIES) for _ in range(5)]
+    
+        def assign(category, house, value):
+            """Assign value to house if it does not contradict a clue.
+    
+            These checks prune the search; _verify enforces the clues
+            completely when a full assignment is reached.
+            """
+            if solution[house][category] is not None:
+                return solution[house][category] == value
+            # Each category value may appear in at most one house.
+            for other in range(5):
+                if other != house and solution[other][category] == value:
+                    return False
+            solution[house][category] = value
+            ok = True
+            # 2. The Englishman lives in the red house.
+            if solution[house]["nationality"] == "Englishman":
+                ok = solution[house]["color"] in (None, "red")
+            # 3. The Spaniard owns the dog.
+            if solution[house]["nationality"] == "Spaniard":
+                ok = ok and solution[house]["pet"] in (None, "dog")
+            # 4. The person in the green house drinks coffee.
+            if solution[house]["color"] == "green":
+                ok = ok and solution[house]["drink"] in (None, "coffee")
+            # 5. The Ukrainian drinks tea.
+            if solution[house]["nationality"] == "Ukrainian":
+                ok = ok and solution[house]["drink"] in (None, "tea")
+            # 6. The green house is immediately to the right of the ivory house.
+            if solution[house]["color"] == "green":
+                ok = ok and house &gt; 0
+                ok = ok and solution[house - 1]["color"] in (None, "ivory")
+                if house &lt; 4:
+                    ok = ok and solution[house + 1]["color"] != "ivory"
+            if solution[house]["color"] == "ivory":
+                ok = ok and house &lt; 4
+                ok = ok and solution[house + 1]["color"] in (None, "green")
+                if house &gt; 0:
+                    ok = ok and solution[house - 1]["color"] != "green"
+            # 7. The snail owner likes to go dancing.
+            if solution[house]["pet"] == "snail":
+                ok = ok and solution[house]["hobby"] in (None, "dancing")
+            # 8. The person in the yellow house is a painter.
+            if solution[house]["color"] == "yellow":
+                ok = ok and solution[house]["hobby"] in (None, "painting")
+            # 11. The person who enjoys reading lives next to the person with
+            #     the fox.
+            if solution[house]["hobby"] == "reading":
+                ok = ok and any(
+                    solution[n]["pet"] in (None, "fox")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            if solution[house]["pet"] == "fox":
+                ok = ok and any(
+                    solution[n]["hobby"] in (None, "reading")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            # 12. The painter's house is next to the house with the horse.
+            if solution[house]["hobby"] == "painting":
+                ok = ok and any(
+                    solution[n]["pet"] in (None, "horse")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            if solution[house]["pet"] == "horse":
+                ok = ok and any(
+                    solution[n]["hobby"] in (None, "painting")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            # 13. The person who plays football drinks orange juice.
+            if solution[house]["hobby"] == "football":
+                ok = ok and solution[house]["drink"] in (None, "orange juice")
+            # 14. The Japanese person plays chess.
+            if solution[house]["nationality"] == "Japanese":
+                ok = ok and solution[house]["hobby"] in (None, "chess")
+            if not ok:
+                solution[house][category] = None
+                return False
+            return True
+    
+        def backtrack(house, category_index):
+            if house == 5:
+                return _verify(solution)
+            if category_index == 5:
+                return backtrack(house + 1, 0)
+            if house == 0 and category_index == 0:
+                # 10. The Norwegian lives in the first house.
+                if not assign("nationality", house, "Norwegian"):
+                    return False
+                return backtrack(house, category_index + 1)
+            category = CATEGORIES[category_index]
+            for value in VALUES[category_index]:
+                if assign(category, house, value):
+                    if backtrack(house, category_index + 1):
+                        return True
+                    solution[house][category] = None
+            return False
+    
+        # 9. The person in the middle house drinks milk.
+        # 15. The Norwegian lives next to the blue house (so house 2 is blue).
+        solution[2]["drink"] = "milk"
+        solution[1]["color"] = "blue"
+        if not backtrack(0, 0):
+&gt;           raise ValueError("the puzzle has no solution")
+E           ValueError: the puzzle has no solution
+
+zebra_puzzle.py:186: ValueError</failure></testcase><testcase classname="zebra_puzzle_test.ZebraPuzzleTest" name="test_resident_who_owns_zebra" time="1.030"><failure message="ValueError: the puzzle has no solution">self = &lt;zebra_puzzle_test.ZebraPuzzleTest testMethod=test_resident_who_owns_zebra&gt;
+
+    def test_resident_who_owns_zebra(self):
+&gt;       self.assertEqual(owns_zebra(), "Japanese")
+                         ^^^^^^^^^^^^
+
+zebra_puzzle_test.py:18: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+zebra_puzzle.py:211: in owns_zebra
+    for house in _solution_houses():
+                 ^^^^^^^^^^^^^^^^^^
+zebra_puzzle.py:197: in _solution_houses
+    _solution = _solve()
+                ^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+    def _solve():
+        """Return the unique solution as a list of per-house dicts."""
+        solution = [dict.fromkeys(CATEGORIES) for _ in range(5)]
+    
+        def assign(category, house, value):
+            """Assign value to house if it does not contradict a clue.
+    
+            These checks prune the search; _verify enforces the clues
+            completely when a full assignment is reached.
+            """
+            if solution[house][category] is not None:
+                return solution[house][category] == value
+            # Each category value may appear in at most one house.
+            for other in range(5):
+                if other != house and solution[other][category] == value:
+                    return False
+            solution[house][category] = value
+            ok = True
+            # 2. The Englishman lives in the red house.
+            if solution[house]["nationality"] == "Englishman":
+                ok = solution[house]["color"] in (None, "red")
+            # 3. The Spaniard owns the dog.
+            if solution[house]["nationality"] == "Spaniard":
+                ok = ok and solution[house]["pet"] in (None, "dog")
+            # 4. The person in the green house drinks coffee.
+            if solution[house]["color"] == "green":
+                ok = ok and solution[house]["drink"] in (None, "coffee")
+            # 5. The Ukrainian drinks tea.
+            if solution[house]["nationality"] == "Ukrainian":
+                ok = ok and solution[house]["drink"] in (None, "tea")
+            # 6. The green house is immediately to the right of the ivory house.
+            if solution[house]["color"] == "green":
+                ok = ok and house &gt; 0
+                ok = ok and solution[house - 1]["color"] in (None, "ivory")
+                if house &lt; 4:
+                    ok = ok and solution[house + 1]["color"] != "ivory"
+            if solution[house]["color"] == "ivory":
+                ok = ok and house &lt; 4
+                ok = ok and solution[house + 1]["color"] in (None, "green")
+                if house &gt; 0:
+                    ok = ok and solution[house - 1]["color"] != "green"
+            # 7. The snail owner likes to go dancing.
+            if solution[house]["pet"] == "snail":
+                ok = ok and solution[house]["hobby"] in (None, "dancing")
+            # 8. The person in the yellow house is a painter.
+            if solution[house]["color"] == "yellow":
+                ok = ok and solution[house]["hobby"] in (None, "painting")
+            # 11. The person who enjoys reading lives next to the person with
+            #     the fox.
+            if solution[house]["hobby"] == "reading":
+                ok = ok and any(
+                    solution[n]["pet"] in (None, "fox")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            if solution[house]["pet"] == "fox":
+                ok = ok and any(
+                    solution[n]["hobby"] in (None, "reading")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            # 12. The painter's house is next to the house with the horse.
+            if solution[house]["hobby"] == "painting":
+                ok = ok and any(
+                    solution[n]["pet"] in (None, "horse")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            if solution[house]["pet"] == "horse":
+                ok = ok and any(
+                    solution[n]["hobby"] in (None, "painting")
+                    for n in range(house - 1, house + 1)
+                    if 0 &lt;= n &lt; 5
+                )
+            # 13. The person who plays football drinks orange juice.
+            if solution[house]["hobby"] == "football":
+                ok = ok and solution[house]["drink"] in (None, "orange juice")
+            # 14. The Japanese person plays chess.
+            if solution[house]["nationality"] == "Japanese":
+                ok = ok and solution[house]["hobby"] in (None, "chess")
+            if not ok:
+                solution[house][category] = None
+                return False
+            return True
+    
+        def backtrack(house, category_index):
+            if house == 5:
+                return _verify(solution)
+            if category_index == 5:
+                return backtrack(house + 1, 0)
+            if house == 0 and category_index == 0:
+                # 10. The Norwegian lives in the first house.
+                if not assign("nationality", house, "Norwegian"):
+                    return False
+                return backtrack(house, category_index + 1)
+            category = CATEGORIES[category_index]
+            for value in VALUES[category_index]:
+                if assign(category, house, value):
+                    if backtrack(house, category_index + 1):
+                        return True
+                    solution[house][category] = None
+            return False
+    
+        # 9. The person in the middle house drinks milk.
+        # 15. The Norwegian lives next to the blue house (so house 2 is blue).
+        solution[2]["drink"] = "milk"
+        solution[1]["color"] = "blue"
+        if not backtrack(0, 0):
+&gt;           raise ValueError("the puzzle has no solution")
+E           ValueError: the puzzle has no solution
+
+zebra_puzzle.py:186: ValueError</failure></testcase></testsuite></testsuites>

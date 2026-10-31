@@ -1,0 +1,76 @@
+class BowlingGame:
+    def __init__(self):
+        self._rolls = []
+        self._frame = 0  # number of completed frames
+        self._pins_in_frame = 0  # pins knocked down in the current frame
+        self._rolls_in_frame = 0  # rolls made in the current frame
+        self._bonus_rolls_remaining = 0  # fill balls left in the tenth frame
+        self._first_bonus_pins = None  # pins of the first fill ball after a strike
+        self._game_over = False
+
+    def roll(self, pins):
+        if not 0 <= pins <= 10:
+            raise Exception("pins must be between 0 and 10")
+        if self._game_over:
+            raise Exception("cannot roll after the game is over")
+
+        if self._bonus_rolls_remaining > 0:
+            if (
+                self._bonus_rolls_remaining == 1
+                and self._first_bonus_pins is not None
+                and self._first_bonus_pins < 10
+                and pins > 10 - self._first_bonus_pins
+            ):
+                raise Exception(
+                    "bonus rolls after a strike cannot score more than 10 points"
+                )
+            self._rolls.append(pins)
+            if self._bonus_rolls_remaining == 2:
+                self._first_bonus_pins = pins
+            self._bonus_rolls_remaining -= 1
+            if self._bonus_rolls_remaining == 0:
+                self._game_over = True
+            return
+
+        self._rolls.append(pins)
+        self._pins_in_frame += pins
+        self._rolls_in_frame += 1
+
+        if self._frame < 9:
+            if pins == 10 or self._rolls_in_frame == 2:
+                if self._pins_in_frame > 10:
+                    raise Exception(
+                        "two rolls in a frame cannot score more than 10 points"
+                    )
+                self._complete_frame()
+        else:
+            # Tenth frame: a strike or spare earns fill balls.
+            if self._rolls_in_frame == 1:
+                if pins == 10:
+                    self._bonus_rolls_remaining = 2
+            elif self._pins_in_frame == 10:
+                self._bonus_rolls_remaining = 1
+            else:
+                self._game_over = True
+
+    def _complete_frame(self):
+        self._frame += 1
+        self._pins_in_frame = 0
+        self._rolls_in_frame = 0
+
+    def score(self):
+        if not self._game_over:
+            raise Exception("game is not complete")
+        total = 0
+        i = 0
+        for _ in range(10):
+            if self._rolls[i] == 10:
+                total += 10 + self._rolls[i + 1] + self._rolls[i + 2]
+                i += 1
+            elif self._rolls[i] + self._rolls[i + 1] == 10:
+                total += 10 + self._rolls[i + 2]
+                i += 2
+            else:
+                total += self._rolls[i] + self._rolls[i + 1]
+                i += 2
+        return total

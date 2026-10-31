@@ -1,0 +1,87 @@
+package connect
+
+// ResultOf computes the winner of a game of Hex / Polygon.
+//
+// The board is a parallelogram of hexagonal fields. Player "O" is assigned
+// the top and bottom edges and wins by connecting the two. Player "X" is
+// assigned the left and right edges and wins by connecting the two. If
+// neither player has such a connection, the game has no winner yet.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	height := len(lines)
+	width := len(lines[0])
+
+	board := make([][]byte, height)
+	for r, line := range lines {
+		board[r] = []byte(line)
+	}
+
+	// Player O connects the top edge to the bottom edge.
+	if connects(board, height, width, 'O',
+		func(r, c int) bool { return r == 0 },
+		func(r, c int) bool { return r == height-1 }) {
+		return "O", nil
+	}
+
+	// Player X connects the left edge to the right edge.
+	if connects(board, height, width, 'X',
+		func(r, c int) bool { return c == 0 },
+		func(r, c int) bool { return c == width-1 }) {
+		return "X", nil
+	}
+
+	return "", nil
+}
+
+// connects reports whether `player` has a contiguous path of stones between
+// the two opposite sides described by `start` and `target`.
+func connects(board [][]byte, height, width int, player byte, start, target func(r, c int) bool) bool {
+	visited := make([][]bool, height)
+	for r := 0; r < height; r++ {
+		visited[r] = make([]bool, width)
+	}
+
+	queue := make([][2]int, 0, height*width)
+	for r := 0; r < height; r++ {
+		for c := 0; c < width && c < len(board[r]); c++ {
+			if board[r][c] == player && start(r, c) {
+				visited[r][c] = true
+				queue = append(queue, [2]int{r, c})
+			}
+		}
+	}
+
+	// The six neighbours of a cell in this skewed (parallelogram) layout.
+	neighbors := [6][2]int{
+		{0, -1}, {0, 1}, // left, right
+		{-1, 0}, {-1, 1}, // upper, upper-right
+		{1, -1}, {1, 0}, // lower-left, lower
+	}
+
+	for len(queue) > 0 {
+		cur := queue[0]
+		queue = queue[1:]
+		r, c := cur[0], cur[1]
+
+		if target(r, c) {
+			return true
+		}
+
+		for _, d := range neighbors {
+			nr, nc := r+d[0], c+d[1]
+			if nr < 0 || nr >= height || nc < 0 || nc >= width || nc >= len(board[nr]) {
+				continue
+			}
+			if visited[nr][nc] || board[nr][nc] != player {
+				continue
+			}
+			visited[nr][nc] = true
+			queue = append(queue, [2]int{nr, nc})
+		}
+	}
+
+	return false
+}

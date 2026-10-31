@@ -1,0 +1,57 @@
+.....F.........................                                          [100%]
+=================================== FAILURES ===================================
+_ BowlingTest.test_a_strike_with_the_one_roll_bonus_after_a_spare_in_the_last_frame_does_not_get_a_bonus _
+
+self = <bowling_test.BowlingTest testMethod=test_a_strike_with_the_one_roll_bonus_after_a_spare_in_the_last_frame_does_not_get_a_bonus>
+
+    def test_a_strike_with_the_one_roll_bonus_after_a_spare_in_the_last_frame_does_not_get_a_bonus(
+        self,
+    ):
+        rolls = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 7, 3, 10]
+>       game = self.roll_new_game(rolls)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+bowling_test.py:92: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+bowling_test.py:16: in roll_new_game
+    game.roll(roll)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <bowling.BowlingGame object at 0x10b5c5820>, pins = 10
+
+    def roll(self, pins):
+        if not 0 <= pins <= 10:
+            raise Exception("Roll must be between 0 and 10 pins")
+        if self._game_complete():
+            raise Exception("Cannot roll after game is over")
+    
+        is_tenth = len(self._frames) == 10
+        frame = self._frames[-1] if self._frames else None
+        if frame is None or self._frame_complete(frame, is_tenth):
+            self._frames.append([pins])
+            self._rolls.append(pins)
+            return
+    
+        if len(frame) == 1:
+            first = frame[0]
+            if first == 10:
+                # Strike in the tenth frame: first bonus roll.
+                frame.append(pins)
+            else:
+                if pins > 10 - first:
+                    raise Exception("Frame cannot score more than 10 pins")
+                frame.append(pins)
+            self._rolls.append(pins)
+            return
+    
+        # Two rolls already in the frame: only possible in the tenth frame,
+        # and only after a strike. This is the second bonus roll.
+        second = frame[1]
+        if second != 10 and pins > 10 - second:
+>           raise Exception("Bonus roll cannot score more than 10 pins")
+E           Exception: Bonus roll cannot score more than 10 pins
+
+bowling.py:35: Exception
+=========================== short test summary info ============================
+FAILED bowling_test.py::BowlingTest::test_a_strike_with_the_one_roll_bonus_after_a_spare_in_the_last_frame_does_not_get_a_bonus
+1 failed, 30 passed in 0.04s

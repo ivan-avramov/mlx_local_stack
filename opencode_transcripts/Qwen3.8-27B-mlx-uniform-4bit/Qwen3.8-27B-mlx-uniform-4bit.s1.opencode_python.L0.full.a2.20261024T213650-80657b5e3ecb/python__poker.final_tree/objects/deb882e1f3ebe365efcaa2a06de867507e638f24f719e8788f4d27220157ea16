@@ -1,0 +1,71 @@
+"""Pick the best hand(s) from a list of poker hands.
+
+Each hand is a string of five space-separated cards, e.g. ``"4S 5S 7H 8D JC"``.
+Cards are written as a rank (``2``-``10``, ``J``, ``Q``, ``K``, ``A``)
+followed by a suit (``C``, ``D``, ``H``, ``S``).
+"""
+
+from collections import Counter
+
+_RANKS = {rank: value for value, rank in enumerate("23456789TJQKA", start=2)}
+_RANKS["10"] = 10  # tens are spelled out in the input
+
+
+def best_hands(hands):
+    """Return the winning hand(s) from ``hands`` (a list of hand strings).
+
+    Hands that tie for the highest score are all returned, in the order
+    they appeared in ``hands``.
+    """
+    scored = [(hand, _score(hand)) for hand in hands]
+    highest = max(score for _, score in scored)
+    return [hand for hand, score in scored if score == highest]
+
+
+def _score(hand):
+    """Return a tuple that orders one hand by standard poker rules.
+
+    The first element is the category (higher beats lower); the remaining
+    elements are tie-breaker ranks, so plain tuple comparison works.
+    """
+    cards = hand.split()
+    ranks = [_RANKS[card[:-1]] for card in cards]
+    suits = {card[-1] for card in cards}
+    counts = Counter(ranks)
+
+    is_flush = len(suits) == 1
+    is_straight = len(counts) == 5 and (
+        max(ranks) - min(ranks) == 4 or set(ranks) == {2, 3, 4, 5, 14}  # wheel
+    )
+    straight_high = max(ranks) if is_straight else 0
+    if is_straight and straight_high == 14 and min(ranks) == 2:
+        straight_high = 5  # ace-low ("wheel") straight
+
+    if is_straight and is_flush:
+        category = 8
+    elif is_straight:
+        category = 4
+    elif is_flush:
+        category = 5
+    elif 4 in counts.values():
+        category = 7
+    elif 3 in counts.values() and 2 in counts.values():
+        category = 6
+    elif 3 in counts.values():
+        category = 3
+    elif 2 in counts.values():
+        category = 2 if len(counts) == 3 else 1  # two pair vs. one pair
+    else:
+        category = 0
+
+    if is_straight:
+        return (category, straight_high)
+    if is_flush:
+        return (category, *sorted(ranks, reverse=True))
+
+    # Rank groups by (count desc, rank desc): pair, then kickers, etc.
+    tiebreak = tuple(
+        rank
+        for rank, count in sorted(counts.items(), key=lambda item: (-item[1], -item[0]))
+    )
+    return (category, *tiebreak)

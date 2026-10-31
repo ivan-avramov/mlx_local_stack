@@ -1,0 +1,125 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll = errors.New("negative roll is invalid")
+	errTooManyPins  = errors.New("pin count exceeds pins on the lane")
+	errGameOver     = errors.New("cannot roll after game is over")
+	errIncomplete   = errors.New("score cannot be taken until the end of the game")
+)
+
+// Game keeps track of the rolls of a bowling game.
+type Game struct {
+	rolls []int
+}
+
+// NewGame returns a new, empty bowling game.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// Roll records a throw that knocked down pins.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	over, pinsStanding := g.state()
+	if over {
+		return errGameOver
+	}
+	if pins > pinsStanding {
+		return errTooManyPins
+	}
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+// Score returns the total score of a completed game.
+func (g *Game) Score() (int, error) {
+	over, _ := g.state()
+	if !over {
+		return 0, errIncomplete
+	}
+
+	total := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		if frame < 9 {
+			switch {
+			case g.rolls[i] == 10:
+				total += 10 + g.rolls[i+1] + g.rolls[i+2]
+				i++
+			case g.rolls[i]+g.rolls[i+1] == 10:
+				total += 10 + g.rolls[i+2]
+				i += 2
+			default:
+				total += g.rolls[i] + g.rolls[i+1]
+				i += 2
+			}
+		} else {
+			// The tenth frame is worth the total pins knocked down,
+			// including any fill balls.
+			for ; i < len(g.rolls); i++ {
+				total += g.rolls[i]
+			}
+		}
+	}
+	return total, nil
+}
+
+// state reports whether the game is over and, if not, how many pins are
+// still standing in the current frame.
+func (g *Game) state() (over bool, pinsStanding int) {
+	frame := 0
+	pinsDown := 0
+	frameRolls := 0
+	tenthRolls := 0
+	firstRoll := 0
+	pinsStanding = 10
+
+	for _, pins := range g.rolls {
+		if frame > 9 {
+			return true, 0
+		}
+		if frame < 9 {
+			frameRolls++
+			if pinsDown == 0 && pins == 10 {
+				frame++
+				pinsDown = 0
+				frameRolls = 0
+			} else {
+				pinsDown += pins
+				if pinsDown == 10 || frameRolls == 2 {
+					frame++
+					pinsDown = 0
+					frameRolls = 0
+				}
+			}
+			pinsStanding = 10 - pinsDown
+		} else {
+			tenthRolls++
+			switch tenthRolls {
+			case 1:
+				firstRoll = pins
+				pinsDown = pins
+			case 2:
+				if firstRoll == 10 {
+					pinsDown = pins
+				} else {
+					pinsDown += pins
+				}
+			}
+			if tenthRolls == 3 || (tenthRolls == 2 && firstRoll < 10 && pinsDown < 10) {
+				return true, 0
+			}
+			if pinsDown == 10 {
+				// A strike or spare: the next roll is at a fresh rack.
+				pinsStanding = 10
+			} else {
+				pinsStanding = 10 - pinsDown
+			}
+		}
+	}
+	return false, pinsStanding
+}

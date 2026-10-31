@@ -1,0 +1,214 @@
+// Package ledger prints a nicely formatted ledger for a given locale and
+// currency.
+//
+// Refactoring log
+// ---------------
+// The original implementation worked but was hard to follow. It was rewritten
+// in small, test-preserving steps:
+//
+//  1. Replace the recursive "dummy entry" trick (used to validate the currency
+//     when the ledger was empty) with explicit, up-front validation of the
+//     currency, the locale and every entry's date. This removes the recursion
+//     and the surprising dependency on a fabricated entry.
+//  2. Replace the hand-rolled selection sort (built on the m1/m2 bool maps)
+//     with sort.SliceStable and a readable less function. The ordering is
+//     unchanged: date, then description, then change, all ascending.
+//  3. Replace the per-entry goroutines + channel with a simple sequential loop
+//     over a private copy of the entries. The output is identical and the
+//     concurrency was only introducing ordering hazards.
+//  4. Break the big formatting block into small helpers: header, formatDate,
+//     formatDescription, formatChange and formatNumber. Each does one thing.
+//  5. Centralise the column widths as constants so the layout is defined in one
+//     place.
+//
+// The public behaviour (FormatLedger) is unchanged: it still returns an error
+// for an unknown currency, an unknown locale or an invalid date, and it never
+// mutates the caller's slice.
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+// Entry is a single ledger row.
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+// Column widths used throughout the layout.
+const (
+	dateWidth        = 10
+	descriptionWidth = 25
+	changeWidth      = 13
+)
+
+// Sentinel errors returned by FormatLedger.
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+// FormatLedger renders the entries as a formatted ledger for the given
+// currency and locale. It returns an error if the currency or locale is
+// unknown, or if any entry has an invalid date. The input slice is not
+// modified.
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if !validCurrency(currency) {
+		return "", errInvalidCurrency
+	}
+	if !validLocale(locale) {
+		return "", errInvalidLocale
+	}
+
+	// Work on a private copy so the caller's slice is never mutated.
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+
+	for _, e := range sorted {
+		if err := validateDate(e.Date); err != nil {
+			return "", err
+		}
+	}
+
+	sort.SliceStable(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, e := range sorted {
+		b.WriteString(formatRow(currency, locale, e))
+	}
+	return b.String(), nil
+}
+
+// validCurrency reports whether c is a supported currency.
+func validCurrency(c string) bool {
+	return c == "USD" || c == "EUR"
+}
+
+// validLocale reports whether l is a supported locale.
+func validLocale(l string) bool {
+	return l == "en-US" || l == "nl-NL"
+}
+
+// validateDate reports whether d is a well-formed "Y-m-d" date.
+func validateDate(d string) error {
+	if len(d) != 10 || d[4] != '-' || d[7] != '-' {
+		return errInvalidDate
+	}
+	return nil
+}
+
+// header renders the column heading row for the given locale.
+func header(locale string) string {
+	dateCol, descCol, changeCol := "Date", "Description", "Change"
+	if locale == "nl-NL" {
+		dateCol, descCol, changeCol = "Datum", "Omschrijving", "Verandering"
+	}
+	return padLeft(dateCol, dateWidth) + " | " +
+		padLeft(descCol, descriptionWidth) + " | " +
+		changeCol + "\n"
+}
+
+// formatRow renders a single ledger row, terminated by a newline.
+func formatRow(currency, locale string, e Entry) string {
+	return formatDate(locale, e.Date) + " | " +
+		formatDescription(e.Description) + " | " +
+		padRight(formatChange(currency, locale, e.Change), changeWidth) + "\n"
+}
+
+// formatDate renders the date in the locale's convention.
+func formatDate(locale, date string) string {
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year
+	}
+	return month + "/" + day + "/" + year
+}
+
+// formatDescription pads or truncates the description to descriptionWidth.
+// Descriptions that are too long are cut to fit, with an ellipsis.
+func formatDescription(desc string) string {
+	if len(desc) > descriptionWidth {
+		return desc[:descriptionWidth-3] + "..."
+	}
+	return padLeft(desc, descriptionWidth)
+}
+
+// formatChange renders the change amount with the locale's currency symbol,
+// number grouping and sign convention.
+func formatChange(currency, locale string, change int) string {
+	negative := change < 0
+	abs := change
+	if negative {
+		abs = -abs
+	}
+	dollars, cents := abs/100, abs%100
+
+	symbol := "$"
+	if currency == "EUR" {
+		symbol = "€"
+	}
+
+	if locale == "nl-NL" {
+		number := formatNumber(dollars, cents, '.', ',')
+		if negative {
+			return symbol + " " + number + "-"
+		}
+		return symbol + " " + number + " "
+	}
+
+	number := formatNumber(dollars, cents, ',', '.')
+	if negative {
+		return "(" + symbol + number + ")"
+	}
+	return symbol + number + " "
+}
+
+// formatNumber renders dollars.cents using the given thousands and decimal
+// separators, e.g. 123456 -> "1,234.56" for (',', '.').
+func formatNumber(dollars, cents int, thousandsSep, decimalSep byte) string {
+	d := strconv.Itoa(dollars)
+	var sb strings.Builder
+	for i := 0; i < len(d); i++ {
+		if i > 0 && (len(d)-i)%3 == 0 {
+			sb.WriteByte(thousandsSep)
+		}
+		sb.WriteByte(d[i])
+	}
+	sb.WriteByte(decimalSep)
+	return sb.String() + fmt.Sprintf("%02d", cents)
+}
+
+// padLeft left-aligns s in a field of width, padding with spaces.
+func padLeft(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+// padRight right-aligns s in a field of width, padding with spaces. The width
+// is measured in runes so that multi-byte symbols such as the euro sign occupy
+// a single column.
+func padRight(s string, width int) string {
+	if utf8.RuneCountInString(s) >= width {
+		return s
+	}
+	return strings.Repeat(" ", width-utf8.RuneCountInString(s)) + s
+}

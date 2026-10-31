@@ -1,0 +1,72 @@
+class ConnectGame:
+    """Solves a game of Hex / Polygon / CON-TAC-TIX.
+
+    The board is a parallelogram of hexagonal cells written as text rows,
+    each subsequent row indented by one character.  Player ``X`` plays from
+    left to right and player ``O`` plays from top to bottom.  A player wins
+    when their stones form a connected path between the two sides they are
+    assigned.
+    """
+
+    def __init__(self, board):
+        self.rows = [line.strip().split() for line in board.splitlines() if line.strip()]
+
+    def get_winner(self):
+        if not self.rows:
+            return ""
+
+        height = len(self.rows)
+        width = len(self.rows[0])
+
+        # X is assigned the left and right sides.
+        x_starts = [(row, 0) for row in range(height) if self._cell(row, 0) == "X"]
+        if self._reaches("X", x_starts, lambda row, col: col == width - 1):
+            return "X"
+
+        # O is assigned the top and bottom sides.
+        o_starts = [(0, col) for col in range(width) if self._cell(0, col) == "O"]
+        if self._reaches("O", o_starts, lambda row, col: row == height - 1):
+            return "O"
+
+        return ""
+
+    def _cell(self, row, col):
+        if 0 <= row < len(self.rows) and 0 <= col < len(self.rows[row]):
+            return self.rows[row][col]
+        return None
+
+    @staticmethod
+    def _neighbors(row, col):
+        # Row r is indented by r characters, so cell (r, c) sits at horizontal
+        # position r + 2c.  A hexagonal cell touches the six neighbours one
+        # half-width away, which in this skewed layout are:
+        return [
+            (row, col - 1),
+            (row, col + 1),
+            (row - 1, col),
+            (row - 1, col + 1),
+            (row + 1, col - 1),
+            (row + 1, col),
+        ]
+
+    def _reaches(self, player, starts, goal):
+        seen = set()
+        stack = []
+        for start in starts:
+            if start not in seen:
+                seen.add(start)
+                stack.append(start)
+
+        while stack:
+            row, col = stack.pop()
+            if goal(row, col):
+                return True
+            for nrow, ncol in self._neighbors(row, col):
+                if self._cell(nrow, ncol) != player:
+                    continue
+                if (nrow, ncol) in seen:
+                    continue
+                seen.add((nrow, ncol))
+                stack.append((nrow, ncol))
+
+        return False

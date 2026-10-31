@@ -1,0 +1,61 @@
+package hexadecimal
+
+import (
+	"errors"
+	"math"
+	"strings"
+)
+
+// ParseHex converts a hexadecimal string to its decimal (int64) equivalent
+// using first principles, without relying on any built-in base conversion.
+//
+// It returns an error whose message contains "syntax" for strings that are
+// empty or contain characters that are not valid hexadecimal digits, and an
+// error whose message contains "range" for values that do not fit in an int64.
+func ParseHex(in string) (int64, error) {
+	if in == "" {
+		return 0, errors.New("syntax error: empty string")
+	}
+
+	var out int64
+	for _, r := range in {
+		var digit int64
+		switch {
+		case r >= '0' && r <= '9':
+			digit = int64(r - '0')
+		case r >= 'a' && r <= 'f':
+			digit = int64(r-'a') + 10
+		case r >= 'A' && r <= 'F':
+			digit = int64(r-'A') + 10
+		default:
+			return 0, errors.New("syntax error: invalid hexadecimal character")
+		}
+
+		// Check for overflow before accumulating: out*16 + digit must fit
+		// in an int64.
+		if out > (math.MaxInt64-digit)/16 {
+			return 0, errors.New("range error: value out of range")
+		}
+		out = out*16 + digit
+	}
+
+	return out, nil
+}
+
+// HandleErrors calls ParseHex on each input and reports, for each one,
+// whether it produced no error ("none"), a syntax error, or a range error.
+func HandleErrors(inputs []string) []string {
+	results := make([]string, len(inputs))
+	for i, in := range inputs {
+		_, err := ParseHex(in)
+		switch {
+		case err == nil:
+			results[i] = "none"
+		case strings.Contains(strings.ToLower(err.Error()), "syntax"):
+			results[i] = "syntax"
+		default:
+			results[i] = "range"
+		}
+	}
+	return results
+}

@@ -1,0 +1,70 @@
+package hexadecimal
+
+import "errors"
+
+var (
+	errSyntax = errors.New("invalid syntax")
+	errRange  = errors.New("value out of range")
+)
+
+// maxInt64 is the largest value representable by an int64.
+const maxInt64 = int64(9223372036854775807)
+
+// hexValue returns the decimal value of a single hexadecimal digit and
+// whether the byte is a valid hexadecimal digit.
+func hexValue(c byte) (int64, bool) {
+	switch {
+	case c >= '0' && c <= '9':
+		return int64(c - '0'), true
+	case c >= 'a' && c <= 'f':
+		return int64(c-'a') + 10, true
+	case c >= 'A' && c <= 'F':
+		return int64(c-'A') + 10, true
+	}
+	return 0, false
+}
+
+// ParseHex converts a hexadecimal string to its decimal equivalent.
+// It returns a syntax error for empty strings or strings containing
+// non-hexadecimal characters, and a range error when the value does
+// not fit in an int64.
+func ParseHex(in string) (int64, error) {
+	if len(in) == 0 {
+		return 0, errSyntax
+	}
+
+	var result int64
+	for i := 0; i < len(in); i++ {
+		d, ok := hexValue(in[i])
+		if !ok {
+			return 0, errSyntax
+		}
+
+		// Overflow check: result*16 + d must not exceed maxInt64.
+		if result > (maxInt64-d)/16 {
+			return 0, errRange
+		}
+
+		result = result*16 + d
+	}
+
+	return result, nil
+}
+
+// HandleErrors calls ParseHex on each input and reports, for each one,
+// whether the result was "none", "syntax", or "range".
+func HandleErrors(inputs []string) []string {
+	results := make([]string, len(inputs))
+	for i, in := range inputs {
+		_, err := ParseHex(in)
+		switch {
+		case err == nil:
+			results[i] = "none"
+		case err == errRange:
+			results[i] = "range"
+		default:
+			results[i] = "syntax"
+		}
+	}
+	return results
+}

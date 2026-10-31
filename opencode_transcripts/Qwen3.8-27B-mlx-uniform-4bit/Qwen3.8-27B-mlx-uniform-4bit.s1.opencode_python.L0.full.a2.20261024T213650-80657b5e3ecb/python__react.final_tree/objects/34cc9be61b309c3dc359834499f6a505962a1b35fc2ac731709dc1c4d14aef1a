@@ -1,0 +1,120 @@
+from collections import deque
+
+
+class _Cell:
+    """Base class for reactive cells.
+
+    Tracks the cells that depend on this one so that a change can be
+    propagated through the dependency graph.
+    """
+
+    def __init__(self):
+        self._dependents = []
+
+    def _add_dependent(self, cell):
+        self._dependents.append(cell)
+
+
+class InputCell(_Cell):
+    """A cell with a settable value.
+
+    Setting :attr:`value` propagates the change to every cell that
+    (transitively) depends on this one, recomputing them in dependency
+    order until the system reaches a new stable state.
+    """
+
+    def __init__(self, initial_value):
+        super().__init__()
+        self._value = initial_value
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._value = new_value
+        self._propagate()
+
+    def _propagate(self):
+        affected = self._collect_affected()
+        if not affected:
+            return
+        for cell in _topological_sort(affected):
+            new_value = cell._compute_function([inp.value for inp in cell._inputs])
+            if new_value != cell._value:
+                cell._value = new_value
+                for callback in cell._callbacks:
+                    callback(new_value)
+
+    def _collect_affected(self):
+        """Return every compute cell that transitively depends on this input."""
+        affected = []
+        visited = {id(self)}
+        stack = [self]
+        while stack:
+            cell = stack.pop()
+            for dependent in cell._dependents:
+                if id(dependent) not in visited:
+                    visited.add(id(dependent))
+                    affected.append(dependent)
+                    stack.append(dependent)
+        return affected
+
+
+class ComputeCell(_Cell):
+    """A cell whose value is computed from its inputs."""
+
+    def __init__(self, inputs, compute_function):
+        super().__init__()
+        self._inputs = list(inputs)
+        self._compute_function = compute_function
+        self._callbacks = []
+        self._value = compute_function([inp.value for inp in self._inputs])
+        for inp in self._inputs:
+            inp._add_dependent(self)
+
+    @property
+    def value(self):
+        return self._value
+
+    def add_callback(self, callback):
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+
+
+def _topological_sort(cells):
+    """Return *cells* ordered so that each cell's inputs come before it.
+
+    Only inputs that are themselves part of *cells* are considered; inputs
+    outside the set (e.g. unchanged input cells) are already in their final
+    state and need no reordering.
+    """
+    cell_ids = {id(cell) for cell in cells}
+    id_to_cell = {id(cell): cell for cell in cells}
+    in_degree = {}
+    adjacency = {}
+    for cell in cells:
+        cell_id = id(cell)
+        in_degree[cell_id] = sum(1 for inp in cell._inputs if id(inp) in cell_ids)
+        adjacency[cell_id] = []
+    for cell in cells:
+        cell_id = id(cell)
+        for inp in cell._inputs:
+            inp_id = id(inp)
+            if inp_id in cell_ids:
+                adjacency[inp_id].append(cell_id)
+
+    queue = deque(cell_id for cell_id, degree in in_degree.items() if degree == 0)
+    order = []
+    while queue:
+        cell_id = queue.popleft()
+        order.append(id_to_cell[cell_id])
+        for next_id in adjacency[cell_id]:
+            in_degree[next_id] -= 1
+            if in_degree[next_id] == 0:
+                queue.append(next_id)
+    return order

@@ -1,0 +1,118 @@
+import re
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+_NUMBER_RE = re.compile(r"-?\d+$")
+
+
+def _pop(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop()
+
+
+def _div(a, b):
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    # Integer division truncating toward zero, like Forth's /
+    q, r = divmod(a, b)
+    if r and (a < 0) != (b < 0):
+        q += 1
+    return q
+
+
+def _add(s):
+    b, a = _pop(s), _pop(s)
+    s.append(a + b)
+
+
+def _sub(s):
+    b, a = _pop(s), _pop(s)
+    s.append(a - b)
+
+
+def _mul(s):
+    b, a = _pop(s), _pop(s)
+    s.append(a * b)
+
+
+def _div_word(s):
+    b, a = _pop(s), _pop(s)
+    s.append(_div(a, b))
+
+
+def _dup(s):
+    if not s:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    s.append(s[-1])
+
+
+def _drop(s):
+    _pop(s)
+
+
+def _swap(s):
+    b, a = _pop(s), _pop(s)
+    s.extend((b, a))
+
+
+def _over(s):
+    if len(s) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    s.append(s[-2])
+
+
+_BUILTINS = {
+    "+": _add,
+    "-": _sub,
+    "*": _mul,
+    "/": _div_word,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    def execute(tokens):
+        for token in tokens:
+            token = token.lower()
+            if _NUMBER_RE.match(token):
+                stack.append(int(token))
+            elif token in words:
+                execute(words[token])
+            elif token in _BUILTINS:
+                _BUILTINS[token](stack)
+            else:
+                raise ValueError("undefined operation")
+
+    def expand(tokens):
+        # Expand user words at definition time so a definition captures the
+        # meaning of each word as it existed when the definition was made.
+        out = []
+        for token in tokens:
+            token = token.lower()
+            if token in words:
+                out.extend(expand(words[token]))
+            else:
+                out.append(token)
+        return out
+
+    for line in input_data:
+        tokens = line.split()
+        if tokens and tokens[0] == ":":
+            name = tokens[1].lower()
+            if _NUMBER_RE.match(name):
+                raise ValueError("illegal operation")
+            words[name] = expand(tokens[2:-1])
+        else:
+            execute(tokens)
+
+    return stack

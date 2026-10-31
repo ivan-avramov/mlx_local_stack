@@ -1,0 +1,113 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// term is a letter's signed contribution to one column of the sum.
+type term struct {
+	letter string
+	coef   int
+}
+
+// Solve solves an alphametic puzzle of the form
+// "WORD + WORD + ... == WORD" and returns the digit assigned to each
+// letter, or an error if the puzzle has no solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, errors.New("invalid puzzle: expected exactly one '=='")
+	}
+
+	addends := strings.Fields(strings.ReplaceAll(eq[0], "+", " "))
+	results := strings.Fields(strings.ReplaceAll(eq[1], "+", " "))
+
+	// coeff[letter][col] is the letter's signed contribution to the column
+	// at distance col from the right: +1 per occurrence in an addend,
+	// -1 per occurrence in the result.
+	coeff := make(map[string]map[int]int)
+	leading := make(map[string]bool)
+	maxCol := 0
+
+	addWord := func(word string, sign int) {
+		if len(word) > 1 {
+			leading[word[:1]] = true
+		}
+		for i := 0; i < len(word); i++ {
+			letter := word[i : i+1]
+			col := len(word) - 1 - i
+			if coeff[letter] == nil {
+				coeff[letter] = make(map[int]int)
+			}
+			coeff[letter][col] += sign
+			if col > maxCol {
+				maxCol = col
+			}
+		}
+	}
+
+	for _, w := range addends {
+		addWord(w, 1)
+	}
+	for _, w := range results {
+		addWord(w, -1)
+	}
+
+	if len(coeff) > 10 {
+		return nil, errors.New("puzzle has more than ten distinct letters")
+	}
+
+	// Group each column's terms by letter, dropping terms whose net
+	// coefficient is zero.
+	cols := make([][]term, maxCol+1)
+	for letter, byCol := range coeff {
+		for col, c := range byCol {
+			if c != 0 {
+				cols[col] = append(cols[col], term{letter, c})
+			}
+		}
+	}
+
+	assignment := make(map[string]int)
+	used := make([]bool, 10)
+
+	// solve tries to satisfy column col, whose terms are indexed from idx,
+	// given the carry flowing into the column and the running sum of the
+	// terms already processed in this column.
+	var solve func(col, carry, idx, sum int) bool
+	solve = func(col, carry, idx, sum int) bool {
+		if col > maxCol {
+			return carry == 0
+		}
+		if idx == len(cols[col]) {
+			total := carry + sum
+			if total%10 != 0 {
+				return false
+			}
+			return solve(col+1, total/10, 0, 0)
+		}
+		t := cols[col][idx]
+		if v, ok := assignment[t.letter]; ok {
+			return solve(col, carry, idx+1, sum+t.coef*v)
+		}
+		for d := 0; d <= 9; d++ {
+			if used[d] || (leading[t.letter] && d == 0) {
+				continue
+			}
+			assignment[t.letter] = d
+			used[d] = true
+			if solve(col, carry, idx+1, sum+t.coef*d) {
+				return true
+			}
+			used[d] = false
+			delete(assignment, t.letter)
+		}
+		return false
+	}
+
+	if !solve(0, 0, 0, 0) {
+		return nil, errors.New("puzzle has no solution")
+	}
+	return assignment, nil
+}

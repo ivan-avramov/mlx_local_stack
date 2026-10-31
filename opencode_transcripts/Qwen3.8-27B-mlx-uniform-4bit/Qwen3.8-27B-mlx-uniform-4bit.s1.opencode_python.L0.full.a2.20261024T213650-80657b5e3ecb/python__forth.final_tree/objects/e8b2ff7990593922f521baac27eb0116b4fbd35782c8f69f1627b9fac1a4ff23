@@ -1,0 +1,139 @@
+"""A very simple evaluator for a small subset of Forth.
+
+Supports integer arithmetic (+, -, *, /), stack manipulation
+(dup, drop, swap, over) and user-defined words via
+``: word-name definition ;``.
+"""
+
+import re
+
+
+class StackUnderflowError(Exception):
+    """Raised when a word needs more values than are on the stack."""
+
+
+_NUMBER_RE = re.compile(r"^-?\d+$")
+
+
+def _pop(stack, count):
+    if len(stack) < count:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return [stack.pop() for _ in range(count)]
+
+
+def _add(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a + b)
+
+
+def _subtract(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a - b)
+
+
+def _multiply(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a * b)
+
+
+def _divide(stack):
+    b, a = _pop(stack, 2)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    stack.append(a // b)
+
+
+def _dup(stack):
+    (a,) = _pop(stack, 1)
+    stack.append(a)
+    stack.append(a)
+
+
+def _drop(stack):
+    _pop(stack, 1)
+
+
+def _swap(stack):
+    b, a = _pop(stack, 2)
+    stack.append(b)
+    stack.append(a)
+
+
+def _over(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a)
+    stack.append(b)
+    stack.append(a)
+
+
+_BUILTIN_WORDS = {
+    "+": _add,
+    "-": _subtract,
+    "*": _multiply,
+    "/": _divide,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def _is_number(token):
+    return _NUMBER_RE.match(token) is not None
+
+
+def _compile(token, words):
+    """Compile a single token into a list of primitives.
+
+    A number compiles to itself; a word compiles to the (already
+    expanded) definition it currently refers to, so that definitions
+    capture the meaning of the words they use at definition time.
+    """
+    if _is_number(token):
+        return [int(token)]
+    word = words.get(token.lower())
+    if word is None:
+        raise ValueError("undefined operation")
+    return word
+
+
+def _execute(token, words, stack):
+    if _is_number(token):
+        stack.append(int(token))
+        return
+    word = words.get(token.lower())
+    if word is None:
+        raise ValueError("undefined operation")
+    for primitive in word:
+        if isinstance(primitive, int):
+            stack.append(primitive)
+        else:
+            _BUILTIN_WORDS[primitive](stack)
+
+
+def evaluate(input_data):
+    stack = []
+    words = {name: [name] for name in _BUILTIN_WORDS}
+
+    for line in input_data:
+        tokens = line.split()
+        if not tokens:
+            continue
+        if tokens[0] == ":":
+            if len(tokens) < 2:
+                raise ValueError("illegal operation")
+            name = tokens[1].lower()
+            if _is_number(tokens[1]):
+                raise ValueError("illegal operation")
+            body_tokens = tokens[2:]
+            if ";" in body_tokens:
+                body_tokens = body_tokens[: body_tokens.index(";")]
+            body = []
+            for token in body_tokens:
+                body.extend(_compile(token, words))
+            words[name] = body
+        else:
+            for token in tokens:
+                _execute(token, words, stack)
+
+    return stack

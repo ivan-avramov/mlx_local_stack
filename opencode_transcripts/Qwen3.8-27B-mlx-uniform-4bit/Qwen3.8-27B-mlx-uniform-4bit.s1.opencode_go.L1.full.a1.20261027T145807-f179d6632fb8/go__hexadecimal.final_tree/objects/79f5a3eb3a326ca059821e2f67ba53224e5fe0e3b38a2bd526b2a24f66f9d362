@@ -1,0 +1,66 @@
+package hexadecimal
+
+import (
+	"errors"
+	"strings"
+)
+
+// Sentinel errors returned by ParseHex.
+var (
+	errSyntax = errors.New("syntax error: invalid hexadecimal string")
+	errRange  = errors.New("range error: value out of range for int64")
+)
+
+// maxInt64 is the maximum value of a signed 64-bit integer.
+const maxInt64 = int64(1<<63 - 1)
+
+// ParseHex converts a hexadecimal string (e.g. "10af8c") to its decimal
+// equivalent using first principles: each character is mapped to its digit
+// value and accumulated, with an explicit overflow check.
+func ParseHex(in string) (int64, error) {
+	if in == "" {
+		return 0, errSyntax
+	}
+
+	var n int64
+	for i := 0; i < len(in); i++ {
+		var digit int64
+		switch c := in[i]; {
+		case c >= '0' && c <= '9':
+			digit = int64(c - '0')
+		case c >= 'a' && c <= 'f':
+			digit = int64(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			digit = int64(c-'A') + 10
+		default:
+			return 0, errSyntax
+		}
+
+		// Overflow check: n*16+digit must not exceed maxInt64.
+		if n > (maxInt64-digit)/16 {
+			return 0, errRange
+		}
+		n = n*16 + digit
+	}
+	return n, nil
+}
+
+// HandleErrors takes a list of inputs for ParseHex and returns a matching
+// list of "none", "syntax", or "range" according to the error result.
+func HandleErrors(inputs []string) []string {
+	results := make([]string, len(inputs))
+	for i, in := range inputs {
+		_, err := ParseHex(in)
+		switch {
+		case err == nil:
+			results[i] = "none"
+		case strings.Contains(strings.ToLower(err.Error()), "syntax"):
+			results[i] = "syntax"
+		case strings.Contains(strings.ToLower(err.Error()), "range"):
+			results[i] = "range"
+		default:
+			results[i] = "syntax"
+		}
+	}
+	return results
+}

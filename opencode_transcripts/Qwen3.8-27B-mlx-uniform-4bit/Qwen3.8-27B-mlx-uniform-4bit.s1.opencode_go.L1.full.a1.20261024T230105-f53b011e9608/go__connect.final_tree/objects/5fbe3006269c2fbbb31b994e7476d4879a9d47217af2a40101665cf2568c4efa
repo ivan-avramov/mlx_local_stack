@@ -1,0 +1,95 @@
+package connect
+
+// ResultOf computes the winner of a game of Hex / Polygon.
+//
+// The board is a parallelogram of hexagonal cells given as rows of strings.
+// Spaces are ignored; they exist only for readability. "O" plays from top to
+// bottom and "X" plays from left to right: the first player to connect their
+// stones to the opposite side wins.
+//
+// It returns "O" or "X" if that player has a connecting path, or "" if nobody
+// has won yet.
+func ResultOf(lines []string) (string, error) {
+	// Build the grid, dropping the spaces used for alignment.
+	grid := make([][]rune, 0, len(lines))
+	cols := 0
+	for _, line := range lines {
+		row := make([]rune, 0, len(line))
+		for _, r := range line {
+			if r != ' ' {
+				row = append(row, r)
+			}
+		}
+		grid = append(grid, row)
+		if len(row) > cols {
+			cols = len(row)
+		}
+	}
+	rows := len(grid)
+	if rows == 0 {
+		return "", nil
+	}
+
+	inBounds := func(r, c int) bool {
+		return r >= 0 && r < rows && c >= 0 && c < len(grid[r])
+	}
+
+	// The six hexagonal neighbours of a cell. The board is a parallelogram
+	// leaning to the right, so each row is shifted half a cell relative to the
+	// row above it: the upper neighbours sit at (r-1, c) and (r-1, c+1) and the
+	// lower neighbours at (r+1, c-1) and (r+1, c).
+	neighbours := [][2]int{
+		{0, -1}, {0, 1},   // left, right
+		{-1, 0}, {-1, 1},  // upper-left, upper-right
+		{1, -1}, {1, 0},   // lower-left, lower-right
+	}
+
+	// connected reports whether any of the player's cells on the start edge is
+	// connected (through the player's own cells) to any of their cells on the
+	// end edge.
+	connected := func(player rune, onStart, onEnd func(r, c int) bool) bool {
+		visited := make([][]bool, rows)
+		for i := range visited {
+			visited[i] = make([]bool, len(grid[i]))
+		}
+		stack := [][2]int{}
+		for r := 0; r < rows; r++ {
+			for c := 0; c < len(grid[r]); c++ {
+				if grid[r][c] == player && onStart(r, c) {
+					visited[r][c] = true
+					stack = append(stack, [2]int{r, c})
+				}
+			}
+		}
+		for len(stack) > 0 {
+			cur := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			if onEnd(cur[0], cur[1]) {
+				return true
+			}
+			for _, d := range neighbours {
+				nr, nc := cur[0]+d[0], cur[1]+d[1]
+				if !inBounds(nr, nc) || visited[nr][nc] || grid[nr][nc] != player {
+					continue
+				}
+				visited[nr][nc] = true
+				stack = append(stack, [2]int{nr, nc})
+			}
+		}
+		return false
+	}
+
+	// O wins by connecting the top row to the bottom row.
+	if connected('O',
+		func(r, c int) bool { return r == 0 },
+		func(r, c int) bool { return r == rows-1 }) {
+		return "O", nil
+	}
+	// X wins by connecting the left column to the right column.
+	if connected('X',
+		func(r, c int) bool { return c == 0 },
+		func(r, c int) bool { return c == cols-1 }) {
+		return "X", nil
+	}
+	return "", nil
+}

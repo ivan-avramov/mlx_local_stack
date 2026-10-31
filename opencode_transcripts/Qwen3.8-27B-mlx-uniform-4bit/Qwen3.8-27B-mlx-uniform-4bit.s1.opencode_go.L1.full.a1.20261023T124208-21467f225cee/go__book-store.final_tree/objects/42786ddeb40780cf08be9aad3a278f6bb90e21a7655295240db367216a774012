@@ -1,0 +1,55 @@
+package bookstore
+
+import "sort"
+
+// groupCosts holds the total cost (in cents) of a group of a given size.
+// Index 0 is unused; a group of size n has groupCosts[n].
+var groupCosts = []int{0, 800, 1520, 2160, 2560, 3000}
+
+// Cost returns the minimum total price, in cents, for the given basket of
+// books. Each book is identified by an integer 1-5 (the five titles in the
+// series). Books are grouped into sets of distinct titles to maximize the
+// discount.
+func Cost(books []int) int {
+	var counts [5]int
+	for _, b := range books {
+		if b >= 1 && b <= 5 {
+			counts[b-1]++
+		}
+	}
+
+	// Sort counts in descending order so the most plentiful titles come first.
+	sort.Slice(counts[:], func(i, j int) bool { return counts[i] > counts[j] })
+
+	// Build groups "layer by layer": each group takes one copy of every title
+	// that still has stock. This is optimal on its own, with one exception:
+	// a group of five plus a group of three (3000 + 2160 = 5160) is more
+	// expensive than two groups of four (2560 + 2560 = 5120).
+	var groups [6]int
+	for {
+		size := 0
+		for i := 0; i < 5; i++ {
+			if counts[i] > 0 {
+				counts[i]--
+				size++
+			}
+		}
+		if size == 0 {
+			break
+		}
+		groups[size]++
+	}
+
+	// Trade each (five, three) pair for two fours to capture the savings.
+	for groups[5] > 0 && groups[3] > 0 {
+		groups[5]--
+		groups[3]--
+		groups[4] += 2
+	}
+
+	total := 0
+	for size := 1; size <= 5; size++ {
+		total += groups[size] * groupCosts[size]
+	}
+	return total
+}

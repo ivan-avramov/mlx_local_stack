@@ -1,0 +1,32 @@
+def can_chain(dominoes):
+    if not dominoes:
+        return []
+
+    def search(remaining, chain):
+        if not remaining:
+            if chain[0][0] == chain[-1][1]:
+                return chain
+            return None
+        last = chain[-1][1]
+        for i, (a, b) in enumerate(remaining):
+            rest = remaining[:i] + remaining[i + 1:]
+            if a == last:
+                result = search(rest, chain + [(a, b)])
+                if result is not None:
+                    return result
+            if b == last and b != a:
+                result = search(rest, chain + [(b, a)])
+                if result is not None:
+                    return result
+        return None
+
+    for i, (a, b) in enumerate(dominoes):
+        rest = dominoes[:i] + dominoes[i + 1:]
+        result = search(rest, [(a, b)])
+        if result is not None:
+            return result
+        if b != a:
+            result = search(rest, [(b, a)])
+            if result is not None:
+                return result
+    return None

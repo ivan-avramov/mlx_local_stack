@@ -1,0 +1,27 @@
+VOWELS = "aeiou"
+
+
+def _translate_word(word):
+    # Rule 1: word begins with a vowel, or with "xr" or "yt"
+    if word[0] in VOWELS or word[:2] in ("xr", "yt"):
+        return word + "ay"
+
+    # Find where the leading consonant cluster ends:
+    # the first vowel, or a "y" that is not in the first position
+    # (Rules 2 and 4).
+    split = len(word)
+    for i, letter in enumerate(word):
+        if letter in VOWELS or (i > 0 and letter == "y"):
+            split = i
+            break
+
+    # Rule 3: if the cluster ends in "q" and is followed by "u",
+    # move the "qu" to the end as well
+    if split > 0 and word[split - 1:split + 1] == "qu":
+        split += 1
+
+    return word[split:] + word[:split] + "ay"
+
+
+def translate(text):
+    return " ".join(_translate_word(word) for word in text.split(" "))

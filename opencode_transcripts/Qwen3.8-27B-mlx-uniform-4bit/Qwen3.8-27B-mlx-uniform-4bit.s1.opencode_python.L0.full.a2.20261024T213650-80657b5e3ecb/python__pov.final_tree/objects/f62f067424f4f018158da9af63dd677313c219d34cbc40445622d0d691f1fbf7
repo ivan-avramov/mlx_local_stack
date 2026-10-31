@@ -1,0 +1,67 @@
+from json import dumps
+
+
+class Tree:
+    def __init__(self, label, children=None):
+        self.label = label
+        self.children = children if children is not None else []
+
+    def __dict__(self):
+        return {self.label: [c.__dict__() for c in sorted(self.children)]}
+
+    def __str__(self, indent=None):
+        return dumps(self.__dict__(), indent=indent)
+
+    def __lt__(self, other):
+        return self.label < other.label
+
+    def __eq__(self, other):
+        return self.__dict__() == other.__dict__()
+
+    def from_pov(self, from_node):
+        path = self._path_to(from_node)
+        if path is None:
+            raise ValueError("Tree could not be reoriented")
+
+        result = None
+        for i, node in enumerate(path):
+            if i == len(path) - 1:
+                # The new root (from_node): keep all of its original children.
+                children = list(node.children)
+            elif i == 0:
+                # The original root: drop the path child, no parent to add.
+                children = [c for c in node.children if c is not path[1]]
+            else:
+                # An intermediate node: drop the path child, add the path parent.
+                children = [c for c in node.children if c is not path[i + 1]]
+            if i > 0:
+                children.append(result)
+            result = Tree(node.label, children)
+        return result
+
+    def path_to(self, from_node, to_node):
+        rerooted = self.from_pov(from_node)
+        path = rerooted._path_labels(to_node)
+        if path is None:
+            raise ValueError("No path found")
+        return path
+
+    def _path_to(self, target):
+        """Return the list of node objects from self to target (inclusive), or None."""
+        if self.label == target:
+            return [self]
+        for child in self.children:
+            sub = child._path_to(target)
+            if sub is not None:
+                return [self] + sub
+        return None
+
+    def _path_labels(self, target):
+        """Return the list of labels from self to target (inclusive), or None."""
+        if self.label == target:
+            return [self.label]
+        for child in self.children:
+            sub = child._path_labels(target)
+            if sub is not None:
+                return [self.label] + sub
+        return None

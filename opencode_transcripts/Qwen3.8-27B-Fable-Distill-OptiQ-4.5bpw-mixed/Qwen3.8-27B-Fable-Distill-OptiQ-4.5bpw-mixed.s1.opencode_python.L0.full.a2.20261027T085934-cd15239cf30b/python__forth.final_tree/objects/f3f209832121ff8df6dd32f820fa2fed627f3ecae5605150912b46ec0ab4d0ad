@@ -1,0 +1,112 @@
+import re
+
+_NUMBER_RE = re.compile(r"^-?\d+$")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _is_number(token):
+    return bool(_NUMBER_RE.match(token))
+
+
+def _underflow():
+    raise StackUnderflowError("Insufficient number of items in stack")
+
+
+def _execute(token, stack):
+    if _is_number(token):
+        stack.append(int(token))
+    elif token in ("+", "-", "*"):
+        if len(stack) < 2:
+            _underflow()
+        b = stack.pop()
+        a = stack.pop()
+        if token == "+":
+            stack.append(a + b)
+        elif token == "-":
+            stack.append(a - b)
+        else:
+            stack.append(a * b)
+    elif token == "/":
+        if len(stack) < 2:
+            _underflow()
+        divisor = stack.pop()
+        if divisor == 0:
+            raise ZeroDivisionError("divide by zero")
+        dividend = stack.pop()
+        quotient = abs(dividend) // abs(divisor)
+        if (dividend < 0) ^ (divisor < 0):
+            quotient = -quotient
+        stack.append(quotient)
+    elif token == "dup":
+        if not stack:
+            _underflow()
+        stack.append(stack[-1])
+    elif token == "drop":
+        if not stack:
+            _underflow()
+        stack.pop()
+    elif token == "swap":
+        if len(stack) < 2:
+            _underflow()
+        stack[-1], stack[-2] = stack[-2], stack[-1]
+    elif token == "over":
+        if len(stack) < 2:
+            _underflow()
+        stack.append(stack[-2])
+    else:
+        raise ValueError("undefined operation")
+
+
+def _expand(body, definitions):
+    # Expand a definition immediately so that words it references keep the
+    # meaning they had at the time the definition was made.
+    expanded = []
+    for token in body:
+        if _is_number(token):
+            expanded.append(token)
+        elif token in definitions:
+            expanded.extend(definitions[token])
+        else:
+            expanded.append(token)
+    return expanded
+
+
+def evaluate(input_data):
+    stack = []
+    definitions = {}
+
+    for line in input_data:
+        tokens = [token.lower() for token in line.split()]
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token == ":":
+                if i + 1 >= len(tokens):
+                    raise ValueError("illegal operation")
+                name = tokens[i + 1]
+                if _is_number(name):
+                    raise ValueError("illegal operation")
+                body = []
+                i += 2
+                while i < len(tokens) and tokens[i] != ";":
+                    body.append(tokens[i])
+                    i += 1
+                if i >= len(tokens):
+                    raise ValueError("illegal operation")
+                i += 1  # skip the terminating ';'
+                definitions[name] = _expand(body, definitions)
+            elif _is_number(token):
+                stack.append(int(token))
+                i += 1
+            elif token in definitions:
+                for body_token in definitions[token]:
+                    _execute(body_token, stack)
+                i += 1
+            else:
+                _execute(token, stack)
+                i += 1
+
+    return stack

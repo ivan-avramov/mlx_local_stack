@@ -1,0 +1,48 @@
+import math
+
+ALPHABET_SIZE = 26
+GROUP_SIZE = 5
+
+
+def _check_coprime(a):
+    if math.gcd(a, ALPHABET_SIZE) != 1:
+        raise ValueError("a and m must be coprime.")
+
+
+def encode(plain_text, a, b):
+    _check_coprime(a)
+
+    ciphertext = []
+    for char in plain_text.lower():
+        if char.isalpha():
+            index = ord(char) - ord("a")
+            encrypted = (a * index + b) % ALPHABET_SIZE
+            ciphertext.append(chr(ord("a") + encrypted))
+        elif char.isdigit():
+            ciphertext.append(char)
+
+    groups = [
+        "".join(ciphertext[i : i + GROUP_SIZE])
+        for i in range(0, len(ciphertext), GROUP_SIZE)
+    ]
+    return " ".join(groups)
+
+
+def decode(ciphered_text, a, b):
+    _check_coprime(a)
+
+    # Find the modular multiplicative inverse of a mod m.
+    inverse_a = next(
+        x for x in range(ALPHABET_SIZE) if (a * x) % ALPHABET_SIZE == 1
+    )
+
+    plaintext = []
+    for char in ciphered_text:
+        if char.isalpha():
+            index = ord(char) - ord("a")
+            decrypted = (inverse_a * (index - b)) % ALPHABET_SIZE
+            plaintext.append(chr(ord("a") + decrypted))
+        elif char.isdigit():
+            plaintext.append(char)
+
+    return "".join(plaintext)

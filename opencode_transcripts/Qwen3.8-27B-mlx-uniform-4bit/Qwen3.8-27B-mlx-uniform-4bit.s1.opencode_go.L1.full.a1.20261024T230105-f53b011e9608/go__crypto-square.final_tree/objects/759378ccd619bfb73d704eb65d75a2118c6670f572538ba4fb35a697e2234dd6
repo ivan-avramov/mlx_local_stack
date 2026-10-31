@@ -1,0 +1,44 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode normalizes the plaintext (lower-cased, spaces and punctuation
+// removed), arranges it in a rectangle as square as possible, and returns
+// the columns read left to right, separated by single spaces. Columns that
+// fall short of the rectangle's height are padded with a trailing space.
+func Encode(pt string) string {
+	// Normalize: keep only letters and digits, lower-cased.
+	var m []rune
+	for _, r := range pt {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			m = append(m, unicode.ToLower(r))
+		}
+	}
+	n := len(m)
+	if n == 0 {
+		return ""
+	}
+
+	// Smallest c with c >= r and c - r <= 1, i.e. c = ceil(sqrt(n)).
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := (n + c - 1) / c
+
+	chunks := make([]string, c)
+	for j := 0; j < c; j++ {
+		var b strings.Builder
+		b.Grow(r)
+		for i := 0; i < r; i++ {
+			if i*c+j < n {
+				b.WriteRune(m[i*c+j])
+			} else {
+				b.WriteRune(' ')
+			}
+		}
+		chunks[j] = b.String()
+	}
+	return strings.Join(chunks, " ")
+}

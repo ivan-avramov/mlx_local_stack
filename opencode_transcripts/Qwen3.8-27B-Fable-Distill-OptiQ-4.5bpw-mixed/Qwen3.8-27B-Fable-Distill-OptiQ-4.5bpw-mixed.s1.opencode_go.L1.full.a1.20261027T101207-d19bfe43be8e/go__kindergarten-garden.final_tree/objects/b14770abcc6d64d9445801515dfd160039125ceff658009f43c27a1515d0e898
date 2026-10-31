@@ -1,0 +1,80 @@
+package kindergarten
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Garden holds a diagram and the children assigned to it.
+type Garden struct {
+	rows     [2]string
+	children map[string]int // child name -> index of their first cup
+}
+
+// plantNames maps a diagram cup code to the plant's name.
+var plantNames = map[byte]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// NewGarden parses the diagram and assigns cups to the children in
+// alphabetical order. The diagram argument starts each row with a '\n'.
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	if !strings.HasPrefix(diagram, "\n") {
+		return nil, errors.New("diagram must start with a newline")
+	}
+	rows := strings.Split(diagram, "\n")
+	if len(rows) != 3 || rows[0] != "" {
+		return nil, errors.New("diagram must have exactly two rows")
+	}
+	row1, row2 := rows[1], rows[2]
+	if len(row1) != len(row2) {
+		return nil, errors.New("mismatched rows")
+	}
+	if len(row1)%2 != 0 {
+		return nil, errors.New("odd number of cups")
+	}
+	for i := 0; i < len(row1)+len(row2); i++ {
+		code := (row1 + row2)[i]
+		if _, ok := plantNames[code]; !ok {
+			return nil, fmt.Errorf("invalid cup code %q", code)
+		}
+	}
+	// Sort a copy so the caller's slice is not modified.
+	names := make([]string, len(children))
+	copy(names, children)
+	sort.Strings(names)
+
+	g := &Garden{
+		rows:     [2]string{row1, row2},
+		children: make(map[string]int, len(names)),
+	}
+	for i, name := range names {
+		if _, exists := g.children[name]; exists {
+			return nil, fmt.Errorf("duplicate name %q", name)
+		}
+		g.children[name] = i
+	}
+	return g, nil
+}
+
+// Plants returns the four plants belonging to the named child, in the
+// order: first row left cup, first row right cup, second row left cup,
+// second row right cup. The second return value reports whether the
+// child is in the garden.
+func (g *Garden) Plants(child string) ([]string, bool) {
+	idx, ok := g.children[child]
+	if !ok || 2*idx+1 >= len(g.rows[0]) {
+		return nil, false
+	}
+	return []string{
+		plantNames[g.rows[0][2*idx]],
+		plantNames[g.rows[0][2*idx+1]],
+		plantNames[g.rows[1][2*idx]],
+		plantNames[g.rows[1][2*idx+1]],
+	}, true
+}

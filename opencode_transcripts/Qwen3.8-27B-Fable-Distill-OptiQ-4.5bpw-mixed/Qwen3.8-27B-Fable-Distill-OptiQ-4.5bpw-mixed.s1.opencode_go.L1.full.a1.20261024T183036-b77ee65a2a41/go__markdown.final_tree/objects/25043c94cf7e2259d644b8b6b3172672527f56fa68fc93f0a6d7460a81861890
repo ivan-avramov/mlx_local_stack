@@ -1,0 +1,96 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//
+// The original implementation walked the input one byte at a time, threading a
+// handful of ad-hoc flags (header level, list depth, "list opened", "header
+// encountered") through a single loop. That made the control flow hard to
+// follow.
+//
+// The rewrite processes the input line by line, which matches how markdown is
+// structured. Each line is independently one of three things:
+//
+//   - a header,  when it starts with 1-6 '#' followed by a space
+//   - a list item, when it starts with "* "
+//   - a paragraph, otherwise
+//
+// Bold and italic emphasis is converted up front, before the lines are split,
+// because the original applied it to the whole string as well.
+func Render(markdown string) string {
+	markdown = applyEmphasis(markdown)
+
+	var html strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if isListItem(line) {
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + listItemContent(line) + "</li>")
+			continue
+		}
+
+		if inList {
+			html.WriteString("</ul>")
+			inList = false
+		}
+		html.WriteString(renderLine(line))
+	}
+
+	if inList {
+		html.WriteString("</ul>")
+	}
+
+	return html.String()
+}
+
+// applyEmphasis converts the first bold (__text__) and italic (_text_) spans
+// into their HTML equivalents.
+func applyEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// isListItem reports whether line starts a list item ("* ...").
+func isListItem(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}
+
+// listItemContent returns the text of a list item, without the leading "* ".
+func listItemContent(line string) string {
+	return strings.TrimPrefix(line, "* ")
+}
+
+// renderLine renders a non-list line, either as a header or a paragraph.
+func renderLine(line string) string {
+	if level := headerLevel(line); level > 0 {
+		return fmt.Sprintf("<h%d>%s</h%d>", level, line[level+1:], level)
+	}
+	return "<p>" + line + "</p>"
+}
+
+// headerLevel returns the level (1-6) if line is a header, otherwise 0.
+// A header is 1-6 leading '#' characters followed by a space. Seven or more
+// leading hashes are not a header and are rendered as a paragraph instead.
+func headerLevel(line string) int {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level >= 1 && level <= 6 && level < len(line) && line[level] == ' ' {
+		return level
+	}
+	return 0
+}

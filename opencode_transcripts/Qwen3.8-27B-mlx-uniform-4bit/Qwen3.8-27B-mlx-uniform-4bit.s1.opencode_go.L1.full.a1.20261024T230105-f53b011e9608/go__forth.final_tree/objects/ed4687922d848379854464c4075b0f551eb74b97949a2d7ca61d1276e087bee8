@@ -1,0 +1,227 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+var (
+	errEmptyStack = errors.New("empty stack")
+	errOneValue   = errors.New("only one value on the stack")
+	errDivideZero = errors.New("divide by zero")
+	errUndefined  = errors.New("undefined operation")
+	errIllegal    = errors.New("illegal operation")
+)
+
+// op is a single compiled Forth operation.
+type op func(stack *[]int) error
+
+// word is a compiled Forth word: a sequence of operations.
+type word []op
+
+// token is a single token of a Forth line: either a number or a word.
+type token struct {
+	num   int
+	word  string
+	isNum bool
+}
+
+// tokenize splits a line into tokens. A number is an optional '-'
+// followed by one or more digits; anything else is a word (lowercased,
+// since words are case-insensitive).
+func tokenize(line string) []token {
+	var toks []token
+	for _, field := range strings.Fields(line) {
+		if n, ok := parseNumber(field); ok {
+			toks = append(toks, token{num: n, isNum: true})
+		} else {
+			toks = append(toks, token{word: strings.ToLower(field)})
+		}
+	}
+	return toks
+}
+
+// parseNumber reports whether s is a (possibly negative) integer.
+func parseNumber(s string) (int, bool) {
+	i := 0
+	if s[0] == '-' {
+		i = 1
+	}
+	if i == len(s) {
+		return 0, false
+	}
+	for _, c := range s[i:] {
+		if c < '0' || c > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// builtins are the predefined words.
+var builtins = map[string]word{
+	"+":    {binop(func(a, b int) (int, error) { return a + b, nil })},
+	"-":    {binop(func(a, b int) (int, error) { return a - b, nil })},
+	"*":    {binop(func(a, b int) (int, error) { return a * b, nil })},
+	"/":    {binop(func(a, b int) (int, error) { if b == 0 { return 0, errDivideZero }; return a / b, nil })},
+	"dup":  {dup},
+	"drop": {drop},
+	"swap": {swap},
+	"over": {over},
+}
+
+// binop builds an operation that pops two values and pushes f(a, b),
+// where a was below b on the stack.
+func binop(f func(a, b int) (int, error)) op {
+	return func(stack *[]int) error {
+		a, b, err := popTwo(stack)
+		if err != nil {
+			return err
+		}
+		v, err := f(a, b)
+		if err != nil {
+			return err
+		}
+		*stack = append(*stack, v)
+		return nil
+	}
+}
+
+func popTwo(stack *[]int) (int, int, error) {
+	s := *stack
+	if len(s) < 2 {
+		if len(s) == 1 {
+			return 0, 0, errOneValue
+		}
+		return 0, 0, errEmptyStack
+	}
+	a := s[len(s)-2]
+	b := s[len(s)-1]
+	*stack = s[:len(s)-2]
+	return a, b, nil
+}
+
+func dup(stack *[]int) error {
+	s := *stack
+	if len(s) == 0 {
+		return errEmptyStack
+	}
+	*stack = append(s, s[len(s)-1])
+	return nil
+}
+
+func drop(stack *[]int) error {
+	s := *stack
+	if len(s) == 0 {
+		return errEmptyStack
+	}
+	*stack = s[:len(s)-1]
+	return nil
+}
+
+func swap(stack *[]int) error {
+	s := *stack
+	if len(s) < 2 {
+		if len(s) == 1 {
+			return errOneValue
+		}
+		return errEmptyStack
+	}
+	s[len(s)-1], s[len(s)-2] = s[len(s)-2], s[len(s)-1]
+	return nil
+}
+
+func over(stack *[]int) error {
+	s := *stack
+	if len(s) < 2 {
+		if len(s) == 1 {
+			return errOneValue
+		}
+		return errEmptyStack
+	}
+	*stack = append(s, s[len(s)-2])
+	return nil
+}
+
+// Forth evaluates the input lines and returns the resulting stack.
+// Definitions (": name body ;") persist across lines; words are
+// case-insensitive and may override built-ins.
+func Forth(input []string) ([]int, error) {
+	words := make(map[string]word, len(builtins))
+	for name, def := range builtins {
+		words[name] = def
+	}
+	var stack []int
+	for _, line := range input {
+		toks := tokenize(line)
+		if len(toks) == 0 {
+			continue
+		}
+		if !toks[0].isNum && toks[0].word == ":" {
+			if err := define(toks, words); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		for _, t := range toks {
+			if t.isNum {
+				stack = append(stack, t.num)
+				continue
+			}
+			def, ok := words[t.word]
+			if !ok {
+				return nil, errUndefined
+			}
+			for _, o := range def {
+				if err := o(&stack); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	if stack == nil {
+		stack = []int{}
+	}
+	return stack, nil
+}
+
+// define compiles a ": name body ;" definition into the word table.
+// Word references in the body are resolved against the table as it
+// stands, so a word that refers to its own name captures the previous
+// definition.
+func define(toks []token, words map[string]word) error {
+	if len(toks) < 3 {
+		return errIllegal
+	}
+	name := toks[1]
+	if name.isNum {
+		return errIllegal
+	}
+	last := toks[len(toks)-1]
+	if last.isNum || last.word != ";" {
+		return errIllegal
+	}
+	var def word
+	for _, t := range toks[2 : len(toks)-1] {
+		if t.isNum {
+			n := t.num
+			def = append(def, func(stack *[]int) error {
+				*stack = append(*stack, n)
+				return nil
+			})
+		} else {
+			d, ok := words[t.word]
+			if !ok {
+				return errUndefined
+			}
+			def = append(def, d...)
+		}
+	}
+	words[name.word] = def
+	return nil
+}

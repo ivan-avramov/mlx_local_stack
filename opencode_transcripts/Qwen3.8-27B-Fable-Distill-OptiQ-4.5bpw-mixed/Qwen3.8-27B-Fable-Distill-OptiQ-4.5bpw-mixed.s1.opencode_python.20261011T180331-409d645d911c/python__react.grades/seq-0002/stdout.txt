@@ -1,0 +1,165 @@
+.....FF.F.....                                                           [100%]
+=================================== FAILURES ===================================
+_ ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change>
+
+    def test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        always_two = ComputeCell(
+            [
+                plus_one,
+                minus_one,
+            ],
+            lambda inputs: inputs[0] - inputs[1],
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        always_two.add_callback(callback1)
+>       input.value = 2
+        ^^^^^^^^^^^
+
+react_test.py:257: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:14: in value
+    callback()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x10aa539b0>
+
+    def _recompute(self):
+        new_value = self._compute_function(
+            [input_cell.value for input_cell in self._inputs]
+        )
+        if new_value != self._value:
+            self._value = new_value
+            for callback in list(self._callbacks):
+>               callback(self._value)
+E               TypeError: ComputeCell._recompute() takes 1 positional argument but 2 were given
+
+react.py:46: TypeError
+_ ReactTest.test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change>
+
+    def test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one1 = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        minus_one2 = ComputeCell(
+            [
+                minus_one1,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        output = ComputeCell(
+            [
+                plus_one,
+                minus_one2,
+            ],
+            lambda inputs: inputs[0] * inputs[1],
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        output.add_callback(callback1)
+>       input.value = 4
+        ^^^^^^^^^^^
+
+react_test.py:228: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:14: in value
+    callback()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x10aa52de0>
+
+    def _recompute(self):
+        new_value = self._compute_function(
+            [input_cell.value for input_cell in self._inputs]
+        )
+        if new_value != self._value:
+            self._value = new_value
+            for callback in list(self._callbacks):
+>               callback(self._value)
+E               TypeError: ComputeCell._recompute() takes 1 positional argument but 2 were given
+
+react.py:46: TypeError
+________ ReactTest.test_compute_cells_can_depend_on_other_compute_cells ________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_can_depend_on_other_compute_cells>
+
+    def test_compute_cells_can_depend_on_other_compute_cells(self):
+        input = InputCell(1)
+        times_two = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 2,
+        )
+        times_thirty = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 30,
+        )
+        output = ComputeCell(
+            [
+                times_two,
+                times_thirty,
+            ],
+            lambda inputs: inputs[0] + inputs[1],
+        )
+        self.assertEqual(output.value, 32)
+>       input.value = 3
+        ^^^^^^^^^^^
+
+react_test.py:79: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:14: in value
+    callback()
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x10aa53b00>
+
+    def _recompute(self):
+        new_value = self._compute_function(
+            [input_cell.value for input_cell in self._inputs]
+        )
+        if new_value != self._value:
+            self._value = new_value
+            for callback in list(self._callbacks):
+>               callback(self._value)
+E               TypeError: ComputeCell._recompute() takes 1 positional argument but 2 were given
+
+react.py:46: TypeError
+=========================== short test summary info ============================
+FAILED react_test.py::ReactTest::test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change
+FAILED react_test.py::ReactTest::test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change
+FAILED react_test.py::ReactTest::test_compute_cells_can_depend_on_other_compute_cells
+3 failed, 11 passed in 0.03s

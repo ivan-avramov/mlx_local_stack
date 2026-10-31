@@ -1,0 +1,225 @@
+package ledger
+
+// FormatLedger renders a nicely formatted ledger for the given currency and
+// locale. Entries are sorted by date, then description, then change (all
+// ascending) and laid out in fixed-width columns.
+//
+// Refactoring log (kept per the exercise instructions):
+//
+//  1. Split the single monolithic FormatLedger into small, single-purpose
+//     helpers: header, row, formatDate, formatChange, and grouping/padding
+//     utilities. Each does one thing and is easy to reason about.
+//  2. Replaced the hand-rolled selection sort (with its m1/m2 boolean-to-int
+//     encoding) with sort.Slice and a readable comparator.
+//  3. Removed the goroutine/channel fan-out ("Parallelism, always a great
+//     idea"); rows are built sequentially in order, which is simpler and
+//     avoids the goroutine-per-entry overhead.
+//  4. Replaced the recursive self-call hack used to validate the currency for
+//     an empty ledger with explicit up-front validation of currency, locale,
+//     and every entry's date.
+//  5. Consolidated the duplicated nl-NL / en-US amount formatting into a single
+//     formatChange that switches on locale, and extracted the thousands-grouping
+//     into a grouped helper.
+//  6. Replaced manual string concatenation with strings.Builder.
+//
+// The input entries slice is never mutated: a copy is sorted.
+
+import (
+	"errors"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+const (
+	dateWidth          = 10
+	descriptionWidth   = 25
+	changeWidth        = 13
+	descriptionTruncAt = 22
+)
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if !isSupportedCurrency(currency) {
+		return "", errInvalidCurrency
+	}
+	if !isSupportedLocale(locale) {
+		return "", errInvalidLocale
+	}
+	for _, e := range entries {
+		if !isValidDate(e.Date) {
+			return "", errInvalidDate
+		}
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, e := range sorted {
+		b.WriteString(row(locale, currency, e))
+	}
+	return b.String(), nil
+}
+
+func isSupportedCurrency(currency string) bool {
+	return currency == "USD" || currency == "EUR"
+}
+
+func isSupportedLocale(locale string) bool {
+	return locale == "en-US" || locale == "nl-NL"
+}
+
+func isValidDate(date string) bool {
+	return len(date) == 10 && date[4] == '-' && date[7] == '-'
+}
+
+func header(locale string) string {
+	dateHdr, descHdr, changeHdr := "Date", "Description", "Change"
+	if locale == "nl-NL" {
+		dateHdr, descHdr, changeHdr = "Datum", "Omschrijving", "Verandering"
+	}
+	return pad(dateHdr, dateWidth) + " | " + pad(descHdr, descriptionWidth) + " | " + changeHdr + "\n"
+}
+
+func row(locale, currency string, e Entry) string {
+	return pad(formatDate(locale, e.Date), dateWidth) + " | " +
+		truncateDescription(e.Description) + " | " +
+		rightPadChange(formatChange(locale, currency, e.Change)) + "\n"
+}
+
+// formatDate converts a "YYYY-MM-DD" date into the locale's display format.
+func formatDate(locale, date string) string {
+	year := date[0:4]
+	month := date[5:7]
+	day := date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year
+	}
+	return month + "/" + day + "/" + year
+}
+
+// truncateDescription fits the description into the description column,
+// truncating overlong values with an ellipsis.
+func truncateDescription(desc string) string {
+	if len(desc) > descriptionWidth {
+		return desc[:descriptionTruncAt] + "..."
+	}
+	return pad(desc, descriptionWidth)
+}
+
+// formatChange renders an amount in cents using the locale's number and
+// currency conventions.
+func formatChange(locale, currency string, change int) string {
+	negative := change < 0
+	cents := change
+	if negative {
+		cents = -cents
+	}
+
+	centsStr := strconv.Itoa(cents)
+	switch len(centsStr) {
+	case 1:
+		centsStr = "00" + centsStr
+	case 2:
+		centsStr = "0" + centsStr
+	}
+	integerPart := centsStr[:len(centsStr)-2]
+	fractionPart := centsStr[len(centsStr)-2:]
+
+	var b strings.Builder
+	if locale == "nl-NL" {
+		b.WriteString(symbol(currency))
+		b.WriteString(" ")
+		b.WriteString(grouped(integerPart, "."))
+		b.WriteString(",")
+		b.WriteString(fractionPart)
+		if negative {
+			b.WriteString("-")
+		} else {
+			b.WriteString(" ")
+		}
+		return b.String()
+	}
+
+	// en-US
+	if negative {
+		b.WriteString("(")
+	}
+	b.WriteString(symbol(currency))
+	b.WriteString(grouped(integerPart, ","))
+	b.WriteString(".")
+	b.WriteString(fractionPart)
+	if negative {
+		b.WriteString(")")
+	} else {
+		b.WriteString(" ")
+	}
+	return b.String()
+}
+
+func symbol(currency string) string {
+	if currency == "EUR" {
+		return "€"
+	}
+	return "$"
+}
+
+// grouped inserts the separator every three digits from the right, e.g.
+// grouped("123456", ".") == "123.456".
+func grouped(s, sep string) string {
+	var parts []string
+	rest := s
+	for len(rest) > 3 {
+		parts = append(parts, rest[len(rest)-3:])
+		rest = rest[:len(rest)-3]
+	}
+	if len(rest) > 0 {
+		parts = append(parts, rest)
+	}
+	// parts is low-to-high; reverse to high-to-low before joining.
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, sep)
+}
+
+// pad left-justifies s to width using spaces.
+func pad(s string, width int) string {
+	if len(s) >= width {
+		return s
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+// rightPadChange right-justifies the change field to changeWidth, measuring
+// the field in runes so multi-byte symbols like € take a single column.
+func rightPadChange(s string) string {
+	runes := utf8.RuneCountInString(s)
+	if runes >= changeWidth {
+		return s
+	}
+	return strings.Repeat(" ", changeWidth-runes) + s
+}

@@ -1,0 +1,139 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form "A + BB == ILL".
+// It returns a map from each letter to its digit, or an error if the
+// puzzle has no valid solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Index(puzzle, "==")
+	if eq < 0 {
+		return nil, errors.New("invalid puzzle: missing '=='")
+	}
+
+	words := make([]string, 0, 16)
+	for _, part := range strings.Split(puzzle[:eq], "+") {
+		if w := strings.TrimSpace(part); w != "" {
+			words = append(words, w)
+		}
+	}
+	if w := strings.TrimSpace(puzzle[eq+2:]); w != "" {
+		words = append(words, w)
+	}
+	if len(words) < 2 {
+		return nil, errors.New("invalid puzzle: need addends and a result")
+	}
+
+	// Compute each letter's net coefficient (sum of place values it
+	// occupies across all words) and which letters lead a multi-digit
+	// word and therefore may not be zero.
+	coeff := make(map[byte]int64)
+	leading := make(map[byte]bool)
+	maxLen := 0
+	for i, w := range words {
+		sign := int64(1)
+		if i == len(words)-1 {
+			sign = -1
+		}
+		if len(w) > 1 {
+			leading[w[0]] = true
+		}
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+		for j := 0; j < len(w); j++ {
+			coeff[w[j]] += sign * pow10[len(w)-1-j]
+		}
+	}
+
+	// Order letters by decreasing |coefficient| so the most
+	// significant letters are assigned first, which prunes the search.
+	type letter struct {
+		c     byte
+		coeff int64
+	}
+	ls := make([]letter, 0, len(coeff))
+	for c, k := range coeff {
+		ls = append(ls, letter{c, k})
+	}
+	for i := 1; i < len(ls); i++ {
+		for j := i; j > 0 && abs64(ls[j].coeff) > abs64(ls[j-1].coeff); j-- {
+			ls[j], ls[j-1] = ls[j-1], ls[j]
+		}
+	}
+	if len(ls) > 10 {
+		return nil, errors.New("no solution: more than ten distinct letters")
+	}
+
+	// remainingBound[i] is the largest magnitude the unassigned letters
+	// from index i onward can still contribute.
+	remainingBound := make([]int64, len(ls)+1)
+	for i := len(ls) - 1; i >= 0; i-- {
+		remainingBound[i] = remainingBound[i+1] + abs64(ls[i].coeff)*9
+	}
+
+	assignment := make(map[byte]int, len(ls))
+	var used uint32 // bit d set means digit d is taken
+
+	var backtrack func(idx int, current int64) bool
+	backtrack = func(idx int, current int64) bool {
+		if idx == len(ls) {
+			return current == 0
+		}
+		l := ls[idx]
+		for d := 0; d <= 9; d++ {
+			if used&(1<<d) != 0 {
+				continue
+			}
+			if leading[l.c] && d == 0 {
+				continue
+			}
+			next := current + l.coeff*int64(d)
+			// The remaining letters cannot cancel a partial sum that is
+			// larger than their maximum possible contribution.
+			if next > remainingBound[idx+1] || next < -remainingBound[idx+1] {
+				continue
+			}
+			used |= 1 << d
+			assignment[l.c] = d
+			if backtrack(idx+1, next) {
+				return true
+			}
+			used &^= 1 << d
+			delete(assignment, l.c)
+		}
+		return false
+	}
+
+	if !backtrack(0, 0) {
+		return nil, fmt.Errorf("no solution for puzzle %q", puzzle)
+	}
+
+	result := make(map[string]int, len(assignment))
+	for c, d := range assignment {
+		result[string(c)] = d
+	}
+	return result, nil
+}
+
+// pow10 holds powers of ten up to 18, enough for any puzzle that fits
+// in an int64 coefficient.
+var pow10 = func() []int64 {
+	p := make([]int64, 19)
+	p[0] = 1
+	for i := 1; i < len(p); i++ {
+		p[i] = p[i-1] * 10
+	}
+	return p
+}()
+
+func abs64(x int64) int64 {
+	if x < 0 {
+		return -x
+	}
+	return x
+}

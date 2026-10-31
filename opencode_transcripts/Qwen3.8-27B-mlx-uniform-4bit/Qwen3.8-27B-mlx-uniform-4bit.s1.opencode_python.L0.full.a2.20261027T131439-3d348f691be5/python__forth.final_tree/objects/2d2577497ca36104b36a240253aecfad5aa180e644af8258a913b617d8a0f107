@@ -1,0 +1,129 @@
+import re
+
+NUMBER_RE = re.compile(r"^-?\d+$")
+
+_UNDERFLOW_MSG = "Insufficient number of items in stack"
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _require(stack, count):
+    if len(stack) < count:
+        raise StackUnderflowError(_UNDERFLOW_MSG)
+
+
+def _pop_two(stack):
+    _require(stack, 2)
+    b = stack.pop()
+    a = stack.pop()
+    return a, b
+
+
+def _plus(stack):
+    a, b = _pop_two(stack)
+    stack.append(a + b)
+
+
+def _minus(stack):
+    a, b = _pop_two(stack)
+    stack.append(a - b)
+
+
+def _times(stack):
+    a, b = _pop_two(stack)
+    stack.append(a * b)
+
+
+def _divide(stack):
+    a, b = _pop_two(stack)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    # Integer division, truncating toward zero.
+    q = abs(a) // abs(b)
+    if (a < 0) ^ (b < 0):
+        q = -q
+    stack.append(q)
+
+
+def _dup(stack):
+    _require(stack, 1)
+    stack.append(stack[-1])
+
+
+def _drop(stack):
+    _require(stack, 1)
+    stack.pop()
+
+
+def _swap(stack):
+    _require(stack, 2)
+    stack[-1], stack[-2] = stack[-2], stack[-1]
+
+
+def _over(stack):
+    _require(stack, 2)
+    stack.append(stack[-2])
+
+
+BUILTINS = {
+    "+": _plus,
+    "-": _minus,
+    "*": _times,
+    "/": _divide,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def _is_number(token):
+    return NUMBER_RE.match(token) is not None
+
+
+def _execute(tokens, stack, words):
+    for token in tokens:
+        key = token.lower()
+        if _is_number(token):
+            stack.append(int(token))
+        elif key in words:
+            _execute(words[key], stack, words)
+        elif key in BUILTINS:
+            BUILTINS[key](stack)
+        else:
+            raise ValueError("undefined operation")
+
+
+def _define(name, body_tokens, words):
+    if _is_number(name):
+        raise ValueError("illegal operation")
+    # Expand user-defined words at definition time so that a definition
+    # captures the meaning of words as they are known now.
+    body = []
+    for token in body_tokens:
+        key = token.lower()
+        if key in words:
+            body.extend(words[key])
+        else:
+            body.append(token)
+    words[name.lower()] = body
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    for line in input_data:
+        tokens = line.split()
+        if not tokens:
+            continue
+        if tokens[0] == ":":
+            name = tokens[1]
+            end = tokens.index(";")
+            _define(name, tokens[2:end], words)
+        else:
+            _execute(tokens, stack, words)
+
+    return stack

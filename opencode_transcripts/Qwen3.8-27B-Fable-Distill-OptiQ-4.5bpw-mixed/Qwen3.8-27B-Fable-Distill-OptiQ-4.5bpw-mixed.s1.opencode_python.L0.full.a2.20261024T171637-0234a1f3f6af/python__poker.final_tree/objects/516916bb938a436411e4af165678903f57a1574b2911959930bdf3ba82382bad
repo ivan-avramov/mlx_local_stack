@@ -1,0 +1,64 @@
+FACE_VALUES = {
+    "2": 2, "3": 3, "4": 4, "5": 5, "6": 6, "7": 7, "8": 8, "9": 9, "10": 10,
+    "J": 11, "Q": 12, "K": 13, "A": 14,
+}
+
+# Hand categories, in increasing strength.
+HIGH_CARD = 0
+PAIR = 1
+TWO_PAIR = 2
+THREE_OF_A_KIND = 3
+STRAIGHT = 4
+FLUSH = 5
+FULL_HOUSE = 6
+FOUR_OF_A_KIND = 7
+STRAIGHT_FLUSH = 8
+
+
+def _rank_value(card):
+    return FACE_VALUES[card[:-1]]
+
+
+def _score_hand(hand):
+    cards = hand.split()
+    ranks = sorted((_rank_value(card) for card in cards), reverse=True)
+    flush = len({card[-1] for card in cards}) == 1
+
+    straight_high = None
+    if len(set(ranks)) == 5:
+        if ranks[0] - ranks[-1] == 4:
+            straight_high = ranks[0]
+        elif ranks == [14, 5, 4, 3, 2]:
+            straight_high = 5  # ace plays low in A-2-3-4-5
+
+    if straight_high is not None:
+        if flush:
+            return (STRAIGHT_FLUSH, straight_high)
+        return (STRAIGHT, straight_high)
+    if flush:
+        return (FLUSH, *ranks)
+
+    counts = {}
+    for rank in ranks:
+        counts[rank] = counts.get(rank, 0) + 1
+    # One entry per distinct rank, highest count first, then highest rank.
+    groups = sorted(counts.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)
+    tiebreakers = [rank for rank, count in groups]
+
+    if groups[0][1] == 4:
+        return (FOUR_OF_A_KIND, *tiebreakers)
+    if groups[0][1] == 3:
+        if len(groups) == 2:
+            return (FULL_HOUSE, *tiebreakers)
+        return (THREE_OF_A_KIND, *tiebreakers)
+    if groups[0][1] == 2:
+        if len(groups) == 3:
+            return (TWO_PAIR, *tiebreakers)
+        return (PAIR, *tiebreakers)
+    return (HIGH_CARD, *ranks)
+
+
+def best_hands(hands):
+    scored = [(_score_hand(hand), hand) for hand in hands]
+    top_score = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == top_score]

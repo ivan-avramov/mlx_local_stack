@@ -1,0 +1,219 @@
+package forth
+
+import (
+	"fmt"
+	"regexp"
+	"strconv"
+	"strings"
+)
+
+// token is a single parsed Forth token: either a number or a word.
+type token struct {
+	isNumber bool
+	value    int   // valid when isNumber is true
+	word     string // lowercased; valid when isNumber is false
+}
+
+// numberRe matches an optional leading minus followed by one or more digits.
+var numberRe = regexp.MustCompile(`^-?\d+$`)
+
+// parseToken classifies a whitespace-delimited field as a number or a word.
+func parseToken(s string) token {
+	if numberRe.MatchString(s) {
+		v, _ := strconv.Atoi(s)
+		return token{isNumber: true, value: v}
+	}
+	return token{isNumber: false, word: strings.ToLower(s)}
+}
+
+// pop1 returns the top of the stack, erroring if it is empty.
+func pop1(s []int) (int, error) {
+	if len(s) == 0 {
+		return 0, fmt.Errorf("empty stack")
+	}
+	return s[len(s)-1], nil
+}
+
+// pop2 returns the top two values (a = second from top, b = top),
+// erroring if there are fewer than two values.
+func pop2(s []int) (int, int, error) {
+	if len(s) < 2 {
+		return 0, 0, fmt.Errorf("not enough values on the stack")
+	}
+	return s[len(s)-2], s[len(s)-1], nil
+}
+
+// builtin is the signature of a built-in stack operation.
+type builtin func([]int) ([]int, error)
+
+// builtins maps lowercased built-in names to their implementations.
+var builtins = map[string]builtin{
+	"+": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], a+b), nil
+	},
+	"-": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], a-b), nil
+	},
+	"*": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], a*b), nil
+	},
+	"/": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		if b == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return append(s[:len(s)-2], a/b), nil
+	},
+	"dup": func(s []int) ([]int, error) {
+		a, err := pop1(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-1], a, a), nil
+	},
+	"drop": func(s []int) ([]int, error) {
+		if _, err := pop1(s); err != nil {
+			return nil, err
+		}
+		return s[:len(s)-1], nil
+	},
+	"swap": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], b, a), nil
+	},
+	"over": func(s []int) ([]int, error) {
+		a, b, err := pop2(s)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], a, b, a), nil
+	},
+}
+
+// expand resolves a definition body against the current word table, inlining
+// the current definition of any user-defined word it references. This is what
+// gives words their local-scope semantics: a definition captures the meaning
+// of the words it uses at the time it is defined. Built-ins and numbers are
+// left as-is.
+func expand(body []token, words map[string][]token) ([]token, error) {
+	var def []token
+	for _, t := range body {
+		switch {
+		case t.isNumber:
+			def = append(def, t)
+		case isUserWord(t.word, words):
+			def = append(def, words[t.word]...)
+		case isBuiltin(t.word):
+			def = append(def, t)
+		default:
+			return nil, fmt.Errorf("undefined word in definition: %s", t.word)
+		}
+	}
+	return def, nil
+}
+
+func isUserWord(name string, words map[string][]token) bool {
+	_, ok := words[name]
+	return ok
+}
+
+func isBuiltin(name string) bool {
+	_, ok := builtins[name]
+	return ok
+}
+
+// execToken executes a single token against the stack, returning the new stack.
+func execToken(t token, stack []int, words map[string][]token) ([]int, error) {
+	switch {
+	case t.isNumber:
+		return append(stack, t.value), nil
+	case isUserWord(t.word, words):
+		for _, dt := range words[t.word] {
+			var err error
+			stack, err = execToken(dt, stack, words)
+			if err != nil {
+				return nil, err
+			}
+		}
+		return stack, nil
+	case isBuiltin(t.word):
+		return builtins[t.word](stack)
+	default:
+		return nil, fmt.Errorf("undefined word: %s", t.word)
+	}
+}
+
+// Forth evaluates a sequence of Forth input lines and returns the resulting
+// stack, or an error if any operation is invalid.
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	words := map[string][]token{}
+
+	for _, line := range input {
+		fields := strings.Fields(line)
+		i := 0
+		for i < len(fields) {
+			if fields[i] == ":" {
+				// Word definition: : name body... ;
+				if i+1 >= len(fields) {
+					return nil, fmt.Errorf("incomplete word definition")
+				}
+				nameTok := parseToken(fields[i+1])
+				if nameTok.isNumber {
+					return nil, fmt.Errorf("cannot redefine a number")
+				}
+				name := nameTok.word
+				i += 2
+
+				var body []token
+				closed := false
+				for i < len(fields) {
+					if fields[i] == ";" {
+						closed = true
+						i++
+						break
+					}
+					body = append(body, parseToken(fields[i]))
+					i++
+				}
+				if !closed {
+					return nil, fmt.Errorf("unterminated word definition")
+				}
+
+				def, err := expand(body, words)
+				if err != nil {
+					return nil, err
+				}
+				words[name] = def
+				continue
+			}
+
+			tok := parseToken(fields[i])
+			var err error
+			stack, err = execToken(tok, stack, words)
+			if err != nil {
+				return nil, err
+			}
+			i++
+		}
+	}
+	return stack, nil
+}

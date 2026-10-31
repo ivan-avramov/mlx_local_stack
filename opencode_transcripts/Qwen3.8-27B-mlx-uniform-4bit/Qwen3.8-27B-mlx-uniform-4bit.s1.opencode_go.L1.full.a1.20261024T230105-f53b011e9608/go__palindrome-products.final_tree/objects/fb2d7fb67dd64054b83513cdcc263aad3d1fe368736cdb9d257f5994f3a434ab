@@ -1,0 +1,68 @@
+package palindrome
+
+import (
+	"fmt"
+	"strconv"
+)
+
+// Product holds a palindromic product and all the factor pairs
+// within the given range that produce it.
+type Product struct {
+	Value          int
+	Factorizations [][2]int
+}
+
+// Products returns the smallest and largest palindromic products of two
+// numbers within the inclusive range [fmin, fmax], along with all factor
+// pairs for each. It returns an error if fmin > fmax or if no palindromic
+// product exists in the range.
+func Products(fmin, fmax int) (Product, Product, error) {
+	if fmin > fmax {
+		return Product{}, Product{}, fmt.Errorf("fmin > fmax: %d > %d", fmin, fmax)
+	}
+
+	var minP, maxP Product
+	found := false
+
+	for i := fmin; i <= fmax; i++ {
+		for j := i; j <= fmax; j++ {
+			p := i * j
+			if !isPalindrome(p) {
+				continue
+			}
+			if !found {
+				minP = Product{Value: p, Factorizations: [][2]int{{i, j}}}
+				maxP = Product{Value: p, Factorizations: [][2]int{{i, j}}}
+				found = true
+				continue
+			}
+			if p < minP.Value {
+				minP = Product{Value: p, Factorizations: [][2]int{{i, j}}}
+			} else if p == minP.Value {
+				minP.Factorizations = append(minP.Factorizations, [2]int{i, j})
+			}
+			if p > maxP.Value {
+				maxP = Product{Value: p, Factorizations: [][2]int{{i, j}}}
+			} else if p == maxP.Value {
+				maxP.Factorizations = append(maxP.Factorizations, [2]int{i, j})
+			}
+		}
+	}
+
+	if !found {
+		return Product{}, Product{}, fmt.Errorf("no palindromes found for range [%d, %d]", fmin, fmax)
+	}
+
+	return minP, maxP, nil
+}
+
+// isPalindrome reports whether n reads the same forwards and backwards.
+func isPalindrome(n int) bool {
+	s := strconv.Itoa(n)
+	for i, j := 0, len(s)-1; i < j; i, j = i+1, j-1 {
+		if s[i] != s[j] {
+			return false
+		}
+	}
+	return true
+}

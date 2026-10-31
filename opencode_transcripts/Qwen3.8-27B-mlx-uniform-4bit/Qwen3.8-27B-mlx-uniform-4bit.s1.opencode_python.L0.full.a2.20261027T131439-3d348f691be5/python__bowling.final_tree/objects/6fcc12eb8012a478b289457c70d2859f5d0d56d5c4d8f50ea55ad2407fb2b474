@@ -1,0 +1,86 @@
+class BowlingGame:
+    """Keeps track of the rolls of a bowling game and computes its score."""
+
+    def __init__(self):
+        self.rolls = []
+
+    def roll(self, pins):
+        """Record a single roll, validating it against the rules of bowling."""
+        if pins < 0 or pins > 10:
+            raise ValueError("A roll cannot score less than 0 or more than 10 points")
+        if self._game_complete():
+            raise ValueError("Cannot roll if the game already has ten frames")
+        frame, in_frame = self._current_frame()
+        if frame < 9:
+            if len(in_frame) == 1 and in_frame[0] + pins > 10:
+                raise ValueError("Two rolls in a frame cannot score more than 10 points")
+        elif len(in_frame) == 1:
+            if in_frame[0] != 10 and in_frame[0] + pins > 10:
+                raise ValueError("Two rolls in a frame cannot score more than 10 points")
+        elif len(in_frame) == 2:
+            if in_frame[0] == 10 and in_frame[1] != 10 and in_frame[1] + pins > 10:
+                raise ValueError(
+                    "Bonus rolls after a strike cannot score more than 10 points"
+                )
+        self.rolls.append(pins)
+
+    def score(self):
+        """Return the total score once the game is complete."""
+        if not self._game_complete():
+            raise ValueError("Cannot score an incomplete game")
+        total = 0
+        rolls = self.rolls
+        i = 0
+        for frame in range(10):
+            if frame < 9:
+                if rolls[i] == 10:
+                    total += 10 + rolls[i + 1] + rolls[i + 2]
+                    i += 1
+                elif rolls[i] + rolls[i + 1] == 10:
+                    total += 10 + rolls[i + 2]
+                    i += 2
+                else:
+                    total += rolls[i] + rolls[i + 1]
+                    i += 2
+            else:
+                total += sum(rolls[i:])
+        return total
+
+    def _current_frame(self):
+        """Return the index of the frame being played and the rolls in it so far."""
+        rolls = self.rolls
+        i = 0
+        frame = 0
+        while frame < 9 and i < len(rolls):
+            if rolls[i] == 10:
+                i += 1
+            else:
+                if i + 1 >= len(rolls):
+                    break  # second roll of this frame has not been made yet
+                i += 2
+            frame += 1
+        return frame, rolls[i:]
+
+    def _game_complete(self):
+        """Return True once all ten frames, including any bonus rolls, are done."""
+        rolls = self.rolls
+        i = 0
+        for frame in range(10):
+            if i >= len(rolls):
+                return False
+            if frame < 9:
+                if rolls[i] == 10:
+                    i += 1
+                else:
+                    if i + 1 >= len(rolls):
+                        return False
+                    i += 2
+            else:
+                if i + 1 >= len(rolls):
+                    return False
+                if rolls[i] == 10:
+                    return i + 2 < len(rolls)
+                if rolls[i] + rolls[i + 1] == 10:
+                    return i + 2 < len(rolls)
+                return True
+        return False

@@ -1,0 +1,63 @@
+"""Calculate the cheapest total price for a basket of books from a 5-book series.
+
+One copy of any book costs $8.  Buying a group of *different* titles earns a
+discount: 2 different books -> 5%, 3 -> 10%, 4 -> 20%, 5 -> 25%.  The basket
+is split into groups of distinct titles (at most one copy of each title per
+group) so that the total discount is as big as possible.
+
+Prices are returned in cents.
+"""
+
+from functools import lru_cache
+
+# Price (in cents) of a group of `size` different books.
+# 800 * size * (1 - discount):  1: 0%, 2: 5%, 3: 10%, 4: 20%, 5: 25%.
+GROUP_PRICES = {
+    1: 800,
+    2: 1520,
+    3: 2160,
+    4: 2560,
+    5: 3000,
+}
+
+_TITLES = 5
+_ALL_GROUPS = range(1, 1 << _TITLES)  # every non-empty subset of the 5 titles
+
+
+def total(basket):
+    """Return the minimum total price, in cents, for the given basket.
+
+    ``basket`` is an iterable of book numbers (integers 1-5).  The books are
+    grouped optimally into sets of distinct titles to maximize the discount.
+    """
+    counts = [0] * _TITLES
+    for book in basket:
+        counts[book - 1] += 1
+
+    @lru_cache(maxsize=None)
+    def best(counts):
+        # ``counts`` is a tuple of the 5 per-title counts, sorted in
+        # non-increasing order.  The titles are interchangeable, so only this
+        # multiset of counts matters.
+        if not any(counts):
+            return 0
+        result = float("inf")
+        for mask in _ALL_GROUPS:
+            next_counts = []
+            size = 0
+            for bit in range(_TITLES):
+                count = counts[bit]
+                if mask >> bit & 1:
+                    if count == 0:
+                        break  # cannot take a title with no copies left
+                    size += 1
+                    next_counts.append(count - 1)
+                else:
+                    next_counts.append(count)
+            else:
+                cost = GROUP_PRICES[size] + best(tuple(sorted(next_counts, reverse=True)))
+                if cost < result:
+                    result = cost
+        return result
+
+    return best(tuple(sorted(counts, reverse=True)))

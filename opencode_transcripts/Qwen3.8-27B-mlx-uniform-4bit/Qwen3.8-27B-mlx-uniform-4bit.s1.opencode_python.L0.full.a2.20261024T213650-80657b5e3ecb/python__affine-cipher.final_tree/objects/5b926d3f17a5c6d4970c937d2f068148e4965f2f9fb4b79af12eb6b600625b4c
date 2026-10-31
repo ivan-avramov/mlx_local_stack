@@ -1,0 +1,46 @@
+"""Affine cipher implementation.
+
+Encrypts with E(x) = (a*x + b) mod m and decrypts with D(y) = (a^-1)*(y - b) mod m,
+where m is the length of the alphabet (26 for the Roman alphabet).
+"""
+
+import math
+import string
+
+ALPHABET = string.ascii_lowercase
+M = len(ALPHABET)
+
+
+def _check_coprime(a):
+    if math.gcd(a, M) != 1:
+        raise ValueError("a and m must be coprime.")
+
+
+def _modular_inverse(a):
+    return pow(a, -1, M)
+
+
+def encode(plain_text, a, b):
+    _check_coprime(a)
+    encoded = []
+    for char in plain_text:
+        char = char.lower()
+        if char in ALPHABET:
+            i = ALPHABET.index(char)
+            encoded.append(ALPHABET[(a * i + b) % M])
+        elif char.isdigit():
+            encoded.append(char)
+    return " ".join("".join(encoded)[i:i + 5] for i in range(0, len(encoded), 5))
+
+
+def decode(ciphered_text, a, b):
+    _check_coprime(a)
+    a_inv = _modular_inverse(a)
+    decoded = []
+    for char in ciphered_text:
+        if char in ALPHABET:
+            y = ALPHABET.index(char)
+            decoded.append(ALPHABET[(a_inv * (y - b)) % M])
+        elif char.isdigit():
+            decoded.append(char)
+    return "".join(decoded)

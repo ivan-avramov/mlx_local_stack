@@ -1,0 +1,176 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form "A + B + ... == C", where
+// each letter stands for a distinct digit 0-9 and the leading digit of any
+// multi-digit word is non-zero. It returns the letter->digit mapping, or an
+// error if the puzzle has no solution.
+func Solve(puzzle string) (map[string]int, error) {
+	addends, result, err := parsePuzzle(puzzle)
+	if err != nil {
+		return nil, err
+	}
+
+	// The puzzle is valid exactly when sum(addends) == result, which is the
+	// single linear equation  sum over letters L of coeff(L) * digit(L) == 0.
+	// coeff(L) is the sum of (+/-) 10^position over every occurrence of L,
+	// positive for addends and negative for the result.
+	coeffs := make(map[rune]int64)
+	leading := make(map[rune]bool)
+
+	record := func(word string, sign int64) {
+		n := len(word)
+		for i, r := range word {
+			pos := n - 1 - i // 0 = units column
+			coeffs[r] += sign * pow10[pos]
+			if i == 0 && n > 1 {
+				leading[r] = true
+			}
+		}
+	}
+	for _, w := range addends {
+		record(w, 1)
+	}
+	record(result, -1)
+
+	// A letter can only take one of ten digits.
+	letters := make([]rune, 0, len(coeffs))
+	for r := range coeffs {
+		letters = append(letters, r)
+	}
+	if len(letters) > 10 {
+		return nil, errors.New("no solution: more than ten distinct letters")
+	}
+
+	// Assign letters with the largest coefficients first so the running sum
+	// moves quickly, which makes the bound below prune the search harder.
+	sort.Slice(letters, func(i, j int) bool {
+		return abs64(coeffs[letters[i]]) > abs64(coeffs[letters[j]])
+	})
+
+	assignment := make(map[rune]int, len(letters))
+	used := make([]bool, 10)
+
+	var solve func(idx int, sum int64) bool
+	solve = func(idx int, sum int64) bool {
+		if idx == len(letters) {
+			return sum == 0
+		}
+		// Prune: even with the best/worst digits the unassigned letters can
+		// supply, the total can never reach zero.
+		if !canReach(-sum, letters[idx:], coeffs, used) {
+			return false
+		}
+
+		r := letters[idx]
+		noZero := leading[r]
+		for d := 0; d < 10; d++ {
+			if used[d] || (noZero && d == 0) {
+				continue
+			}
+			used[d] = true
+			assignment[r] = d
+			if solve(idx+1, sum+coeffs[r]*int64(d)) {
+				return true
+			}
+			used[d] = false
+		}
+		return false
+	}
+
+	if !solve(0, 0) {
+		return nil, errors.New("no solution")
+	}
+
+	res := make(map[string]int, len(letters))
+	for r, d := range assignment {
+		res[string(r)] = d
+	}
+	return res, nil
+}
+
+// canReach reports whether the remaining letters can still bring the running
+// sum to zero. It bounds the remaining contribution using the smallest and
+// largest still-available digits, which is a safe (if loose) outer bound that
+// ignores the distinctness and leading constraints.
+func canReach(target int64, remaining []rune, coeffs map[rune]int64, used []bool) bool {
+	minD, maxD := 10, -1
+	for d := 0; d < 10; d++ {
+		if !used[d] {
+			if minD == 10 {
+				minD = d
+			}
+			maxD = d
+		}
+	}
+	if minD == 10 {
+		return len(remaining) == 0
+	}
+	lo, hi := int64(0), int64(0)
+	for _, r := range remaining {
+		c := coeffs[r]
+		if c >= 0 {
+			lo += c * int64(minD)
+			hi += c * int64(maxD)
+		} else {
+			lo += c * int64(maxD)
+			hi += c * int64(minD)
+		}
+	}
+	return target >= lo && target <= hi
+}
+
+// parsePuzzle splits a puzzle string into its addends and result.
+func parsePuzzle(puzzle string) ([]string, string, error) {
+	parts := strings.Split(puzzle, "==")
+	if len(parts) != 2 {
+		return nil, "", errors.New("invalid puzzle: expected exactly one '=='")
+	}
+	addends := strings.Split(strings.TrimSpace(parts[0]), "+")
+	for i, a := range addends {
+		addends[i] = strings.TrimSpace(a)
+		if err := validateWord(addends[i]); err != nil {
+			return nil, "", err
+		}
+	}
+	result := strings.TrimSpace(parts[1])
+	if err := validateWord(result); err != nil {
+		return nil, "", err
+	}
+	return addends, result, nil
+}
+
+// validateWord ensures a word is non-empty and made only of uppercase letters.
+func validateWord(word string) error {
+	if word == "" {
+		return errors.New("invalid puzzle: empty word")
+	}
+	for _, r := range word {
+		if r < 'A' || r > 'Z' {
+			return fmt.Errorf("invalid puzzle: %q is not a word of uppercase letters", word)
+		}
+	}
+	return nil
+}
+
+func abs64(v int64) int64 {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
+var pow10 = func() []int64 {
+	p := make([]int64, 32)
+	p[0] = 1
+	for i := 1; i < len(p); i++ {
+		p[i] = p[i-1] * 10
+	}
+	return p
+}()

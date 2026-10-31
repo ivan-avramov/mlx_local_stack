@@ -1,0 +1,71 @@
+package dominoes
+
+// Domino represents a single domino with two halves.
+type Domino [2]int
+
+// MakeChain returns a closed chain of all the given dominoes, if one exists.
+// A closed chain is an ordering of the dominoes (each possibly flipped) such
+// that adjacent halves match and the free end of the last domino matches the
+// free end of the first. The second return value reports whether such a
+// chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+
+	used := make([]bool, len(input))
+	chain := make([]Domino, 0, len(input))
+
+	for i := range input {
+		used[i] = true
+		chain = append(chain, input[i])
+		if c, ok := search(input, used, chain); ok {
+			return c, true
+		}
+		chain = chain[:0]
+		used[i] = false
+	}
+
+	return []Domino{}, false
+}
+
+// search extends chain with unused dominoes whose halves match the open end,
+// trying both orientations, until all dominoes are placed and the chain
+// closes. It returns the completed chain and whether one was found.
+func search(input []Domino, used []bool, chain []Domino) ([]Domino, bool) {
+	if len(chain) == len(input) {
+		if chain[0][0] == chain[len(chain)-1][1] {
+			return chain, true
+		}
+		return nil, false
+	}
+
+	need := chain[len(chain)-1][1]
+	for i := range input {
+		if used[i] {
+			continue
+		}
+		if input[i][0] == need {
+			if c, ok := try(input, used, chain, i, input[i]); ok {
+				return c, true
+			}
+		}
+		if input[i][1] == need {
+			if c, ok := try(input, used, chain, i, Domino{input[i][1], input[i][0]}); ok {
+				return c, true
+			}
+		}
+	}
+	return nil, false
+}
+
+// try places d (already oriented to match the open end) at the end of chain
+// and backtracks if the search fails.
+func try(input []Domino, used []bool, chain []Domino, index int, d Domino) ([]Domino, bool) {
+	used[index] = true
+	chain = append(chain, d)
+	c, ok := search(input, used, chain)
+	chain = chain[:len(chain)-1]
+	used[index] = false
+	return c, ok
+}

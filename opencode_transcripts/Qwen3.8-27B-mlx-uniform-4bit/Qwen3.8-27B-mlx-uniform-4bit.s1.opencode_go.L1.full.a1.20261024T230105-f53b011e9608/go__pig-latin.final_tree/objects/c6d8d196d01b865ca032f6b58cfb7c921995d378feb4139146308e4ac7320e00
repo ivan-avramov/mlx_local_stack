@@ -1,0 +1,50 @@
+package piglatin
+
+import "strings"
+
+func isVowel(c byte) bool {
+	switch c {
+	case 'a', 'e', 'i', 'o', 'u':
+		return true
+	}
+	return false
+}
+
+// translateWord applies the four pig latin rules to a single word.
+func translateWord(word string) string {
+	if word == "" {
+		return ""
+	}
+	// Rule 1: word begins with a vowel sound.
+	if isVowel(word[0]) || strings.HasPrefix(word, "xr") || strings.HasPrefix(word, "yt") {
+		return word + "ay"
+	}
+	// Rules 2-4: move the leading consonant cluster to the end.
+	i := 0
+	for i < len(word) {
+		c := word[i]
+		// Rule 3: "qu" is moved along with the preceding consonants.
+		if c == 'q' && i+1 < len(word) && word[i+1] == 'u' {
+			i += 2
+			break
+		}
+		// Rule 4: "y" after at least one consonant is treated as a vowel.
+		if c == 'y' && i > 0 {
+			break
+		}
+		if isVowel(c) {
+			break
+		}
+		i++
+	}
+	return word[i:] + word[:i] + "ay"
+}
+
+// Sentence translates a whole sentence word by word.
+func Sentence(sentence string) string {
+	words := strings.Fields(sentence)
+	for i, w := range words {
+		words[i] = translateWord(w)
+	}
+	return strings.Join(words, " ")
+}

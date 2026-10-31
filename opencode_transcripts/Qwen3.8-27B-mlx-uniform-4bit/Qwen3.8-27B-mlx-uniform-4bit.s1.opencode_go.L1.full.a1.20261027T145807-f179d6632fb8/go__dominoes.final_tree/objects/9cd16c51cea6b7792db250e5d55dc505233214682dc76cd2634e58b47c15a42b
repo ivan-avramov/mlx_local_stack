@@ -1,0 +1,50 @@
+package dominoes
+
+// Domino is a single stone, represented by the values on its two halves.
+type Domino [2]int
+
+// MakeChain attempts to order the given dominoes into a chain in which the
+// dots on adjacent halves match and the two unpaired ends (the first and last
+// stone) match each other. It returns the chain and true if such a chain
+// exists, or nil and false otherwise. An empty input yields an empty chain.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+	used := make([]bool, len(input))
+	chain, ok := buildChain(input, used, nil, input[0][0])
+	if !ok {
+		return nil, false
+	}
+	return chain, true
+}
+
+// buildChain grows the chain one domino at a time, appending any unused
+// domino (in either orientation) whose left half matches next. Once every
+// domino has been placed, the chain is valid only if its final half matches
+// the chain's starting value, closing the loop.
+func buildChain(input []Domino, used []bool, chain []Domino, next int) ([]Domino, bool) {
+	if len(chain) == len(input) {
+		ok := chain[len(chain)-1][1] == chain[0][0]
+		return chain, ok
+	}
+	for i, d := range input {
+		if used[i] {
+			continue
+		}
+		if d[0] == next {
+			used[i] = true
+			if c, ok := buildChain(input, used, append(chain, d), d[1]); ok {
+				return c, true
+			}
+			used[i] = false
+		} else if d[1] == next {
+			used[i] = true
+			if c, ok := buildChain(input, used, append(chain, Domino{d[1], d[0]}), d[0]); ok {
+				return c, true
+			}
+			used[i] = false
+		}
+	}
+	return nil, false
+}

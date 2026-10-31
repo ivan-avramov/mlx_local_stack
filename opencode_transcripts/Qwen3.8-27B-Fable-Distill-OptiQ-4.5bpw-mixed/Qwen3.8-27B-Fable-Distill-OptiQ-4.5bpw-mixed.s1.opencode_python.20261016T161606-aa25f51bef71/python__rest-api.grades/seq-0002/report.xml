@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?><testsuites name="pytest tests"><testsuite name="pytest" errors="0" failures="3" skipped="0" tests="9" time="0.028" timestamp="2026-10-16T16:17:08.941527-07:00" hostname="localhost"><testcase classname="rest_api_test.RestApiTest" name="test_add_user" time="0.001" /><testcase classname="rest_api_test.RestApiTest" name="test_borrower_has_negative_balance" time="0.001"><failure message="KeyError: 'Bob'">self = &lt;rest_api_test.RestApiTest testMethod=test_borrower_has_negative_balance&gt;
+
+    def test_borrower_has_negative_balance(self):
+        database = {
+            "users": [
+                {"name": "Adam", "owes": {}, "owed_by": {}, "balance": 0.0},
+                {"name": "Bob", "owes": {"Chuck": 3.0}, "owed_by": {}, "balance": -3.0},
+                {"name": "Chuck", "owes": {}, "owed_by": {"Bob": 3.0}, "balance": 3.0},
+            ]
+        }
+        api = RestAPI(database)
+        payload = json.dumps({"lender": "Adam", "borrower": "Bob", "amount": 3.0})
+&gt;       response = api.post("/iou", payload)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+rest_api_test.py:73: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+rest_api.py:18: in post
+    return self._create_iou(payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;rest_api.RestAPI object at 0x106b87140&gt;
+payload = '{"lender": "Adam", "borrower": "Bob", "amount": 3.0}'
+
+    def _create_iou(self, payload):
+        data = json.loads(payload)
+        lender = self._find_user(data["lender"])
+        borrower = self._find_user(data["borrower"])
+        amount = data["amount"]
+    
+        # Net the new loan against any existing debt between the two.
+        existing = lender["owes"].get(borrower["name"], 0.0)
+        diff = amount - existing
+&gt;       del lender["owes"][borrower["name"]]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'Bob'
+
+rest_api.py:43: KeyError</failure></testcase><testcase classname="rest_api_test.RestApiTest" name="test_both_users_have_0_balance" time="0.001"><failure message="KeyError: 'Bob'">self = &lt;rest_api_test.RestApiTest testMethod=test_both_users_have_0_balance&gt;
+
+    def test_both_users_have_0_balance(self):
+        database = {
+            "users": [
+                {"name": "Adam", "owes": {}, "owed_by": {}, "balance": 0.0},
+                {"name": "Bob", "owes": {}, "owed_by": {}, "balance": 0.0},
+            ]
+        }
+        api = RestAPI(database)
+        payload = json.dumps({"lender": "Adam", "borrower": "Bob", "amount": 3.0})
+&gt;       response = api.post("/iou", payload)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+rest_api_test.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+rest_api.py:18: in post
+    return self._create_iou(payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;rest_api.RestAPI object at 0x106b86960&gt;
+payload = '{"lender": "Adam", "borrower": "Bob", "amount": 3.0}'
+
+    def _create_iou(self, payload):
+        data = json.loads(payload)
+        lender = self._find_user(data["lender"])
+        borrower = self._find_user(data["borrower"])
+        amount = data["amount"]
+    
+        # Net the new loan against any existing debt between the two.
+        existing = lender["owes"].get(borrower["name"], 0.0)
+        diff = amount - existing
+&gt;       del lender["owes"][borrower["name"]]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'Bob'
+
+rest_api.py:43: KeyError</failure></testcase><testcase classname="rest_api_test.RestApiTest" name="test_get_single_user" time="0.001" /><testcase classname="rest_api_test.RestApiTest" name="test_lender_has_negative_balance" time="0.001"><failure message="KeyError: 'Adam'">self = &lt;rest_api_test.RestApiTest testMethod=test_lender_has_negative_balance&gt;
+
+    def test_lender_has_negative_balance(self):
+        database = {
+            "users": [
+                {"name": "Adam", "owes": {}, "owed_by": {}, "balance": 0.0},
+                {"name": "Bob", "owes": {"Chuck": 3.0}, "owed_by": {}, "balance": -3.0},
+                {"name": "Chuck", "owes": {}, "owed_by": {"Bob": 3.0}, "balance": 3.0},
+            ]
+        }
+        api = RestAPI(database)
+        payload = json.dumps({"lender": "Bob", "borrower": "Adam", "amount": 3.0})
+&gt;       response = api.post("/iou", payload)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+rest_api_test.py:97: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+rest_api.py:18: in post
+    return self._create_iou(payload)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = &lt;rest_api.RestAPI object at 0x106b876e0&gt;
+payload = '{"lender": "Bob", "borrower": "Adam", "amount": 3.0}'
+
+    def _create_iou(self, payload):
+        data = json.loads(payload)
+        lender = self._find_user(data["lender"])
+        borrower = self._find_user(data["borrower"])
+        amount = data["amount"]
+    
+        # Net the new loan against any existing debt between the two.
+        existing = lender["owes"].get(borrower["name"], 0.0)
+        diff = amount - existing
+&gt;       del lender["owes"][borrower["name"]]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+E       KeyError: 'Adam'
+
+rest_api.py:43: KeyError</failure></testcase><testcase classname="rest_api_test.RestApiTest" name="test_lender_owes_borrower" time="0.001" /><testcase classname="rest_api_test.RestApiTest" name="test_lender_owes_borrower_less_than_new_loan" time="0.001" /><testcase classname="rest_api_test.RestApiTest" name="test_lender_owes_borrower_same_as_new_loan" time="0.001" /><testcase classname="rest_api_test.RestApiTest" name="test_no_users" time="0.001" /></testsuite></testsuites>

@@ -1,0 +1,59 @@
+package bookstore
+
+import "sort"
+
+// pricePerGroup[size] is the total price of a group of `size` distinct books,
+// after applying the discount for that group size.
+var pricePerGroup = [...]int{0, 800, 1520, 2160, 2560, 3000}
+
+// Cost returns the cheapest total price (in cents) for the given basket of
+// books, where each book is identified by an integer 1..5.
+func Cost(books []int) int {
+	// Count how many copies of each of the five titles are in the basket.
+	counts := make([]int, 5)
+	for _, b := range books {
+		counts[b-1]++
+	}
+	sort.Sort(sort.Reverse(sort.IntSlice(counts)))
+
+	// Form groups level by level: at level k, take one copy of every title
+	// that has at least k copies. This yields the largest possible groups.
+	groups := make([]int, 0, len(books))
+	for k := 1; k <= counts[0]; k++ {
+		size := 0
+		for _, c := range counts {
+			if c >= k {
+				size++
+			}
+		}
+		groups = append(groups, size)
+	}
+
+	// A group of five plus a group of three costs 5160, while two groups of
+	// four cost 5120, so trade as many (5,3) pairs as possible for (4,4).
+	fives, fours, threes, twos, ones := 0, 0, 0, 0, 0
+	for _, size := range groups {
+		switch size {
+		case 5:
+			fives++
+		case 4:
+			fours++
+		case 3:
+			threes++
+		case 2:
+			twos++
+		case 1:
+			ones++
+		}
+	}
+	trades := fives
+	if threes < trades {
+		trades = threes
+	}
+	fives -= trades
+	threes -= trades
+	fours += 2 * trades
+
+	return fives*pricePerGroup[5] + fours*pricePerGroup[4] + threes*pricePerGroup[3] +
+		twos*pricePerGroup[2] + ones*pricePerGroup[1]
+}

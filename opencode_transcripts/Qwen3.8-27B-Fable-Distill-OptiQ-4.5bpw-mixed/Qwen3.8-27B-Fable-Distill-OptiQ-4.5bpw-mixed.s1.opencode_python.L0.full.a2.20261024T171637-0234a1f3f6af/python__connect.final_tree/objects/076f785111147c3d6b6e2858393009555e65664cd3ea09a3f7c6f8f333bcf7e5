@@ -1,0 +1,49 @@
+class ConnectGame:
+    def __init__(self, board):
+        lines = [line.strip() for line in board.strip().splitlines() if line.strip()]
+        self.board = [line.split() for line in lines]
+
+    def get_winner(self):
+        rows = len(self.board)
+        if not rows:
+            return ""
+        cols = max(len(row) for row in self.board)
+        # X connects left to right; O connects top to bottom.
+        for player, start, goal in (
+            ("X", lambda r, c: c == 0, lambda r, c: c == cols - 1),
+            ("O", lambda r, c: r == 0, lambda r, c: r == rows - 1),
+        ):
+            if self._connected(player, start, goal):
+                return player
+        return ""
+
+    def _connected(self, player, start, goal):
+        rows = len(self.board)
+        cols = max(len(row) for row in self.board)
+        visited = set()
+        stack = [
+            (r, c)
+            for r in range(rows)
+            for c in range(cols)
+            if start(r, c) and self._cell(r, c) == player
+        ]
+        visited.update(stack)
+        while stack:
+            r, c = stack.pop()
+            if goal(r, c):
+                return True
+            for dr, dc in ((1, -1), (1, 0), (-1, 0), (-1, 1), (0, -1), (0, 1)):
+                nr, nc = r + dr, c + dc
+                if (
+                    0 <= nr < rows
+                    and 0 <= nc < cols
+                    and (nr, nc) not in visited
+                    and self._cell(nr, nc) == player
+                ):
+                    visited.add((nr, nc))
+                    stack.append((nr, nc))
+        return False
+
+    def _cell(self, r, c):
+        row = self.board[r]
+        return row[c] if c < len(row) else "."

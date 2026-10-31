@@ -1,0 +1,68 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+var errInvalidVerse = errors.New("verse must be between 0 and 99")
+
+// Song recites the entire song, from 99 bottles down to none.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}
+
+// Verses recites verses from start down to stop, inclusive.
+func Verses(start, stop int) (string, error) {
+	if start < 0 || start > 99 || stop < 0 || stop > 99 || start < stop {
+		return "", errInvalidVerse
+	}
+	var sb strings.Builder
+	for n := start; n >= stop; n-- {
+		v, _ := Verse(n)
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+// bottles renders the count of bottles, e.g. "99 bottles", "1 bottle",
+// or "no more bottles".
+func bottles(n int) string {
+	switch n {
+	case 0:
+		return "no more bottles"
+	case 1:
+		return "1 bottle"
+	default:
+		return fmt.Sprintf("%d bottles", n)
+	}
+}
+
+// Verse recites the verse for n bottles of beer.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", errInvalidVerse
+	}
+	if n == 0 {
+		return "No more bottles of beer on the wall, no more bottles of beer.\n" +
+			"Go to the store and buy some more, 99 bottles of beer on the wall.\n", nil
+	}
+	taken := "one down"
+	if n == 1 {
+		taken = "it down"
+	}
+	return fmt.Sprintf("%s of beer on the wall, %s of beer.\n"+
+		"Take %s and pass it around, %s of beer on the wall.\n",
+		capitalize(bottles(n)), bottles(n), taken, bottles(n-1)), nil
+}
+
+// capitalize uppercases the first rune of s.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}

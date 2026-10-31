@@ -1,0 +1,64 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// Song returns the entire song, from verse 99 down to verse 0.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}
+
+// Verses returns the verses from start down to stop (inclusive),
+// each verse followed by a blank line.
+func Verses(start, stop int) (string, error) {
+	if start < 0 || start > 99 || stop < 0 || stop > 99 || start < stop {
+		return "", errors.New("invalid verse range")
+	}
+	var b strings.Builder
+	for n := start; n >= stop; n-- {
+		verse, err := Verse(n)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(verse)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
+// Verse returns a single verse for the given bottle count.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", errors.New("invalid verse number")
+	}
+	first := bottles(n)
+	capFirst := strings.ToUpper(first[:1]) + first[1:]
+	firstLine := fmt.Sprintf("%s of beer on the wall, %s of beer.", capFirst, first)
+	var secondLine string
+	switch {
+	case n > 1:
+		secondLine = fmt.Sprintf("Take one down and pass it around, %s of beer on the wall.", bottles(n-1))
+	case n == 1:
+		secondLine = "Take it down and pass it around, no more bottles of beer on the wall."
+	default:
+		secondLine = "Go to the store and buy some more, 99 bottles of beer on the wall."
+	}
+	return firstLine + "\n" + secondLine + "\n", nil
+}
+
+// bottles returns the phrase for a given bottle count, e.g. "8 bottles",
+// "1 bottle", or "no more bottles".
+func bottles(n int) string {
+	switch {
+	case n > 1:
+		return fmt.Sprintf("%d bottles", n)
+	case n == 1:
+		return "1 bottle"
+	default:
+		return "no more bottles"
+	}
+}

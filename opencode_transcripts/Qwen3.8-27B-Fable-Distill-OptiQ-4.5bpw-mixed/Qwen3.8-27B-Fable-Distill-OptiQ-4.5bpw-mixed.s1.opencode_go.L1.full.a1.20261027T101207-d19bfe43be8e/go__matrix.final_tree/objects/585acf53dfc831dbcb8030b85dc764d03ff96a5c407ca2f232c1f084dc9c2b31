@@ -1,0 +1,77 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Matrix is a rectangular grid of integers.
+type Matrix = *matrix
+
+type matrix struct {
+	rows [][]int
+}
+
+// New parses a string of whitespace-separated integers, one row per line,
+// into a Matrix. It returns an error if any row is empty, rows have
+// unequal lengths, or any field is not an integer.
+func New(s string) (Matrix, error) {
+	lines := strings.Split(s, "\n")
+	m := &matrix{rows: make([][]int, 0, len(lines))}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix row is empty")
+		}
+		row := make([]int, len(fields))
+		for i, f := range fields {
+			v, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, err
+			}
+			row[i] = v
+		}
+		m.rows = append(m.rows, row)
+	}
+	for _, row := range m.rows {
+		if len(row) != len(m.rows[0]) {
+			return nil, errors.New("matrix rows have unequal lengths")
+		}
+	}
+	return m, nil
+}
+
+// Cols returns a copy of the matrix's columns, without affecting the matrix.
+func (m Matrix) Cols() [][]int {
+	cols := make([][]int, len(m.rows[0]))
+	for c := range cols {
+		cols[c] = make([]int, len(m.rows))
+	}
+	for r, row := range m.rows {
+		for c := range row {
+			cols[c][r] = row[c]
+		}
+	}
+	return cols
+}
+
+// Rows returns a copy of the matrix's rows, without affecting the matrix.
+func (m Matrix) Rows() [][]int {
+	rows := make([][]int, len(m.rows))
+	for i, row := range m.rows {
+		rows[i] = make([]int, len(row))
+		copy(rows[i], row)
+	}
+	return rows
+}
+
+// Set sets the element at row, col to val. It reports whether the position
+// is within the matrix.
+func (m Matrix) Set(row, col, val int) bool {
+	if row < 0 || row >= len(m.rows) || col < 0 || col >= len(m.rows[row]) {
+		return false
+	}
+	m.rows[row][col] = val
+	return true
+}

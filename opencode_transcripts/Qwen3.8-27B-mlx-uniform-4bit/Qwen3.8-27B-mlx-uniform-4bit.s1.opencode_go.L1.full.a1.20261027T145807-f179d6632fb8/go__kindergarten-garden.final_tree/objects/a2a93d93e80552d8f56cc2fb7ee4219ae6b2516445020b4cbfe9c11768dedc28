@@ -1,0 +1,86 @@
+package kindergarten
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Garden holds a two-row diagram of plant cups and the class roster,
+// sorted alphabetically. Each child is assigned the two cups in each
+// row at their alphabetical position (Alice first, Larry last).
+type Garden struct {
+	rows     [2]string
+	children []string
+}
+
+// plantNames maps the diagram encoding of each seed to its plant name.
+var plantNames = map[rune]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// NewGarden parses the diagram and the list of children.
+//
+// The diagram argument starts each row with a '\n'.  This allows Go's
+// raw string literals to present diagrams in source code nicely as two
+// rows flush left, for example,
+//
+//	diagram := `
+//	VVCCGG
+//	VVCCGG`
+//
+// The diagram must consist of exactly two rows of equal, even length,
+// containing only valid cup codes, and the children must be unique.
+// The children slice is not modified.
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	rows := strings.Split(diagram, "\n")
+	if len(rows) != 3 || rows[0] != "" {
+		return nil, errors.New("diagram must consist of exactly two rows, each on its own line")
+	}
+	if len(rows[1]) != len(rows[2]) {
+		return nil, errors.New("diagram rows must have the same number of cups")
+	}
+	if len(rows[1])%2 != 0 {
+		return nil, errors.New("diagram must contain an even number of cups")
+	}
+	for _, c := range rows[1] + rows[2] {
+		if _, ok := plantNames[c]; !ok {
+			return nil, fmt.Errorf("invalid cup code %q", c)
+		}
+	}
+
+	// Sort a copy so the caller's slice is left untouched.
+	children = append([]string(nil), children...)
+	sort.Strings(children)
+	for i := 1; i < len(children); i++ {
+		if children[i] == children[i-1] {
+			return nil, fmt.Errorf("duplicate child %q", children[i])
+		}
+	}
+	if len(children) > len(rows[1])/2 {
+		return nil, errors.New("too many children for the garden")
+	}
+
+	return &Garden{rows: [2]string{rows[1], rows[2]}, children: children}, nil
+}
+
+// Plants returns the four plants belonging to the named child:
+// the two cups in the row nearest the windows, then the two cups
+// in the second row. ok is false if the child is not in the garden.
+func (g *Garden) Plants(child string) ([]string, bool) {
+	i := sort.SearchStrings(g.children, child)
+	if i == len(g.children) || g.children[i] != child {
+		return nil, false
+	}
+	plants := make([]string, 0, 4)
+	for row := 0; row < 2; row++ {
+		for j := 0; j < 2; j++ {
+			plants = append(plants, plantNames[rune(g.rows[row][i*2+j])])
+		}
+	}
+	return plants, true
+}

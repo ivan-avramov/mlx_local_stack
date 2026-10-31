@@ -1,0 +1,191 @@
+// Package ledger prints a nicely formatted ledger for a given locale
+// (American or Dutch) and currency (US dollar or euro).
+//
+// Refactoring log
+// ===============
+// The original implementation passed the tests but was hard to follow.
+// It was rewritten in small steps, keeping the test suite green at each step:
+//
+//  1. Replaced the hand-rolled bubble sort (built on boolean->int lookup
+//     maps) with sort.Slice and a plain (date, description, change)
+//     comparison.
+//  2. Removed the goroutine-per-entry + channel machinery and formatted the
+//     lines sequentially. Besides being simpler, this fixes a latent
+//     goroutine leak: on the first error the original code returned while
+//     other goroutines were still blocked sending on the unbuffered channel.
+//  3. Split the one big body into small helpers: header, formatDate,
+//     formatDescription, formatAmount, groupThousands, padChange.
+//  4. Replaced the repeated if/else chains on locale with direct lookups and
+//     validated currency, locale and dates up front with descriptive errors.
+//
+// Observable behavior is unchanged: output formatting (including the
+// rune-based padding of the change column, so the euro sign counts as one
+// character), sorting order, error conditions, and the guarantee that the
+// caller's entries slice is not modified.
+package ledger
+
+import (
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+// Entry represents a single ledger entry.
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+// currencies maps the supported currency codes to their symbols.
+var currencies = map[string]string{
+	"USD": "$",
+	"EUR": "€",
+}
+
+// FormatLedger renders a formatted ledger for the given currency and locale,
+// with one line per entry sorted by date, then description, then change.
+// The entries slice is not modified.
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if _, ok := currencies[currency]; !ok {
+		return "", fmt.Errorf("unsupported currency %q", currency)
+	}
+	if locale != "en-US" && locale != "nl-NL" {
+		return "", fmt.Errorf("unsupported locale %q", locale)
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, e := range sorted {
+		line, err := formatLine(currency, locale, e)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+// header returns the column titles for the given locale.
+func header(locale string) string {
+	date, description, change := "Date", "Description", "Change"
+	if locale == "nl-NL" {
+		date, description, change = "Datum", "Omschrijving", "Verandering"
+	}
+	return fmt.Sprintf("%-10s | %-25s | %s\n", date, description, change)
+}
+
+// formatLine renders a single ledger line.
+func formatLine(currency, locale string, e Entry) (string, error) {
+	date, err := formatDate(locale, e.Date)
+	if err != nil {
+		return "", err
+	}
+	amount, err := formatAmount(currency, locale, e.Change)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%-10s | %s | %s\n", date, formatDescription(e.Description), padChange(amount)), nil
+}
+
+// formatDate validates a "YYYY-MM-DD" date and returns it in the display
+// order used by the locale: MM/DD/YYYY for en-US, DD-MM-YYYY for nl-NL.
+func formatDate(locale, date string) (string, error) {
+	if len(date) != 10 || date[4] != '-' || date[7] != '-' {
+		return "", fmt.Errorf("invalid date %q: expected YYYY-MM-DD", date)
+	}
+	for i, c := range date {
+		if i != 4 && i != 7 && (c < '0' || c > '9') {
+			return "", fmt.Errorf("invalid date %q: expected YYYY-MM-DD", date)
+		}
+	}
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year, nil
+	}
+	return month + "/" + day + "/" + year, nil
+}
+
+// formatDescription truncates overlong descriptions to 22 characters plus an
+// ellipsis and pads the rest to the 25-byte column width.
+func formatDescription(desc string) string {
+	if len(desc) > 25 {
+		return desc[:22] + "..."
+	}
+	return desc + strings.Repeat(" ", 25-len(desc))
+}
+
+// formatAmount renders a change in cents in the locale's number format:
+// en-US uses "1,234.56" with parentheses for negatives, nl-NL uses
+// "1.234,56" with a trailing minus. Positive amounts get a trailing space so
+// the column stays aligned.
+func formatAmount(currency, locale string, cents int) (string, error) {
+	symbol, ok := currencies[currency]
+	if !ok {
+		return "", fmt.Errorf("unsupported currency %q", currency)
+	}
+	negative := cents < 0
+	if negative {
+		cents = -cents
+	}
+	centsPart := fmt.Sprintf("%02d", cents%100)
+
+	switch locale {
+	case "nl-NL":
+		s := fmt.Sprintf("%s %s,%s", symbol, groupThousands(cents/100, "."), centsPart)
+		if negative {
+			s += "-"
+		} else {
+			s += " "
+		}
+		return s, nil
+	default: // en-US
+		s := fmt.Sprintf("%s%s.%s", symbol, groupThousands(cents/100, ","), centsPart)
+		if negative {
+			return "(" + s + ")", nil
+		}
+		return s + " ", nil
+	}
+}
+
+// groupThousands inserts the given separator every three digits,
+// e.g. 1234567 -> "1.234.567" for sep ".".
+func groupThousands(n int, sep string) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteString(sep)
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}
+
+// padChange left-pads the amount with spaces so the column is 13 characters
+// wide. The width is counted in runes, matching the original implementation
+// (the euro sign counts as one character).
+func padChange(s string) string {
+	w := 13 - utf8.RuneCountInString(s)
+	if w < 0 {
+		w = 0
+	}
+	return strings.Repeat(" ", w) + s
+}

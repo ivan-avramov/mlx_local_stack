@@ -1,0 +1,94 @@
+from json import dumps
+
+
+class Tree:
+    def __init__(self, label, children=None):
+        self.label = label
+        self.children = children if children is not None else []
+
+    def __dict__(self):
+        return {self.label: [c.__dict__() for c in sorted(self.children)]}
+
+    def __str__(self, indent=None):
+        return dumps(self.__dict__(), indent=indent)
+
+    def __lt__(self, other):
+        return self.label < other.label
+
+    def __eq__(self, other):
+        return self.__dict__() == other.__dict__()
+
+    def copy(self):
+        """Return a deep copy of this tree."""
+        return Tree(self.label, [child.copy() for child in self.children])
+
+    def from_pov(self, from_node):
+        """Return a copy of the tree reoriented so that `from_node` is the root.
+
+        The edges along the path from the root to `from_node` are flipped, so
+        the former ancestors of `from_node` become its descendants. The
+        original tree is not modified.
+
+        Raises ValueError if `from_node` is not present in the tree.
+        """
+        path = self._find_path(from_node)
+        if path is None:
+            raise ValueError("Tree could not be reoriented")
+        return self._reorient(path)
+
+    def path_to(self, from_node, to_node):
+        """Return the list of labels on the path from `from_node` to `to_node`.
+
+        Raises ValueError if `from_node` is not in the tree or if `to_node`
+        cannot be reached from it.
+        """
+        tree = self.from_pov(from_node)
+        path = self._label_path(tree, to_node)
+        if path is None:
+            raise ValueError("No path found")
+        return path
+
+    def _find_path(self, node_label):
+        """Return a list of Tree objects from this node down to the node with
+        the given label, or None if no such node exists."""
+        if self.label == node_label:
+            return [self]
+        for child in self.children:
+            result = child._find_path(node_label)
+            if result is not None:
+                return [self] + result
+        return None
+
+    def _reorient(self, path):
+        """Build a new tree from a root-to-target path, flipping the edges
+        along the path so that the target (last entry) becomes the root.
+
+        `path` is a list of Tree objects from the original root down to the
+        target. A new tree is built; the nodes of `path` are not modified.
+        """
+        last = len(path) - 1
+        reoriented = None
+        for i, node in enumerate(path):
+            if i < last:
+                # The next node on the path is now this node's child, so it is
+                # no longer one of this node's children.
+                kept = [child for child in node.children if child is not path[i + 1]]
+            else:
+                kept = list(node.children)
+            children = [child.copy() for child in kept]
+            if reoriented is not None:
+                # This node's former parent is now one of its children.
+                children.append(reoriented)
+            reoriented = Tree(node.label, children)
+        return reoriented
+
+    def _label_path(self, tree, to_node):
+        """Return the list of labels from `tree` (root) down to the node
+        labeled `to_node`, or None if no such node exists."""
+        if tree.label == to_node:
+            return [tree.label]
+        for child in tree.children:
+            result = self._label_path(child, to_node)
+            if result is not None:
+                return [tree.label] + result
+        return None

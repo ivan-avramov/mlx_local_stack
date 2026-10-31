@@ -1,0 +1,107 @@
+from collections import deque
+
+
+def _propagate(source):
+    """Recompute every cell affected by a change to ``source``.
+
+    Collects ``source`` and all of its transitive dependents, recomputes
+    them in topological order (so a cell's dependencies are always up to
+    date before it is recomputed), and fires each cell's callbacks only if
+    its value in the new stable state differs from the previous one.
+    """
+    # Collect the changed cell plus every transitive dependent.
+    affected = []
+    visited = set()
+    stack = [source]
+    while stack:
+        cell = stack.pop()
+        if cell in visited:
+            continue
+        visited.add(cell)
+        affected.append(cell)
+        for dependent in cell._dependents:
+            if dependent not in visited:
+                stack.append(dependent)
+
+    # Topologically sort the affected cells. A cell's in-degree counts only
+    # the dependencies that are themselves affected; dependencies that did
+    # not change are already up to date and need no recompute.
+    in_degree = {
+        cell: sum(1 for dep in cell._dependencies if dep in visited)
+        for cell in affected
+    }
+    queue = deque(cell for cell in affected if in_degree[cell] == 0)
+    order = []
+    while queue:
+        cell = queue.popleft()
+        order.append(cell)
+        for dependent in cell._dependents:
+            if dependent in visited:
+                in_degree[dependent] -= 1
+                if in_degree[dependent] == 0:
+                    queue.append(dependent)
+
+    # Recompute in order, firing callbacks for cells whose value changed.
+    for cell in order:
+        old_value = cell._value
+        cell._recompute()
+        if cell._value != old_value:
+            for callback in list(cell._callbacks):
+                callback(cell._value)
+
+
+class InputCell:
+    def __init__(self, initial_value):
+        self._value = initial_value
+        self._dependencies = []
+        self._dependents = []
+        self._callbacks = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        old_value = self._value
+        self._value = new_value
+        if old_value != new_value:
+            _propagate(self)
+
+    def _recompute(self):
+        # Input cells are set directly; there is nothing to recompute.
+        pass
+
+    def _add_dependent(self, cell):
+        self._dependents.append(cell)
+
+
+class ComputeCell:
+    def __init__(self, inputs, compute_function):
+        self._dependencies = list(inputs)
+        self.compute_function = compute_function
+        self._dependents = []
+        self._callbacks = []
+        for cell in self._dependencies:
+            cell._add_dependent(self)
+        self._value = self._compute()
+
+    @property
+    def value(self):
+        return self._value
+
+    def _compute(self):
+        return self.compute_function([cell.value for cell in self._dependencies])
+
+    def _recompute(self):
+        self._value = self._compute()
+
+    def add_callback(self, callback):
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+
+    def _add_dependent(self, cell):
+        self._dependents.append(cell)
