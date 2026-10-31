@@ -1,64 +1,58 @@
-# Handoff — 2026-10-30 (session 12 END: C249 recorded → C258 MTP ON CERTIFIED for three entries; B2 ACCEPTED (C259) and landed on `main`; end-of-session push + drafter cards pending the gate)
+# Handoff — 2026-10-31 (session 12 END: C249 → C258 MTP ON CERTIFIED for three entries; B2 ACCEPTED (C259) and landed; local state harvested and cleaned (C260); one end-of-session push)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C259, C258, P551, C257, P550, P547, P546,
-C256, C255), `docs/specs/p426-b2-tg1-wave2.md` (v3.2; §16.8 to the end), `docs/PLAN.md` (the queue after B2). Model names: FULL registry
-names only, always. Review rounds: 3 per artifact (AGENTS.md).
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C260, C259, C258, P551, C257, P550, P547), the PLAN
+queue after B2, and `docs/reviews/cleanup-2026-10/dispositions.md` (what was deleted, what was kept, what was lost). Model names: FULL
+registry names only, always. Review rounds: 3 per artifact (AGENTS.md).
 
-## FIRST, before anything else
+## FIRST — verify the end of session 12 (each step was done after this file was committed; any "no" is a blocker)
 
-1. **The end-of-session push is DONE** (C259): stack `main` `e3c70a79..b4b69886` at level full (receipt
-   `stack-b4b69886…-fcd6dc89c5f8.json`; two earlier gates on the way: `15f8b9c9` stopped by PID, `d751d66d` FAIL on the skip-list
-   difference alone, fixed by `b4b69886`). The three drafter cards are uploaded and verified by anonymous download (HF commits
-   `2a289ef1`, `6cffc653`, `9d686947`). This handoff edit itself is a local docs-only commit: push it (docs-only level) with the operator's
-   approval.
-2. **Harvest before deleting** (`docs/reviews/`): `$STACK_WORKDIR/b2/runs/` implementer reports `s7*`, `s8*`, `s9*`, `fix2`, `fix4`
-   (`*.sonnet.report.md`) and test-writer deliveries `tw2-3f`–`3h` (`tw2-3f.report.md`, `tw2-3g.json` / `tw2-3h.json` `result`), plus the
-   briefs; `$STACK_WORKDIR/p541/`, `p542/` implementer / test-writer reports and briefs (only their code reviews are filed). Then delete
-   those directories (`chmod -R u+w` first for read-only copies).
+1. `git fetch && git status`: `main` == `origin/main` and `evidence` == `origin/evidence` (one push, `main` at level full after a PASS gate on
+   its tip — the receipt in `$STACK_WORKDIR/gate/`; `evidence` at data-only).
+2. The 240 C248 exactness arrays are on the HF dataset `caslca/mlx-local-stack-evidence` (C260) with the sha256 of
+   `evidence:backfill/2026-10-30-c260a/EXTERNAL_MANIFEST.json`.
+3. The `caslca/Qwen3.6-27B-Opus-Distill-OptiQ-4bit-mtp-drafter` card shows the interval `1.74×[1.71,1.77]` (re-uploaded with the push; the
+   first upload said 1.78, a hand-rounding the generated scoresheet corrected).
+4. `$STACK_WORKDIR` holds only the Keep set (`nltk_data`, `polyglot-benchmark`, `opencode-2.0.20`, `vision_gate_images`, `gate/`,
+   `locks/`); `git worktree list` shows only `main`; no local branches besides `main` / `evidence` (stack) and `main` (forks).
+   If the cleanup stopped part-way, finish it per `docs/reviews/cleanup-2026-10/dispositions.md` (its preconditions first).
 
-## State — 2026-10-30 ~21:30Z
+## State — 2026-10-31
 
-- **C249 DONE** (README row "C249 MTP ON vs OFF memory + speed on S′"): normal-length decode ON / OFF `Qwen3.8-27B-mlx-uniform-4bit`
-  1.72×, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` 1.74×, `Ornith-1.0-35B-mlx-uniform-4bit` 1.45× (tight item intervals; outputs byte-identical
-  60 / 60); 256K decode −13% / −6% (directional, P550) / −9%; 256K prefill-spike peak +0.3–0.5 GB. Rows on `main` (`80df5db8`).
-- **C258**: MTP ON CERTIFIED for those three (registry annotations, README). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` stays
-  PROVISIONAL (C244) until Wave 2. TurboQuant-KV provisional labels (C189 / C202) unchanged.
-- **B2 ACCEPTED (C259) and landed** on `main` as `97db61da` (the B2 benchmark diff through fix round 5 + the independent frozen set; one
-  merge conflict in `local_gate.py` resolved: B2's lock `finally` + P541's level lines). Full suite on the clean candidate 8547 passed
-  (+ 2 baseline-only s0 checks, by design); frozen set 525 / 527. Open items P552–P555 accepted per the designer's recs.
-- **P547** (C249 part (2) ran without its monitor: launcher bug) fixed in `bench_watch.py`'s usage line (`b0adf0dd`, test red first).
-- Pushed state: `origin/main` = `b4b69886` (all session-12 work).
+- **C249 / C258**: MTP ON CERTIFIED for `Qwen3.8-27B-mlx-uniform-4bit`, `Qwen3.6-27B-Opus-Distill-OptiQ-4bit`,
+  `Ornith-1.0-35B-mlx-uniform-4bit` (normal-length decode 1.72× / 1.74× / 1.45×, outputs byte-identical; 256K decode −13% / −6% /
+  −9%, a flag; 256K peak +0.3–0.5 GB). Numbers: the generated `benchmark/results/c249/scoresheet.json`. Drafter cards updated.
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` stays PROVISIONAL (C244) until Wave 2.
+- **B2 ACCEPTED (C259) and on `main`** (`97db61da`): the Wave-2 tg1 legs, sequencer, harvest; the independent frozen set (525 / 527; the 2
+  baseline-only s0 checks skip after the B2 base, registered in `benchmark/gate/stack.skips.txt`). Build records in
+  `docs/reviews/p426-b2/` (+ `build/`).
+- **Evidence (C260)**: the P369 / C249 run reports and raw logs, the Wave 1 / S′ raw legs, the remaining opencode transcripts, m62–m65,
+  gate receipts and the uncited result dirs on `evidence` (`fc4bf618`, scrubbed, fail-closed); the parked P475 / P475a / P476 code on
+  `evidence` (`05161ba0`), its review texts in `docs/reviews/parked/`; P541 / P542 / B2 build records in `docs/reviews/*/build/`.
+- Lost by decision (C260, verified twice by sol): PII-bearing opencode DBs, probe working directories, scratch `tmp/`, venvs — the list is
+  in the cleanup dispositions.
 
 ## Next, in order
 
-1. FIRST 1–2.
+1. FIRST 1–4.
 2. **Wave 2 per PLAN** (B2 accepted): v8 freeze → rehearsals R1–R3 → pilots → amendment → Wave 2 legs (first pick
-   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; OFF arm = `main` + revert of the C244 hunk, P525) → B8 / B6. Read spec §1, §7, §9, §16.8
-   before launching; run the sequencer as shipped from an arm worktree.
-3. Optional (C258): a 128K / 192K `qualify.py` ABBA point per C258 entry to locate the 256K crossover (≈ 2 h GPU, descriptive) — a
-   GPU filler while CPU-side work runs elsewhere, never during a gate or a suite.
+   `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; OFF arm = `main` + revert of the C244 hunk, P525; arms are fresh worktrees from `main`)
+   → B8 / B6. Read spec §1, §7, §9, §16.8 before launching; the sequencer as shipped; `bench_watch.py` with `PYTHONPATH=benchmark`, its
+   liveness checked after start (P547).
+3. Optional (C258): a 128K / 192K `qualify.py` ABBA point per C258 entry (the crossover; needs a fresh fork root at `fd67082a` and C249-style
+   worktrees) — descriptive GPU filler, never during a gate or a suite.
 4. P503 (load-sensitive stack tests).
-
-## Copies to resolve
-
-- `$STACK_WORKDIR/b2/*` — code landed (`97db61da`); reports not yet all filed: FIRST 2, then delete.
-- Worktrees `stack-c249` (ON), `stack-c249-off` (all OFF): rows harvested; keep only if Next 3 runs, else `git worktree remove`.
-  `stack-p369-full-off` (branch `p369-full-off`): remove. `stack-p426-s2-{off,on}` (branch `p426-on-s2`): until Wave 2's freeze.
-- Fork roots `$STACK_WORKDIR/p369/fork-{1cce312f,a4cd07e0,fd67082a}`: C249 recorded — delete (keep `fd67082a` if Next 3 runs).
-- `$STACK_WORKDIR/p541`, `p542`: FIRST 2, then delete.
 
 ## Rules learned (session 12)
 
-- A measurement launcher checks its monitor is alive after start and stops the measurement if it died (P547); run `bench_watch.py`
-  with `PYTHONPATH=benchmark`.
-- A replicate claim needs the replicates read: "tight" held for two of three entries (P550).
-- Never edit a running bash script (bash reads it incrementally).
-- A wrapper whose default path is `set -- <path>` when `$# = 0` loses that default as soon as any flag is passed: give the path.
-- A clean candidate copy without a local `main` fails merge-base tests: create `main` from `origin/main` before the full suite.
-- Scratch commits in review copies bypass the public-repo scans: expect naming / PII findings when landing on `main` (variable names
-  that look like model suffixes, placeholder home paths in fixtures → rename / `allow-pii-pattern`).
-- Check a Write succeeded before committing what it wrote.
-- Source the machine config in the shell that pushes (the pre-push hook refuses without `STACK_WORKDIR`).
-- A new skip needs its line in `benchmark/gate/<repo>.skips.txt`, else the gate FAILs on the skip list after a full run.
+- A measurement launcher checks its monitor is alive after start and stops the measurement if it died (P547).
+- A replicate claim needs the replicates read (P550). Numbers in docs come from a generated scoresheet, never hand-rounded (C249 1.78 → 1.77).
+- Never edit a running bash script. Check a Write succeeded before committing it. Source the machine config in the shell that pushes.
+- A wrapper whose default path is `set -- <path>` when `$# = 0` loses it once any flag is passed. A candidate copy without a local `main`
+  fails merge-base tests. A new skip needs its line in `benchmark/gate/<repo>.skips.txt`.
+- Scratch commits in review copies bypass the public-repo scans: landing them on `main` surfaces naming / PII findings.
+- `evidence_backfill --files-from` stages every listed file as a normal file (arrays included, all in memory): list arrays only via the
+  directory mode, which sends them to `EXTERNAL_MANIFEST.json`.
+- Before deleting local state: inventory by path + hash against `main`, `evidence` and the HF dataset; a hash in a manifest restores
+  nothing; file every review / report / brief first; have the table verified cold.
 
-Next decision id C260; discussion ids continue from P555.
+Next decision id C261; discussion ids continue from P562.
