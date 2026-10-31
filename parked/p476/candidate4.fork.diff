@@ -1,0 +1,450 @@
+diff --git a/dev/p369_phase2/qualify.py b/dev/p369_phase2/qualify.py
+index 1b5e3980..a53c28b0 100644
+--- a/dev/p369_phase2/qualify.py
++++ b/dev/p369_phase2/qualify.py
+@@ -15,10 +15,6 @@ ENTRIES = {  # C199 (c): the arm each entry is qualified in
+     "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed": "mtp_on",
+     "Qwen3.8-27B-mlx-uniform-4bit": "mtp_on",
+     "Qwen3.6-27B-Opus-Distill-OptiQ-4bit": "mtp_on_gated",  # only after its P369 campaign passed
+-    "Qwen3.8-27B-static-mixed-4bit": "served",
+-    "Qwen3.8-27B-OptiQ-4.5bpw-mixed": "served",
+-    "Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit": "served",
+-    "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit": "served",
+ }
+ MIN_OUTPUT_TOKENS = (
+     2048  # mlx-vlm server: a request leaving less is refused (fork 02e8046d)
+@@ -75,13 +71,13 @@ def arm_for(name, predictor):
+ 
+ 
+ def default_entries():
+-    """Code round 1 D8: the full qualification is all seven (Qwen3.6 then needs its P369 evidence); a subset only via
++    """Code round 1 D8: the full qualification is all three MTP entries (Qwen3.6 then needs its P369 evidence); a subset only via
+     ``--entry``."""
+     return list(ENTRIES)
+ 
+ 
+ def entry_problems(names, *, p369_summary, predictor=None):
+-    """Every name is one of the seven; ``Qwen3.6-27B-Opus-Distill-OptiQ-4bit`` MTP-ON only with a P369 FULL-run PASS for it
++    """Every name is one of the three MTP entries; ``Qwen3.6-27B-Opus-Distill-OptiQ-4bit`` MTP-ON only with a P369 FULL-run PASS for it
+     (its ``--predictor off`` arm needs none, P426 B7)."""
+     problems = [f"unknown entry {n!r}" for n in names if n not in ENTRIES]
+     for name in names:
+diff --git a/dev/p369_phase2/registry_states.py b/dev/p369_phase2/registry_states.py
+index f3f7e8d7..d43865d5 100644
+--- a/dev/p369_phase2/registry_states.py
++++ b/dev/p369_phase2/registry_states.py
+@@ -17,7 +17,7 @@ from pathlib import Path
+ 
+ FIXTURE_NAME = "stack_registry_golden.yaml"
+ FIXTURE_MARKER = "# ---- BEGIN VERBATIM main_models.yaml ----\n"
+-FIXTURE_SHA256 = "96067c3d019375a19f28bd9546f45da9907da62ea75c2f8649deffd81b6ebfdb"
++FIXTURE_SHA256 = "b00648f84715a102b6cebdbf4c9038e72fca7cf697bb518203bf41f4517e7f18"
+ _C177 = (
+     "  # P369 INTERIM (C177 2026-10-17): MTP OFF on the daily driver until the MTP EOS/budget fixes ship and are "
+     "re-certified"
+diff --git a/dev/p415_reference_peaks.json b/dev/p415_reference_peaks.json
+index dc25b849..e8b9908b 100644
+--- a/dev/p415_reference_peaks.json
++++ b/dev/p415_reference_peaks.json
+@@ -26,34 +26,6 @@
+   },
+   "source_path": "benchmark/results/Qwen3.8-27B-mlx-uniform-4bit/capacity_ladder.m43on-20260913.jsonl"
+  },
+- "Qwen3.8-27B-static-mixed-4bit": {
+-  "peak_gb": 31.579,
+-  "source": "benchmark/results/Qwen3.8-27B-static-mixed-4bit/capacity_ladder.jsonl (256000 row, 2026-08-18)",
+-  "source_blob": "18f3d028ac147d5ed22e4440db249f8ea1f6bdb8",
+-  "fingerprint": {
+-   "prompt_tokens": 252070,
+-   "kv_codec": "turboquant4",
+-   "p405_window": false,
+-   "mtp": "off",
+-   "method": "mx.get_peak_memory (server_peak_gb)"
+-  },
+-  "source_path": "benchmark/results/Qwen3.8-27B-static-mixed-4bit/capacity_ladder.jsonl"
+- },
+- "Qwen3.8-27B-OptiQ-4.5bpw-mixed": {
+-  "peak_gb": 33.715,
+-  "source": "benchmark/results/Qwen3.8-27B-OptiQ-4.5bpw-mixed/capacity_ladder.jsonl (256000 row, 2026-08-18)",
+-  "source_blob": "3d5df5bab1a94a2d25a7b110d5e5bee61af02c77",
+-  "fingerprint": {
+-   "prompt_tokens": 252070,
+-   "kv_codec": "turboquant4",
+-   "p405_window": false,
+-   "mtp": "off",
+-   "method": "mx.get_peak_memory (server_peak_gb)"
+-  },
+-  "source_path": "benchmark/results/Qwen3.8-27B-OptiQ-4.5bpw-mixed/capacity_ladder.jsonl"
+- },
+- "Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit": null,
+- "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit": null,
+  "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed": {
+   "peak_gb": 37.97,
+   "source": "docs/campaign-results.md (M58 arms A/B 2026-10-06, '256K cold \u2026 37.97 GB'; M57 arm E 2026-10-05)",
+diff --git a/mlx_vlm/tests/fixtures/stack_registry_golden.yaml b/mlx_vlm/tests/fixtures/stack_registry_golden.yaml
+index cb3a60b7..c1e1fa6e 100644
+--- a/mlx_vlm/tests/fixtures/stack_registry_golden.yaml
++++ b/mlx_vlm/tests/fixtures/stack_registry_golden.yaml
+@@ -1,7 +1,8 @@
+-# PINNED COPY of the stack's main_models.yaml in its shipped-when-ON form (P422): stack 59d7802f (C202 — all four
++# PINNED COPY of the stack's main_models.yaml in its shipped-when-ON form (P422): stack P476-STACK-COMMIT (P476 prune to the five published entries; C202 — all four
+ # MTP-certified entries OFF) with every dev/p369_phase2/registry_states.py ENTRY_OFF substitution reversed, i.e. all
+-# four entries MTP-ON — the shipped-when-ON tuple the P369 tests certify (P387). It parses identically to the previous
+-# fixture (stack 7021bdbb, the last real MTP-ON registry): the difference is comments only (two C202 PROVISIONAL blocks).
++# four entries MTP-ON — the shipped-when-ON tuple the P369 tests certify (P387). It differs from the previous
++# fixture (stack 7021bdbb, the last real MTP-ON registry) by the P476 prune: the six pruned `models:` entries are gone,
++# `openwebui.retired_model_ids` is added, and the C202 PROVISIONAL comment blocks are new.
+ # Everything after the BEGIN marker is VERBATIM; its sha256 is pinned in registry_states.FIXTURE_SHA256 and
+ # test_mtp_verify_scan.FIXTURE_SHA256. The ordinary suite reads ONLY this file; the opt-in live check
+ # (MLX_REQUIRE_STACK_REGISTRY=1) accepts exactly the 16 per-entry ON / OFF states (registry_states.classify). REFRESH on
+@@ -43,6 +44,13 @@ openwebui:
+     - Qwen3.8-27B-mlx-uniform-4bit
+     - Ornith-1.0-35B-mlx-uniform-4bit
+     - NVIDIA-Nemotron-3.5-Lightning-30B-A3B-4bit
++  retired_model_ids:
++    - gemma-4-31B-it-qat-6bit
++    - gemma-4-26B-A4B-it-OptiQ-4bit
++    - Qwen3.8-27B-static-mixed-4bit
++    - Qwen3.8-27B-OptiQ-4.5bpw-mixed
++    - Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit
++    - Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit
+ 
+ agent_defaults:
+   openwebui: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+@@ -79,69 +87,6 @@ task_model:
+     output: 2048
+ 
+ models:
+-  # QAT / optimized-quant experiments (quality-vs-size; QAT/OptiQ earn their keep at 4-6 bit).
+-  - name: gemma-4-31B-it-qat-6bit
+-    type: vision
+-    on_demand: true
+-    hf_path: mlx-community/gemma-4-31B-it-qat-6bit
+-    max_kv_cache_size: 196608      # 192K: weights ~31GB make 256K (~58GB) trip the RAM backstop
+-    kv_prealloc_tokens: 196608
+-    kv_quant_scheme: uniform
+-    kv_bits: 4
+-    prefill_step_size: 512
+-    quantized_kv_start: 0
+-    generation_defaults:
+-      temperature: 0.7
+-      top_p: 0.95
+-      top_k: 64
+-      min_p: 0.0
+-      repetition_penalty: 1.08
+-      max_tokens: 32768
+-      thinking_budget: 16384
+-      enable_thinking: true
+-    presentation:
+-      role: main
+-      family: gemma
+-      display_name: "gemma-4-31B-it-qat-6bit (dense)"
+-      context: 196608
+-      output: 32768
+-      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+-    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+-    # draft_block_size: 16
+-    # suffix_min_match: 2
+-    # draft_cooldown: 2
+-
+-  - name: gemma-4-26B-A4B-it-OptiQ-4bit
+-    type: vision
+-    on_demand: true
+-    hf_path: mlx-community/gemma-4-26B-A4B-it-OptiQ-4bit
+-    max_kv_cache_size: 262144
+-    kv_prealloc_tokens: 262144
+-    kv_quant_scheme: uniform
+-    kv_bits: 4
+-    prefill_step_size: 512
+-    quantized_kv_start: 0
+-    generation_defaults:
+-      temperature: 0.7
+-      top_p: 0.95
+-      top_k: 64
+-      min_p: 0.0
+-      repetition_penalty: 1.08
+-      max_tokens: 49152
+-      thinking_budget: 32768
+-      enable_thinking: true
+-    presentation:
+-      role: main
+-      family: gemma
+-      display_name: "gemma-4-26B-A4B-it-OptiQ-4bit (MoE)"
+-      context: 262144
+-      output: 49152
+-      capabilities: [tools, vision, thinking, web_search, code_interpreter]
+-    # draft_kind: suffix       # drafter-free suffix decoding (see gemma-4-31b-it-6bit)
+-    # draft_block_size: 16
+-    # suffix_min_match: 2
+-    # draft_cooldown: 2
+-
+   # ── Campaign picks for 256K agentic coding (MLX quants, hosted on HF: caslca) ──
+   # B MENU (operator C38 ruling 2026-08-29): 1st Qwen3.6-27B-Opus-Distill-OptiQ-4bit
+   # (certified MTP triple, M6b), 2nd Ornith-1.0-35B-mlx-uniform-4bit (certified MTP triple,
+@@ -405,106 +350,12 @@ models:
+ 
+   # C51 2026-09-09: medium-effort bench clone retired; base entry now carries its certified tune.
+ 
+-  - name: Qwen3.8-27B-static-mixed-4bit
+-    type: vision
+-    on_demand: true
+-    hf_path: caslca/Qwen3.8-27B-static-mixed-4bit  # vision tower RESTORED 2026-08-23 (bf16 graft rev be1aa462; trunk md5+logit bit-identical)
+-    max_kv_cache_size: 262144
+-    kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
+-    # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
+-    # only, no bf16-KV arms — bf16 floor was 16GB/session, measured 51GB footprint).
+-    # TQ4 matches both winners' shipped config.
+-    kv_quant_scheme: turboquant
+-    kv_bits: 4
+-    quantized_kv_start: 0
+-    prefill_step_size: 512
+-    generation_defaults:
+-      temperature: 1.0
+-      top_p: 0.95
+-      top_k: 20
+-      min_p: 0.0
+-      presence_penalty: 0.0
+-      max_tokens: 102400
+-      thinking_budget: 81920
+-      enable_thinking: true
+-
+   # RETIRED 2026-08-26 (C33, operator): the M23 reference entry `Qwen3.8-27B-4bit`
+   # (hf_path mlx-community/Qwen3.8-27B-4bit) was REMOVED — a full-tensor md5 sweep proved it
+   # IDENTICAL to `Qwen3.8-27B-mlx-uniform-4bit` (2179/2180 tensors; sole delta = the bf16-grafted
+   # vision tower, which only the caslca copy restores). One model, one name. Its m23/m23b/m23c
+   # result rows remain on disk as same-model session replicates (C30).
+ 
+-  - name: Qwen3.8-27B-OptiQ-4.5bpw-mixed
+-    type: vision
+-    on_demand: true
+-    hf_path: caslca/Qwen3.8-27B-OptiQ-4.5bpw-mixed
+-    max_kv_cache_size: 262144
+-    kv_prealloc_tokens: 262144   # restored to cap (standing rule) — at TQ4 width the floor is ~4GB/session, bounded by MLX_VLM_CACHE_SESSION_MAX=2
+-    # KV = deployed convention (operator ruling 2026-08-17: measure at expected deployment
+-    # only, no bf16-KV arms — bf16 floor was 16GB/session, measured 51GB footprint).
+-    # TQ4 matches both winners' shipped config.
+-    kv_quant_scheme: turboquant
+-    kv_bits: 4
+-    quantized_kv_start: 0
+-    prefill_step_size: 512
+-    generation_defaults:
+-      # 1.0 -> 0.6 (2026-08-28, M25 prep): 0.6 is this recipe's M2 Stage-1 SCREENED tune
+-      # (conv 14/14 + the HumanEval/146 capped probe, pass@1 1.00 at t0.6) and the family's
+-      # certified operating point on the sibling; t1.0 is the family's MEASURED-runaway temp
+-      # (M2: checkpoint 1.0 AND 0.7 both ran away >3600 s). The 1.0 here was the checkpoint
+-      # default the funnel screens FROM, never an operating point — updated before the
+-      # first deployed-profile arm ever reads it.
+-      temperature: 0.6
+-      top_p: 0.95
+-      top_k: 20
+-      min_p: 0.0
+-      presence_penalty: 0.0
+-      max_tokens: 102400
+-      thinking_budget: 81920
+-      enable_thinking: true
+-    presentation:
+-      # role: candidate => bench carriers only, never client configs. Added 2026-08-28
+-      # (M25, operator-requested paces run): enables the paired opencode arms vs
+-      # Qwen3.8-27B-mlx-uniform-4bit and the winners.
+-      role: candidate
+-      family: qwen
+-      display_name: "Qwen3.8-27B (OptiQ 4.5bpw mixed)"  # UI label, allow-shorthand
+-      context: 262144
+-      output: 102400
+-      capabilities: [tools, vision, thinking]
+-
+-  - name: Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit
+-    type: vision
+-    on_demand: true
+-    hf_path: caslca/Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit  # UPLOADED 2026-08-23 (public)
+-    max_kv_cache_size: 262144
+-    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+-    kv_quant_scheme: turboquant
+-    kv_bits: 4
+-    quantized_kv_start: 0
+-    prefill_step_size: 512
+-    generation_defaults:
+-      temperature: 0.6  # CERTIFIED M19 2026-08-22 (deployed ladder; t0.5 knee was a profile artifact)
+-      top_p: 0.95
+-      top_k: 20
+-      min_p: 0.0
+-      presence_penalty: 0.0
+-      max_tokens: 102400
+-      thinking_budget: 81920
+-      enable_thinking: true
+-    presentation:
+-      # role: candidate — durable form of the carrier entry hand-written in bcc6d37 for the
+-      # M3 opencode arm (2026-08-22): the registry never carried a presentation block for this
+-      # model, so `configgen generate` silently DROPPED it from benchmark/opencode_bench.json
+-      # on the next re-emit (caught 2026-08-28 while landing the Qwen3.8-27B-mlx-uniform-4bit
+-      # block — C36). Emission verified byte-reproducing the committed carrier entry.
+-      role: candidate
+-      family: qwen
+-      display_name: "Qwen3.8-27B Fable-Distill (reasoning)"  # UI label, allow-shorthand
+-      context: 262144
+-      output: 102400
+-      capabilities: [tools, vision, thinking]
+-
+   - name: Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+     type: vision
+     on_demand: true
+@@ -582,23 +433,4 @@ models:
+ 
+   # (the reasoning_effort=medium bench clone of this checkpoint was RETIRED 2026-09-07 when medium became its certified default; its rows live under results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-MED)  # allow-shorthand
+   # (the reasoning_effort=low bench clone was RETIRED 2026-09-07 after S2c: the effort curve's knee is at medium — see campaign-results 2026-09-07 S2c)  # allow-shorthand
+-  - name: Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit
+-    type: vision
+-    on_demand: true
+-    hf_path: caslca/Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit  # UPLOADED 2026-08-23 (public)
+-    max_kv_cache_size: 262144
+-    kv_prealloc_tokens: 262144   # standing rule: prealloc = cap
+-    kv_quant_scheme: turboquant
+-    kv_bits: 4
+-    quantized_kv_start: 0
+-    prefill_step_size: 512
+-    generation_defaults:
+-      temperature: 0.55  # CERTIFIED M20/O37 2026-08-23; evidence RESTATED by C46 2026-09-03 (strict 86/74 vs 86/70 at t0.6, budget hits 0 vs 2 per 100; the original 82/70 vs 76/68 rested on pre-C28 timeout DNFs)
+-      top_p: 0.95
+-      top_k: 20
+-      min_p: 0.0
+-      presence_penalty: 0.0
+-      max_tokens: 102400
+-      thinking_budget: 81920
+-      enable_thinking: true
+ 
+diff --git a/mlx_vlm/tests/test_mtp_verify_scan.py b/mlx_vlm/tests/test_mtp_verify_scan.py
+index 7ad99fe0..4e31c49d 100644
+--- a/mlx_vlm/tests/test_mtp_verify_scan.py
++++ b/mlx_vlm/tests/test_mtp_verify_scan.py
+@@ -1727,11 +1727,11 @@ FIXTURE_REGISTRY = (
+     Path(__file__).resolve().parent / "fixtures" / "stack_registry_golden.yaml"
+ )
+ FIXTURE_MARKER = "# ---- BEGIN VERBATIM main_models.yaml ----\n"
+-FIXTURE_SHA256 = "96067c3d019375a19f28bd9546f45da9907da62ea75c2f8649deffd81b6ebfdb"
++FIXTURE_SHA256 = "b00648f84715a102b6cebdbf4c9038e72fca7cf697bb518203bf41f4517e7f18"
+ UNIFORM_PICK = "Qwen3.8-27B-mlx-uniform-4bit"
+ # P422: the stack registry at 59d7802f (C202, all four MTP-certified entries OFF) with every ENTRY_OFF substitution
+ # reversed — the shipped-when-ON form; it parses identically to the previous fixture (stack 7021bdbb; comments only).
+-FIXTURE_SOURCE = "59d7802f"
++FIXTURE_SOURCE = "P476-STACK-COMMIT"
+ _C177 = "  # P369 INTERIM (C177 2026-10-17): MTP OFF on the daily driver until the MTP EOS/budget fixes ship and are re-certified"
+ # Per pick, (fixture line, its C177 interim line), verbatim — the ONLY lines the interim may change (K2).
+ INTERIM_LINES = {
+diff --git a/mlx_vlm/tests/test_p415_qualify.py b/mlx_vlm/tests/test_p415_qualify.py
+index c2b4f304..8be4fd7f 100644
+--- a/mlx_vlm/tests/test_p415_qualify.py
++++ b/mlx_vlm/tests/test_p415_qualify.py
+@@ -20,7 +20,9 @@ from p369_phase2 import qualify  # noqa: E402
+ FABLE = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
+ UNIFORM = "Qwen3.8-27B-mlx-uniform-4bit"
+ QWEN36 = "Qwen3.6-27B-Opus-Distill-OptiQ-4bit"
+-STATIC = "Qwen3.8-27B-static-mixed-4bit"
++# P476: the real registry no longer ships a non-MTP "served" entry; the served-arm code path is covered by a SYNTHETIC
++# entry injected into ``qualify.ENTRIES`` by the tests that need it (``_with_served``), never by a registry name.
++STATIC = "synthetic-served-27B"
+ VENV_BIN = Path("/stack/.venv/bin")
+ 
+ GEN = dict(
+@@ -133,23 +135,27 @@ def _cmd(entry):
+ 
+ 
+ # ------------------------------------------------------------------ T1: the entries and their arms (C199)
+-def test_t1_the_seven_entries_and_their_arms():
+-    assert set(qualify.ENTRIES) == {
+-        FABLE,
+-        UNIFORM,
+-        QWEN36,
+-        STATIC,
+-        "Qwen3.8-27B-OptiQ-4.5bpw-mixed",
+-        "Qwen3.8-27B-Fable-Distill-mlx-uniform-4bit",
+-        "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit",
+-    }
++def _with_served(monkeypatch):
++    """P476: inject the synthetic served-arm entry (the real ENTRIES keep only the three MTP entries)."""
++    monkeypatch.setitem(qualify.ENTRIES, STATIC, "served")
++
++
++def test_t1_the_three_entries_and_their_arms():
++    assert set(qualify.ENTRIES) == {FABLE, UNIFORM, QWEN36}
+     assert qualify.ENTRIES[FABLE] == qualify.ENTRIES[UNIFORM] == "mtp_on"
+     assert qualify.ENTRIES[QWEN36] == "mtp_on_gated"
++    assert QWEN36 in qualify.default_entries() and len(qualify.default_entries()) == 3
++
++
++def test_t1_a_synthetic_served_entry_takes_the_served_arm(monkeypatch):
++    assert STATIC not in qualify.ENTRIES
++    _with_served(monkeypatch)
+     assert qualify.ENTRIES[STATIC] == "served"
+-    assert QWEN36 in qualify.default_entries() and len(qualify.default_entries()) == 7
++    assert qualify.arm_for(STATIC, None) == "served"
+ 
+ 
+-def test_t1_an_unknown_entry_or_an_ungated_qwen36_refuses(tmp_path):
++def test_t1_an_unknown_entry_or_an_ungated_qwen36_refuses(tmp_path, monkeypatch):
++    _with_served(monkeypatch)
+     assert qualify.entry_problems(["nope"], p369_summary=None)
+     assert qualify.entry_problems(
+         [QWEN36], p369_summary=None
+@@ -471,7 +477,7 @@ def test_t6_the_reference_table_loads_and_refuses_bad_rows(tmp_path):
+             source_path="docs/campaign-results.md",
+             fingerprint=FP,
+         ),
+-        "Qwen3.8-27B-Opus-Distill-v2-mlx-uniform-4bit": None,  # none recorded
++        UNIFORM: None,  # none recorded
+     }
+     p = tmp_path / "refs.json"
+     p.write_text(json.dumps(good))
+@@ -486,6 +492,13 @@ def test_t6_the_reference_table_loads_and_refuses_bad_rows(tmp_path):
+ 
+ 
+ # ------------------------------------------------------------------ T5 / T10 / T7 / T11: outcomes and the schedule
++def test_p476_the_real_reference_table_loads_against_the_real_entries():
++    """P476: ``load_references`` refuses a reference for an entry outside ``ENTRIES``; the REAL file must pass."""
++    table = qualify.load_references(qualify.REFERENCES)
++    assert set(table) <= set(qualify.ENTRIES)
++    assert table[FABLE]["peak_gb"] == 37.97
++
++
+ def test_t5_idle_before_every_entry_after_the_first():
+     assert qualify.idle_before(["a", "b", "c"]) == [False, True, True]
+ 
+@@ -532,6 +545,7 @@ def _drive(
+ 
+     from p369_phase2 import orchestrate
+ 
++    _with_served(monkeypatch)
+     registry = "models: []\n"
+     blocks = {FABLE: FABLE_ENTRY, STATIC: STATIC_ENTRY}
+     for name, value in dict(
+@@ -828,8 +842,8 @@ def test_d5_the_fork_must_be_at_the_reviewed_head_and_the_stack_unchanged():
+     assert qualify.guard_problems(base, dict(base, fork_clean=False), reviewed="a" * 40)
+ 
+ 
+-def test_d8_the_default_run_is_all_seven_and_needs_the_qwen36_evidence():
+-    assert len(qualify.default_entries()) == 7 and QWEN36 in qualify.default_entries()
++def test_d8_the_default_run_is_all_three_and_needs_the_qwen36_evidence():
++    assert len(qualify.default_entries()) == 3 and QWEN36 in qualify.default_entries()
+ 
+ 
+ def test_d9_the_auto_cache_limit_is_mlx_vlms_derivation():
+diff --git a/mlx_vlm/tests/test_p426_qualify_predictor.py b/mlx_vlm/tests/test_p426_qualify_predictor.py
+index 7a76866f..24e40561 100644
+--- a/mlx_vlm/tests/test_p426_qualify_predictor.py
++++ b/mlx_vlm/tests/test_p426_qualify_predictor.py
+@@ -39,11 +39,14 @@ FABLE_OFF_ENTRY = {
+         (STATIC, "off", "served"),
+     ],
+ )
+-def test_the_arm_follows_the_predictor(name, predictor, arm):
++def test_the_arm_follows_the_predictor(monkeypatch, name, predictor, arm):
++    # P476: STATIC is the scoped SYNTHETIC served entry (as in test_p415_qualify), not a registry name.
++    t415._with_served(monkeypatch)
+     assert qualify.arm_for(name, predictor) == arm
+ 
+ 
+-def test_a_served_entry_has_no_on_arm():
++def test_a_served_entry_has_no_on_arm(monkeypatch):
++    t415._with_served(monkeypatch)
+     with pytest.raises(ValueError, match="no MTP-ON arm"):
+         qualify.arm_for(STATIC, "on")
+ 

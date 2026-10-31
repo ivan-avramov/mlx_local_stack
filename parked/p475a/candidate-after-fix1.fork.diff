@@ -1,0 +1,1077 @@
+diff --git a/dev/p369_phase2/qualify.py b/dev/p369_phase2/qualify.py
+index a53c28b0..02ff4d2a 100644
+--- a/dev/p369_phase2/qualify.py
++++ b/dev/p369_phase2/qualify.py
+@@ -192,7 +192,7 @@ def expected_config(entry):
+         ),
+         kv_quant_mode=values["kv_quant_mode"] or None,
+         quantized_kv_start=int(values["quantized_kv_start"]),
+-        kv_bits=int(values["kv_bits"]) or None,
++        kv_bits=values["kv_bits"] or None,  # P475a: the exact width, never truncated
+         kv_quant_scheme=values["kv_quant_scheme"] or None,
+         prefill_step=int(values["prefill_step_size"]),
+         prealloc=int(values["kv_prealloc_tokens"]),
+@@ -380,12 +380,17 @@ def request_problems(rec, expected):
+     from p369_phase2 import kvmanifest
+ 
+     observed, template = rec.get("manifest"), rec.get("template")
++    native_attention = None  # P475a: unknown without a manifest / template (that problem is reported alone)
+     if not observed or not template:
+         problems.append("no leaf manifest / template of the measured cache")
+     else:
+         problems += kvmanifest.manifest_problems(
+             observed, template, expected_kv(expected)
+         )
++        native_attention = any(  # N16, or TurboQuant's retained native layer
++            e["kind"] == "native"
++            for e in kvmanifest.expected_manifest(template, expected_kv(expected))
++        )
+         caps = rec.get("capacities_by_path") or {}
+         kv_paths = [
+             o["path"] for o in observed if o.get("kind") in ("tq", "affine", "native")
+@@ -397,12 +402,15 @@ def request_problems(rec, expected):
+                 problems.append(
+                     f"layer {path} capacity {caps.get(path)} != {expected['prealloc']}"
+                 )
+-    fused = expected["attention_policy"] == "fused_v1"
++    # P475a: fused_v1 forces SDPA only where the expected manifest keeps a native-KV attention leaf; affine arms take the
++    # quantized-attention path (no forced call)
++    fused = expected["attention_policy"] == "fused_v1" and bool(native_attention)
+     forced = rec.get("sdpa_forced") or 0
+-    if fused != (forced > 0):
+-        problems.append(
+-            f"sdpa_forced {forced} (attention {expected['attention_policy']})"
+-        )
++    if native_attention is not None or expected["attention_policy"] != "fused_v1":
++        if fused != (forced > 0):
++            problems.append(
++                f"sdpa_forced {forced} (attention {expected['attention_policy']})"
++            )
+     if expected["lazy_embeddings"] != ((rec.get("lazy_calls") or 0) > 0):
+         problems.append(
+             f"lazy embedding calls {rec.get('lazy_calls')} ({expected['lazy_embeddings']})"
+@@ -561,19 +569,23 @@ FINGERPRINT = (
+ )
+ 
+ 
+-def reference_comparison(ref, peak_gb, fingerprint):
+-    """C199 (a): the delta vs a historical peak, labelled by EVERY fingerprint field that differs or is absent."""
++def reference_comparison(ref, peak_gb, fingerprint, kv_arm=None):
++    """C199 (a): the delta vs a historical peak, labelled by EVERY fingerprint field that differs or is absent; a KV arm
++    (P475a) is never comparable with the committed format's reference."""
+     theirs = ref.get("fingerprint") or {}
+     differs = [
+         f for f in FINGERPRINT if f not in theirs or theirs[f] != fingerprint.get(f)
+     ]
+-    return dict(
++    out = dict(
+         reference_gb=ref["peak_gb"],
+         delta_gb=round(peak_gb - ref["peak_gb"], 4),
+         differs=differs,
+         comparable=not differs,
+         source=ref.get("source"),
+     )
++    if kv_arm is not None:
++        out.update(label="non-comparable: KV arm", comparable=False)
++    return out
+ 
+ 
+ def load_references(path, *, table=None, blob_exists=None):
+@@ -824,6 +836,15 @@ def drive(args):
+     )
+     names = list(args.entry or default_entries())
+     predictor = getattr(args, "predictor", None)
++    if getattr(args, "kv_arm", False):  # P475a
++        if len(args.entry or []) != 1 or predictor != "off":
++            raise SystemExit(
++                "refused: --kv-arm needs exactly one --entry and --predictor off"
++            )
++        if args.entry[0] not in registry_states.KV_ARM_ENTRIES:
++            raise SystemExit(
++                f"refused: --kv-arm entry {args.entry[0]!r} is not one of {list(registry_states.KV_ARM_ENTRIES)}"
++            )
+     problems = entry_problems(
+         names, p369_summary=args.p369_summary, predictor=predictor
+     )
+@@ -907,11 +928,23 @@ def _drive_locked(
+         registry = orchestrate.read_registry(stack / "main_models.yaml")
+         registry_sha = orchestrate.sha256_file(stack / "main_models.yaml")
+         fixture = registry_states.fixture_text(fork / "mlx_vlm" / "tests" / "fixtures")
+-        off_entries = registry_states.classify(registry, fixture)
+-        if off_entries is None:
+-            problems.append(
+-                "the live registry is not one of the 16 accepted byte states"
+-            )
++        kv_arm = None
++        if getattr(args, "kv_arm", False):  # P475a: the ONE classification under --kv-arm
++            arm_class = registry_states.classify_kv_arm(registry, fixture, names[0])
++            off_entries = None if arm_class is None else arm_class[0]
++            if arm_class is None:
++                problems.append(
++                    f"--kv-arm: the live registry is not one of the 16 accepted states except {names[0]}'s KV keys"
++                )
++            else:
++                kv_arm = dict(entry=names[0], delta=arm_class[1])
++                report["kv_arm"] = kv_arm
++        else:
++            off_entries = registry_states.classify(registry, fixture)
++            if off_entries is None:
++                problems.append(
++                    "the live registry is not one of the 16 accepted byte states"
++                )
+         console = console_script_info(stack)
+         problems += entry_point_problems(
+             dict(console, delegates_to_cli_main=True), stack / ".venv" / "bin"
+@@ -1050,7 +1083,7 @@ def _drive_locked(
+                         None
+                         if ref is None
+                         else reference_comparison(
+-                            ref, peak, fingerprint_of(rec, expected)
++                            ref, peak, fingerprint_of(rec, expected), kv_arm=kv_arm
+                         )
+                     ),
+                 )
+@@ -1266,6 +1299,9 @@ def build_parser():
+     ap.add_argument(  # P426 B7: the M1 memory axis measures both predictor states
+         "--predictor", choices=("on", "off"), default=None
+     )
++    ap.add_argument(  # P475a: the entry under test may differ from an accepted state in its KV-format keys
++        "--kv-arm", action="store_true"
++    )
+     ap.add_argument("--idle-s", type=float, default=IDLE_S)
+     ap.add_argument(  # P452: the production tree this run attests (P426: stack S carries B1's log-only counters)
+         "--production-ref", default=orchestrate.PRODUCTION
+diff --git a/dev/p369_phase2/registry_states.py b/dev/p369_phase2/registry_states.py
+index d43865d5..bf572406 100644
+--- a/dev/p369_phase2/registry_states.py
++++ b/dev/p369_phase2/registry_states.py
+@@ -228,12 +228,13 @@ def _same(a, b):
+     return a == b
+ 
+ 
+-def classify(text, fixture):
+-    """C203: the frozenset of MTP-OFF entries if ``text``'s SETTINGS are one of the 16 states, else None."""
+-    try:
+-        doc, ref = parse(text), parse(fixture)
+-    except ValueError:
+-        return None
++KV_ARM_KEYS = ("kv_bits", "kv_quant_scheme")  # P475a: the only keys a KV arm may change
++_ABSENT = object()
++
++
++def _classify_docs(doc, ref, arm=None):
++    """``(off set, kv delta)`` for two parsed documents, or None; ``arm`` names the one entry that may ALSO differ in
++    ``KV_ARM_KEYS`` (P475a), ``None`` is exactly C203's rule."""
+     if not isinstance(doc, dict) or not _same(
+         {k: v for k, v in doc.items() if k != "models"},
+         {k: v for k, v in ref.items() if k != "models"},
+@@ -242,9 +243,20 @@ def classify(text, fixture):
+     models, ref_models = doc.get("models") or [], ref.get("models") or []
+     if [m.get("name") for m in models] != [m.get("name") for m in ref_models]:
+         return None
+-    off = set()
++    off, delta = set(), {}
+     for got, want in zip(models, ref_models):
+         name = want.get("name")
++        if name == arm:
++            # the KV keys go back to the fixture's values before the comparison; the difference is the delta
++            for key in KV_ARM_KEYS:
++                have, fixed = got.get(key, _ABSENT), want.get(key, _ABSENT)
++                if not _same(have, fixed):
++                    delta[key] = (
++                        None if fixed is _ABSENT else fixed,
++                        None if have is _ABSENT else have,
++                    )
++            got = {k: v for k, v in got.items() if k not in KV_ARM_KEYS}
++            got.update({k: want[k] for k in KV_ARM_KEYS if k in want})
+         if _same(got, want):
+             continue
+         if name in ENTRY_OFF and _same(
+@@ -253,7 +265,69 @@ def classify(text, fixture):
+             off.add(name)
+             continue
+         return None
+-    return frozenset(off)
++    return frozenset(off), delta
++
++
++def classify(text, fixture):
++    """C203: the frozenset of MTP-OFF entries if ``text``'s SETTINGS are one of the 16 states, else None."""
++    try:
++        doc, ref = parse(text), parse(fixture)
++    except ValueError:
++        return None
++    got = _classify_docs(doc, ref)
++    return None if got is None else got[0]
++
++
++KV_ARM_ENTRIES = (  # P475a: the two picks the matrix measures; any other entry refuses
++    "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed",
++    "Qwen3.8-27B-mlx-uniform-4bit",
++)
++KV_ARM_SCHEMES = ("uniform", "turboquant")
++
++
++def _kv_arm_valid(arm):
++    """The arm's KV values are in the P475 arm set: ``kv_bits`` the integer 0 (native; the scheme is inert there, absent or
++    either), 8 or 4, and for 4 / 8 a scheme of ``KV_ARM_SCHEMES``."""
++    bits, scheme = arm.get("kv_bits"), arm.get("kv_quant_scheme")
++    if type(bits) is not int or bits not in (0, 4, 8):
++        return False
++    return scheme in KV_ARM_SCHEMES or (bits == 0 and scheme is None)
++
++
++def _models_ok(doc):
++    """``doc`` is a mapping whose ``models`` (if any) is a list of mappings with string names (what ``_classify_docs`` reads)."""
++    if not isinstance(doc, dict):
++        return False
++    models = doc.get("models")
++    return models is None or (
++        isinstance(models, list)
++        and all(isinstance(m, dict) and isinstance(m.get("name"), str) for m in models)
++    )
++
++
++def classify_kv_arm(text, fixture, entry):
++    """P475a: ``(off set, {key: (fixture value, arm value)})`` if ``text`` is one of the 16 states except that ``entry`` (one of
++    ``KV_ARM_ENTRIES``) may ALSO differ in ``KV_ARM_KEYS`` (values of the P475 arm set). Any other difference (a changed
++    ``quantized_kv_start`` included), a second entry differing, another ``entry`` or a malformed document is None, never an
++    exception. An empty delta is ``classify``'s answer.
++    """
++    if entry not in KV_ARM_ENTRIES:
++        return None
++    try:
++        doc, ref = parse(text), parse(fixture)
++    except ValueError:
++        return None
++    if not (_models_ok(doc) and _models_ok(ref)):
++        return None
++    got = _classify_docs(doc, ref, arm=entry)
++    if got is None or entry not in {m.get("name") for m in ref.get("models") or []}:
++        return None
++    off, delta = got
++    if delta:
++        arm = next(m for m in doc["models"] if m.get("name") == entry)
++        if not _kv_arm_valid(arm):
++            return None
++    return off, delta
+ 
+ 
+ def overlay_on(text, fixture, entry):
+diff --git a/mlx_vlm/tests/test_p475a_qualify_kv_arm.py b/mlx_vlm/tests/test_p475a_qualify_kv_arm.py
+new file mode 100644
+index 00000000..2da6d41d
+--- /dev/null
++++ b/mlx_vlm/tests/test_p475a_qualify_kv_arm.py
+@@ -0,0 +1,811 @@
++"""P475a: `qualify --kv-arm` — a registry differing from an accepted state in exactly the KV-format keys of the ONE entry
++under test (fork-only, dev, CPU; nothing loads a model).
++
++`registry_states.classify_kv_arm` is `classify` plus a KV delta on one entry; `qualify` applies it under `--kv-arm`, checks
++the live cache against the ARM's own manifest, labels the reference comparison non-comparable, and (for every run) asserts
++the quantized-attention path (`sdpa_forced == 0`) exactly when the expected manifest has no native attention leaf.
++"""
++
++import json
++import re
++import sys
++from pathlib import Path
++
++import pytest
++
++DEV = Path(__file__).resolve().parents[2] / "dev"
++sys.path.insert(0, str(DEV))
++
++from mlx_vlm.tests import test_p415_qualify as t415  # noqa: E402
++from p369_phase2 import qualify  # noqa: E402
++from p369_phase2 import registry_states as rs  # noqa: E402
++
++FIXTURE = rs.fixture_text(Path(__file__).resolve().parent / "fixtures")
++FABLE = t415.FABLE
++UNIFORM = t415.UNIFORM
++PICKS = (FABLE, UNIFORM)
++ARMS = {  # P475 arm -> (kv_bits, kv_quant_scheme)
++    "N16": (0, "turboquant"),
++    "AF8": (8, "uniform"),
++    "TQ8": (8, "turboquant"),
++    "AF4": (4, "uniform"),
++    "TQ4": (4, "turboquant"),
++}
++
++
++def _set(text, entry, **keys):
++    """``text`` with the named keys of ``entry``'s block set (the line rewritten in place, comments dropped)."""
++    lines = text.split("\n")
++    start, end = rs._span(lines, entry)
++    for key, value in keys.items():
++        hits = [
++            i for i in range(start, end) if re.match(rf"^    {key}:", lines[i])
++        ]
++        assert len(hits) == 1, (entry, key)
++        lines[hits[0]] = f"    {key}: {value}"
++    return "\n".join(lines)
++
++
++def _arm_text(entry, arm, base=FIXTURE):
++    bits, scheme = ARMS[arm]
++    return _set(base, entry, kv_bits=bits, kv_quant_scheme=scheme)
++
++
++def _fixture_kv(entry):
++    e = rs.settings(FIXTURE)[entry]
++    return e["kv_bits"], e["kv_quant_scheme"]
++
++
++# ------------------------------------------------------------------ criterion 1: classify_kv_arm
++def test_the_arm_keys():
++    assert rs.KV_ARM_KEYS == ("kv_bits", "kv_quant_scheme")
++
++
++@pytest.mark.parametrize("arm", ARMS)
++@pytest.mark.parametrize("entry", PICKS)
++def test_every_arm_of_each_pick_is_accepted_with_the_right_delta(entry, arm):
++    got = rs.classify_kv_arm(_arm_text(entry, arm), FIXTURE, entry)
++    bits, scheme = ARMS[arm]
++    fbits, fscheme = _fixture_kv(entry)
++    want = {}
++    if bits != fbits:
++        want["kv_bits"] = (fbits, bits)
++    if scheme != fscheme:
++        want["kv_quant_scheme"] = (fscheme, scheme)
++    assert got == (frozenset(), want)
++
++
++@pytest.mark.parametrize("entry", PICKS)
++def test_an_arm_on_top_of_an_mtp_off_state_is_accepted(entry):
++    text = _arm_text(entry, "AF8", rs.apply(FIXTURE, {entry}))
++    off, delta = rs.classify_kv_arm(text, FIXTURE, entry)
++    assert off == frozenset({entry}) and delta["kv_bits"][1] == 8
++
++
++@pytest.mark.parametrize("state", [frozenset(), frozenset(PICKS)])
++def test_an_empty_delta_equals_classify(state):
++    text = rs.apply(FIXTURE, state)
++    assert rs.classify(text, FIXTURE) == state
++    for entry in PICKS:
++        assert rs.classify_kv_arm(text, FIXTURE, entry) == (state, {})
++
++
++def test_a_second_entry_changed_refuses():
++    text = _arm_text(FABLE, "AF8")
++    other = _set(text, UNIFORM, kv_bits=8)
++    assert rs.classify_kv_arm(other, FIXTURE, FABLE) is None
++    assert rs.classify_kv_arm(other, FIXTURE, UNIFORM) is None
++    # a different entry's KV change is not the entry under test's
++    assert rs.classify_kv_arm(_arm_text(UNIFORM, "AF8"), FIXTURE, FABLE) is None
++
++
++@pytest.mark.parametrize(
++    "key,value",
++    [
++        ("kv_prealloc_tokens", 131072),
++        ("max_kv_cache_size", 131072),
++        ("prefill_step_size", 1024),
++        ("type", "text"),
++    ],
++)
++def test_a_non_kv_key_changed_refuses(key, value):
++    text = _set(_arm_text(FABLE, "AF8"), FABLE, **{key: value})
++    assert rs.classify_kv_arm(text, FIXTURE, FABLE) is None
++
++
++def test_a_changed_top_level_setting_refuses():
++    text = _arm_text(FABLE, "AF8")
++    assert rs.classify_kv_arm("x_extra: 1\n" + text, FIXTURE, FABLE) is None
++
++
++@pytest.mark.parametrize("start", [5000, 1, '"0"', "false"])
++def test_quantized_kv_start_must_stay_zero(start):
++    text = _set(_arm_text(FABLE, "AF8"), FABLE, quantized_kv_start=start)
++    assert rs.classify_kv_arm(text, FIXTURE, FABLE) is None
++
++
++@pytest.mark.parametrize(
++    "bits,scheme",
++    [(-4, "turboquant"), ('"8"', "uniform"), (4, "bogus"), (True, "uniform")],
++)
++def test_values_the_manifest_cannot_model_refuse(bits, scheme):
++    text = _set(FIXTURE, FABLE, kv_bits=bits, kv_quant_scheme=scheme)
++    assert rs.classify_kv_arm(text, FIXTURE, FABLE) is None
++
++
++def test_an_mtp_key_change_outside_the_16_states_plus_a_kv_change_refuses():
++    old, _ = rs.ENTRY_OFF[FABLE][1]  # draft_kind alone commented out: a half state
++    off = rs.apply(FIXTURE, {FABLE})
++    half = off.replace(rs.ENTRY_OFF[FABLE][1][1], old, 1)
++    assert rs.classify(half, FIXTURE) is None
++    assert rs.classify_kv_arm(_arm_text(FABLE, "AF8", half), FIXTURE, FABLE) is None
++    # and a KV change on a half-removed MTP state of the OTHER pick
++    half2 = rs.apply(FIXTURE, {UNIFORM}).replace(
++        rs.ENTRY_OFF[UNIFORM][1][1], rs.ENTRY_OFF[UNIFORM][1][0], 1
++    )
++    assert rs.classify_kv_arm(_arm_text(FABLE, "AF8", half2), FIXTURE, FABLE) is None
++
++
++def test_an_unknown_entry_refuses():
++    assert rs.classify_kv_arm(FIXTURE, FIXTURE, "no-such-entry") is None
++
++
++def test_unparseable_text_refuses():
++    assert rs.classify_kv_arm("a: 1\na: 2\n", FIXTURE, FABLE) is None
++    assert rs.classify_kv_arm(FIXTURE.replace("\n", "\r\n"), FIXTURE, FABLE) is None
++
++
++# ------------------------------------------------------------------ criterion 0: the attention rule
++AF_TEMPLATE = t415._template()
++
++
++def _affine_manifest(bits):
++    return [
++        (
++            dict(
++                path=t["path"],
++                kind="affine",
++                cls="PreallocQuantizedKVCache",
++                batch=False,
++                bits=bits,
++                group_size=64,
++            )
++            if t["kind"] == "native"
++            else dict(t)
++        )
++        for t in AF_TEMPLATE
++    ]
++
++
++def _fable_arm_entry(bits, scheme):
++    return dict(t415.FABLE_ENTRY, kv_bits=bits, kv_quant_scheme=scheme)
++
++
++@pytest.mark.parametrize("bits", [8, 4])
++def test_affine_arms_of_the_fused_pick_pass_with_no_forced_sdpa(bits):
++    expected = qualify.expected_config(_fable_arm_entry(bits, "uniform"))
++    assert expected["attention_policy"] == "fused_v1"
++    rec = t415._record(
++        sdpa_forced=0,
++        manifest=_affine_manifest(bits),
++        memory=dict(
++            t415._record()["memory"],
++            set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++        ),
++    )
++    assert qualify.request_problems(rec, expected) == []
++    forced = dict(rec, sdpa_forced=640)
++    assert any("sdpa_forced" in p for p in qualify.request_problems(forced, expected))
++
++
++def test_native_and_turboquant_arms_still_require_forced_calls():
++    for entry, manifest in (
++        (_fable_arm_entry(0, "uniform"), t415._native_manifest()),
++        (_fable_arm_entry(4, "turboquant"), t415._tq_manifest()),
++        (_fable_arm_entry(8, "turboquant"), None),
++    ):
++        expected = qualify.expected_config(entry)
++        manifest = manifest or _tq8_manifest()
++        for forced, ok in ((640, True), (0, False)):
++            rec = t415._record(
++                sdpa_forced=forced,
++                manifest=manifest,
++                memory=dict(
++                    t415._record()["memory"],
++                    set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++                ),
++            )
++            got = [p for p in qualify.request_problems(rec, expected) if "sdpa" in p]
++            assert (got == []) is ok, (entry["kv_bits"], forced, got)
++
++
++def _tq8_manifest():
++    out = t415._tq_manifest()
++    out[1] = dict(out[1], bits=8.0, key_bits=8.0, value_bits=8.0)
++    return out
++
++
++def test_the_no_flag_rule_for_a_non_fused_entry_is_unchanged():
++    expected = qualify.expected_config(t415.STATIC_ENTRY)
++    assert expected["attention_policy"] == "auto"
++    rec = t415._record(
++        sdpa_forced=3,
++        lazy_calls=0,
++        shrink_calls=0,
++        drafter_live_checks=None,
++        peaks=dict(prefill=30e9, decode=30.2e9, retire=None),
++        manifest=t415._tq_manifest(),
++        memory=dict(
++            t415._record()["memory"],
++            set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++        ),
++    )
++    assert any("sdpa_forced" in p for p in qualify.request_problems(rec, expected))
++
++
++# ------------------------------------------------------------------ criterion 2: qualify --kv-arm
++def test_the_parser_has_the_flag_and_defaults_off():
++    ap = qualify.build_parser()
++    base = ["--stack-root", "s", "--fork-root", "f", "--out", "o", "--reviewed-head", "h"]
++    assert ap.parse_args(base).kv_arm is False
++    assert ap.parse_args(base + ["--kv-arm"]).kv_arm is True
++
++
++def _drive_arm(
++    tmp_path,
++    monkeypatch,
++    *,
++    arm=(
++        frozenset({FABLE}),
++        {"kv_bits": (0, 8), "kv_quant_scheme": ("turboquant", "uniform")},
++    ),
++    kv_arm=True,
++    predictor="off",
++    names=(FABLE,),
++    run_job=None,
++    refs=None,
++):
++    """t415._drive with the registry classified by ``classify_kv_arm`` (→ ``arm``); ``classify`` must not be called."""
++    from p369_phase2 import registry_states
++
++    calls = []
++    real_drive = qualify.drive
++
++    def drive(args):
++        args.predictor = predictor
++        args.kv_arm = kv_arm
++        monkeypatch.setattr(
++            registry_states,
++            "classify_kv_arm",
++            lambda text, fx, entry: calls.append(entry) or arm,
++            raising=False,
++        )
++
++        def forbidden(text, fx):
++            raise AssertionError("classify called under --kv-arm")
++
++        if kv_arm:
++            monkeypatch.setattr(registry_states, "classify", forbidden)
++        return real_drive(args)
++
++    monkeypatch.setattr(qualify, "drive", drive)
++    entry = {
++        k: v
++        for k, v in _fable_arm_entry(8, "uniform").items()
++        if k not in ("draft_kind", "draft_model", "mtp_verify_scan")
++    }
++    real_cmd = t415._cmd(t415.FABLE_ENTRY)
++    drafter_flags = {"--mtp-verify-scan", "--draft-kind", "--draft-model"}
++    off_cmd = [
++        a
++        for i, a in enumerate(real_cmd)
++        if a not in drafter_flags and (i == 0 or real_cmd[i - 1] not in drafter_flags)
++    ]
++    off_cmd[off_cmd.index("turboquant")] = "uniform"  # the arm: affine 8-bit
++    off_cmd += ["--kv-bits", "8"]
++    monkeypatch.setattr(t415, "_cmd", lambda e: off_cmd)
++    monkeypatch.setattr(t415, "FABLE_ENTRY", entry)
++    expected = qualify.expected_config(entry)
++
++    def good(job, *a, **k):
++        rec = t415._record(
++            sdpa_forced=0,
++            drafter_live_checks=None,
++            manifest=_affine_manifest(8),
++            memory=dict(
++                t415._record()["memory"],
++                set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++            ),
++        )
++        return dict(requests=[dict(qualify=rec)])
++
++    code, report = t415._drive(
++        tmp_path,
++        monkeypatch,
++        run_job or good,
++        names=names,
++        keep_refs=refs is not None,
++    )
++    return code, report, calls
++
++
++def test_a_kv_arm_run_completes_and_records_the_delta(tmp_path, monkeypatch):
++    code, report, calls = _drive_arm(tmp_path, monkeypatch)
++    assert code == 0, report
++    assert calls == [FABLE]
++    assert report["entries"][FABLE]["status"] == "COMPLETED"
++    assert report["kv_arm"] == dict(
++        entry=FABLE,
++        delta={"kv_bits": [0, 8], "kv_quant_scheme": ["turboquant", "uniform"]},
++    )
++
++
++def test_the_expected_manifest_comes_from_the_arm(tmp_path, monkeypatch):
++    """The live cache is checked against the ARM's registry entry: a native16 cache under an affine-8 arm fails."""
++
++    def native(job, *a, **k):
++        rec = t415._record(drafter_live_checks=None, sdpa_forced=0)
++        return dict(requests=[dict(qualify=rec)])
++
++    code, report, _ = _drive_arm(tmp_path, monkeypatch, run_job=native)
++    state = report["entries"][FABLE]
++    assert code == 1 and state["status"] != "COMPLETED"
++    assert any("layer" in p for p in state["problems"])
++
++
++def test_a_refused_classification_refuses_the_run(tmp_path, monkeypatch):
++    with pytest.raises(SystemExit) as exc:
++        _drive_arm(tmp_path, monkeypatch, arm=None)
++    assert "refused" in str(exc.value)
++
++
++@pytest.mark.parametrize(
++    "kwargs,why",
++    [
++        (dict(names=(FABLE, UNIFORM)), "exactly one"),
++        (dict(names=()), "exactly one"),
++        (dict(predictor="on"), "predictor"),
++        (dict(predictor=None), "predictor"),
++    ],
++)
++def test_kv_arm_refuses_without_one_entry_and_predictor_off(
++    tmp_path, monkeypatch, kwargs, why
++):
++    with pytest.raises(SystemExit) as exc:
++        _drive_arm(tmp_path, monkeypatch, **kwargs)
++    assert why in str(exc.value) and "--kv-arm" in str(exc.value)
++
++
++def test_the_mtp_off_check_reads_the_arm_classification(tmp_path, monkeypatch):
++    """An arm registry serving the entry MTP-ON (it is not in the off set) fails the mtp_off check, as without the flag."""
++    code, report, _ = _drive_arm(
++        tmp_path,
++        monkeypatch,
++        arm=(frozenset({UNIFORM}), {"kv_bits": (0, 8)}),
++    )
++    assert code == 1
++    assert any(
++        "MTP-ON" in p for p in report["entries"][FABLE]["problems"]
++    ), report["entries"][FABLE]
++
++
++def test_the_reference_comparison_is_labelled_non_comparable(tmp_path, monkeypatch):
++    ref = dict(peak_gb=37.0, fingerprint=dict(t415.FP), source="s", source_path="p")
++    monkeypatch.setattr(qualify, "load_references", lambda p, **k: {FABLE: ref})
++    code, report, _ = _drive_arm(tmp_path, monkeypatch, refs=True)
++    got = report["entries"][FABLE]["reference"]
++    assert code == 0
++    assert got["comparable"] is False
++    assert got["label"] == "non-comparable: KV arm"
++    assert got["reference_gb"] == 37.0
++
++
++def test_without_the_flag_the_registry_goes_through_classify(tmp_path, monkeypatch):
++    """No flag: classify is the gate, the report has no kv_arm field and the reference carries no label."""
++    from p369_phase2 import registry_states
++
++    called = []
++    monkeypatch.setattr(
++        registry_states,
++        "classify_kv_arm",
++        lambda *a: called.append(a) or None,
++        raising=False,
++    )
++
++    def run_job(job, *a, **k):
++        return t415._good(job)
++
++    code, report = t415._drive(tmp_path, monkeypatch, run_job, names=(t415.STATIC,))
++    assert code == 0 and called == []
++    assert "kv_arm" not in report
++
++
++# ------------------------------------------------------------------ review fix round: the entry and width sets
++OTHERS = (t415.QWEN36, "Ornith-1.0-35B-mlx-uniform-4bit", "no-such-entry")
++
++
++def test_the_arm_entries_are_the_two_p475_picks():
++    assert rs.KV_ARM_ENTRIES == (FABLE, UNIFORM)
++
++
++@pytest.mark.parametrize("entry", OTHERS)
++def test_classify_kv_arm_refuses_any_other_entry(entry):
++    for text in (FIXTURE, rs.apply(FIXTURE, {FABLE})):
++        assert rs.classify_kv_arm(text, FIXTURE, entry) is None
++    if entry in rs.settings(FIXTURE):  # even a clean KV change of an entry the fixture holds
++        assert rs.classify_kv_arm(_set(FIXTURE, entry, kv_bits=8), FIXTURE, entry) is None
++
++
++@pytest.mark.parametrize("entry", OTHERS)
++def test_qualify_kv_arm_refuses_any_other_entry(tmp_path, monkeypatch, entry):
++    with pytest.raises(SystemExit) as exc:
++        _drive_arm(tmp_path, monkeypatch, names=(entry,))
++    assert "--kv-arm" in str(exc.value) and "not one of" in str(exc.value)
++
++
++@pytest.mark.parametrize("entry", PICKS)
++@pytest.mark.parametrize(
++    "bits,scheme",
++    [
++        (4.5, "turboquant"),  # fractional
++        (6, "turboquant"),
++        (2, "uniform"),
++        (16, "uniform"),
++        (3.9, "uniform"),
++        (8.0, "uniform"),  # a float is not the integer width
++        (".inf", "uniform"),
++        (".nan", "turboquant"),
++        ("-.inf", "uniform"),
++        (8, "bogus"),
++        (8, '""'),
++        (4, "null"),  # a quantized width needs a named scheme
++        ("null", "uniform"),
++    ],
++)
++def test_widths_outside_the_p475_arm_set_refuse(entry, bits, scheme):
++    text = _set(FIXTURE, entry, kv_bits=bits, kv_quant_scheme=scheme)
++    assert rs.classify_kv_arm(text, FIXTURE, entry) is None
++
++
++def test_expected_config_keeps_the_exact_width():
++    for bits, flag in ((4.5, "4.5"), (8, "8"), (4, "4")):
++        expected = qualify.expected_config(_fable_arm_entry(bits, "uniform"))
++        assert expected["kv_bits"] == bits and expected["flags"]["--kv-bits"] == flag
++        assert qualify.expected_kv(expected)["kv_bits"] == float(bits)
++    assert qualify.expected_config(_fable_arm_entry(0, "uniform"))["kv_bits"] is None
++
++
++# ------------------------------------------------------------------ malformed documents are None, never an exception
++def _with_models(models_text):
++    """The fixture with its ``models`` section replaced (every other top-level setting equal)."""
++    lines = FIXTURE.split("\n")
++    start = lines.index("models:")
++    tail = [i for i in range(start + 1, len(lines)) if re.match(r"^\S", lines[i])]
++    end = tail[0] if tail else len(lines)
++    return "\n".join(lines[:start] + models_text.split("\n") + lines[end:])
++
++
++@pytest.mark.parametrize(
++    "models",
++    [
++        "models: [null]",
++        "models: [1, 2]",
++        "models: [[]]",
++        "models:\n  - just a string",
++        "models: {name: x}",
++        "models: text",
++        "models:\n  - name: [1, 2]\n    kv_bits: 8",
++        "models:\n  - kv_bits: 8",
++        "models:\n  -",
++    ],
++)
++@pytest.mark.parametrize("entry", PICKS)
++def test_malformed_but_parseable_documents_are_none(models, entry):
++    text = _with_models(models)
++    assert rs.parse(text) is not None
++    assert rs.classify_kv_arm(text, FIXTURE, entry) is None
++
++
++def test_a_non_mapping_document_is_none():
++    for text in ("- 1\n- 2\n", "just text\n", "", "null\n"):
++        for entry in PICKS:
++            assert rs.classify_kv_arm(text, FIXTURE, entry) is None
++
++
++def test_a_null_entry_among_valid_ones_is_none():
++    text = _arm_text(FABLE, "AF8")
++    broken = text.replace("\nmodels:\n", "\nmodels:\n  - null\n", 1)
++    assert broken != text and rs.parse(broken) is not None
++    assert rs.classify_kv_arm(broken, FIXTURE, FABLE) is None
++
++
++# ------------------------------------------------------------------ no leaf manifest / template: only that problem
++@pytest.mark.parametrize("forced", [0, 640])
++@pytest.mark.parametrize("missing", ["manifest", "template", "both"])
++def test_a_missing_manifest_or_template_reports_only_that_problem(missing, forced):
++    expected = qualify.expected_config(t415.FABLE_ENTRY)
++    assert expected["attention_policy"] == "fused_v1"
++    drop = {"manifest": ("manifest",), "template": ("template",)}.get(
++        missing, ("manifest", "template")
++    )
++    rec = t415._record(sdpa_forced=forced, **{k: None for k in drop})
++    problems = qualify.request_problems(rec, expected)
++    assert problems == ["no leaf manifest / template of the measured cache"]
++
++
++def test_a_missing_manifest_still_checks_a_non_fused_entry():
++    expected = qualify.expected_config(t415.STATIC_ENTRY)
++    rec = t415._record(
++        sdpa_forced=3,
++        manifest=None,
++        template=None,
++        lazy_calls=0,
++        shrink_calls=0,
++        drafter_live_checks=None,
++        peaks=dict(prefill=30e9, decode=30.2e9, retire=None),
++        memory=dict(
++            t415._record()["memory"],
++            set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++        ),
++    )
++    problems = qualify.request_problems(rec, expected)
++    assert any("no leaf manifest" in p for p in problems)
++    assert any("sdpa_forced" in p for p in problems)
++
++
++# ------------------------------------------------------------------ real paths over the pruned registry, 10 cells
++STACK_REGISTRY = Path(__file__).resolve().parents[3] / "mlx_local_stack" / "main_models.yaml"
++CELLS = [(entry, arm) for entry in PICKS for arm in ARMS]
++CELL_IDS = [f"{'fable' if entry == FABLE else 'uniform'}-{arm}" for entry, arm in CELLS]
++VENV_BIN = t415.VENV_BIN
++FUSED_FORCED = {"N16": True, "AF8": False, "TQ8": True, "AF4": False, "TQ4": True}
++
++
++@pytest.fixture(scope="module")
++def pruned():
++    if not STACK_REGISTRY.is_file():
++        pytest.skip(f"pruned registry {STACK_REGISTRY.name} not available beside the fork")
++    return STACK_REGISTRY.read_text()
++
++
++def _cell_registry(pruned, entry, arm):
++    return _arm_text(entry, arm, base=pruned)
++
++
++def _cell_block(text, entry):
++    import yaml
++
++    return {m["name"]: m for m in yaml.safe_load(text)["models"]}[entry]
++
++
++def _serve_argv(block, venv_bin):
++    """mlx-serve ``process_manager._build_command`` (type vision), spelled flag by flag from its source: the defaults it
++    reads (``ModelConfig``) and the ``if`` that gates each flag."""
++    cmd = [str(Path(venv_bin) / "mlx_vlm.server"), "--model", block["hf_path"]]
++    cmd += ["--host", "127.0.0.1", "--port", "8091"]
++    if block.get("context_length", 0) > 0:
++        cmd += ["--max-tokens", str(block["context_length"])]
++    if block.get("max_kv_cache_size", 0) > 0:
++        cmd += ["--max-kv-size", str(block["max_kv_cache_size"])]
++    if block.get("kv_prealloc_tokens", 0) > 0:
++        cmd += ["--kv-prealloc-tokens", str(block["kv_prealloc_tokens"])]
++    if block.get("cache_session_shrink") is not None:
++        cmd += ["--cache-session-shrink", "on" if block["cache_session_shrink"] else "off"]
++    if block.get("attention_policy", "") not in ("", "auto"):
++        cmd += ["--attention-policy", block["attention_policy"]]
++    if block.get("lazy_prompt_embeddings") is True:
++        cmd += ["--lazy-prompt-embeddings"]
++    if block.get("mtp_verify_scan", "") not in ("", "per_query"):
++        cmd += ["--mtp-verify-scan", block["mtp_verify_scan"]]
++    if block.get("kv_bits", 0) > 0:
++        cmd += ["--kv-bits", str(block["kv_bits"])]
++    if block.get("kv_quant_scheme"):
++        cmd += ["--kv-quant-scheme", block["kv_quant_scheme"]]
++    if block.get("kv_quant_mode"):
++        cmd += ["--kv-quant-mode", block["kv_quant_mode"]]
++    if block.get("prefill_step_size"):
++        cmd += ["--prefill-step-size", str(block["prefill_step_size"])]
++    if block.get("generation_defaults"):
++        cmd += ["--generation-defaults", json.dumps(block["generation_defaults"])]
++    if block.get("draft_kind"):
++        cmd += ["--draft-kind", block["draft_kind"]]
++        if block.get("draft_model"):
++            cmd += ["--draft-model", block["draft_model"]]
++    cmd += ["--quantized-kv-start", str(block.get("quantized_kv_start", 0))]
++    if block.get("cache_limit_gb", 0.0) > 0:
++        cmd += ["--cache-limit-gb", str(block["cache_limit_gb"])]
++    cmd += ["--memory-limit-frac", str(block.get("memory_limit_frac", 0.85))]
++    return cmd
++
++
++def _cell_record(expected, sdpa_forced):
++    """A request record whose cache is exactly the cell's expected manifest."""
++    from p369_phase2 import kvmanifest
++
++    template = t415._template()
++    manifest = kvmanifest.expected_manifest(template, qualify.expected_kv(expected))
++    caps = {
++        o["path"]: expected["prealloc"]
++        for o in manifest
++        if o["kind"] in ("tq", "affine", "native")
++    }
++    defaults = expected["generation_defaults"]
++    changes = dict(
++        sdpa_forced=sdpa_forced,
++        manifest=manifest,
++        template=template,
++        capacities_by_path=caps,
++        resolved=dict(defaults, max_tokens=2048, thinking_budget=1638, seed=7),
++        server_defaults=defaults,
++        drafter_live_checks=None,
++        lazy_calls=1 if expected["lazy_embeddings"] else 0,
++        shrink_calls=1 if expected["shrink"] else 0,
++        peaks=dict(
++            prefill=36.5e9,
++            decode=36.9e9,
++            retire=37.1e9 if expected["shrink"] else None,
++        ),
++        memory=dict(
++            t415._record()["memory"],
++            set_cache_limit=[qualify.expected_cache_limit(24, expected)],
++        ),
++    )
++    return t415._record(**changes)
++
++
++def _required_forced(entry, arm):
++    """The attention rule per cell, written out: only the fused_v1 pick, and only where a native leaf attends."""
++    return entry == FABLE and FUSED_FORCED[arm]
++
++
++def _drive_cell(tmp_path, monkeypatch, pruned, entry, arm, sdpa_forced):
++    """``qualify --kv-arm`` over the cell's real arm registry with the REAL ``classify_kv_arm`` (spied) and ``classify``
++    forbidden; returns ``(code, report, classify_kv_arm calls, classify calls)``."""
++    import argparse
++
++    from p369_phase2 import orchestrate
++
++    text = _cell_registry(pruned, entry, arm)
++    block = _cell_block(text, entry)
++    expected = qualify.expected_config(block)
++    record = _cell_record(expected, sdpa_forced)
++    arm_calls, classify_calls = [], []
++    real = rs.classify_kv_arm
++
++    def spy(text_, fixture, name):
++        arm_calls.append(name)
++        return real(text_, fixture, name)
++
++    def forbidden(text_, fixture):
++        classify_calls.append(text_)
++        raise AssertionError("classify called under --kv-arm")
++
++    for name, value in dict(
++        acquire_lock=lambda lock: 3,
++        release_lock=lambda fd: None,
++        lock_path=lambda env: tmp_path / ".lock",
++        preflight=lambda args, out: dict(problems=[]),
++        read_registry=lambda p: text,
++        sha256_file=lambda p: "s",
++        fork_versions=lambda f: {"mlx": "0.32.3"},
++        overlay_registry=lambda text_, name, fixture: (text_, True),
++        weights_record=lambda m: dict(revision="r", files={}),
++        worker_env=lambda env: env,
++        run_job=lambda job, *a, **k: dict(requests=[dict(qualify=record)]),
++    ).items():
++        monkeypatch.setattr(orchestrate, name, value)
++    monkeypatch.setattr(orchestrate, "Monitor", t415._NullMonitor)
++    monkeypatch.setattr(rs, "fixture_text", lambda d: FIXTURE)
++    monkeypatch.setattr(rs, "classify", forbidden)
++    monkeypatch.setattr(rs, "classify_kv_arm", spy)
++    monkeypatch.setattr(qualify, "load_references", lambda p, **k: {})
++    monkeypatch.setattr(qualify, "_resolve_ref", lambda path, ref: "a" * 40)
++    monkeypatch.setattr(
++        qualify,
++        "_tree_state",
++        lambda fork, stack: dict(fork_head="a" * 40, fork_clean=True, stack_head="s" * 40),
++    )
++    monkeypatch.setattr(
++        qualify,
++        "console_script_info",
++        lambda stack: dict(
++            shebang=str(Path(stack) / ".venv" / "bin" / "python"),
++            entry="mlx_vlm.server:main",
++            stack_mlx_vlm="x",
++        ),
++    )
++    monkeypatch.setattr(qualify, "_last_tick_age", lambda p: 1.0)
++    monkeypatch.setattr(qualify, "_pmset_log", lambda: (0, t415.PMSET))
++    monkeypatch.setattr(qualify, "interference", lambda o: dict(ok=True, why=None))
++    monkeypatch.setattr(qualify, "binding_problems", lambda *a: [])
++    monkeypatch.setattr(qualify, "_git_head", lambda p: "h")
++    monkeypatch.setattr(
++        qualify, "full_command", lambda stack, path, name: (_serve_argv(block, Path(stack) / ".venv" / "bin"), "m")
++    )
++    monkeypatch.setattr("time.sleep", lambda s: None)
++    args = argparse.Namespace(
++        stack_root=str(tmp_path / "stack"),
++        fork_root=str(tmp_path / "fork"),
++        out=str(tmp_path / "run"),
++        entry=[entry],
++        p369_summary=None,
++        idle_s=600.0,
++        reviewed_head="a" * 40,
++        predictor="off",
++        kv_arm=True,
++    )
++    (tmp_path / "stack" / ".venv" / "bin").mkdir(parents=True)
++    code = qualify.drive(args)
++    report = json.loads((tmp_path / "run" / "report.json").read_text())
++    return code, report, arm_calls, classify_calls
++
++
++@pytest.mark.parametrize("entry,arm", CELLS, ids=CELL_IDS)
++def test_every_cell_runs_through_the_real_classify_kv_arm(
++    tmp_path, monkeypatch, pruned, entry, arm
++):
++    committed = rs.settings(pruned)[entry]
++    bits, scheme = ARMS[arm]
++    want = {
++        key: [have, new]
++        for key, have, new in (
++            ("kv_bits", committed["kv_bits"], bits),
++            ("kv_quant_scheme", committed["kv_quant_scheme"], scheme),
++        )
++        if have != new
++    }
++    code, report, arm_calls, classify_calls = _drive_cell(
++        tmp_path, monkeypatch, pruned, entry, arm, 640 if _required_forced(entry, arm) else 0
++    )
++    assert code == 0, report["entries"][entry]
++    assert report["entries"][entry]["status"] == "COMPLETED"
++    assert report["kv_arm"] == dict(entry=entry, delta=want)
++    assert arm_calls == [entry] and classify_calls == []
++
++
++@pytest.mark.parametrize("entry,arm", CELLS, ids=CELL_IDS)
++def test_a_wrong_sdpa_forced_keeps_the_cell_from_completing(
++    tmp_path, monkeypatch, pruned, entry, arm
++):
++    required = _required_forced(entry, arm)
++    code, report, _, _ = _drive_cell(
++        tmp_path, monkeypatch, pruned, entry, arm, 0 if required else 640
++    )
++    state = report["entries"][entry]
++    assert code == 1 and state["status"] != "COMPLETED"
++    assert any("sdpa_forced" in p for p in state["problems"]), state["problems"]
++
++
++def test_the_affine_fused_arm_and_native_arm_are_rejected_on_the_wrong_side(pruned):
++    """The three named cases straight through ``request_problems``."""
++    for arm, wrong in (("AF8", 640), ("AF4", 640), ("N16", 0)):
++        expected = qualify.expected_config(_cell_block(_cell_registry(pruned, FABLE, arm), FABLE))
++        problems = qualify.request_problems(_cell_record(expected, wrong), expected)
++        assert any("sdpa_forced" in p for p in problems), (arm, problems)
++        right = 640 - wrong
++        assert qualify.request_problems(_cell_record(expected, right), expected) == [], arm
++
++
++@pytest.mark.parametrize("entry,arm", CELLS, ids=CELL_IDS)
++def test_the_arm_entry_carries_exactly_the_arms_kv_flags_and_mlx_serves_argv_passes(
++    pruned, entry, arm
++):
++    bits, scheme = ARMS[arm]
++    block = _cell_block(_cell_registry(pruned, entry, arm), entry)
++    expected = qualify.expected_config(block)
++    kv_flags = {
++        f: v for f, v in expected["flags"].items() if f in ("--kv-bits", "--kv-quant-scheme")
++    }
++    want = {"--kv-quant-scheme": scheme}
++    if bits:
++        want["--kv-bits"] = str(bits)
++    assert kv_flags == want
++    argv = _serve_argv(block, VENV_BIN)
++    assert qualify.command_problems(expected, argv, VENV_BIN) == []
++    got = {a: argv[i + 1] for i, a in enumerate(argv) if a in ("--kv-bits", "--kv-quant-scheme")}
++    assert got == want
++    other = _serve_argv(
++        _cell_block(_cell_registry(pruned, entry, "AF8" if arm != "AF8" else "AF4"), entry),
++        VENV_BIN,
++    )
++    assert qualify.command_problems(expected, other, VENV_BIN)
