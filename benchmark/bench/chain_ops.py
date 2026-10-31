@@ -554,7 +554,7 @@ class ChainOps:
             if r.returncode != 0 or not r.stdout.strip():
                 raise ChainAbort(f"interpreter {Path(path).name}: its site-packages cannot be determined")
             site = Path(r.stdout.strip())
-        dists, editables = [], {}
+        dists, editables, plain = [], {}, []
         for info in sorted(site.glob("*.dist-info")):
             meta = {}
             try:
@@ -571,35 +571,59 @@ class ChainOps:
             if direct.is_file() and (json.loads(direct.read_text()).get("dir_info") or {}).get("editable"):
                 editables[name] = self._editable_state(name, json.loads(direct.read_text())["url"])
                 continue
-            dists.append([name, meta.get("Version", ""), self._verify_record(name, site, info / "RECORD")])
+            plain.append((name, meta.get("Version", ""), self._record_rows(name, info / "RECORD")))
+        claims = {}                                         # P579: a file several distributions' RECORDs list (e.g. both opencv wheels' cv2)
+        for name, _, rows in plain:
+            for rel, digest in rows:
+                claims.setdefault(os.path.normpath(site / rel), []).append((name, digest))
+        actual = {}
+        for name, version, rows in plain:
+            dists.append([name, version, self._verify_record(name, site, rows, claims, actual)])
+        shared = [dict(path=os.path.relpath(f, site), claimants=sorted(n for n, _ in c),
+                       matches=next(n for n, d in sorted(c) if d.partition("=")[2] == actual[f]))
+                  for f, c in sorted(claims.items()) if len(c) > 1]
         dists.sort(key=lambda d: (d[0], d[1]))
-        digest = hashlib.sha256(json.dumps(dists, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
-        return dict(path=path, inventory_sha256=digest, editables=dict(sorted(editables.items())))
+        digest = hashlib.sha256(json.dumps([dists, shared], sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        return dict(path=path, inventory_sha256=digest, editables=dict(sorted(editables.items())))   # spec 16.2: shared paths enter the digest only
 
     @staticmethod
-    def _verify_record(name, site, record):
-        import base64
+    def _record_rows(name, record):
         import csv
         try:
             rows = list(csv.reader(record.read_text().splitlines()))
         except OSError:
             raise ChainAbort(f"distribution {name}: its RECORD is unreadable") from None
+        return [(row[0], row[1]) for row in rows if len(row) >= 2 and row[1]]   # RECORD itself, .pyc files: listed without a hash
+
+    def _verify_record(self, name, site, rows, claims, actual):
+        """Every RECORD entry re-verified against the installed bytes; a file another distribution also lists passes when its
+        bytes equal one claimant's digest (P579). An entry outside site-packages (a console script, whose shebang names the
+        worktree) enters the inventory as the sha256 of its content with the worktree root canonicalized to `<WT>` (P580)."""
+        import base64
+        roots = sorted({str(self.repo), str(Path(self.repo).resolve())}, key=len, reverse=True)
         entries = []
-        for row in rows:
-            if len(row) < 2 or not row[1]:
-                continue                                    # RECORD itself, .pyc files: listed without a hash
-            algo, _, want = row[1].partition("=")
-            f = Path(os.path.normpath(site / row[0]))
+        for rel, recorded in rows:
+            algo, _, want = recorded.partition("=")
+            f = os.path.normpath(site / rel)
             try:
-                h = hashlib.new(algo)
-                with open(f, "rb") as fh:
-                    for chunk in iter(lambda: fh.read(1 << 20), b""):
-                        h.update(chunk)
+                h, data = hashlib.new(algo), (Path(f).read_bytes() if rel.startswith("..") else None)
+                if data is not None:
+                    h.update(data)
+                else:
+                    with open(f, "rb") as fh:
+                        for chunk in iter(lambda: fh.read(1 << 20), b""):
+                            h.update(chunk)
             except (OSError, ValueError):
-                raise ChainAbort(f"RECORD of {name}: {row[0]} is missing or unreadable (systemic)") from None
-            if base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode() != want:
-                raise ChainAbort(f"RECORD of {name}: {row[0]} differs from its recorded digest (systemic)")
-            entries.append([row[0], row[1]])
+                raise ChainAbort(f"RECORD of {name}: {rel} is missing or unreadable (systemic)") from None
+            got = actual.setdefault(f, base64.urlsafe_b64encode(h.digest()).rstrip(b"=").decode())
+            if got != want and not any(d.partition("=")[2] == got for n, d in claims.get(f, ()) if n != name):
+                raise ChainAbort(f"RECORD of {name}: {rel} differs from its recorded digest (systemic)")
+            if rel.startswith(".."):
+                for root in roots:
+                    data = data.replace(root.encode(), b"<WT>")
+                entries.append([rel, "wt-canonical-sha256=" + hashlib.sha256(data).hexdigest()])
+            else:
+                entries.append([rel, recorded])
         return sorted(entries)
 
     def _editable_state(self, name, url):
