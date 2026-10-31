@@ -463,8 +463,8 @@ class ChainOps:
             return res.stdout
         gitlinks = {}
         for line in git("ls-tree", "HEAD", "src/mlx-vlm", "src/mlx-serve").splitlines():
-            meta, path = line.split("\t", 1)
-            gitlinks[path] = meta.split()[2]
+            meta, rel = line.split("\t", 1)                          # P578: never rebind `path` (git -C ran in the submodule)
+            gitlinks[rel] = meta.split()[2]
         return dict(head=git("rev-parse", "HEAD").strip(), clean=git("status", "--porcelain").strip() == "", gitlinks=gitlinks)
 
     def last_leg_end(self):
