@@ -1,67 +1,78 @@
-# Handoff — 2026-11-01 (session 13, IN PROGRESS: Wave 2 legs 1–8 running; v8 frozen; nothing pushed yet)
+# Handoff — 2026-11-01 (session 13 END: Wave 2 stopped at leg 3 (INVALID); the relaunch plan v2 reviewed; build in session 14; nothing pushed)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C266, P585, C265, P584, P583, C264, P581–P582, C263,
-P579–P580, C262, P578–P577, P576, C261, P570–P575, P569, P568–P563), and spec `docs/specs/p426-b2-tg1-wave2.md` §1, §7, §9, §10, §16.8.
-Model names: FULL registry names only. Review rounds: 3 per artifact (AGENTS.md).
+THE one handoff. Read this, then `docs/reviews/p586/plan.md` (THE plan, v2, with its review dispositions), then `docs/open-questions.md`
+top entries (newest first: P590–P591, C267, P586–P589, C266, P585, C265, P584, P583, C264, P581–P582, C263, P579–P580, C262, P578–P577,
+P576, C261, P570–P575, P569, P568–P563), and spec `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §5.1, §10, §11, §16.8. Model names: FULL
+registry names only. Review rounds: 3 per artifact (AGENTS.md); the plan used round 1 of 3.
 
-## FIRST — check Wave 2
+## FIRST — verify the end of session 13 (each "no" is a blocker)
 
-1. The sequencer (`bench.p426_wave2 run`, launched 2026-11-01 05:37 UTC under `nohup`, pid 16891 at launch) writes
-   `$STACK_WORKDIR/p426/wave2/sequencer.stdout` and `sequence.json`; resume = the same command (below). Exit codes: 0 done, 1 stopped
-   (leg / gate / pair / drift), 2 refused, 3 overrun pause, 4 harvest failure — none loses a leg. A stop is the operator's decision.
-2. Legs: 1–2 pilots → pilot gate + timeout amendment (automatic) → 3–4 s1 off/on → 5–6 s2 on/off → 7–8 reload on/off (≈ 13 h).
-   Each leg's watcher must be alive (`<leg>.a1/watch.jsonl` ticks every 300 s; P547).
-3. Harvests land in the main checkout `benchmark/results/p426/wave2/<attempt>/` (uncommitted until committed as `data(bench)`) and the
-   evidence stage `$STACK_WORKDIR/p426/wave2/scratch/evidence`.
+1. Nothing runs: no `bench.p426_wave2` / `run_tg1_chain` / `bench_watch` / `opencode run` / mlx-serve process; :8000 free.
+2. `main` is ahead of `origin/main` by session 13's local commits (no push this session); `evidence` is one local commit ahead
+   (`c42bca0c`, P566's log slice). `git status` clean apart from the untracked Wave-2 harvest files under `benchmark/results/p426/wave2/`
+   (the first v8's pilots — they move to `wave2.v8-af0711cf/` per the plan, never committed under `wave2/`).
+3. The first v8's out-base `$STACK_WORKDIR/p426/wave2/` holds `records/v8_base.json` (`af0711cf…`), `amendment.json`, the pilot pair
+   (VALID, dossier PASS) and `tg1-p426-off-s1.a1` (INVALID, harvest refused: P587).
 
-Resume command (from the main checkout; relative `PYTHONPATH` so each watcher imports its own worktree):
-`set -a; . "${XDG_CONFIG_HOME:-$HOME/.config}/mlx_local_stack/config.sh"; set +a; PYTHONPATH=benchmark nohup .venv-bench/bin/python -m
-bench.p426_wave2 run --record-dir $STACK_WORKDIR/p426/wave2/records --worktree-off $STACK_WORKDIR/worktrees/stack-p426-off --worktree-on
-$STACK_WORKDIR/worktrees/stack-p426-on --out-base $STACK_WORKDIR/p426/wave2 --historical-walls
-benchmark/results/p426/wave2/historical_walls.json >> $STACK_WORKDIR/p426/wave2/sequencer.stdout 2>&1 </dev/null &`
+## Next, in order (C267; the operator wants this in a fresh session)
+
+1. **Build the plan** (`docs/reviews/p586/plan.md` v2): P586 (`kill_client_aborted` + its completed-unaccounted variant, provenance-gated),
+   P587 (Go grader `go.stderr` → evidence, then a dry classifier over leg 3's whole tree until clean), P588 (invalidated-slot tombstone),
+   P589 (rehearsal: + s1's first 2 Go items; R2's injected mismatch on the first Go item), P590 (DST audit), P591 (record the client's
+   step-cap source). Each red-first; fixtures from leg 3's real records (scrubbed). Four-eyes light (implementer + independent
+   test-writer) is the user's standing preference for non-trivial work; plan review rounds 2–3 remain for the built change.
+2. **Offline replay** of leg 3 through the fixed code: all 23 items reconcile (`go/crypto-square` = `kill_client_aborted`), the dry harvest
+   classifier finds nothing. Then the B2 / T3 / M64 / M62 / guard suites (build pytest file lists in Python; background shells do not expand
+   globs here).
+3. **Harvest the superseded first v8** (pilots + leg 3) into `benchmark/results/p426/wave2.v8-af0711cf/` + `evidence`, BEFORE the new run
+   publishes (plan "Records").
+4. Re-cut both arms on the new `main` tip (P564 form: OFF = `main` minus C244's registry + seeding-test hunks; ON = OFF + them, tree ==
+   `main`; `restore_diff_problems` = []), a new rehearsal manifest, R1–R3 (now with Go) on a fresh out-base under `p426/rehearsal/`
+   (`--main-root` = a scratch clone, P576), check R1 VALID ×2 + dossier PASS, R2 INVALID for the injected reason ON THE GO ITEM, R3 VALID
+   with a kill case. Then the gate on the new OFF commit (quiet box), new build inputs, `p426_freeze v8` into `$STACK_WORKDIR/p426/wave2b/
+   records/`, then `p426_wave2 run --out-base $STACK_WORKDIR/p426/wave2b` (legs 1–8, ≈ 13 h; `nohup`, relative `PYTHONPATH=benchmark`).
+   The freeze needs the operator's Go (C266 pattern: "review, then freeze if clean").
+5. Then (quiet windows only): C258 crossover via the fork `qualify.py --prompt-tokens` / `--max-output-tokens` flag (P577 (a)); P503 fixes
+   (C261: P570 / P571 / P573 / P575 as one test-only change, P574, P572); P576 (rehearsal default main root).
 
 ## State — 2026-11-01
 
-- **v8 frozen** (C266): `$STACK_WORKDIR/p426/wave2/records/v8_base.json` (`af0711cf…`): OFF `5fd3c972` (`main` `192d1c71` minus C244's
-  registry + seeding-test hunks, P564), ON `2a173f8b` (tree == `main`), settle bound 2123.7 s, pilot deadline 11,469 s, prompt date
-  `Fri Oct 30 2026`, build inputs `$STACK_WORKDIR/p426/wave2/build_inputs-20261101a.json` (gate PASS `stack-5fd3c972…`), walls
-  `benchmark/results/p426/wave2/historical_walls.json` (P566). Rehearsal `20261101a` (manifest `2bfffbd3…`): R1 VALID ×2 + dossier PASS,
-  R2 INVALID (injected), R3 VALID `kill_inflight_failed`.
-- **B2 live bugs found and fixed this session** (each red-first; reviews in `docs/reviews/p579-p580/`, `p581/`, `p583/`, `p585/`):
-  P578 worktree_state read the submodule HEAD; P579 two opencv wheels own `cv2/*`; P580 console-script shebangs; P581 worker argv shebang
-  token; P582 TMPDIR harvest rules; P583 metallib via descriptor; P584 R3 stall-kill = the real `stalled` gate; P585 psutil SystemError
-  in the process guard (v3 + round-3 fix). P576 (rehearsal default main root) worked around with `--main-root`, fix pending.
-- **C258 crossover** (P568 → P577 C262 option (a)): the `run_capacity` instrument failed its `Ornith-1.0-35B-mlx-uniform-4bit` 256K
-  anchor (−1.1% vs C249's −8.7%; rows committed, void); next = a fork dev-only `qualify.py --prompt-tokens` + `--max-output-tokens`
-  (request override recorded; output length fixed at 2048 for comparability, 256 for the length effect), test-first + one cold review,
-  then 128K / 192K ABBA per C258 entry — in quiet windows only.
-- **P503** (C261): proposals P570–P575 approved; build in the first quiet window (never during a leg).
-- **P569**: the C260 cleanup lost P499's rows / worker log and the T3 smoke worker logs; the cleanup inventory was not filed.
+- **Wave 2, first v8** (`af0711cf…`, arms OFF `5fd3c972` / ON `2a173f8b`): pilots VALID + dossier PASS + amendment; leg 3 `off-s1.a1`
+  INVALID at `go/crypto-square` (a 61-min thinking runaway the client aborted — no reconciliation case, P586) after 22 Python + 1 Go items;
+  superseded, never paired.
+- **B2 live fixes this session** (each red-first; reviews `docs/reviews/{p579-p580,p581,p583,p585}/`): P578 worktree_state; P579 shared
+  RECORD files; P580 console-script shebangs; P581 worker-argv shebang token; P582 TMPDIR harvest rules; P583 metallib via descriptor;
+  P584 R3 stall-kill via the real `stalled` gate; P585 psutil SystemError in the process guard (v3 + review-r3 fix). Open: P576.
+- **C258 crossover**: `run_capacity` failed its 256K anchor for `Ornith-1.0-35B-mlx-uniform-4bit` (rows committed, void); next = P577 (a).
+- **P569**: the C260 cleanup lost P499's rows / log and the T3 smoke worker logs; its own inventory was not filed.
+- **P566**: the Wave-2 historical walls are generated (`benchmark/results/p426/wave2/historical_walls.json`, sources on `evidence`).
 
 ## Worktrees / scratch (each with its resolution)
 
-- `$STACK_WORKDIR/worktrees/stack-p426-off`, `stack-p426-on` (branches `p426-off`, `p426-on`): Wave 2 arms — keep until Wave 2 is
-  harvested; archive the two arm commits to `origin` as `archive/p426-wave2-{off,on}` at the push (P567, approval then), then remove.
+- `$STACK_WORKDIR/worktrees/stack-p426-off`, `stack-p426-on` (branches `p426-off`, `p426-on`): the Wave 2 arms — re-cut for the new v8;
+  archive the final arm commits as `archive/p426-wave2-{off,on}` at the push (P567), then remove.
 - `$STACK_WORKDIR/worktrees/stack-c258x-off` (branch `c258x-off`): the crossover's all-OFF registry — keep for P577; remove after.
-- `$STACK_WORKDIR/p426/rehearsal/{20261030,20261031,20261031b,20261031c,20261031d,20261101a}` + `manifest-*.json` + `main-clone-*`:
-  rehearsal attempts (only `20261101a` binds v8); harvest the `20261101a` stage to `evidence` with Wave 2, the rest are refusal records
-  (file a summary, then delete the clones).
-- `$STACK_WORKDIR/c258x/` (crossover block logs; the smoke block log carries a charger serial in its power lines — scrub before any
-  harvest), `$STACK_WORKDIR/p426/historical/` (harvested, `c42bca0c`), `$STACK_WORKDIR/scratch/evstage-20261030-p566` (published).
+- `$STACK_WORKDIR/p426/wave2/` (the first v8): harvest per step 3, then delete the scratch clone under it.
+- `$STACK_WORKDIR/p426/rehearsal/{20261030,…,20261101a}` + `manifest-*.json` + `main-clone-*`: rehearsal attempts; `20261101a` bound the
+  first v8. File a one-line summary per attempt in the P586 build record, harvest `20261101a`'s stage with Wave 2, delete the clones.
+- `$STACK_WORKDIR/c258x/` (crossover block logs; the smoke block's power lines carry a charger serial: scrub before any harvest),
+  `$STACK_WORKDIR/p426/historical/` (harvested, `c42bca0c`), `$STACK_WORKDIR/scratch/evstage-20261030-p566` (published),
+  `$STACK_WORKDIR/p426/wave2/build_inputs*.json`.
 
-## Push (one, at the end of the session, operator approval)
+## Push (one, at the end of a session, operator approval)
 
-`main` (docs / fixes / data: level full needs a PASS gate on its tip), `evidence` (`c42bca0c` + the Wave 2 stage: data-only), the arm
-archive branches. Read every gate verdict before the push; never chain them (P541).
+`main` (level full: a PASS gate on its tip), `evidence` (`c42bca0c` + Wave 2 stages: data-only), the arm archive branches. Read every gate
+verdict before the push; never chain them (P541).
 
 ## Rules learned (session 13)
 
-- B2's box ops had only fake-ops tests: a read-only shakedown of every real box op against the real arms before a launch found four
-  bugs at once; do it before any first live run.
-- A spec's injection must be checked against the real mechanism (P584: a lowered silence limit never fires on a healthy item).
-- Never mutate a library's shared objects to change its behaviour (P585 v2 broke psutil's `oneshot` / cache everywhere).
+- Code tested only against fakes breaks on its first live run: before any first live run, a read-only shakedown of every real box op,
+  and a rehearsal that covers EVERY item kind the legs run (Python AND Go) and every failure path they can take (P589).
+- A diagnosis from one log line is a hypothesis: check the client's own record and the worker's telemetry before writing a rule (P586's
+  first diagnosis was wrong by 60 min — the DST fall-back hour, P590).
+- A spec's injection must be checked against the real mechanism (P584). Never mutate a library's shared objects (P585 v2).
 - A narrowed fix is a scope change: say so in the proposal, not in a status line (P585 v1).
 - Background shells here may not expand globs: build pytest file lists in Python (`glob.glob`).
 - A directory is deleted only when a manifest lists its files; harvest a cleanup's own inventory first (P569).
 
-Next decision id C267; discussion ids continue from P586.
+Next decision id C268; discussion ids continue from P592.
