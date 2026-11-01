@@ -1,4 +1,4 @@
-# P586–P591 — Wave 2 relaunch plan v2 (C267; plan review round 1 of 3 applied — `plan-r1.*`, dispositions below; a fresh session builds it)
+# P586–P593 — Wave 2 relaunch plan v2 (C267; plan review round 1 of 3 applied — `plan-r1.*`, dispositions below; a fresh session builds it)
 
 ## Situation
 
@@ -47,6 +47,20 @@ byte cursor / UTC; any that does is fixed red-first (P586's (a) compares in UTC)
 (opencode 2.0.20 default / the generated carrier / a probe policy) and records it in the spec; a fixed WALL cap is arm-asymmetric (ON decodes
 faster, so it writes more tokens before the cap) — a residual for B6 / the ship call, not a fix.
 
+**P592 — the client's wall cap (C268; replaces P591's "residual").** opencode cut `go/crypto-square`'s request 3 at ≈ 3645 s of wall time;
+neither the generated v2 carrier nor the adapter sets a request / step timeout, so the cap is most likely opencode 2.0.20's default (P591
+pins it down). M63: `client_inactivity` appeared ONLY in OFF arms (3 × across the two picks, never ON) — a wall cap cuts the slower arm
+first, so it is not a matched budget (AGENTS: rank at a matched budget; client timeouts = max generation / floor decode rate + headroom:
+102,400 / ≈ 18 tok/s ≈ 5,700 s + headroom). Change: set opencode's request / step timeout explicitly in the generated v2 carrier, identical
+in both arms, to the AGENTS-derived bound (recorded with its derivation), so the thinking budget — not the clock — ends a runaway in both
+arms. A scaffold change: the carrier hash and the policy sha change (Wave 2 is fresh; never pooled with M63). Red-first: the carrier
+generator emits the bound; a test pins it to the formula. P586's `kill_client_aborted` stays for a cap that still fires.
+
+**P593 — record how every ending and speed was obtained (C268).** The scaffold policy record carries the client's effective cap and its
+source; each client-aborted item records its wall at the abort, its generated tokens and the decode rate of that request (server
+telemetry); B6 reports client-aborted endings as their own runaway-tax category per arm (beside budget-hit / turn-cap / exec-timeout), so a
+quality delta is never read without them.
+
 ## Before relaunch
 
 1. An offline replay of leg 3: every item record through the fixed reconciliation (all 23 reconcile; `crypto-square` = `kill_client_closed`)
@@ -80,4 +94,4 @@ The equality rules of the receipt / pair gate; the pilot / amendment logic; the 
 | 5 | R2 stops on its first Python item, so P588's Go path is never rehearsed | **Adopted**: R2's injection moves to the first Go item, after web extraction |
 | 6 | the superseded and new runs collide on attempt names / harvest paths | **Adopted (adapted)**: the superseded run is harvested under `wave2.v8-af0711cf/` first; the new run keeps `wave2/` |
 
-Driver additions: P590 (DST, local log timestamps), P591 (the client's step cap). Rounds 2–3 remain for the built change.
+Driver additions: P590 (DST, local log timestamps), P591 (the client's step cap); operator additions (C268): P592 (an explicit, derived client timeout), P593 (ending / speed provenance per arm). Rounds 2–3 remain for the built change.

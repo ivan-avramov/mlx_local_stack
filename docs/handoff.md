@@ -1,7 +1,7 @@
 # Handoff — 2026-11-01 (session 13 END: Wave 2 stopped at leg 3 (INVALID); the relaunch plan v2 reviewed; build in session 14; nothing pushed)
 
 THE one handoff. Read this, then `docs/reviews/p586/plan.md` (THE plan, v2, with its review dispositions), then `docs/open-questions.md`
-top entries (newest first: P590–P591, C267, P586–P589, C266, P585, C265, P584, P583, C264, P581–P582, C263, P579–P580, C262, P578–P577,
+top entries (newest first: C268, P590–P591, C267, P586–P589, C266, P585, C265, P584, P583, C264, P581–P582, C263, P579–P580, C262, P578–P577,
 P576, C261, P570–P575, P569, P568–P563), and spec `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §5.1, §10, §11, §16.8. Model names: FULL
 registry names only. Review rounds: 3 per artifact (AGENTS.md); the plan used round 1 of 3.
 
@@ -19,7 +19,8 @@ registry names only. Review rounds: 3 per artifact (AGENTS.md); the plan used ro
 1. **Build the plan** (`docs/reviews/p586/plan.md` v2): P586 (`kill_client_aborted` + its completed-unaccounted variant, provenance-gated),
    P587 (Go grader `go.stderr` → evidence, then a dry classifier over leg 3's whole tree until clean), P588 (invalidated-slot tombstone),
    P589 (rehearsal: + s1's first 2 Go items; R2's injected mismatch on the first Go item), P590 (DST audit), P591 (record the client's
-   step-cap source). Each red-first; fixtures from leg 3's real records (scrubbed). Four-eyes light (implementer + independent
+   step-cap source), P592 (an explicit client request / step timeout = the AGENTS bound, both arms), P593 (ending / speed provenance
+   per arm; client-aborted endings their own runaway-tax category). Each red-first; fixtures from leg 3's real records (scrubbed). Four-eyes light (implementer + independent
    test-writer) is the user's standing preference for non-trivial work; plan review rounds 2–3 remain for the built change.
 2. **Offline replay** of leg 3 through the fixed code: all 23 items reconcile (`go/crypto-square` = `kill_client_aborted`), the dry harvest
    classifier finds nothing. Then the B2 / T3 / M64 / M62 / guard suites (build pytest file lists in Python; background shells do not expand
@@ -34,6 +35,21 @@ registry names only. Review rounds: 3 per artifact (AGENTS.md); the plan used ro
    The freeze needs the operator's Go (C266 pattern: "review, then freeze if clean").
 5. Then (quiet windows only): C258 crossover via the fork `qualify.py --prompt-tokens` / `--max-output-tokens` flag (P577 (a)); P503 fixes
    (C261: P570 / P571 / P573 / P575 as one test-only change, P574, P572); P576 (rehearsal default main root).
+
+## Session 14 instructions (operator, session 13)
+
+- Build P586–P593 per the plan, each red-first, fixtures from leg 3's real records (scrubbed), four-eyes light. P586 is provenance-gated:
+  `kill_client_aborted` (+ its completed-unaccounted variant) only with ALL of the plan's conditions (a)–(e); everything else stays systemic.
+- Offline replay of leg 3 (all 23 items reconcile; the dry harvest classifier clean), then the B2 / T3 / M64 / M62 / guard suites; then one
+  cold review of the built change (round 2 of 3; cursor `gpt-5.6-sol-high`).
+- Harvest the superseded first v8 into `benchmark/results/p426/wave2.v8-af0711cf/` + `evidence` before anything new publishes.
+- Re-cut the arms, rehearse R1–R3 with the Go items, gate the new OFF commit; bring the freeze inputs — the operator gives Go on the freeze.
+- After Wave 2 (quiet windows only): P577 (a) crossover flag, P503 fixes (C261), P576.
+- Rules: a push means its stated level passed (P541): read gate verdicts before any push, never chain them; one push at the end of the
+  session unless the operator says otherwise. Never commit with `--no-verify`. Never run anything while a gate or GPU measurement runs.
+  Tests never read the live registry state. Numbers in docs come from generated scoresheets, never hand-copied. Before deleting any local
+  state: inventory against `main`, `evidence` and the HF dataset, file reports first, have the table verified. Ask the operator only at
+  Go / Accept / pushes / scope changes.
 
 ## State — 2026-11-01
 
@@ -75,4 +91,4 @@ verdict before the push; never chain them (P541).
 - Background shells here may not expand globs: build pytest file lists in Python (`glob.glob`).
 - A directory is deleted only when a manifest lists its files; harvest a cleanup's own inventory first (P569).
 
-Next decision id C268; discussion ids continue from P592.
+Next decision id C269; discussion ids continue from P594.
