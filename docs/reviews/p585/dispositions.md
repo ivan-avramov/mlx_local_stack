@@ -18,3 +18,12 @@ psutil's cached objects in place.
 
 v3 was not re-reviewed (the verify is the work item's last dispatch; a defect a verify finds opens no further one): red-first tests
 (8; 7 red on HEAD, the eighth a regression guard) and the B2 / T3 / M64 / M62 / guard suites.
+
+**Round 3 (opinion on v3; operator-authorized beyond the budget, C266):**
+
+| # | Finding (sol) | Severity / evidence | Disposition |
+|---|---|---|---|
+| R3-1 | `_scan()` silently drops an unconstructable TRACKED parent for the tick: its child that appears in that tick cannot join the ancestry closure; if the parent then exits and the child leaves the roots, cleanup can report clean with the child alive | major / confirmed (trace) | **Adopted**: `_scan(psutil, last)` keeps the guard's previous-tick objects; a pid whose construction raises AccessDenied / SystemError is listed through its previous object (its reads stay denied obligations — `process_iter`'s own cached-object behaviour), a never-seen one is skipped, a vanished one forgotten; red-first (fake psutil module). |
+| R3-2 | A3 false: `SystemError` in `_transient` also catches caller callbacks inside broad handlers (`after_signal`, `scrub`) | minor / confirmed (trace) | **Declined, residual**: the callbacks are pure Python (a SystemError there is a C-level fault, practically absent); narrowing every handler to psutil-only calls is a larger refactor of a heavily reviewed module; minor. |
+
+Per C266 a major adopted finding is not clean: fix, re-cut, R1–R3 again, then the freeze.

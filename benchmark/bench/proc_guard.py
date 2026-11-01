@@ -58,16 +58,26 @@ def _lookup(psutil, pid):
         raise psutil.AccessDenied(pid, msg=f"lookup: {exc}") from None
 
 
-def _scan(psutil):
-    """Every live process as a fresh `psutil.Process` (never psutil's shared `process_iter` cache, which a SystemError raised
-    inside its generator would end for the whole tick): a process that vanishes or cannot even be constructed is skipped for
-    this tick, as a process mid-exit (P585); the next tick sees it again."""
-    out = []
+def _scan(psutil, last):
+    """Every live process as a `psutil.Process` built per pid (never psutil's shared `process_iter` cache, which a SystemError
+    raised inside its generator would end for the whole tick; P585). A process that cannot be constructed (AccessDenied /
+    SystemError: mid-exec / mid-exit) is listed through its previous tick's object, so a tracked parent never drops out of
+    the ancestry closure (review r3 P1; `process_iter` kept a cached object the same way) and its reads stay denied
+    obligations; one never seen before is skipped for this tick; a vanished one is forgotten. `last` is the guard's cache."""
+    out, seen = [], {}
     for pid in psutil.pids():
         try:
-            out.append(psutil.Process(pid))
-        except (psutil.NoSuchProcess, psutil.AccessDenied, SystemError):
+            proc = psutil.Process(pid)
+        except psutil.NoSuchProcess:
             continue
+        except (psutil.AccessDenied, SystemError):
+            proc = last.get(pid)
+            if proc is None:
+                continue
+        out.append(proc)
+        seen[pid] = proc
+    last.clear()
+    last.update(seen)
     return out
 
 
@@ -362,7 +372,8 @@ class ProcessGuard:
             except (psutil.NoSuchProcess, psutil.AccessDenied, SystemError, TransportAbort, StopIteration):
                 pass
         self.probe_session = os.getsid(0)
-        self.scan = scan or (lambda: _scan(psutil))                                  # P585
+        self._scan_last = {}                                                         # P585: the previous tick's objects
+        self.scan = scan or (lambda: _scan(psutil, self._scan_last))
         self.get = get or (lambda pid: _lookup(psutil, pid))
         self.roots = [str(Path(p).resolve()) for p in roots]
         self.per_process = per_process

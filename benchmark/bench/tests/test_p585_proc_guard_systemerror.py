@@ -129,3 +129,42 @@ def test_start_time_turns_systemerror_into_access_denied(tmp_path, monkeypatch):
     monkeypatch.setattr(impl_class(), "create_time", raising)
     with pytest.raises(psutil.AccessDenied):
         pg.start_time(p)
+
+
+# ---- review r3 (sol, C266) finding 1: a process that cannot be constructed keeps its previous tick's object ----------------
+class FakePsutil:
+    """`pids()` / `Process(pid)` with scripted construction failures; the module the default scan is handed."""
+    NoSuchProcess, AccessDenied = psutil.NoSuchProcess, psutil.AccessDenied
+
+    def __init__(self, pids):
+        self.live, self.fail = list(pids), {}
+
+    def pids(self):
+        return list(self.live)
+
+    def Process(self, pid):  # noqa: N802 — psutil's name
+        exc = self.fail.get(pid)
+        if exc is not None:
+            raise exc(pid) if exc is not SystemError else SystemError("returned a result with an exception set")
+        return SimpleNamespace(pid=pid, made=object())
+
+
+from types import SimpleNamespace  # noqa: E402
+
+
+def test_a_tracked_parent_that_cannot_be_constructed_stays_visible_through_its_previous_object():
+    fake, last = FakePsutil([1, 2, 3]), {}
+    first = {p.pid: p for p in pg._scan(fake, last)}
+    for exc in (SystemError, psutil.AccessDenied):
+        fake.fail = {2: exc}
+        again = {p.pid: p for p in pg._scan(fake, last)}
+        assert set(again) == {1, 2, 3} and again[2] is first[2]            # the previous object, never dropped
+
+
+def test_a_never_seen_unconstructable_process_is_skipped_and_a_vanished_one_is_forgotten():
+    fake, last = FakePsutil([1, 2]), {}
+    pg._scan(fake, last)
+    fake.live, fake.fail = [1, 2, 9], {9: SystemError, 2: psutil.NoSuchProcess}
+    assert {p.pid for p in pg._scan(fake, last)} == {1}                    # 9 never seen; 2 vanished
+    fake.fail = {2: SystemError}
+    assert {p.pid for p in pg._scan(fake, last)} == {1, 9}                 # 2 was forgotten when it vanished; 9 now constructs
