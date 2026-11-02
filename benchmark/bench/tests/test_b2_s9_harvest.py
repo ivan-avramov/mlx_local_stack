@@ -262,12 +262,17 @@ def test_an_unmatched_file_in_a_named_run_directory_fails_too(tmp_path):
 def test_the_inventory_maps_every_file_of_the_leg_run_and_evidence_directories(tmp_path):
     w = World(tmp_path)
     doc = w.harvest()
-    seen = {f["source"] for f in doc["files"]}
+    private = {f["source"] for f in doc["files"] if f["exclusion_reason"] == "private_state"}      # X7: one entry per private run directory
+    assert private == {f"run:{RUN_ID}/home/"}
+    seen = {f["source"] for f in doc["files"]} - private - {"record:excluded_private_state.json"}
     on_disk = ({"leg:" + p.relative_to(w.root).as_posix() for p in w.root.rglob("*") if p.is_file()}
-               | {f"run:{RUN_ID}/" + p.relative_to(w.run).as_posix() for p in w.run.rglob("*") if p.is_file()}
+               | {f"run:{RUN_ID}/" + p.relative_to(w.run).as_posix() for p in w.run.rglob("*") if p.is_file()
+                  and p.relative_to(w.run).parts[0] != "home"}
                | {f"evidence:{RUN_ID}/" + p.relative_to(w.ev).as_posix() for p in w.ev.rglob("*") if p.is_file()})
     assert seen == on_disk
     for f in doc["files"]:
+        if f["source"] in private or f["source"].startswith("record:"):
+            continue
         assert set(f) >= {"source", "sha256", "destination", "published", "published_sha256", "compression", "exclusion_reason"}
         src = {"leg": w.root, "run": w.run, "evidence": w.ev}[f["source"].split(":")[0]]
         rel = f["source"].split(":", 1)[1]
@@ -293,8 +298,9 @@ def test_destinations_follow_the_rule_table_main_structured_evidence_raw(tmp_pat
         assert entry(doc, s)["destination"] == "evidence", s
     objects = [f for f in entries(doc, f"evidence:{RUN_ID}/python__beer-song.final_tree/objects/")]
     assert objects and all(f["destination"] == "evidence" for f in objects)
-    private = entry(doc, f"run:{RUN_ID}/home/.config/state.db")
-    assert private["destination"] == "excluded" and private["exclusion_reason"] and private["published"] is None
+    private = entry(doc, f"run:{RUN_ID}/home/")                       # X7: one entry per private run directory
+    assert private["destination"] == "excluded" and private["exclusion_reason"] == "private_state" and private["published"] is None
+    assert private["files"] == 1
     assert entry(doc, f"run:{RUN_ID}/cfg/opencode/plugins/noretry.js")["destination"] in ("evidence", "excluded")
 
 
@@ -913,8 +919,8 @@ def a_dossier(tmp_path, **over):
 
 
 def test_publish_dossier_signature_and_return_shape(tmp_path):
-    assert list(inspect.signature(H.publish_dossier).parameters) == ["path", "main_root", "evidence_stage", "scrub"]     # (unchanged by
-    assert list(inspect.signature(H.publish_run_files).parameters) == ["paths", "main_root", "scrub"]                   # fix round 4)
+    assert list(inspect.signature(H.publish_dossier).parameters) == ["path", "main_root", "evidence_stage", "scrub", "namespace"]   # X8 adds
+    assert list(inspect.signature(H.publish_run_files).parameters) == ["paths", "main_root", "scrub", "namespace"]               # `namespace`
     assert all(inspect.signature(H.publish_dossier).parameters[n].kind is inspect.Parameter.KEYWORD_ONLY for n in ("main_root", "evidence_stage", "scrub"))
     assert inspect.signature(H.harvest_wave2).parameters["secrets"].kind is inspect.Parameter.KEYWORD_ONLY
     src = a_dossier(tmp_path)
@@ -1099,7 +1105,7 @@ def test_the_harvest_inventories_the_launch_log_with_the_attempt_and_routes_it_t
 
 
 def test_the_launch_log_is_optional_never_a_symlink_and_passes_the_secret_gate(tmp_path):
-    assert not [f for f in World(tmp_path / "a").harvest()["files"] if f["source"].startswith("record:")]
+    assert not [f for f in World(tmp_path / "a").harvest()["files"] if f["source"].startswith("record:logs/")]      # X7: the private-state list is a record too
     w = World(tmp_path / "b")
     outside = put(tmp_path / "outside.txt", "SENTINEL-NEVER-READ")
     (w.root.parent / "logs").mkdir(parents=True)

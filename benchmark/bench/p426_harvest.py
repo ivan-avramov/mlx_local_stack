@@ -41,7 +41,9 @@ def wave1_dir(build="s"):
 
 
 class HarvestError(RuntimeError):
-    pass
+    def __init__(self, message="", problems=None):
+        super().__init__(message)
+        self.problems = list(problems) if problems is not None else ([str(message)] if str(message) else [])
 
 
 @dataclasses.dataclass(frozen=True)
@@ -176,6 +178,17 @@ def harvest_run_files(paths, *, main_root, scrub, overwrite=(), build="s"):
 
 # ============================================================================================ Wave 2 (B2 spec 11, 16)
 WAVE2 = Path("benchmark") / "results" / "p426" / "wave2"
+NAMESPACE_RE = re.compile(r"wave2(?:\.[a-z0-9][a-z0-9.-]*)?")          # X8: `wave2` or `wave2.<label>`
+PRIVATE_LIST = "excluded_private_state.json"                          # X7: the per-file list of the private-state exclusions (evidence)
+
+
+def namespace_root(namespace="wave2"):
+    """X8: the `benchmark/results/p426/<namespace>` directory of a harvest; anything but `wave2` / `wave2.<label>` is refused."""
+    if not isinstance(namespace, str) or not NAMESPACE_RE.fullmatch(namespace):
+        raise HarvestError(f"namespace {namespace!r} is not `wave2` or `wave2.<label>` (label: [a-z0-9][a-z0-9.-]*)")
+    return WAVE2.with_name(namespace)
+
+
 LEG_STATES = ("VALID", "VALID_WITH_DNF", "INVALID", "NOT_STARTED", "OVERRUN")
 ATTEMPT_RE = re.compile(r"^(?P<leg>[A-Za-z0-9][A-Za-z0-9-]*)\.a(?P<n>[1-9][0-9]*)$")
 RUN_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{12}$")
@@ -278,6 +291,9 @@ def classify(kind, rel):
             return "evidence", None
         return None
     if kind == "evidence":
+        if name == "go.stderr":                           # P587: the Go grader's stderr, exactly `<item>.grades/seq-<NNNN>/go.stderr`
+            return ("evidence", None) if (len(parts) == 3 and parts[0].endswith(".grades")
+                                          and re.fullmatch(r"seq-\d+", parts[1])) else None
         return ("evidence", None) if name.endswith(EVIDENCE_SUFFIXES + (".xml",)) else None       # flat, or in a per-item directory
     return None
 
@@ -449,11 +465,12 @@ class Entry:
     def __init__(self, source, path, kind, rel, dest, reason=None, link=None, data=None):
         self.source, self.path, self.kind, self.rel = source, Path(path) if path else None, kind, rel
         self.dest, self.reason, self.link, self.data = dest, reason, link, data
-        self.sha = self.published = self.published_sha = self.compression = self.lossy = None
+        self.sha = self.published = self.published_sha = self.compression = self.lossy = self.files = None
 
     def record(self):
         return dict(source=self.source, sha256=self.sha, destination=self.dest, published=self.published,
                     published_sha256=self.published_sha, compression=self.compression, exclusion_reason=self.reason,
+                    **({"files": self.files} if self.files is not None else {}),
                     **({"link_target": self.link} if self.link is not None else {}),
                     **({"lossy_decode": self.lossy} if self.lossy else {}))
 
@@ -814,10 +831,43 @@ def _verified(doc, main_dest, main_root, evidence_stage, name):
         return False
 
 
-def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, worktree=None, workdir=None, absent_sources=()):
+def _fold_private_state(entries):
+    """X7: the `private_state` exclusions (a probe run's HOME / data / state / cache / tmp: opencode's and the toolchains' own files)
+    become ONE `HARVEST.json` entry per private run directory (`run:<id>/<dir>/`: the file count and the sha256 of the sorted
+    `<relpath>\\t<sha256>\\n` lines, `relpath` below that directory); the per-file list goes to the evidence stage as
+    `excluded_private_state.json`. Returns the entries to inventory (every other entry, the folded ones, the list entry)."""
+    groups, rest = {}, []
+    for e in entries:
+        if e.dest == "excluded" and e.reason == "private_state":
+            label, rel = e.source.split(":", 1)[1].split("/", 1)
+            top, below = rel.split("/", 1) if "/" in rel else (rel, "")
+            groups.setdefault((e.kind, label, top), []).append((below or top, _stream_sha(e.path)))
+        else:
+            rest.append(e)
+    if not groups:
+        return entries
+    listing = []
+    for (kind, label, top), files in sorted(groups.items()):
+        files.sort()
+        source = f"{kind}:{label}/{top}/"
+        folded = Entry(source, None, kind, f"{top}/", "excluded", "private_state")
+        folded.files = len(files)
+        folded.sha = _sha("".join(f"{r}\t{s}\n" for r, s in files).encode())
+        rest.append(folded)
+        listing += [dict(source=source, relpath=r, sha256=s) for r, s in files]
+    body = (json.dumps(listing, indent=1, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
+    rest.append(Entry(f"record:{PRIVATE_LIST}", None, "log", PRIVATE_LIST, "evidence", data=body))
+    return sorted(rest, key=lambda e: e.source)
+
+
+def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, worktree=None, workdir=None, absent_sources=(),
+                  dry_run=False, namespace="wave2"):
     """Harvest one attempt (B2 spec 11): `HARVEST.json` (a dict) or a `HarvestError` with nothing published. `secrets` = the credential
     values (`p426_secrets.credential_values`, in memory only); `worktree` = the arm worktree whose `logs/` hold the server logs;
-    `workdir` = `$STACK_WORKDIR` (default: `scrub.workdir`)."""
+    `workdir` = `$STACK_WORKDIR` (default: `scrub.workdir`). `dry_run` (P587): inventory, classify, scrub and secret checks run over
+    the whole tree, every problem is collected (`HarvestError.problems`), and nothing is written or removed. `namespace` (X8) =
+    `wave2` or `wave2.<label>`: the directory below `benchmark/results/p426/` of every destination and published path."""
+    ns = namespace_root(namespace)
     leg_root, main_root, evidence_stage = Path(leg_root), Path(main_root), Path(evidence_stage)
     workdir = Path(workdir) if workdir is not None else Path(scrub.workdir)
     if not _plain_dir(leg_root):
@@ -826,11 +876,11 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
     if not m:
         raise HarvestError(f"--leg-root {leg_root.name} is not an attempt root <leg>.a<n>")
     name = leg_root.name
-    main_dest, ev_dest = main_root / WAVE2 / name, evidence_stage / WAVE2 / name
+    main_dest, ev_dest = main_root / ns / name, evidence_stage / ns / name
     main_stage, ev_stage = main_dest.with_name(name + ".stage"), ev_dest.with_name(name + ".stage")
     # a committed destination is done (idempotent); anything else of THIS attempt is incomplete and replaced below
     committed = main_dest / "HARVEST.json"
-    if committed.is_file() and not os.path.islink(committed):
+    if not dry_run and committed.is_file() and not os.path.islink(committed):
         try:
             doc = json.loads(committed.read_bytes())
         except ValueError:
@@ -866,19 +916,21 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
     slices = _log_slices(leg_root, state, inv, worktree, problems)
     for e in slices:
         inv[e.source] = e
-    if problems:
-        raise HarvestError(_problem_text(problems))
+    if problems and not dry_run:
+        raise HarvestError(_problem_text(problems), problems)
 
     gate = Gate(scrub, secrets)
-    entries = sorted(inv.values(), key=lambda e: e.source)
+    entries = _fold_private_state(sorted(inv.values(), key=lambda e: e.source))
     stages = {"main": (main_root, main_stage), "evidence": (evidence_stage, ev_stage)}
     for _, stage in stages.values():                     # a stage of THIS attempt left by an interrupted run is never reused
-        _remove_tree(stage, stage.parent)
+        if not dry_run:
+            _remove_tree(stage, stage.parent)
     quarantine, written = [], []
     try:
         for e in entries:
             if e.dest == "excluded":
-                e.sha = None if e.link is not None else _stream_sha(e.path)
+                if e.files is None:                          # a folded private-state entry carries its own count and digest
+                    e.sha = None if e.link is not None else _stream_sha(e.path)
                 if e.link is not None:
                     e.link = scrub.text(e.link)
                 continue
@@ -905,12 +957,13 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
                 problems.append(f"{e.source}: {len(published)} bytes > {MAX_FILE_BYTES}")
                 continue
             sub = _published_sub(e) + (".xz" if e.compression else "")
-            e.published, e.published_sha = (WAVE2 / name / sub).as_posix(), _sha(published)
-            if not (problems or quarantine):
+            e.published, e.published_sha = (ns / name / sub).as_posix(), _sha(published)
+            if not dry_run and not (problems or quarantine):
                 _write_stage(stages[e.dest][1], sub, published)
                 written.append((e, stages[e.dest][1] / sub))
         if quarantine or problems:
-            raise HarvestError(_problem_text([f"quarantined {q}" for q in quarantine] + problems))
+            every = [f"quarantined {q}" for q in quarantine] + problems
+            raise HarvestError(_problem_text(every), every)
         paths = [e.published for e in entries if e.published]
         if len(paths) != len(set(paths)):
             raise HarvestError("two files map to one published path")
@@ -924,14 +977,17 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
         scrubbed, kinds = gate.check("HARVEST.json", body, "main")
         if kinds or scrubbed != body:
             raise HarvestError("HARVEST.json: quarantined or not portable" + (f" ({', '.join(kinds)})" if kinds else ""))
+        if dry_run:
+            return doc
         _write_stage(main_stage, "HARVEST.json", body)
         for e, staged in written:                        # the staged bytes are verified before anything becomes visible
             if _sha(staged.read_bytes()) != e.published_sha:
                 raise HarvestError(f"{e.source}: its staged copy does not verify")
     except BaseException:
-        for _, stage in stages.values():
-            _remove_tree(stage, stage.parent)
-            _prune_empty(stage.parent, stages["main"][0] if stage is main_stage else evidence_stage)
+        if not dry_run:
+            for _, stage in stages.values():
+                _remove_tree(stage, stage.parent)
+                _prune_empty(stage.parent, stages["main"][0] if stage is main_stage else evidence_stage)
         raise
     # publish: this attempt's incomplete destinations go, then evidence, then `main`: the rename of the `main` destination that
     # carries HARVEST.json is the single commit point
@@ -955,11 +1011,12 @@ def _published_sub(entry):
 
 
 # -------------------------------------------------------------------------------------------- records: the pair dossier, the run files
-def _publish_records(paths, *, main_root, scrub, sub, require_self_hash, may_advance=(), exempt=()):
+def _publish_records(paths, *, main_root, scrub, sub, require_self_hash, may_advance=(), exempt=(), namespace="wave2"):
     """Publish single record files to `<main>/benchmark/results/p426/wave2/<sub>/<name>`: every file is validated first (a regular
     file, never a link; self-hash; the scrub is byte-identity; no credential format, no operator address; no PII), staged beside its
     destination, verified, then renamed into place. An existing destination with the same bytes is done; a different one is
     refused unless its name is in `may_advance` (a state file the sequencer replaces atomically)."""
+    ns = namespace_root(namespace)
     gate = Gate(scrub, scrub.secrets)                        # the same exact in-memory credential values as the leg harvest
     main_root = Path(main_root)
     pending, published, problems = [], [], []
@@ -970,7 +1027,7 @@ def _publish_records(paths, *, main_root, scrub, sub, require_self_hash, may_adv
         except HarvestError as exc:
             problems.append(str(exc) if p.name in str(exc) else f"{p.name}: {exc}")
             continue
-        rel = (WAVE2 / sub / p.name).as_posix()
+        rel = (ns / sub / p.name).as_posix()
         try:
             doc = json.loads(data)
         except ValueError:
@@ -1046,19 +1103,19 @@ def load_credentials(*, environ, home, env_files=()) -> dict:
         raise HarvestError(str(exc)) from None
 
 
-def publish_dossier(path, *, main_root, evidence_stage, scrub):
+def publish_dossier(path, *, main_root, evidence_stage, scrub, namespace="wave2"):
     """Publish one pair dossier (a self-hashed record) to `main` `wave2/pairs/`, staged and verified like a leg's `main` destination.
     Returns `{published: [{source, destination, sha256}], harvest_sha256}`; a dossier has no HARVEST.json, so `harvest_sha256` is
     None. `evidence_stage` is part of the pinned signature; a dossier has no evidence side."""
-    return _publish_records([path], main_root=main_root, scrub=scrub, sub="pairs", require_self_hash=True)
+    return _publish_records([path], main_root=main_root, scrub=scrub, sub="pairs", require_self_hash=True, namespace=namespace)
 
 
-def publish_run_files(paths, *, main_root, scrub):
+def publish_run_files(paths, *, main_root, scrub, namespace="wave2"):
     """Publish the run-level records (the frozen-record directory's files, the sequencer's `sequence.json`) to `main` `wave2/run/`.
     Every frozen record is immutable and needs a valid self-hash; `sequence.json` (a state file) is the one exemption and is
     replaced atomically as it advances. The credential values are `scrub.secrets`, as for the leg harvest."""
     return _publish_records(paths, main_root=main_root, scrub=scrub, sub="run", require_self_hash=True,
-                            may_advance=("sequence.json",), exempt=("sequence.json",))
+                            may_advance=("sequence.json",), exempt=("sequence.json",), namespace=namespace)
 
 
 # -------------------------------------------------------------------------------------------- the CLI
@@ -1113,14 +1170,20 @@ def _parse(argv):
     w2.add_argument("--operator-email", action="append", default=[], help="the address the harvest refuses (repeatable)")
     w2.add_argument("--worktree", default=None, help="the arm worktree whose logs/ hold the server logs (default: from the frozen record)")
     w2.add_argument("--env-file", action="append", default=[], help="an extra <WT>/.env credential source (repeatable)")
+    w2.add_argument("--namespace", default="wave2", help="`wave2` or `wave2.<label>`: the directory below benchmark/results/p426/ "
+                                                         "of the destinations and published paths")
+    w2.add_argument("--dry-run", action="store_true", help="inventory, classify, scrub and secret-check the whole tree, print every "
+                                                           "problem, write nothing (rc 0 clean, 4 otherwise)")
     return ap.parse_args(argv)
 
 
 def main(argv=None, *, environ=None, home=None):
     """`wave2` entry. A `HarvestError` prints one stderr line `REFUSED: <reason>` and exits 2, with nothing published."""
     environ = os.environ if environ is None else environ
+    dry_run = False
     try:
         a = _parse(sys.argv[1:] if argv is None else argv)
+        dry_run = a.dry_run
         if not environ.get("STACK_WORKDIR"):
             raise HarvestError("STACK_WORKDIR is not set")
         from bench import p426_secrets
@@ -1144,8 +1207,12 @@ def main(argv=None, *, environ=None, home=None):
             raise HarvestError(str(exc)) from None
         absent = p426_secrets.absent_sources(home=home, config_path=config, env_files=env_files)
         harvest_wave2(leg_root, main_root=a.main_root, evidence_stage=a.evidence_stage, scrub=scrub, secrets=values,
-                      worktree=worktree, workdir=workdir, absent_sources=absent)
+                      worktree=worktree, workdir=workdir, absent_sources=absent, dry_run=a.dry_run, namespace=a.namespace)
     except HarvestError as exc:
+        if dry_run:                                     # P587: every problem, one per line, rc 4
+            for problem in exc.problems:
+                print("PROBLEM: " + " ".join(str(problem).split()), file=sys.stderr)
+            return 4
         print("REFUSED: " + " ".join(str(exc).split()), file=sys.stderr)
         return 2
     except OSError as exc:

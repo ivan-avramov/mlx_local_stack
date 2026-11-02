@@ -1,4 +1,4 @@
-# P586–P593 — Wave 2 relaunch build — SPEC v1, 2026-11-01 (four-eyes light; plan `docs/reviews/p586/plan.md` v2, C267 / C268)
+# P586–P593 — Wave 2 relaunch build — SPEC v1.1, 2026-11-01 (four-eyes light → strict from the fix round: X7 touches the harvest data boundary; plan `docs/reviews/p586/plan.md` v2, C267 / C268)
 
 ## Goal (verbatim in every brief)
 
@@ -41,8 +41,8 @@ a `Stream Telemetry` line that does not parse raises `LogParseError`.
 
 The hook (`P426Hooks.after_attempt`) builds `client` for a `client_inactivity` row: the export from `row.transcript_path` (resolved
 like `chain_core.web_record` does), its sha256 compared with `row.evidence_sha256.export`; the telemetry lines of the window strictly
-between the trailing request's `Request started` line and its terminal (failed / trailing completed) line; `close_gap_s` = the
-difference of the two lines' leading local stamps (last telemetry line → terminal line). An unreadable export is a problem, never an
+between the trailing request's `Request started` line and its terminal (failed / trailing completed) line; `close_gap_s` per v1.1 X1
+(the export's wall time minus the last telemetry `elapsed`; v1's local-stamp difference was unsafe). An unreadable export is a problem, never an
 exception.
 
 Accepted ONLY when every condition holds (each a named check in `ItemReport.checks`, `client_abort_<x>`):
@@ -51,8 +51,7 @@ Accepted ONLY when every condition holds (each a named check in `ItemReport.chec
   `after.last_error.timestamp_unix` with `after.last_error.error == "stream_closed_before_completion"` for the failed variant, and
   `after.last_request_at` for the completed variant. No local log timestamp enters (a).
 - (b) continuity: `≥ 1` telemetry line; one `uid`; `tokens` and `elapsed_s` strictly increasing; every consecutive `elapsed_s` gap
-  `≤ TELEMETRY_GAP_S` (120.0); `0 ≤ close_gap_s ≤ TELEMETRY_GAP_S` (a negative or larger value — including a DST transition inside
-  that gap — fails, systemic). The first line's `elapsed_s` is not bounded (it includes prefill; residual R1).
+  `≤ TELEMETRY_GAP_S` (120.0); `0 ≤ close_gap_s ≤ TELEMETRY_GAP_S` [superseded by v1.1 X1]. The first line's `elapsed_s` is not bounded (it includes prefill; residual R1).
 - (c) no kill marker: `gate.requests_completed_at_kill`, `termination.reason`, `termination.in_flight_at_kill`,
   `termination.killed_verified`, `termination.client_stop` all null and `termination.killed` empty.
 - (d) accounting: `row.requests_observed == |S|`; failed variant `|F| == 1`, `|C| == len(request_usage) == gate.requests_completed`;
@@ -147,6 +146,26 @@ A carrier / plugin change (P594); B6 / B8 code; server changes; the harvest of t
 
 R1 a stall during prefill before the first telemetry line is not detected by (b). R2 the 60-min cap is arm-asymmetric (OFF decodes
 slower and is cut at ≈ 76K tokens of an 81,920 budget): reported per arm (P593), not removed (P594).
+
+## v1.1 — fix round 1 (supersedes v1 where they differ; reviews `docs/reviews/p586/build-r2.*`, `build-r3.*`, dispositions `build-fixlist.md`)
+
+- X1 (sol r2 P1, blocker): v1's close gap by local log stamps was NOT fail-safe — a pause of ≥ 1 h across the DST fall-back reads as
+  `true − 3600` s. Now `close_gap_s = wall_s − last.elapsed_s` (the export's `(time.completed − time.created) / 1000` of the aborted /
+  trailing assistant message, minus the last telemetry `elapsed`), accepted in `[−ABORT_MATCH_S, TELEMETRY_GAP_S]`; no local log stamp
+  enters any condition (`TelemetryLine.stamp` diagnostic only).
+- X2 (sol r2 P2): (a) also requires `export.info.id == row.session_id` and every `request_usage` message id among the export's assistant
+  ids, in order, before the aborted one.
+- X3: (a) requires `time.created` / `time.completed` ints with `created ≤ completed`; the `client_abort` block uses validated values only.
+- X4: `p426_freeze`'s R3 check keeps its own probe-kill tuple (a client abort is not R3's injected kill).
+- X5: `p426_leg.battery_window` resolves `subprocess.run` at call time (test fakes reach it).
+- X6: leg stamps are `YYYY-MM-DDTHH:MM:SSZ`; `stamp_epoch` refuses unmarked text.
+- X7 (driver P599): `HARVEST.json` folds `private_state` exclusions to one entry per private run directory; the per-file listing goes to the
+  evidence stage only (Go's telemetry counters `compile@go1.27.3-…count` read as addresses to the main-bound email gate).
+- X8 (driver P600): `harvest_wave2(namespace=…)` / `--namespace` (`wave2` or `wave2.<label>`).
+- Acceptance criterion 3 reads: the item RECORDS of non-`client_inactivity` rows are unchanged apart from `totals.decode_rate_source`; the
+  in-memory `ItemReport` gains the optional `client_abort` field (None for them) — nothing serialises `ItemReport` (sol r2 P7).
+- Residuals added: sol r2 P5 — `--dry-run` stops at a structural `leg.json` / state / attempt-name error before the inventory (it still
+  refuses and publishes nothing); the close gap includes client→server latency (≈ 1.6 s on leg 3).
 
 ## Open questions
 

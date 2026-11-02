@@ -32,9 +32,9 @@ to start before 600 s have passed since it.
 
 | # | Leg | Arm worktree | Chain argv (besides §6.7's common flags [o4]) | Items | Record required |
 |---|---|---|---|---|---|
-| R1 | `tg1-p426-rehearsal-{off,on}` | B2 commit / throwaway ON commit | `chain s1 --rehearsal` | 1 + 2 (smoke shape) | rehearsal manifest |
-| R2 | `tg1-p426-rehearsal-mismatch` [r3] | ON rehearsal commit | `chain s1 --rehearsal --inject reconcile-mismatch` | 2 | rehearsal manifest |
-| R3 | `tg1-p426-rehearsal-kill` [r3] | OFF rehearsal commit | `chain s1 --rehearsal --inject stall-kill` | 2 | rehearsal manifest |
+| R1 | `tg1-p426-rehearsal-{off,on}` | B2 commit / throwaway ON commit | `chain s1 --rehearsal` | 1 + 2 + 2 (smoke shape: Python 1 pilot + 2 full, then Go's first 2; P589) | rehearsal manifest |
+| R2 | `tg1-p426-rehearsal-mismatch` [r3] | ON rehearsal commit | `chain s1 --rehearsal --inject reconcile-mismatch` | 3 Python + the first Go item (the leg stops there; P589) | rehearsal manifest |
+| R3 | `tg1-p426-rehearsal-kill` [r3] | OFF rehearsal commit | `chain s1 --rehearsal --inject stall-kill` | 1 + 2 + 2 (the stall-kill is on the first Python item) | rehearsal manifest |
 | 1 | `tg1-p426-off-pilot` | `stack-p426-off` | `pilot` | first 5 of s1's Python order (seed 1001) | v8 base |
 | 2 | `tg1-p426-on-pilot` | `stack-p426-on` | `pilot` | same 5 | v8 base |
 | 3 | `tg1-p426-off-s1` | off | `chain s1` | all 22 Python then all 21 Go, s1 order (§7) | v8 base + timeout amendment |
@@ -53,7 +53,9 @@ to start before 600 s have passed since it.
   harvest into a scratch stage); never graded, paired or published; each run on a fresh root [r3]. R1 (positive pair) must show: every
   barrier fires and its ready / item records exist, reconciliation exact, ON counters present and OFF absent, the pair gate passes, the
   harvest is complete; it records the pair's full environment diff (§6.4) and every ON request's `(generated_tokens, draft_rounds)`
-  (§4.4) [o4]. R2 (negative): the injected reconciliation mismatch stops the leg after that item, `INVALID`. R3: one real probe
+  (§4.4) [o4]. R2 (negative): the injected reconciliation mismatch perturbs the first Go item's reconciliation (after its web evidence was
+  extracted), stops the leg after that item, `INVALID` — through the tombstone path (§16.8, P588), a clean INVALID, never a chain abort
+  [P589]. v8 requires R1's legs to hold the `1 + 2 + 2` items and R2's invalidated slot to be a Go slot. R3: one real probe
   kill (a lowered stall limit on one item; `--inject` exists only with `--rehearsal`) is classified as a scored strict fail with its
   failed-line case recorded. R2 / R3 are excluded from the pair gate; v8 requires R1 VALID, R2 INVALID for exactly that reason, R3 VALID.
 - **Pilot gate (after legs 1–2):** both legs VALID (§5.1), 5 / 5 items reconciled, zero DNF, ON engagement proven on every eligible
@@ -157,12 +159,35 @@ Let `F` = the `Request failed` lines in the window, `C` = the completed lines, `
 | probe kill or `client_inactivity` (scored strict fail), at a request boundary | 0 | `gate.requests_completed_at_kill == |C|` (null for `client_inactivity` → `gate.requests_completed == |C|`) |
 | the same, with a request in flight | 1 | the last line of the window, `error=stream_closed_before_completion`, `|S| == |C| + 1` |
 | the same, a request in flight that the server completed before the client lost it [o4] | 0 | exactly one trailing `C` line absent from `request_usage`, its session == the row's, recorded `completed_unaccounted` |
+| `client_inactivity` with a request in flight, aborted by the client itself (opencode's 60-minute step cut, C154) [P586] | 1 (`kill_client_aborted`) or 0 + one trailing `C` line (`kill_client_aborted_completed_unaccounted`) | ALL of (a)–(e) below, else systemic |
 | DNF (any DNF cause), the abort at a request boundary | 0 | `|C| == len(request_usage)` from the abort manifest [r3] |
 | DNF, a request in flight that the server failed | 1 | the trailing `stream_closed_before_completion` line as above |
 | DNF, a request in flight that the server completed before the client lost it | 0 | exactly one trailing `C` line absent from `request_usage` (the abort manifest's in-flight message), its session == the abort manifest's `session_id` [d2], recorded as `completed_unaccounted` [r3] |
 
 The DNF rows are decided by observed started / completed / failed state, not by the cause name (`connection` also covers
 established-stream resets) [r3].
+
+**Client-aborted in-flight request [P586].** For a `client_inactivity` row the in-flight evidence is the client's own provenance, not
+`termination.in_flight_at_kill` (which only a probe kill writes). The done hook builds `ClientEvidence` (the opencode export read from the
+row's `transcript_path` and its sha256 against `evidence_sha256.export`; the worker's `Stream Telemetry` lines strictly between the trailing
+request's `Request started` line and its terminal line; the close gap = the aborted (completed variant: trailing) assistant message's
+`wall_s` = `(time.completed − time.created) / 1000` from the export, minus the last telemetry line's `elapsed` — client UTC epoch against the
+worker's monotonic clock; no local log stamp enters any condition [P586 fix round, sol r2 P1]). The two cases are accepted ONLY when every condition holds (each a named check `client_abort_<x>`):
+- (a) provenance: the export sha is the row's; its last `assistant` message has `error == {"type": "aborted", "message": "Step
+  interrupted"}`, `finish == "error"`, `time.created` / `time.completed` ints with `created ≤ completed`, the export's `info.id` == the row's `session_id`
+  and every `request_usage` message id among its assistant ids, in order, before the aborted one; and `|time.completed / 1000 − T| ≤ 5.0 s`, `T` = the worker's `last_error.timestamp_unix` (with
+  `error == stream_closed_before_completion`; failed variant) or `last_request_at` (completed variant). No local log timestamp enters (a).
+- (b) continuity: ≥ 1 telemetry line, one `uid`, `tokens` and `elapsed` strictly increasing, every consecutive `elapsed` gap ≤ 120 s, and
+  `−5.0 s ≤ close gap ≤ 120 s` (outside it, or not computable, is systemic). The first line's `elapsed` is not
+  bounded (it includes prefill; residual R1).
+- (c) no kill marker: `gate.requests_completed_at_kill`, `termination.reason` / `in_flight_at_kill` / `killed_verified` / `client_stop`
+  all null and `termination.killed` empty.
+- (d) accounting: `requests_observed == |S|`; failed variant `|F| == 1`, `|C| == len(request_usage) == gate.requests_completed`; completed
+  variant `|F| == 0`, `|C| == len(request_usage) + 1`, the trailing line's session == the row's; plus every check above.
+- (e) a normal client ending: `stop_reason == "completed"`, `opencode_rc == 1`, `client_exit_hang` and `torn_tail` false,
+  `reconciliation.trailing == "interrupted"`.
+The item stays a scored strict fail (`client_inactivity`); `client_inactivity` at a request boundary stays `kill_boundary`; rows without
+`client_inactivity` reconcile as before.
 
 - Per load, before the first item: the A4 window's 3 `anon:*` requests equal the A4 run's `gate.json` and its own 4-request `ses_*`
   session equals the A4 receipt (`a4_v2` receipt) [o4].
@@ -183,7 +208,13 @@ established-stream resets) [r3].
 ### 4.5 Item record (`items/<slot>.json`, written before the barrier answer; DNF: `items/<slot>.dnf.json`)
 The ready record's sha256, the log slice's byte range and sha256 (raw lines go to `evidence`, §11.2), the worker snapshots, the parsed
 per-request table (session, backend, prompt / generated tokens, decode rate as logged, draft counters, failed-line errors), the per-item
-totals (requests, tokens, `ΔD`, accepted / proposed sums), every check's result and the verdict.
+totals (requests, tokens, `ΔD`, accepted / proposed sums), every check's result and the verdict. [P593] Every item record carries
+`totals.decode_rate_source = "completed requests (spec 8)"` (the worker counts no tokens or decode time for a failed request, so an
+aborted request is outside `ΔD`). The two client-abort cases also carry `client_abort = {request_index, wall_s,
+generated_tokens_at_last_telemetry, decode_tok_s, rolling_tps, telemetry_elapsed_s, telemetry_lines, telemetry_interval_tokens (500, the
+fork's default), cap_s (3600), cap_source ("opencode 2.0.20 LocationActivity timeToLive default (C154); not configurable")}`; the token
+count is a lower bound (the last telemetry line). The v8 base record carries `client_step_cap = {seconds: 3600, source, bound_by:
+"opencode_exe_sha256"}` (a property of the pinned binary; `scaffold_policy_sha256` is unchanged).
 
 ## 5. Failure policy (C220)
 
@@ -194,7 +225,7 @@ totals (requests, tokens, `ΔD`, accepted / proposed sums), every check's result
 | NOT_STARTED | an entry check fails before the router starts | nothing launched; leg record `NOT_STARTED` |
 | Systemic | record / registry / lifecycle / probe-identity / M50 drift at any checkpoint; owned router or worker gone or replaced; §4.3 or §4.4 violated; settle timeout; a missing ready record; unparseable line; uncertain cleanup (survivors, containers); a foreign busy process; an abort without a DNF cause; > 2 DNF in the leg; a pair-gate mismatch (§6.5) | stop at once (`invalidate` at a barrier; between invocations no relaunch); leg `INVALID`; sequencer stops |
 | Item DNF | the probe aborts an item with `transport_abort.cause` ∈ {`connection`, `dropped_stream`, `timeout`, `client_timeout`} AND owned router and worker identities unchanged and healthy, settled, §4.3's DNF row holds, certain empty cleanup | a `p426_dnf` record (§5.3); the leg continues on the same load (§5.2) |
-| Scored strict fail | in-probe non-convergence (budget hit, turn cap, exec timeout, `client_inactivity`, kills) | a normal row, `acc_strict = 0` |
+| Scored strict fail | in-probe non-convergence (budget hit, turn cap, exec timeout, `client_inactivity`, kills); a client-aborted in-flight request counts only with its full provenance (§4.3, P586), else it is systemic | a normal row, `acc_strict = 0` |
 | Speed-invalid | an in-run power / watcher failure (§8) | quality continues; the leg's speed block is excluded (§8) |
 
 VALID = chain rc 0, status `finished`, no `running` / quarantined record, the per-item realized ledger (§7) == the plan, every `done`
@@ -331,7 +362,8 @@ supervising the chain and the watcher, never kills; the operator decides. When t
 ### 11.1 Entry point
 `bench.p426_harvest wave2 <leg-root>` (the Wave-1 path unchanged) runs after the chain and watcher exited, for EVERY leg state
 (VALID, VALID-with-DNF, INVALID, NOT_STARTED, OVERRUN); the dossier is labelled with its state. Nothing in a leg root is deleted before its
-harvest is committed.
+harvest is committed. [P587] `--dry-run` runs the inventory, the rule table, the scrub and the secret gate over the whole tree,
+collects and prints every problem (it does not stop at the first), writes and removes nothing; rc 0 when clean, 4 otherwise.
 
 ### 11.2 Inventory and destinations
 - Every regular file under the attempt's leg root, under each run and evidence directory the attempt's own manifests name (the probe
@@ -357,9 +389,12 @@ harvest is committed.
   the realized ledger, rows, manifests, sidecars, DNF / ready / item records, grader reports, per-item code diffs, final-tree manifests,
   the arm-equality receipt, the watcher receipt, `HARVEST.json`.
 - `evidence` stage: raw logs and streams — server-log slices, A4 logs, `RUNLOG.md`, stdout, stderr, transcripts, events, fetched pages,
-  barrier / control files (xz when > 8 MB).
+  barrier / control files (xz when > 8 MB), and the Go grader's stderr `<item>.grades/seq-<NNNN>/go.stderr` (exactly that shape; P587).
 - `HARVEST.json` maps every file: original path, original sha256, destination, published path, published sha256, compression, exclusion
-  reason. B8 / B6 resolve files only through it. Harvested bytes are re-verified before each `data(bench)` commit.
+  reason — except `private_state` exclusions (the run's `home` / `data` / `state` / `cache` / `tmp`), recorded as ONE entry per private run
+  directory (`source` `run:<id>/<dir>/`, `files` count, `sha256` over the sorted `<relpath>\t<sha256>` lines), their per-file listing in the
+  evidence stage only (`<attempt>/excluded_private_state.json`; P599: Go's telemetry counter names read as addresses). The destination
+  namespace is `wave2` or `wave2.<label>` (`--namespace`, P600). B8 / B6 resolve files only through it. Harvested bytes are re-verified before each `data(bench)` commit.
 
 ### 11.3 Scrub and secret gate (before compression)
 - P437 scrub rules (paths, user, host via `SCRUB_MANIFEST.json`), then a refusal scan over the original AND the scrubbed bytes of every
@@ -386,6 +421,9 @@ Per leg via `HARVEST.json`: the leg record (state, class, reason), the realized 
 (§4.5), the arm-equality receipt, the watcher receipt (§8), the record ids; per pair the immutable pair dossier (§6.5) [r3]. Pair keys:
 (session, language, item, seed). Decode rate per §8; acceptance = Σ accepted ÷ Σ proposed within a session. DNF scoring (C235 G1): `acc_strict@budget`
 over ALL planned slots, a DNF counted as a non-success labelled `transport_dnf`; per-arm DNF counts and causes; make-up as sensitivity.
+[P593] B6 reports `client_inactivity` endings per arm as their own runaway-tax category beside budget-hit / turn-cap / exec-timeout
+(each with its item record's `client_abort` block: the client's 60-minute step cut is arm-asymmetric — OFF decodes slower and is cut
+earlier in its budget), and the strict delta with and without the pairs where either arm has one (a pre-registered sensitivity).
 
 ## 13. Tests (test-first) and review
 
@@ -515,7 +553,8 @@ flag, file or field, and exits 2.
 
 ### 16.3 Clarifications
 - In P426 mode the chain passes `--evidence p426` to the probe.
-- `--rehearsal` selects the smoke shape: one pilot item, then two full items, of s1's P426 Python order (§7); `--smoke` stays refused.
+- `--rehearsal` selects the smoke shape: one pilot item, then two full items, of s1's P426 Python order (§7), then the first two items
+  of s1's seeded Go order (seed 1001, one `full` invocation; P589); `--smoke` stays refused.
 - The P426 pilot is the first five of s1's P426 Python order (`Random(seed).sample(sorted(pool), n)`, §7), not the legacy pilot's
   `sorted(Random(seed).sample(pool, 5))`.
 - `ΔD` per item = `decode_time(after) − decode_time(before)`, the worker's aggregate decode time over all the item's requests, 1-token
@@ -635,10 +674,20 @@ flag, file or field, and exits 2.
   per (session, language, item, seed) with `arm_of_dnf` merged into a sorted list (a slot DNF'd in both arms runs once per make-up leg).
 - **Make-up out-roots** are flat like every attempt (§1): `<out-base>/tg1-p426-{off,on}-makeup.a<n>`; only the occurrences files live
   under `<out-base>/makeup/` (§16.7).
-- **Injections (rehearsal only)**: `--inject reconcile-mismatch` makes the chain perturb the first item's reconciliation so that it
-  invalidates with the exact reason `reconciliation mismatch (injected)` (v8 matches it exactly); `--inject stall-kill` makes the chain
+- **Injections (rehearsal only)**: `--inject reconcile-mismatch` makes the chain perturb the first GO item's reconciliation (the first
+  `done` whose item is `go/*`, after the barrier extracted its web evidence) so that it invalidates with the exact reason
+  `reconciliation mismatch (injected)` (v8 matches it exactly) [P589]; `--inject stall-kill` makes the chain
   pass `--inject-stall-item <lang>/<item> --inject-stall-s 30` to the probe invocation holding the first Python item of the rehearsal
   schedule, and the probe applies that stall limit to that item only. Both flags refuse without `--rehearsal`.
+- **Invalidated-slot tombstone [P588]**: when the `done` barrier invalidates a slot after extracting its web evidence, the
+  `p426_invalid` entry carries `web_evidence = {slot, rerun_index, path, sha256}` (the barrier's extraction record; `None` when it
+  extracted none). `after_invocation` and `abandoned_web_evidence` skip a tombstoned `(slot, rerun_index)` after checking the file's
+  sha256 equals the tombstone's (a difference or a missing file is a `ChainAbort`) and never append a `slot_attempts` entry for it: the
+  leg ends INVALID (rc 2), never in a chain abort.
+- **No local timestamps [P590]**: no B2 logic orders or windows by a local log timestamp. Leg start / end stamps (`p426_leg`, the watcher-
+  tick count, the qualify battery window) are UTC, written `YYYY-MM-DDTHH:MM:SSZ` (`utc_stamp`; `stamp_epoch` reads that form or epoch
+  seconds and refuses any other text); §4.3 (b)'s close gap is computed from the export's UTC wall time and the worker's monotonic
+  `elapsed`, never from log stamps (`TelemetryLine.stamp` is diagnostic text only).
 - **Rehearsal inputs**: `p426_wave2 rehearsal` requires `--frozen-prompt-date`; the rehearsal manifest records it and
   `ops.identity(off_worktree)`.
 - **Topology test (§13)**: in-process — the real `Sequencer` whose `launch` runs the real `run_tg1_chain.main(argv, ops=FakeOps)` on a

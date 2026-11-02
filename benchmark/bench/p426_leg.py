@@ -245,11 +245,31 @@ def log_problems(lines, arm, expected):
 
 
 TICK_S = 300
+STAMP_FMT = "%Y-%m-%dT%H:%M:%SZ"
+
+
+def utc_stamp(t=None):
+    """P590 / X6: a leg's start / end stamp, `YYYY-MM-DDTHH:MM:SSZ` in UTC (never the box's local time, which repeats an hour at
+    the fall-back); the `Z` marks the meaning, so no committed receipt mixes UTC and local text in one format."""
+    return time.strftime(STAMP_FMT, time.gmtime(t))
+
+
+def stamp_epoch(stamp):
+    """P590 / X6: the epoch seconds of a leg stamp: an epoch number as is, a `YYYY-MM-DDTHH:MM:SSZ` text as UTC (`calendar.timegm`,
+    no zone database, so no ambiguous or skipped local hour). Any other text (an unmarked `YYYY-MM-DD HH:MM:SS` included) is a
+    `ValueError`: never guessed."""
+    import calendar
+    if isinstance(stamp, (int, float)) and not isinstance(stamp, bool):
+        return float(stamp)
+    if not isinstance(stamp, str):
+        raise ValueError(f"not a leg stamp: {stamp!r}")
+    return float(calendar.timegm(time.strptime(stamp, STAMP_FMT)))
 
 
 def watch_problems(watch, start, end):
     """G3: the watcher's own report — absent, exited early, a power failure, or fewer ticks than the leg's span minus 10 min
-    allows — invalidates the leg's speed (a crashed watcher never reads as 'no power failure')."""
+    allows — invalidates the leg's speed (a crashed watcher never reads as 'no power failure'). `start` / `end` are UTC stamps
+    or epoch seconds (P590)."""
     if not watch:
         return ["no watcher report"]
     problems = []
@@ -257,8 +277,7 @@ def watch_problems(watch, start, end):
         problems.append(f"watcher power failure at {watch['power_failure'].get('first_failure_at')}")
     if watch.get("exited_early"):
         problems.append("watcher exited early")
-    fmt = "%Y-%m-%d %H:%M:%S"
-    span = (time.mktime(time.strptime(end, fmt)) - time.mktime(time.strptime(start, fmt))) if start and end else 0
+    span = (stamp_epoch(end) - stamp_epoch(start)) if start and end else 0
     need = max(0, int((span - 2 * TICK_S) // TICK_S))
     if (watch.get("ticks") or 0) < need:
         problems.append(f"watcher ticks {watch.get('ticks')} < {need} for a {span:.0f} s leg")
@@ -402,6 +421,15 @@ def power_history_problems(returncode, text):
     if bad:
         problems.append(f"pmset -g log: {bad} malformed power-source line(s)")
     return problems
+
+
+def battery_window(start, end, *, qualify, run=None):
+    """The qualify leg's battery intervals over `[start, end]` (UTC stamps or epoch seconds, P590) from `pmset -g log`.
+    `run` defaults to `subprocess.run` resolved at call time (X5), so a monkeypatch of it reaches this function."""
+    out = (run or subprocess.run)(["pmset", "-g", "log"], capture_output=True, text=True, timeout=120)
+    problems = power_history_problems(out.returncode, out.stdout)  # K6: strict grammar
+    epoch = [stamp_epoch(x) for x in (start, end)]
+    return (qualify.battery_intervals(out.stdout, *epoch) if not problems else []), problems
 
 
 def _receipt_path(spec):
@@ -796,10 +824,7 @@ def main(argv=None):
         from p369_phase2 import qualify
 
         def battery(start, end):
-            out = subprocess.run(["pmset", "-g", "log"], capture_output=True, text=True, timeout=120)
-            problems = power_history_problems(out.returncode, out.stdout)  # K6: strict grammar
-            epoch = [time.mktime(time.strptime(x, "%Y-%m-%d %H:%M:%S")) for x in (start, end)]
-            return (qualify.battery_intervals(out.stdout, *epoch) if not problems else []), problems
+            return battery_window(start, end, qualify=qualify)
 
         base_state = _repo_state_for(repo)
 
@@ -811,7 +836,7 @@ def main(argv=None):
             return state
 
         common = dict(run_driver=_real_driver, pins_check=_pins_check_for(fork_dev), battery_intervals=battery,
-                      clock=lambda: time.strftime("%Y-%m-%d %H:%M:%S"), repo_state=repo_state)
+                      clock=utc_stamp, repo_state=repo_state)             # P590: the leg's stamps are UTC
     except BaseException as exc:  # noqa: BLE001 — K1: planning / loading failures are receipted too
         _refuse(stub, dict(name=name, arm=args.arm, kind=args.axis, problems=[], speed_problems=[]), exc)
         if not isinstance(exc, Exception):

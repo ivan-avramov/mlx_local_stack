@@ -37,7 +37,8 @@ ITEM_COUNT = {"python": 22, "go": 21}                                 # one sess
 PILOT_N = 5
 DEADLINE_FACTOR, DEADLINE_SLACK_S = 1.5, 1800.0                       # spec 10.2
 R2_REASON = "reconciliation mismatch (injected)"                      # spec 16.8: R2's exact INVALID reason
-KILL_CASES = ("kill_boundary", "kill_inflight_failed", "kill_completed_unaccounted")
+KILL_CASES = ("kill_boundary", "kill_inflight_failed", "kill_completed_unaccounted")    # the PROBE-kill cases only: R3 injects a probe kill, a client abort is not one
+REHEARSAL_R1_ITEMS = {"python": 3, "go": 2}                           # P589: 1 pilot + 2 full Python items, then 2 Go items
 COUNTED_STATUSES = ("validated", "partial_incident", "hook_stopped")  # invocations whose rows belong to the leg
 GITLINKS = (("mlx_vlm", "src/mlx-vlm"), ("mlx_serve", "src/mlx-serve"))
 IDENTITY_KEYS = ("probe_code_sha256", "scaffold_policy_sha256", "generation_identity_sha256")
@@ -242,11 +243,38 @@ def binding_problems(roots, manifest_path, manifest_sha, wd) -> list:
     return problems
 
 
+def _slot_lang(slot):
+    parts = str(slot).split("|")
+    return parts[-2] if len(parts) >= 2 else None
+
+
+def r1_shape_problems(root) -> list:
+    """P589: an R1 leg holds the rehearsal's `1 + 2 + 2` items: three Python ledger entries (one pilot, two full) and two Go."""
+    try:
+        ledger = read_chain(root).get("p426_ledger") or []
+    except Refusal as exc:
+        return [str(exc)]
+    got = {}
+    for e in ledger:
+        lang = _slot_lang(e.get("slot"))
+        got[lang] = got.get(lang, 0) + 1
+    if got != REHEARSAL_R1_ITEMS:
+        return [f"the leg holds {dict(sorted(got.items()))} items, the rehearsal shape is 1 + 2 + 2 ({REHEARSAL_R1_ITEMS})"]
+    return []
+
+
+def r2_slot_problems(invalid) -> list:
+    """P589: R2's invalidated slot is a Go slot (the injection perturbs the first Go item, through the tombstone path)."""
+    lang = _slot_lang(invalid[0].get("slot")) if invalid else None
+    return [] if lang == "go" else [f"R2: the invalidated slot is a {lang!r} slot, it must be a Go slot (the first Go item)"]
+
+
 def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sha, wd):
     """(problems, r1 differences): R1 VALID both arms and its pair gate passed; R2 INVALID for the injected reason; R3 VALID with
     a real kill classified; every leg bound to this manifest (`binding_problems`). R2 / R3 are excluded from the pair gate (spec 1)."""
     problems = binding_problems((r1_off, r1_on, r2, r3), manifest_path, manifest_sha, wd)
     problems += [f"R1 {arm}: {p}" for arm, root in (("off", r1_off), ("on", r1_on)) for p in valid_leg_problems(root, arm)]
+    problems += [f"R1 {arm}: {p}" for arm, root in (("off", r1_off), ("on", r1_on)) for p in r1_shape_problems(root)]
     diffs = []
     if not problems:
         pair = pr.pair_problems(read_receipt(r1_off), read_receipt(r1_on))
@@ -263,6 +291,8 @@ def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sh
             problems.append(f"R2: leg state is {leg.get('state')!r}, it must be INVALID for the injected mismatch")
         elif len(invalid) != 1 or invalid[0].get("reason") != R2_REASON or leg.get("reason") != R2_REASON:
             problems.append(f"R2: INVALID, but not for the injected reconciliation mismatch (reason {leg.get('reason')!r})")
+        else:
+            problems += r2_slot_problems(invalid)
     except Refusal as exc:
         problems.append(f"R2: {exc}")
     try:
@@ -548,6 +578,7 @@ def cmd_v8(a, ops, checks, wd):
         pilot_deadline_s=deadline_formula({"python": PILOT_N}, {"python": walls["w_python_s"], "go": walls["w_go_s"]}),
         settle_bound_s=settle, generic_pred_s=chain_core.GENERIC_PRED_S, volatile_env_keys=list(VOLATILE_ENV_KEYS),
         r1_env_difference=diffs, rehearsal_manifest_sha256=manifest["sha256"],
+        client_step_cap=dict(seconds=prc.CLIENT_STEP_CAP_S, source=prc.CLIENT_STEP_CAP_SOURCE, bound_by="opencode_exe_sha256"),   # P593
         stack_suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], **{k: idents["off"][k] for k in IDENTITY_KEYS}))
 
 

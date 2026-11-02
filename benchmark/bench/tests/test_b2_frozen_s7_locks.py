@@ -215,11 +215,11 @@ def test_new_the_p426_dnf_record_carries_the_section_16_1_fields(tmp_path, monke
     assert S.self_hashed(dnf)["sha256"] == dnf["sha256"]                    # an immutable record ([d2] §16 classes)
 
 
-def test_new_the_rehearsal_runs_the_smoke_shape_of_s1s_p426_python_order(tmp_path, monkeypatch):
+def test_new_the_rehearsal_runs_the_smoke_shape_of_s1s_p426_python_order_then_two_go_items(tmp_path, monkeypatch):
     rc, env = leg(tmp_path, monkeypatch, mode=("chain", "s1", "--rehearsal"), rehearsal=True)
     assert rc == 0, "\n".join(env["lines"][-20:])
     order = S.p426_order(PY, 1001)
-    assert invs(env) == [("python", order[:1]), ("python", order[1:3])]
+    assert invs(env) == [("python", order[:1]), ("python", order[1:3]), ("go", S.p426_order(GO, 1001)[:2])]      # P589
     assert "/p426/rehearsal/" in str(env["out"])
     # post-reveal 3h (§16.8 after the strict verify round 1, rehearsal binding): chain.json names the manifest and the inject
     cj = json.loads((Path(env["out"]) / "chain.json").read_text())

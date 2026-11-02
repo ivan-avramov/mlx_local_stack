@@ -34,7 +34,7 @@ def test_the_real_watcher_imports_bench_ticks_and_stops(tmp_path):
     log = (tmp_path / "math500-p426-off-smoke.watch.log").read_text()
     assert "driver=ALIVE" in log
     assert watch["exited_early"] is False and watch["ticks"] >= 2
-    assert L.watch_problems(watch, "2026-10-22 10:00:00", "2026-10-22 10:00:04") in ([], [
+    assert L.watch_problems(watch, "2026-10-22T10:00:00Z", "2026-10-22T10:00:04Z") in ([], [
         f"watcher power failure at {(watch['power_failure'] or {}).get('first_failure_at')}"])
 
 

@@ -50,16 +50,19 @@ def occ(session, lang, item, n, arm="off"):
     return dict(session=session, language=lang, item=item, seed={"s1": 1001, "s2": 2002}.get(session, 0), arm_of_dnf=arm, occurrence=n)
 
 
-def test_the_rehearsal_schedule_is_one_pilot_item_then_two_full_items_of_s1s_python_order():
-    """§16.3: `--rehearsal` = the smoke shape of s1's P426 Python order; nothing of Go."""
+def test_the_rehearsal_schedule_is_one_pilot_item_then_two_full_items_of_s1s_python_order_then_two_go_items():
+    """§16.3 (P589): `--rehearsal` = the smoke shape of s1's P426 Python order, then the first two items of its Go order."""
     from bench import schedules
     sched = schedules.tg1("chain", ["s1"], NAMES, picks=(MODEL,), p426=True, rehearsal=True)
     (block,) = sched["blocks"]
-    (leg,) = block["legs"]
+    leg, go = block["legs"]
     order = p426_order("python", 1001)
     assert (block["session"], leg["lang"], leg["seed_base"]) == ("s1", "python", 1001)
     assert leg["full_names"] == order[:3] and leg["pilot_names"] == order[:1]
     assert [(i["phase"], i["names"]) for i in leg["invocations"]] == [("pilot", order[:1]), ("full", order[1:3])]
+    go_order = p426_order("go", 1001)
+    assert (go["lang"], go["full_names"]) == ("go", go_order[:2])
+    assert [(i["phase"], i["names"]) for i in go["invocations"]] == [("full", go_order[:2])]
     assert sched["rehearsal"] is True
     plain = schedules.tg1("chain", ["s1"], NAMES, picks=(MODEL,), p426=True)
     assert "rehearsal" not in plain and schedules.schedule_sha256(plain) != schedules.schedule_sha256(sched)
@@ -105,7 +108,7 @@ def test_the_makeup_schedule_refuses_an_unknown_session_language_or_item(bad):
     (lambda s: s.tg1("pilot", [], NAMES, picks=(MODEL,), p426=True), 5),                          # pilot-only: the leg's order is longer than its run
     (lambda s: s.tg1("chain", ["reload"], NAMES, picks=(MODEL,), p426=True), 5),
     (lambda s: s.tg1("chain", ["s1"], NAMES, picks=(MODEL,), p426=True), 16),                       # python then go: 8 + 8
-    (lambda s: s.tg1("chain", ["s1"], NAMES, picks=(MODEL,), p426=True, rehearsal=True), 3),
+    (lambda s: s.tg1("chain", ["s1"], NAMES, picks=(MODEL,), p426=True, rehearsal=True), 5),            # P589: 1 + 2 Python, 2 Go
     (lambda s: s.tg1_makeup([occ("s1", "python", "p2", 0), occ("s2", "go", "g3", 1)], NAMES, picks=(MODEL,)), 2)])
 def test_the_planned_slots_are_what_the_legs_invocations_run_not_the_length_of_their_order(tmp_path, build, expect):
     """Found by the topology test: a pilot leg's `full_names` is its whole seeded order, but it runs only its 5-item invocation."""
@@ -309,14 +312,21 @@ def first_python_order():
     return random.Random(1001).sample(pool, len(pool))
 
 
-def test_rehearsal_runs_the_smoke_shape_one_pilot_item_then_two_full_items(tmp_path, monkeypatch):
+def first_go_order():
+    import random
+    pool = sorted(f"g{i}" for i in range(1, 7))
+    return random.Random(1001).sample(pool, len(pool))
+
+
+def test_rehearsal_runs_the_smoke_shape_one_pilot_item_then_two_full_items_then_two_go_items(tmp_path, monkeypatch):
     rc, env = world_leg(tmp_path, monkeypatch, ("chain", "s1", "--rehearsal"), rehearsal=True)
     assert rc == 0, log_text(env)
-    order = first_python_order()
+    order, go_order = first_python_order(), first_go_order()
     calls = probe_argvs(env)
-    assert [(flag(c, "--lang"), flag(c, "--items").split(",")) for c in calls] == [("python", order[:1]), ("python", order[1:3])]
+    assert [(flag(c, "--lang"), flag(c, "--items").split(",")) for c in calls] == [
+        ("python", order[:1]), ("python", order[1:3]), ("go", go_order[:2])]
     doc = chain_doc(env)
-    assert [e["slot"].split("|")[-1] for e in doc["p426_ledger"]] == order[:3]
+    assert [e["slot"].split("|")[-1] for e in doc["p426_ledger"]] == order[:3] + go_order[:2]
     assert json.loads((Path(env["out"]) / "schedule.json").read_text())["rehearsal"] is True
     assert str(env["out"]).startswith(str(tmp_path / "p426" / "rehearsal"))
 
@@ -328,15 +338,19 @@ def test_rehearsal_refuses_an_out_root_outside_the_rehearsal_directory_before_wr
     assert not Path(env["out"]).exists() and not S.invocations(env)
 
 
-def test_inject_reconcile_mismatch_invalidates_the_first_item_with_the_exact_reason(tmp_path, monkeypatch):
+def test_inject_reconcile_mismatch_invalidates_the_first_go_item_with_the_exact_reason(tmp_path, monkeypatch):
+    """P589: the injection perturbs the first Go item (the leg-3 shape: an invalidated Go slot with its web evidence extracted)."""
     rc, env = world_leg(tmp_path, monkeypatch, ("chain", "s1", "--rehearsal"), extra=("--inject", "reconcile-mismatch"), rehearsal=True)
     assert rc == 2, log_text(env)
     doc = chain_doc(env)
     assert [i["reason"] for i in doc["p426_invalid"]] == ["reconciliation mismatch (injected)"]
-    assert doc["p426_ledger"] == [] and not doc["p426_dnf"]            # the leg stops after that item: an invalidated item is no row
+    assert doc["p426_invalid"][0]["slot"].split("|")[-2:] == ["go", first_go_order()[0]]
+    assert [e["slot"].split("|")[-1] for e in doc["p426_ledger"]] == first_python_order()[:3] and not doc["p426_dnf"]
     items = sorted(p for p in (Path(env["out"]) / "items").glob("*.json") if not p.name.endswith((".ready.json", ".dnf.json")))
-    rec = json.loads(items[0].read_text())
-    assert len(items) == 1 and rec["verdict"] == "invalid" and not rec["checks"]["injected"]["ok"]
+    recs = [json.loads(p.read_text()) for p in items]
+    bad = [r for r in recs if r["verdict"] == "invalid"]
+    assert len(recs) == 4 and len(bad) == 1 and not bad[0]["checks"]["injected"]["ok"]
+    assert not any("web evidence" in ln for ln in env["lines"]), log_text(env)       # a clean INVALID, not a chain abort (P588)
 
 
 def test_inject_stall_kill_flags_reach_only_the_invocation_holding_the_first_python_item(tmp_path, monkeypatch):

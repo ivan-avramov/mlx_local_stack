@@ -17,6 +17,17 @@ from . import p426_reconcile as pr
 ITEMS_DIR = "items"
 INJECTED_MISMATCH = "reconciliation mismatch (injected)"        # spec 16.8: the exact `invalidate` reason of R2
 LOG_BOUNDS = "log_bounds.json"
+DECODE_RATE_SOURCE = "completed requests (spec 8)"        # P593: the worker counts no tokens / decode time for a failed request
+CLIENT_STEP_CAP_SOURCE = pr.CLIENT_STEP_CAP_SOURCE
+
+
+def _is_go(slot, done) -> bool:
+    """True when the item of this `done` barrier is a Go item: the payload's row id `go/<item>`, else the slot's language field."""
+    item = (done or {}).get("id") if isinstance(done, dict) else None
+    if isinstance(item, str) and "/" in item:
+        return item.split("/", 1)[0] == "go"
+    parts = str(slot).split("|")
+    return len(parts) >= 2 and parts[-2] == "go"
 
 
 # -- records
@@ -197,12 +208,34 @@ class P426Hooks(ch.ChainHooks):
         checks = dict(report.checks) if report else {}
         checks.update(extra_checks)
         problems = (report.problems if report else []) + [f"{n}: {c['detail']}" for n, c in extra_checks.items() if not c["ok"]]
-        return dict(slot=slot, ready_sha256=(ready or {}).get("sha256"),         # §4.5: the ready record's self-hash
-                    log_range=dict(start=ready["log_cursor"]["offset"] if ready else None, end=end,
-                                   sha256=hashlib.sha256(data).hexdigest()),
-                    worker_before=before, worker_after=after, case=case or (report.case if report else None),
-                    requests=report.requests if report else [], totals=report.totals if report else {},
-                    checks=checks, verdict="reconciled" if not problems else "invalid", problems=problems)
+        rec = dict(slot=slot, ready_sha256=(ready or {}).get("sha256"),          # §4.5: the ready record's self-hash
+                   log_range=dict(start=ready["log_cursor"]["offset"] if ready else None, end=end,
+                                  sha256=hashlib.sha256(data).hexdigest()),
+                   worker_before=before, worker_after=after, case=case or (report.case if report else None),
+                   requests=report.requests if report else [],
+                   totals=dict(report.totals if report else {}, decode_rate_source=DECODE_RATE_SOURCE),     # P593
+                   checks=checks, verdict="reconciled" if not problems else "invalid", problems=problems)
+        if report is not None and report.client_abort is not None:               # P593: the two client-abort cases only
+            rec["client_abort"] = report.client_abort
+        return rec
+
+    def _client_evidence(self, row, lines, data):
+        """P586: the client's side of a `client_inactivity` row (None for any other row): the export read from the row's
+        `transcript_path` (resolved like `chain_core.web_record`), its sha256 against `evidence_sha256.export`, and the window's
+        telemetry. An unreadable export is a problem (`export=None`, sha not ok), never an exception."""
+        if row.get("nonconv_kind") != "client_inactivity":
+            return None
+        from .chain_ops import resolve_portable
+        export, sha_ok = None, False
+        tp = row.get("transcript_path")
+        try:
+            raw = resolve_portable(tp, getattr(self.ops, "wd", None) or ".").read_bytes() if tp else None
+            if raw is not None:
+                sha_ok = hashlib.sha256(raw).hexdigest() == (row.get("evidence_sha256") or {}).get("export")
+                export = json.loads(raw)
+        except (OSError, ValueError, TypeError):
+            export, sha_ok = None, False
+        return pr.client_evidence(export, sha_ok, lines, data)
 
     def after_attempt(self, slot, done, context=None):
         """Every `done` outcome writes the item record before the barrier answer, an `invalidate` included (spec 4.5)."""
@@ -229,18 +262,20 @@ class P426Hooks(ch.ChainHooks):
         if not pre and res.settled and after is not None:
             try:
                 lines = pr.parse_log(data)
+                client = self._client_evidence(context.get("row") or {}, lines, data)
             except pr.LogParseError as exc:
                 extra["parse"] = dict(ok=False, detail=str(exc))
             else:
-                report = pr.reconcile_item(context.get("row") or {}, lines, before, after)
+                report = pr.reconcile_item(context.get("row") or {}, lines, before, after, client=client)
                 eng = pr.engagement_problems(report.requests, self.arm, item=True)
                 extra["engagement"] = dict(ok=not eng, detail="; ".join(eng) or
                                            f"arm {self.arm}; <=1-token requests listed: {pr.short_requests(report.requests)}")
         elif res is not None and not res.settled:
             extra["settle"]["detail"] += " (not settled within the bound)"
-        injected = self.inject == "reconcile-mismatch" and self._first_done
-        self._first_done = False
-        if injected:                                         # R2 (spec 1 / 16.8): the first item's reconciliation is perturbed
+        injected = self.inject == "reconcile-mismatch" and self._first_done and _is_go(slot, done)
+        if injected:
+            self._first_done = False
+        if injected:                                         # R2 (spec 1 / 16.8, P589): the first Go item's reconciliation is perturbed
             extra["injected"] = dict(ok=False, detail=INJECTED_MISMATCH)
         record = self._item_record(slot, ready, report, res, data, end, before, after, extra)
         try:

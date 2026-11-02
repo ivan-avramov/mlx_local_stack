@@ -287,7 +287,7 @@ def _run(tmp_path, spec, ops, *, driver_rc=0, power_receipt=None, battery=(), ba
         pins_check=lambda model, arm: [],
         watcher=lambda spec: stop_watch,
         battery_intervals=lambda start, end: (list(battery), list(battery_problems)),
-        clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+        clock=iter(["2026-10-22T01:00:00Z", "2026-10-22T02:00:00Z"]).__next__,
         repo_state=lambda: dict(state if state is not None else PINS),
     )
 
@@ -560,7 +560,7 @@ def test_k1_round3_an_interrupt_during_the_final_power_check_is_receipted_then_r
 
     with pytest.raises(KeyboardInterrupt):
         L.run_leg(spec, ops, run_driver=lambda *a: 0, pins_check=lambda m, a: [], watcher=lambda s: (lambda: None),
-                  battery_intervals=battery, clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+                  battery_intervals=battery, clock=iter(["2026-10-22T01:00:00Z", "2026-10-22T02:00:00Z"]).__next__,
                   repo_state=lambda: dict(PINS))
     assert json.loads((spec.receipt_dir / f"{spec.name}.receipt.json").read_text())["verdict"] == "INVALID"
 
@@ -578,7 +578,7 @@ def test_k2_round3_build_drift_during_the_leg_is_invalid(tmp_path):
         return 0
 
     receipt = L.run_leg(spec, ops, run_driver=driver, pins_check=lambda m, a: [], watcher=lambda s: (lambda: dict(power_failure=None, exited_early=False, ticks=20)),
-                        battery_intervals=lambda s, e: ([], []), clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+                        battery_intervals=lambda s, e: ([], []), clock=iter(["2026-10-22T01:00:00Z", "2026-10-22T02:00:00Z"]).__next__,
                         repo_state=lambda: next(states))
     assert receipt["verdict"] == "INVALID" and any("drift" in p for p in receipt["problems"])
 

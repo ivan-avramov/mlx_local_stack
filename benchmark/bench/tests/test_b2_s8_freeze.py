@@ -78,19 +78,24 @@ def make_manifest(world, capsys=None):
     return out
 
 
+def r1_slots(arm):
+    """P589: an R1 leg's ledger = the rehearsal's `1 + 2 + 2` items: three Python slots, two Go slots."""
+    return [S.slot(arm, "s1", i, "python") for i in range(3)] + [S.slot(arm, "s1", i, "go") for i in range(3, 5)]
+
+
 def make_rehearsal_legs(world, *, r2_reason="reconciliation mismatch (injected)", r2_state="INVALID", r3_kill=True,
                         r1_on_env=None, r1_state="VALID", r3_state="VALID", r1_elapsed=50.0):
     base = world["rehearsal"]
     manifest = base / "manifest.json"             # the legs ran under THIS manifest (fix round 3, item 7): its path and sha256
     ref = dict(path=fz.portable(manifest, world["wd"]), sha256=doc_of(manifest)["sha256"]) if manifest.exists() else None
-    r1_off = S.write_leg_root(base / "tg1-p426-rehearsal-off.a1", arm="off", leg="tg1-p426-rehearsal-off", items=3, elapsed=r1_elapsed,
-                              frozen_record=ref)
-    r1_on = S.write_leg_root(base / "tg1-p426-rehearsal-on.a1", arm="on", leg="tg1-p426-rehearsal-on", items=3, state=r1_state,
+    r1_off = S.write_leg_root(base / "tg1-p426-rehearsal-off.a1", arm="off", leg="tg1-p426-rehearsal-off", slots=r1_slots("off"),
+                              elapsed=r1_elapsed, frozen_record=ref)
+    r1_on = S.write_leg_root(base / "tg1-p426-rehearsal-on.a1", arm="on", leg="tg1-p426-rehearsal-on", slots=r1_slots("on"), state=r1_state,
                              receipt_doc=S.receipt("on", env_extra=r1_on_env), elapsed=r1_elapsed, frozen_record=ref)
     r2 = S.write_leg_root(base / "tg1-p426-rehearsal-mismatch.a1", arm="on", leg="tg1-p426-rehearsal-mismatch", items=1,
                           state=r2_state, klass="systemic", reason=r2_reason, rc=2, status="invalidated",
-                          invalid=[dict(stage="done", slot="x", reason=r2_reason, at="t")], frozen_record=ref,
-                          inject="reconcile-mismatch")
+                          invalid=[dict(stage="done", slot=S.slot("on", "s1", 3, "go"), reason=r2_reason, at="t")], frozen_record=ref,
+                          inject="reconcile-mismatch")           # P589: R2 is invalidated on a Go slot
     r3 = S.write_leg_root(base / "tg1-p426-rehearsal-kill.a1", arm="off", leg="tg1-p426-rehearsal-kill", items=2, kill=r3_kill,
                           state=r3_state, frozen_record=ref, inject="stall-kill")
     return dict(r1_off=r1_off, r1_on=r1_on, r2=r2, r3=r3)
@@ -271,7 +276,7 @@ def test_v8_refuses_an_r1_on_leg_with_a_missing_engagement_counter(world, capsys
     legs = make_rehearsal_legs(world)
     import shutil
     shutil.rmtree(legs["r1_on"])
-    legs["r1_on"] = S.write_leg_root(base / "tg1-p426-rehearsal-on.a1", arm="on", leg="tg1-p426-rehearsal-on", items=3,
+    legs["r1_on"] = S.write_leg_root(base / "tg1-p426-rehearsal-on.a1", arm="on", leg="tg1-p426-rehearsal-on", slots=r1_slots("on"),
                                      engagement_ok=False)
     rc, err = run(v8_argv(world, manifest, legs, world["rec"] / "v8_base.json"), world["ops"], capsys=capsys)
     assert rc == 2 and "R1" in err and "request" in err

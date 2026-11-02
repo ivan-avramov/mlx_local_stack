@@ -206,7 +206,7 @@ def portable_wd(tmp_path, path):
     return "$STACK_WORKDIR/" + Path(path).relative_to(tmp_path / "wd").as_posix()
 
 
-def leg_root_with(tmp_path, name, state, *, elapsed_s=100.0, manifest=None):
+def leg_root_with(tmp_path, name, state, *, elapsed_s=100.0, manifest=None, shape=None, invalid_lang="go"):
     """A rehearsal leg root (post-reveal 3c: a complete leg in the frozen formats — chain.json, the realized ledger, sealed
     ready / item records, the receipt — plus its sealed leg record). R1 legs are VALID smoke shapes of s1's Python order; R2 is
     INVALID for the injected reconciliation mismatch; R3 is VALID with one item killed (a failed-line kill case).
@@ -216,10 +216,13 @@ def leg_root_with(tmp_path, name, state, *, elapsed_s=100.0, manifest=None):
     root = tmp_path / "wd/p426/rehearsal" / name
     leg = name.rsplit(".a", 1)[0]
     arm = "on" if leg in ("tg1-p426-rehearsal-on", "tg1-p426-rehearsal-mismatch") else "off"
-    invalid = ([dict(stage="done", slot=A._slot("pilot", "python", "p2"), reason="reconciliation mismatch (injected)",
+    # P589: R2 is invalidated on the first Go item; the R1 legs hold the rehearsal's `1 + 2 + 2` items (3 Python, 2 Go)
+    invalid = ([dict(stage="done", slot=A._slot("pilot", invalid_lang, f"{invalid_lang[0]}2"), reason="reconciliation mismatch (injected)",
                      at="2026-10-27T00:30:00Z")] if state == "INVALID" else [])   # §16.8: the exact R2 reason
+    if shape is None and leg in ("tg1-p426-rehearsal-off", "tg1-p426-rehearsal-on"):
+        shape = [("python", 3), ("go", 2)]
     A.write_leg(root, leg, ["pilot", "--p426", "--predictor", "mtp" if arm == "on" else "off", "--out-root", str(root)],
-                dict(rc=2 if state == "INVALID" else 0, invalid=invalid, elapsed_s=elapsed_s))
+                dict(rc=2 if state == "INVALID" else 0, invalid=invalid, elapsed_s=elapsed_s, **({"shape": shape} if shape else {})))
     if leg == "tg1-p426-rehearsal-kill":                           # R3: one item's record carries the kill case (§4.3 table)
         p = sorted(q for q in (root / "items").glob("*.json") if not q.name.endswith((".ready.json", ".dnf.json")))[0]
         p.write_text(json.dumps(S.self_hashed(dict(json.loads(p.read_text()), case="kill_boundary")), sort_keys=True))

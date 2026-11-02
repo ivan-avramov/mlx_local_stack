@@ -2304,6 +2304,11 @@ class Chain:
                 continue
             if (slot, rec.get("rerun_index", 0)) in known:
                 continue
+            skip, tomb = self.p426_tombstone(slot, rec.get("rerun_index", 0))
+            if skip:                                         # P588: an invalidated slot keeps the barrier's extraction (sha-checked)
+                if tomb is not None:
+                    self.p426_verify_tombstone(tomb)
+                continue
             tp = row.get("transcript_path")
             path = co.resolve_portable(tp, self.wd) if tp else None
             found[slot] = self.web_record(row, rules, path.with_name(path.stem + ".web.jsonl") if path is not None else None)
@@ -2320,6 +2325,11 @@ class Chain:
         for row in rows:
             slot = cr.slot_for(rec["slot_base"], row["id"])
             if (slot, rindex) in known:
+                continue
+            skip, tomb = self.p426_tombstone(slot, rindex)
+            if skip:                                         # P588: no extraction, no slot attempt; the file must be unchanged
+                if tomb is not None:
+                    self.p426_verify_tombstone(tomb)
                 continue
             tp = row.get("transcript_path")
             path = co.resolve_portable(tp, self.wd) if tp else None
@@ -2665,10 +2675,37 @@ class Chain:
                     load=dict(idx=load["idx"], load_gen=load["rec"]["load_gen"], worker=dict(load["worker"]),
                               session=bar["view"]["session"], model=bar["view"]["model"], arm=bar["view"]["arm"]))
 
-    def p426_invalidate(self, bar, slot, name, stage, reason):
+    def p426_tombstone(self, slot, rindex):
+        """P588: `(skip, tombstone)` for a slot the done barrier invalidated. The tombstone is the barrier's web-evidence record
+        `{slot, rerun_index, path, sha256}` (None when it extracted none, in which case any done-stage invalidation of the slot
+        skips): the slot is no accepted row, so no chain-side extraction and no `slot_attempts` entry may follow."""
+        for entry in self.p426_invalid:
+            tomb = entry.get("web_evidence") if isinstance(entry, dict) else None
+            if isinstance(tomb, dict) and (tomb.get("slot"), tomb.get("rerun_index")) == (slot, rindex):
+                return True, tomb
+            if isinstance(entry, dict) and entry.get("stage") == "done" and entry.get("slot") == slot and tomb is None \
+                    and "web_evidence" in entry:
+                return True, None
+        return False, None
+
+    def p426_verify_tombstone(self, tomb):
+        """The tombstoned file must still be the one the barrier extracted (same sha256); a difference or a missing file aborts."""
+        path = co.resolve_portable(tomb["path"], self.wd)
+        try:
+            sha = sha_file(path)
+        except OSError as exc:
+            raise co.ChainAbort(f"web evidence tombstone: {path.name} is unreadable ({type(exc).__name__})") from None
+        if sha != tomb["sha256"]:
+            raise co.ChainAbort(f"web evidence tombstone: {path.name} differs from the barrier's extraction (sha256)")
+
+    def p426_invalidate(self, bar, slot, name, stage, reason, *, web_evidence=None):
         """`invalidate`: persisted in chain.json BEFORE the `.stop`; the probe exits cleanup-only, the invocation is accepted
-        for its prefix, the cleanup verified and the leg is INVALID (`accept_invocation` raises `LegInvalid`, rc 2)."""
-        self.p426_invalid.append(dict(stage=stage, slot=slot, reason=reason, at=co.utc_stamp()))
+        for its prefix, the cleanup verified and the leg is INVALID (`accept_invocation` raises `LegInvalid`, rc 2). A `done`-stage
+        entry carries the barrier's web-evidence record as its tombstone (P588)."""
+        entry = dict(stage=stage, slot=slot, reason=reason, at=co.utc_stamp())
+        if stage == "done":
+            entry["web_evidence"] = web_evidence
+        self.p426_invalid.append(entry)
         if isinstance(bar.get("rec"), dict):                 # a ready-stage stop has no `hook_stop.disposition`: persist it here
             bar["rec"]["hook_disposition"] = "invalidate"
         self.write_json("invalidated")
@@ -2822,13 +2859,15 @@ class Chain:
                               path.with_name(path.stem + ".web.jsonl") if path is not None else None)
         done = dict(done, web_evidence=web)
         if self.p426:
+            tomb = (dict(slot=slot, rerun_index=bar["rindex"], path=web["path"], sha256=web["sha256"])
+                    if isinstance(web, dict) and "path" in web else None)           # P588: the extraction the invalid slot leaves
             try:
                 disp = self.hooks.run_after(slot, done, context=self.p426_hook_context(bar, slot, name, "done", row=row))
             except chain_hooks.HookInfrastructureError as exc:       # B2: systemic
-                self.p426_invalidate(bar, slot, name, "done", f"hook infrastructure error: {exc.cause}")
+                self.p426_invalidate(bar, slot, name, "done", f"hook infrastructure error: {exc.cause}", web_evidence=tomb)
                 return
             if disp.kind == "invalidate":
-                self.p426_invalidate(bar, slot, name, "done", disp.reason)
+                self.p426_invalidate(bar, slot, name, "done", disp.reason, web_evidence=tomb)
                 return
         else:
             disp = self.hooks.run_after(slot, done)

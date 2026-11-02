@@ -776,7 +776,7 @@ def _run_leg(tmp_path, spec, arms_, *, states, ops=None):
 
     receipt = L.run_leg(spec, ops, run_driver=driver, pins_check=lambda m, a: [], watcher=lambda s: (lambda: dict(
         power_failure=None, exited_early=False, ticks=20)), battery_intervals=lambda s, e: ([], []),
-        clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__, repo_state=iter(states).__next__)
+        clock=iter(["2026-10-22T01:00:00Z", "2026-10-22T02:00:00Z"]).__next__, repo_state=iter(states).__next__)
     return receipt, seen, ops
 
 
@@ -888,7 +888,7 @@ def _qualify_run(tmp_path, arms_, overlay_text):
     ops = TL.FakeOps()
     state = _state(arms_, "on")
     return L.run_qualify_leg(spec, ops, run_driver=lambda *a: 0, pins_check=lambda m, a: [], battery_intervals=lambda s, e: ([], []),
-                             clock=iter(["2026-10-22 01:00:00", "2026-10-22 02:00:00"]).__next__,
+                             clock=iter(["2026-10-22T01:00:00Z", "2026-10-22T02:00:00Z"]).__next__,
                              repo_state=iter([state, state]).__next__, out_dir=out_dir)
 
 

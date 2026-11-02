@@ -63,7 +63,7 @@ quality delta is never read without them.
 
 ## Before relaunch
 
-1. An offline replay of leg 3: every item record through the fixed reconciliation (all 23 reconcile; `crypto-square` = `kill_client_closed`)
+1. An offline replay of leg 3: every item record through the fixed reconciliation (all 24 item records reconcile; `crypto-square` = `kill_client_aborted`)
    and the dry harvest classifier over the whole tree (no problem).
 2. One cold review of the code change (another model family), then the B2 / T3 / M64 / M62 / guard suites.
 3. Re-cut both arms on the new `main` tip (P564 form), a new rehearsal manifest, R1–R3 with the Go items: R1 VALID ×2 + dossier PASS, R2

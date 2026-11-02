@@ -133,6 +133,7 @@ def tg1_legs_table(picks, langs, p426=False):
 
 
 REHEARSAL_PILOT_N, REHEARSAL_FULL_N = 1, 3        # spec 16.3: one pilot item, then two full items (the smoke shape of the P426 order)
+REHEARSAL_GO_N = 2                                # P589: then the first two items of s1's seeded Go order, one `full` invocation
 
 
 def _tg1_leg(session, model, lang, seed_base, names, *, reload_ctl, smoke, predictor, first_leg, pilot_only, p426=False,
@@ -143,7 +144,7 @@ def _tg1_leg(session, model, lang, seed_base, names, *, reload_ctl, smoke, predi
         full = random.Random(seed_base).sample(pool, len(pool))
         pilot = full[:PILOT_N]
         if rehearsal:
-            pilot, full = full[:REHEARSAL_PILOT_N], full[:REHEARSAL_FULL_N]
+            pilot, full = full[:REHEARSAL_PILOT_N], full[:REHEARSAL_FULL_N if first_leg else REHEARSAL_GO_N]
         elif reload_ctl:
             full = list(pilot)
     else:
@@ -177,14 +178,14 @@ def tg1(mode, sessions, names, *, picks, smoke=False, predictor="off", langs=("p
     """The tg1 chain schedule (blocks of one model within one session, legs = languages) with disjoint invocations. `picks`
     (the chain's required `--models`, C221) has no default. `p426=True` (spec 7): each language's items in the seeded
     `random.Random(seed).sample(sorted(pool), len(pool))` order, s2 Go before Python; never with `smoke`. `rehearsal=True`
-    (spec 16.3, P426 only): s1's first language (Python) only, one pilot item then two full items."""
+    (spec 16.3, P426 only): Python one pilot item then two full items, then Go's first `REHEARSAL_GO_N` items (one `full`
+    invocation) of s1's seeded order (P589)."""
     langs, picks = tuple(langs), tuple(picks)
     if p426 and smoke:
         raise ValueError("a P426 schedule has no smoke shape")
     if rehearsal:
         if not p426 or smoke or mode != "chain" or list(sessions) != ["s1"]:
             raise ValueError("the rehearsal shape is one P426 `chain s1` leg (no smoke, no other session)")
-        langs = langs[:1]
     table = tg1_legs_table(picks, langs, p426)
     out = []
     if mode == "pilot":

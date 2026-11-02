@@ -427,7 +427,8 @@ def test_fix_p536_a_makeup_leg_runs_one_invocation_per_group_in_the_canonical_or
 
 def test_fix_p536_the_r2_injection_invalidates_the_rehearsal_leg_for_the_reconciliation_mismatch(tmp_path, monkeypatch):
     """post-reveal 3c (P536): §1 R2 — `chain s1 --rehearsal --inject reconcile-mismatch` stops the leg after the injected
-    item, INVALID for that reason (one `invalidate` at `done`); without the injection the same leg is VALID (frozen s7)."""
+    item, INVALID for that reason (one `invalidate` at `done`); without the injection the same leg is VALID (frozen s7).
+    P589: the injected item is the first GO item (after the rehearsal's three Python items)."""
     env = S.p426_world(tmp_path, monkeypatch, rehearsal=True)
     argv = S.p426_argv(env, ("chain", "s1", "--rehearsal", "--inject", "reconcile-mismatch"))[0]
     try:
@@ -437,8 +438,8 @@ def test_fix_p536_the_r2_injection_invalidates_the_rehearsal_leg_for_the_reconci
     invalid = F.chain_json(env).get("p426_invalid") or []
     assert rc == 2 and len(invalid) == 1 and invalid[0]["stage"] == "done", F.text(env)[-2000:]
     assert invalid[0]["reason"] == "reconciliation mismatch (injected)"             # post-reveal 3d (§16.8): the exact reason
-    first = S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[0]                  # the first item of the rehearsal schedule
-    assert invalid[0]["slot"].endswith("|" + first)
+    first = S.p426_order([f"g{i}" for i in range(1, 7)], 1001)[0]                  # the first Go item of the rehearsal schedule
+    assert invalid[0]["slot"].endswith("|go|" + first)
     assert S.invocations(env), "the leg never reached the probe"
     assert F.chain_json(env).get("inject") == "reconcile-mismatch"      # post-reveal 3h (§16.8): the rehearsal binding
 
