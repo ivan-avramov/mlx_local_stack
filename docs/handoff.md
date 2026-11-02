@@ -1,4 +1,4 @@
-# Handoff — 2026-11-01 (session 14 IN PROGRESS: P586–P593 built + accepted; first v8 harvested; arms re-cut; R1–R3 running; nothing pushed)
+# Handoff — 2026-11-02 (session 14 IN PROGRESS: P586–P593 built + accepted; rehearsal 20261101b all as expected; gate PASS; v8 `4104c7fc…` frozen; Wave 2b legs 1–8 RUNNING; nothing pushed)
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P595–P600, C269, P594, C268, P590–P591, C267,
 P586–P589, …), the build spec `docs/specs/p586-relaunch-build.md` v1.1 and spec `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §4.5, §5.1,
@@ -7,27 +7,23 @@ r1, build r2 opinion, build r3 verify — `docs/reviews/p586/`).
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Is the rehearsal sequencer still running (`bench.p426_wave2 rehearsal`, out-base `$STACK_WORKDIR/p426/rehearsal/20261101b`)? If yes,
-   wait (never start anything alongside). If it exited: read `20261101b/sequence.log` and each leg's `leg.json`.
-2. `main` = `0b185867` + this handoff's docs commits, ahead of `origin/main` (no push this session); `evidence` two local commits ahead
-   (`c42bca0c` P566, `58411357` the first v8's evidence). `git status` clean.
-3. Arms: `stack-p426-off` = `p426-off` `67375468`, `stack-p426-on` = `p426-on` `7a0817d3` (tree == `main` `0b185867`,
-   `restore_diff_problems` = []); the first v8's arms kept as local `archive/p426-wave2.v8-af0711cf-{off,on}` (`5fd3c972` / `2a173f8b`).
+1. Is the Wave 2b sequencer still running (`bench.p426_wave2 run`, out-base `$STACK_WORKDIR/p426/wave2b`, started 2026-11-02 07:01Z,
+   ≈ 13 h)? If yes, never start anything alongside (no suites, gates, builds). If it exited: read `wave2b/sequence.log`, each leg's
+   `leg.json`, the pair dossiers.
+2. `main` ahead of `origin/main` (no push this session); `evidence` two local commits ahead (`c42bca0c`, `58411357`). `git status` clean.
+3. Arms: `p426-off` `67375468`, `p426-on` `7a0817d3` (tree == `main` `0b185867`); the first v8's arms as local
+   `archive/p426-wave2.v8-af0711cf-{off,on}`.
 
 ## Next, in order
 
-1. **Rehearsal verdicts** (`20261101b`, manifest `manifest-20261101b.json` `5d30779f…`, binding OFF `67375468` / ON `7a0817d3`): R1 off /
-   on VALID with `1 + 2` Python then 2 Go items each + pilot dossier PASS; R2 INVALID for `reconciliation mismatch (injected)` ON THE FIRST
-   GO ITEM, ending a clean INVALID (P588 tombstone, no chain abort); R3 VALID with a probe-kill case on the first Python item. Any other
-   outcome: diagnose from the records (client export + worker telemetry, never one log line), propose, red-first.
-2. **The gate on the new OFF commit `67375468`** (quiet box; never with anything else), new build inputs.
-3. **The freeze needs the operator's Go**: bring the inputs (arms, rehearsal manifest + verdicts, settle bound / walls from the rehearsal,
-   build inputs, gate receipt, `client_step_cap`), then `p426_freeze v8` into `$STACK_WORKDIR/p426/wave2b/records/`, then
-   `p426_wave2 run --out-base $STACK_WORKDIR/p426/wave2b` (legs 1–8, ≈ 13 h; `nohup`, relative `PYTHONPATH=benchmark`, `--main-root` the
-   real checkout).
-4. Then (quiet windows only): C258 crossover via the fork `qualify.py --prompt-tokens` / `--max-output-tokens` flag (P577 (a)); P503 fixes
-   (C261: P570 / P571 / P573 / P575 as one test-only change, P574, P572); P576 (rehearsal default main root); C269's queued opencode
-   2.2.5 re-pin (B′, its own validated item).
+1. **Wave 2b** (v8 `4104c7fc…` in `wave2b/records/`; rehearsal `20261101b` manifest `5d30779f…`: R1 off / on VALID with Go, dossier
+   PASS; R2 INVALID injected on `go/beer-song` (leg record INVALID; the chain exit was the P602 ambient-orphan refusal); R3 VALID,
+   `python/beer-song` = `kill_inflight_failed`, AND `go/crypto-square` = `kill_client_aborted` — P586 live; gate PASS on `67375468`,
+   receipt `df5eba89…`; settle bound 7271 s). On a stop: diagnose from the records (export + worker telemetry), propose, red-first.
+2. After Wave 2b: B8 pair verification / B6 signals per spec §12 (client-cut endings per arm + the C269 sensitivity), README evidence
+   update, the MTP certification call per AGENTS (per-axis signals to the operator).
+3. Quiet windows after Wave 2b: **P602 = build P383 per plan v4** (four-eyes; C180's ambient-orphan rule), the gate on `main`'s tip
+   for the push, C258 crossover (P577 (a)), P503 fixes (C261), P576, the opencode 2.2.5 re-pin (C269 B′).
 
 ## Session 14 instructions (operator, carried)
 
@@ -83,4 +79,4 @@ Read every gate verdict before the push; never chain them (P541).
 - File names can look like addresses (`compile@go1.27.3-…count`): a main-bound index of excluded files must not list private names.
 - Dry-run the harvest over every real tree before relaunch; it found P599, which no fake tree had.
 
-Next decision id C270; discussion ids continue from P602.
+Next decision id C270; discussion ids continue from P603.
