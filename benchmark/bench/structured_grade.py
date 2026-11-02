@@ -16,7 +16,7 @@ import uuid
 import xml.etree.ElementTree as ET
 from .token_turn_gate import TransportAbort
 
-VERSION = "m62-structured-v2"
+VERSION = "m62-structured-v3"      # v3 (P604): Go package-load errors of the model's own tree are scored build failures
 TIMEOUTS = {"python": 300, "go": 180}
 REPO = Path(__file__).resolve().parents[2]
 EXCLUDED = {".git", "__pycache__", ".pytest_cache"}
@@ -189,6 +189,14 @@ def parse_python(xml, rc, test, *, stderr="", timed_out=False):
 
 
 GO_PLAIN_FAIL = re.compile(r"^FAIL\t\S+ \[(?:build|setup) failed\]$")
+# P604: `go test` stops at package LOADING (stderr only, no JSON events, rc 1) when the model's own tree cannot load. Attributed to
+# the model only by where Go locates it (review r1): a second package in `/work`, an error located in a NON-test `.go` file (the
+# tests, `go.mod` and the fixture files are protected — a change to them is `tampered` before grading), or an import the model
+# wrote (a cycle). Anything else (an empty mount: `no Go files`, `go.mod file not found`) still aborts as infrastructure.
+GO_LOAD_ERROR = re.compile(
+    r"(?m:found packages \S+ \([^)]*\) and \S+ \([^)]*\) in /work/?$)"
+    r"|(?m:^(?:/work/|\./)?(?![\w.-]*_test\.go:)[\w.-]+\.go:\d+:\d+: )"
+    r"|import cycle not allowed")
 
 
 def parse_go(text, rc, *, stderr="", timed_out=False):
@@ -226,6 +234,7 @@ def parse_go(text, rc, *, stderr="", timed_out=False):
         not leaves
         and not timed_out
         and not re.search(r"build failed|setup failed|syntax error|panic:", text + stderr, re.I)
+        and not (rc == 1 and GO_LOAD_ERROR.search(stderr))
     ):
         raise TransportAbort("Go report has no test events or build error")
     return result

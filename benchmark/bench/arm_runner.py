@@ -692,7 +692,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             gate.stop("client_resource")
         # Transcript acquisition is tracked, and the raw native IDs remain intact.
         heartbeat.set_phase("export")
-        transcript = adapter.transcript(guard, env, work, stream, binary, raw_sink=paths["export"].write_text)
+        transcript = (adapter.transcript(guard, env, work, stream, binary, raw_sink=paths["export"].write_text,     # P603
+                                                 capture_path=paths["export"])
+                      if getattr(adapter, "captures_export_to_file", False)
+                      else adapter.transcript(guard, env, work, stream, binary, raw_sink=paths["export"].write_text))
         paths["export"].write_text(transcript.raw)
         export = transcript.doc
         # The final grade must have a chance to credit its boundary before a T/N stop.

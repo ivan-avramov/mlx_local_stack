@@ -65,7 +65,11 @@ def test_resource_kill_cancels_before_export(tmp_path,monkeypatch,capsys,slow_ph
             return Proc()
         def run_grader(self,cmd,**kw):
             calls.append("export")
-            return subprocess.CompletedProcess(cmd,0,json.dumps(dict(messages=[assistant(),dict(id="m2",type="assistant",error=dict(type="aborted"))])),"")
+            body=json.dumps(dict(messages=[assistant(),dict(id="m2",type="assistant",error=dict(type="aborted"))]))
+            if hasattr(kw.get("stdout"),"write"):                    # P603: the export is captured to the file it is given
+                kw["stdout"].write(body)
+                return subprocess.CompletedProcess(cmd,0,None,"")
+            return subprocess.CompletedProcess(cmd,0,body,"")
         def kill_role(self, role): calls.append("kill-" + role)
         def cleanup(self): calls.append("cleanup")
     monkeypatch.setattr(pg,"ProcessGuard",Guard)

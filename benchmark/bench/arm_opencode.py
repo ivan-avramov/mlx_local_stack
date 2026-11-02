@@ -25,6 +25,7 @@ from pathlib import Path
 import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 
 from . import arm_adapter as aa
@@ -214,6 +215,7 @@ class OcStream(tg.EventStream):
 
 
 class OpencodeArm(aa.ArmAdapter):
+    captures_export_to_file = True              # P603: `transcript(capture_path=…)` writes the export to a file
     arm_id = "oc"
     tool = "opencode"
     label = M64_LABEL
@@ -532,19 +534,37 @@ class OpencodeArm(aa.ArmAdapter):
             merged.append(aa.NormalizedEvent.terminal(stream.terminal_shape))
         return merged
 
-    def transcript(self, guard, env, work, stream, binary, raw_sink=None):
-        exported, _ = ox.run_export(lambda export_env, timeout: guard.run_grader(     # P273: logged-lock retry
-            [binary, "session", "export", stream.session_id or "", "--standalone"], cwd=work, env=export_env,
-            stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout), env, timeout=120)
-        if raw_sink is not None:
-            raw_sink(exported.stdout or "")
-        if exported.returncode:
-            raise tg.TransportAbort("session export failed: " + ox.export_failure_tail(exported.stderr))
-        try:
-            doc = json.loads(exported.stdout)
-        except ValueError as exc:
-            raise tg.TransportAbort("unparsable session export") from exc
-        return Transcript(raw=exported.stdout or "", doc=doc)
+    def transcript(self, guard, env, work, stream, binary, raw_sink=None, capture_path=None):
+        """The client's session export. With `capture_path` (P603) the export's stdout goes to that regular FILE, never a pipe (a
+        piped capture lost its tail at exactly 64 KiB when the client exited), and an unparsable capture is exported once more
+        into the same file (the cut capture's size and sha256 go to stderr); a second unparsable capture aborts as before."""
+        argv = [binary, "session", "export", stream.session_id or "", "--standalone"]
+
+        def once(export_env, timeout):
+            if capture_path is None:
+                return guard.run_grader(argv, cwd=work, env=export_env, stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                        timeout=timeout)
+            with open(capture_path, "w") as out:
+                done = guard.run_grader(argv, cwd=work, env=export_env, stdin=subprocess.DEVNULL, stdout=out,
+                                        stderr=subprocess.PIPE, text=True, timeout=timeout)
+            return subprocess.CompletedProcess(done.args, done.returncode, Path(capture_path).read_text(), done.stderr)
+
+        for attempt in (1, 2):
+            exported, _ = ox.run_export(once, env, timeout=120)       # P273: logged-lock retry
+            if raw_sink is not None:
+                raw_sink(exported.stdout or "")
+            if exported.returncode:
+                raise tg.TransportAbort("session export failed: " + ox.export_failure_tail(exported.stderr))
+            try:
+                doc = json.loads(exported.stdout)
+            except ValueError as exc:
+                if capture_path is None or attempt == 2:
+                    raise tg.TransportAbort("unparsable session export") from exc
+                body = (exported.stdout or "").encode()
+                print(f"P603: unparsable session export capture ({len(body)} bytes, sha256 "
+                      f"{hashlib.sha256(body).hexdigest()}): exporting once more", file=sys.stderr, flush=True)
+                continue
+            return Transcript(raw=exported.stdout or "", doc=doc)
 
     def final_boundary(self, transcript):
         return len([m for m in transcript.doc.get("messages", [])
