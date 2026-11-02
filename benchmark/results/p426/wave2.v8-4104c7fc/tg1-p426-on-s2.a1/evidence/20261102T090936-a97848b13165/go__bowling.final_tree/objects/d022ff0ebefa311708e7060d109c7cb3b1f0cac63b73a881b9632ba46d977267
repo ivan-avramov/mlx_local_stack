@@ -1,0 +1,109 @@
+package bowling
+
+import "errors"
+
+// Game keeps track of the rolls made in a game of bowling.
+type Game struct {
+	rolls []int
+}
+
+func NewGame() *Game {
+	return &Game{}
+}
+
+// frameState derives the current position in the game from the rolls made so
+// far. It returns the index of the frame being played (0-9), the number of
+// pins still standing on the lane, and whether the game is over.
+func (g *Game) frameState() (frame, pinsStanding int, over bool) {
+	frame = 0
+	pinsStanding = 10
+	rollsInFrame := 0
+	tenthRolls := 0
+
+	for _, pins := range g.rolls {
+		if frame < 9 {
+			rollsInFrame++
+			if pinsStanding == 10 && pins == 10 {
+				// Strike: the frame ends after a single roll.
+				frame++
+				rollsInFrame = 0
+				pinsStanding = 10
+			} else {
+				pinsStanding -= pins
+				if rollsInFrame == 2 {
+					frame++
+					rollsInFrame = 0
+					pinsStanding = 10
+				}
+			}
+		} else {
+			// Tenth frame: a strike or spare earns a fill ball on a fresh rack
+			// of pins. The game ends after three rolls, or after two rolls if
+			// the frame was open.
+			tenthRolls++
+			pinsStanding -= pins
+			if pinsStanding == 0 {
+				pinsStanding = 10
+			}
+			if tenthRolls >= 3 {
+				over = true
+			} else if tenthRolls == 2 {
+				first := g.rolls[len(g.rolls)-2]
+				second := g.rolls[len(g.rolls)-1]
+				if first+second < 10 {
+					over = true
+				}
+			}
+		}
+	}
+
+	return frame, pinsStanding, over
+}
+
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errors.New("Negative roll is invalid")
+	}
+
+	_, pinsStanding, over := g.frameState()
+	if over {
+		return errors.New("Cannot roll after game is over")
+	}
+	if pins > pinsStanding {
+		return errors.New("Pin count exceeds pins on the lane")
+	}
+
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+func (g *Game) Score() (int, error) {
+	_, _, over := g.frameState()
+	if !over {
+		return 0, errors.New("Score cannot be taken until the end of the game")
+	}
+
+	score := 0
+	i := 0
+	for frame := 0; frame < 9; frame++ {
+		if g.rolls[i] == 10 {
+			// Strike: 10 plus the next two rolls as bonus.
+			score += 10 + g.rolls[i+1] + g.rolls[i+2]
+			i++
+		} else if g.rolls[i]+g.rolls[i+1] == 10 {
+			// Spare: 10 plus the next roll as bonus.
+			score += 10 + g.rolls[i+2]
+			i += 2
+		} else {
+			// Open frame: just the pins knocked down.
+			score += g.rolls[i] + g.rolls[i+1]
+			i += 2
+		}
+	}
+	for ; i < len(g.rolls); i++ {
+		// Tenth frame: every pin knocked down counts.
+		score += g.rolls[i]
+	}
+
+	return score, nil
+}

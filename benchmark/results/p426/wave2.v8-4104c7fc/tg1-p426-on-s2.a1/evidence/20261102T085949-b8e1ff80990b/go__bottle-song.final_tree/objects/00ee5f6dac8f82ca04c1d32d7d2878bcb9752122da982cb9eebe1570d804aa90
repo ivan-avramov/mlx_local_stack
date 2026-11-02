@@ -1,0 +1,65 @@
+package bottlesong
+
+import (
+	"fmt"
+	"strings"
+)
+
+// numbers maps a bottle count to its lowercase word form.
+// Index 0 is "no" so that "There'll be no green bottles ..." reads naturally.
+var numbers = []string{
+	"no",
+	"one",
+	"two",
+	"three",
+	"four",
+	"five",
+	"six",
+	"seven",
+	"eight",
+	"nine",
+	"ten",
+}
+
+// Recite returns the lyrics for the given number of verses, starting from
+// startBottles bottles and taking down takeDown of them.
+func Recite(startBottles, takeDown int) []string {
+	var lines []string
+	for i := 0; i < takeDown; i++ {
+		n := startBottles - i
+
+		bottles := "bottles"
+		if n == 1 {
+			bottles = "bottle"
+		}
+
+		rest := "no green bottles"
+		switch {
+		case n-1 == 1:
+			rest = "one green bottle"
+		case n-1 > 1:
+			rest = fmt.Sprintf("%s green bottles", numbers[n-1])
+		}
+
+		opening := fmt.Sprintf("%s green %s hanging on the wall,", capitalize(numbers[n]), bottles)
+		lines = append(lines,
+			opening,
+			opening,
+			"And if one green bottle should accidentally fall,",
+			fmt.Sprintf("There'll be %s hanging on the wall.", rest),
+		)
+
+		if i < takeDown-1 {
+			lines = append(lines, "")
+		}
+	}
+	return lines
+}
+
+// capitalize upper-cases the first rune of s and leaves the rest unchanged.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
+}

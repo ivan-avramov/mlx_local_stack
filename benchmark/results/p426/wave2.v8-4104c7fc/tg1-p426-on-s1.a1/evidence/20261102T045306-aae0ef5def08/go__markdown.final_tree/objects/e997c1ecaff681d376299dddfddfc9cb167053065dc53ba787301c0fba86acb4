@@ -1,0 +1,107 @@
+package markdown
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// The input is parsed line by line and grouped into blocks:
+//   - a line starting with one to six "#" followed by a space is a header,
+//   - a line starting with "* " is an unordered list item,
+//   - anything else is paragraph text.
+//
+// Within each block, inline emphasis is converted: __bold__ and _italic_.
+//
+// This is a rewrite of the original character-by-character implementation,
+// which tracked several interacting flags (header level, list depth, whether
+// the list was open, ...) in a single loop. Parsing by block instead keeps
+// each concern in its own small helper and is far easier to follow.
+func Render(markdown string) string {
+	var b strings.Builder
+	inList := false
+	var paragraph []string
+
+	// flushParagraph writes any buffered paragraph lines as a single <p> block.
+	flushParagraph := func() {
+		if len(paragraph) == 0 {
+			return
+		}
+		b.WriteString("<p>" + renderInline(strings.Join(paragraph, "\n")) + "</p>")
+		paragraph = nil
+	}
+
+	// closeList terminates an open <ul>, if there is one.
+	closeList := func() {
+		if inList {
+			b.WriteString("</ul>")
+			inList = false
+		}
+	}
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if header, ok := parseHeader(line); ok {
+			flushParagraph()
+			closeList()
+			b.WriteString(header)
+			continue
+		}
+
+		if item, ok := parseListItem(line); ok {
+			flushParagraph()
+			if !inList {
+				b.WriteString("<ul>")
+				inList = true
+			}
+			b.WriteString(item)
+			continue
+		}
+
+		closeList()
+		paragraph = append(paragraph, line)
+	}
+
+	flushParagraph()
+	closeList()
+	return b.String()
+}
+
+// parseHeader reports whether line is a header. A header is one to six "#"
+// characters followed by a space. Seven or more "#" characters are not a
+// header and are left as ordinary paragraph text.
+func parseHeader(line string) (string, bool) {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level < 1 || level > 6 || level >= len(line) || line[level] != ' ' {
+		return "", false
+	}
+	// level points at the space after the hashes; the text starts right after it.
+	text := line[level+1:]
+	return fmt.Sprintf("<h%d>%s</h%d>", level, renderInline(text), level), true
+}
+
+// parseListItem reports whether line is an unordered list item, i.e. it starts
+// with "* ". The item text is everything after the "* ".
+func parseListItem(line string) (string, bool) {
+	if !strings.HasPrefix(line, "* ") {
+		return "", false
+	}
+	return "<li>" + renderInline(line[2:]) + "</li>", true
+}
+
+// Inline emphasis patterns. Bold is matched before italic so that "__x__" is
+// not mistaken for two adjacent italic markers.
+var (
+	boldPattern   = regexp.MustCompile(`__([^_]+)__`)
+	italicPattern = regexp.MustCompile(`_([^_]+)_`)
+)
+
+// renderInline converts __bold__ and _italic_ emphasis in text to HTML.
+func renderInline(text string) string {
+	text = boldPattern.ReplaceAllString(text, "<strong>$1</strong>")
+	return italicPattern.ReplaceAllString(text, "<em>$1</em>")
+}

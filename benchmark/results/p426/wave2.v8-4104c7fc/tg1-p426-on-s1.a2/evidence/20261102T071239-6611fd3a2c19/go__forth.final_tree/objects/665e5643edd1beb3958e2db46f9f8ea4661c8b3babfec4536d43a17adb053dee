@@ -1,0 +1,233 @@
+package forth
+
+import (
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// interp is a single Forth evaluation context: a value stack plus a
+// dictionary of words. Each word is a function that operates on the
+// interpreter, so user-defined words are simply sequences of such
+// functions captured at definition time (giving lexical scoping).
+type interp struct {
+	stack []int
+	dict  map[string]func(*interp) error
+}
+
+func newInterp() *interp {
+	f := &interp{
+		stack: []int{},
+		dict:  make(map[string]func(*interp) error),
+	}
+	builtins := map[string]func() error{
+		"+":    f.add,
+		"-":    f.sub,
+		"*":    f.mul,
+		"/":    f.div,
+		"dup":  f.dup,
+		"drop": f.drop,
+		"swap": f.swap,
+		"over": f.over,
+	}
+	for name, op := range builtins {
+		op := op
+		f.dict[name] = func(ff *interp) error { return op() }
+	}
+	return f
+}
+
+// Forth evaluates each input line in order, sharing one interpreter so
+// that word definitions persist across lines.
+func Forth(input []string) ([]int, error) {
+	f := newInterp()
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		for i := 0; i < len(tokens); i++ {
+			tok := tokens[i]
+			switch {
+			case tok == ":":
+				if i+1 >= len(tokens) {
+					return nil, fmt.Errorf("incomplete definition")
+				}
+				name := strings.ToLower(tokens[i+1])
+				if isNumber(name) {
+					return nil, fmt.Errorf("illegal operation: cannot redefine a number")
+				}
+				i += 2 // skip ':' and the word name
+				var body []string
+				for i < len(tokens) && tokens[i] != ";" {
+					body = append(body, tokens[i])
+					i++
+				}
+				ops := f.compile(body)
+				f.dict[name] = func(ff *interp) error {
+					for _, op := range ops {
+						if err := op(ff); err != nil {
+							return err
+						}
+					}
+					return nil
+				}
+				// i now points at ';' (or past the end); the loop's i++
+				// skips over it.
+			case isNumber(tok):
+				n, _ := strconv.Atoi(tok)
+				f.push(n)
+			default:
+				op, ok := f.dict[strings.ToLower(tok)]
+				if !ok {
+					return nil, fmt.Errorf("undefined operation: %s", tok)
+				}
+				if err := op(f); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return f.stack, nil
+}
+
+// compile resolves each body token into an operation. Number tokens push
+// a constant; word tokens are looked up in the dictionary right now so
+// that a definition captures the meaning of its words at definition time.
+func (f *interp) compile(body []string) []func(*interp) error {
+	ops := make([]func(*interp) error, 0, len(body))
+	for _, tok := range body {
+		if isNumber(tok) {
+			n, _ := strconv.Atoi(tok)
+			ops = append(ops, func(ff *interp) error {
+				ff.push(n)
+				return nil
+			})
+			continue
+		}
+		name := strings.ToLower(tok)
+		if op, ok := f.dict[name]; ok {
+			ops = append(ops, op)
+		} else {
+			ops = append(ops, func(ff *interp) error {
+				return fmt.Errorf("undefined operation: %s", name)
+			})
+		}
+	}
+	return ops
+}
+
+// isNumber reports whether tok is a (possibly negative) integer literal.
+func isNumber(tok string) bool {
+	s := tok
+	if strings.HasPrefix(s, "-") {
+		s = s[1:]
+	}
+	if s == "" {
+		return false
+	}
+	for _, c := range s {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (f *interp) push(n int) {
+	f.stack = append(f.stack, n)
+}
+
+func (f *interp) pop() (int, error) {
+	if len(f.stack) == 0 {
+		return 0, fmt.Errorf("empty stack")
+	}
+	n := f.stack[len(f.stack)-1]
+	f.stack = f.stack[:len(f.stack)-1]
+	return n, nil
+}
+
+func (f *interp) add() error {
+	b, err := f.pop()
+	if err != nil {
+		return err
+	}
+	a, err := f.pop()
+	if err != nil {
+		return err
+	}
+	f.push(a + b)
+	return nil
+}
+
+func (f *interp) sub() error {
+	b, err := f.pop()
+	if err != nil {
+		return err
+	}
+	a, err := f.pop()
+	if err != nil {
+		return err
+	}
+	f.push(a - b)
+	return nil
+}
+
+func (f *interp) mul() error {
+	b, err := f.pop()
+	if err != nil {
+		return err
+	}
+	a, err := f.pop()
+	if err != nil {
+		return err
+	}
+	f.push(a * b)
+	return nil
+}
+
+func (f *interp) div() error {
+	b, err := f.pop()
+	if err != nil {
+		return err
+	}
+	a, err := f.pop()
+	if err != nil {
+		return err
+	}
+	if b == 0 {
+		return fmt.Errorf("divide by zero")
+	}
+	f.push(a / b)
+	return nil
+}
+
+func (f *interp) dup() error {
+	if len(f.stack) == 0 {
+		return fmt.Errorf("empty stack")
+	}
+	f.push(f.stack[len(f.stack)-1])
+	return nil
+}
+
+func (f *interp) drop() error {
+	if len(f.stack) == 0 {
+		return fmt.Errorf("empty stack")
+	}
+	f.stack = f.stack[:len(f.stack)-1]
+	return nil
+}
+
+func (f *interp) swap() error {
+	if len(f.stack) < 2 {
+		return fmt.Errorf("stack underflow")
+	}
+	n := len(f.stack)
+	f.stack[n-1], f.stack[n-2] = f.stack[n-2], f.stack[n-1]
+	return nil
+}
+
+func (f *interp) over() error {
+	if len(f.stack) < 2 {
+		return fmt.Errorf("stack underflow")
+	}
+	f.push(f.stack[len(f.stack)-2])
+	return nil
+}

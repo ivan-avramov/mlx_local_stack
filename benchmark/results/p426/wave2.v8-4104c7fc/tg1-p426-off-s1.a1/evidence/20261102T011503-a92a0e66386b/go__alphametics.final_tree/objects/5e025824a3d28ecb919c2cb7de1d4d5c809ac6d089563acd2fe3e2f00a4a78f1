@@ -1,0 +1,139 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// solver holds the state for a column-wise backtracking search.
+type solver struct {
+	// colCoeffs[c][letter] is the net coefficient of that letter in column c.
+	// Addend letters contribute +1 per occurrence; the result letter contributes -1.
+	colCoeffs []map[byte]int
+	assign    map[byte]int
+	used      [10]bool
+	leading   map[byte]bool
+	maxCol    int
+}
+
+// Solve finds an assignment of distinct digits to the letters in puzzle such
+// that the equation holds. The puzzle has the form "W1 + W2 + ... == RESULT".
+// It returns a map from each letter to its digit, or an error if no solution
+// exists.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, errors.New("invalid puzzle: expected exactly one '=='")
+	}
+	addends := strings.Split(eq[0], "+")
+	result := strings.TrimSpace(eq[1])
+
+	s := &solver{
+		assign:  make(map[byte]int),
+		leading: make(map[byte]bool),
+	}
+
+	words := append(append([]string{}, addends...), result)
+	for _, w := range words {
+		w = strings.TrimSpace(w)
+		if len(w) > 1 {
+			s.leading[w[0]] = true
+		}
+		if len(w) > s.maxCol {
+			s.maxCol = len(w)
+		}
+	}
+
+	s.colCoeffs = make([]map[byte]int, s.maxCol)
+	for c := range s.colCoeffs {
+		s.colCoeffs[c] = make(map[byte]int)
+	}
+	for _, w := range addends {
+		w = strings.TrimSpace(w)
+		for i := 0; i < len(w); i++ {
+			col := len(w) - 1 - i
+			s.colCoeffs[col][w[i]]++
+		}
+	}
+	for i := 0; i < len(result); i++ {
+		col := len(result) - 1 - i
+		s.colCoeffs[col][result[i]]--
+	}
+
+	if s.solveColumn(0, 0) {
+		out := make(map[string]int, len(s.assign))
+		for l, d := range s.assign {
+			out[string(l)] = d
+		}
+		return out, nil
+	}
+	return nil, errors.New("no solution found")
+}
+
+// solveColumn handles column `col` given the carry into it. It assigns digits
+// to any letters in this column that are not yet assigned so that the column
+// sums correctly, then recurses to the next column.
+func (s *solver) solveColumn(col, carry int) bool {
+	if col >= s.maxCol {
+		return carry == 0
+	}
+	sum := carry
+	var unassigned []byte
+	for letter, c := range s.colCoeffs[col] {
+		if d, ok := s.assign[letter]; ok {
+			sum += c * d
+		} else {
+			unassigned = append(unassigned, letter)
+		}
+	}
+	return s.assignColumn(col, unassigned, sum, 0)
+}
+
+// assignColumn assigns digits to unassigned[0:idx], having accumulated `sum`
+// (the signed column total plus the incoming carry). When every letter in the
+// column is assigned, the total must be a non-negative multiple of 10; the
+// quotient is the carry into the next column.
+func (s *solver) assignColumn(col int, unassigned []byte, sum, idx int) bool {
+	if idx == len(unassigned) {
+		if sum < 0 || sum%10 != 0 {
+			return false
+		}
+		return s.solveColumn(col+1, sum/10)
+	}
+	letter := unassigned[idx]
+	c := s.colCoeffs[col][letter]
+	if idx == len(unassigned)-1 {
+		// The final letter is constrained by the mod-10 rule, so only a few
+		// candidate digits can work; test them directly.
+		for d := 0; d <= 9; d++ {
+			if s.used[d] || (d == 0 && s.leading[letter]) {
+				continue
+			}
+			total := sum + c*d
+			if total < 0 || total%10 != 0 {
+				continue
+			}
+			s.assign[letter] = d
+			s.used[d] = true
+			if s.solveColumn(col+1, total/10) {
+				return true
+			}
+			delete(s.assign, letter)
+			s.used[d] = false
+		}
+		return false
+	}
+	for d := 0; d <= 9; d++ {
+		if s.used[d] || (d == 0 && s.leading[letter]) {
+			continue
+		}
+		s.assign[letter] = d
+		s.used[d] = true
+		if s.assignColumn(col, unassigned, sum+c*d, idx+1) {
+			return true
+		}
+		delete(s.assign, letter)
+		s.used[d] = false
+	}
+	return false
+}

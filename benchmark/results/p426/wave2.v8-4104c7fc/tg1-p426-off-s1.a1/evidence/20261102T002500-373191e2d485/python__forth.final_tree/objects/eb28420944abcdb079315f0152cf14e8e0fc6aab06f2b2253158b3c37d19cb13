@@ -1,0 +1,81 @@
+class StackUnderflowError(Exception):
+    pass
+
+
+def _is_number(token):
+    return token.lstrip("-").isdigit()
+
+
+def _pop_two(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop(), stack.pop()
+
+
+def _pop_one(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop()
+
+
+def _execute(token, stack, words):
+    if _is_number(token):
+        stack.append(int(token))
+    elif token in words:
+        for word in words[token]:
+            _execute(word, stack, words)
+    elif token == "+":
+        b, a = _pop_two(stack)
+        stack.append(a + b)
+    elif token == "-":
+        b, a = _pop_two(stack)
+        stack.append(a - b)
+    elif token == "*":
+        b, a = _pop_two(stack)
+        stack.append(a * b)
+    elif token == "/":
+        b, a = _pop_two(stack)
+        if b == 0:
+            raise ZeroDivisionError("divide by zero")
+        stack.append(a // b)
+    elif token == "dup":
+        if not stack:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack.append(stack[-1])
+    elif token == "drop":
+        _pop_one(stack)
+    elif token == "swap":
+        if len(stack) < 2:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack[-1], stack[-2] = stack[-2], stack[-1]
+    elif token == "over":
+        if len(stack) < 2:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack.append(stack[-2])
+    else:
+        raise ValueError("undefined operation")
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    for line in input_data:
+        tokens = line.lower().split()
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == ":":
+                name = tokens[i + 1]
+                if _is_number(name):
+                    raise ValueError("illegal operation")
+                end = tokens.index(";", i + 2)
+                body = []
+                for token in tokens[i + 2 : end]:
+                    body.extend(words.get(token, [token]))
+                words[name] = body
+                i = end + 1
+            else:
+                _execute(tokens[i], stack, words)
+                i += 1
+
+    return stack

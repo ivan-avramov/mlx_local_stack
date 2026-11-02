@@ -1,0 +1,106 @@
+package connect
+
+import (
+	"errors"
+	"strings"
+)
+
+// ResultOf computes the winner of a game of Hex / Polygon.
+//
+// Each element of lines is one row of the board; the leading spaces are
+// purely visual indentation and are ignored. Player X connects the left
+// and right sides of the board, player O connects the top and bottom
+// sides. The result is "X", "O", or "" if nobody has won yet.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	rows := make([]string, len(lines))
+	for r, line := range lines {
+		rows[r] = strings.ReplaceAll(line, " ", "")
+	}
+	for _, row := range rows {
+		if len(row) != len(rows[0]) {
+			return "", errors.New("invalid board: rows have different lengths")
+		}
+	}
+
+	n := len(rows)
+	w := len(rows[0])
+
+	// Each hexagonal cell has six neighbours; in the row-offset
+	// representation they are at these positions relative to (r, c).
+	var offsets = [][2]int{
+		{-1, 0}, {-1, 1},
+		{0, -1}, {0, 1},
+		{1, -1}, {1, 0},
+	}
+
+	// connected reports whether player's stones form a path between the
+	// two sides the player is assigned.
+	connected := func(player byte) bool {
+		visited := make([][]bool, n)
+		for r := range rows {
+			visited[r] = make([]bool, w)
+		}
+
+		queue := [][2]int{}
+		if player == 'X' {
+			// X connects left to right: start from the left side.
+			for r := 0; r < n; r++ {
+				if rows[r][0] == player {
+					visited[r][0] = true
+					queue = append(queue, [2]int{r, 0})
+				}
+			}
+		} else {
+			// O connects top to bottom: start from the top side.
+			for c := 0; c < w; c++ {
+				if rows[0][c] == player {
+					visited[0][c] = true
+					queue = append(queue, [2]int{0, c})
+				}
+			}
+		}
+
+		for len(queue) > 0 {
+			r, c := queue[0][0], queue[0][1]
+			queue = queue[1:]
+			for _, off := range offsets {
+				nr, nc := r+off[0], c+off[1]
+				if nr < 0 || nr >= n || nc < 0 || nc >= w {
+					continue
+				}
+				if visited[nr][nc] || rows[nr][nc] != player {
+					continue
+				}
+				visited[nr][nc] = true
+				queue = append(queue, [2]int{nr, nc})
+			}
+		}
+
+		for r := 0; r < n; r++ {
+			for c := 0; c < w; c++ {
+				if !visited[r][c] {
+					continue
+				}
+				if player == 'X' && c == w-1 {
+					return true
+				}
+				if player == 'O' && r == n-1 {
+					return true
+				}
+			}
+		}
+		return false
+	}
+
+	if connected('X') {
+		return "X", nil
+	}
+	if connected('O') {
+		return "O", nil
+	}
+	return "", nil
+}

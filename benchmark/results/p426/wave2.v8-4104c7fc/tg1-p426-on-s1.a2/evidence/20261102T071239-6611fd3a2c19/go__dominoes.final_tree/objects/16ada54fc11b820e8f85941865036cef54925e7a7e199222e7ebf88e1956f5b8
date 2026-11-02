@@ -1,0 +1,75 @@
+package dominoes
+
+// Domino represents a single domino stone with two halves.
+type Domino [2]int
+
+// MakeChain computes a way to order the given set of dominoes so that they
+// form a correct closed domino chain: the dots on one half of a stone match
+// the neighboring half of the adjacent stone, and the two free ends (the
+// first and last halves) match each other.
+//
+// It returns the ordered chain and true if such a chain exists, or nil and
+// false otherwise. Each input stone is used exactly once, and stones may be
+// flipped to make the chain work.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	n := len(input)
+	if n == 0 {
+		return []Domino{}, true
+	}
+
+	used := make([]bool, n)
+	chain := make([]Domino, n)
+
+	// Try every domino (in both orientations) as the starting stone.
+	for i := 0; i < n; i++ {
+		for _, start := range []Domino{input[i], {input[i][1], input[i][0]}} {
+			used[i] = true
+			chain[0] = start
+			if backtrack(input, used, chain, 1, n) {
+				return chain, true
+			}
+			used[i] = false
+		}
+	}
+
+	return nil, false
+}
+
+// backtrack extends the chain (which occupies chain[0:l]) with the remaining
+// dominoes, returning true once every domino has been placed and the chain
+// closes on itself.
+func backtrack(input []Domino, used []bool, chain []Domino, l, n int) bool {
+	if l == n {
+		return chain[0][0] == chain[n-1][1]
+	}
+
+	current := chain[l-1][1]
+	for i := 0; i < n; i++ {
+		if used[i] {
+			continue
+		}
+		a, b := input[i][0], input[i][1]
+
+		// Place the stone so its left half matches the current end.
+		if a == current {
+			used[i] = true
+			chain[l] = Domino{a, b}
+			if backtrack(input, used, chain, l+1, n) {
+				return true
+			}
+			used[i] = false
+		}
+
+		// Place the stone flipped so its right half matches the current end.
+		if b == current {
+			used[i] = true
+			chain[l] = Domino{b, a}
+			if backtrack(input, used, chain, l+1, n) {
+				return true
+			}
+			used[i] = false
+		}
+	}
+
+	return false
+}

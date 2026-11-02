@@ -1,0 +1,66 @@
+package bookstore
+
+import "sort"
+
+// prices[i] is the cost, in cents, of a group of i distinct books.
+var prices = []int{0, 800, 1520, 2160, 2560, 3000}
+
+// Cost returns the minimum total price, in cents, for the given basket of
+// books, giving as big a discount as possible.
+func Cost(books []int) int {
+	counts := [5]int{}
+	for _, book := range books {
+		counts[book-1]++
+	}
+
+	// Sort the per-title counts in descending order.
+	sorted := counts[:]
+	sort.Sort(sort.Reverse(sort.IntSlice(sorted)))
+
+	// Build the "staircase" grouping: the j-th group contains one copy of
+	// every title whose count exceeds j. This uses the fewest groups
+	// possible and makes each group as large as it can be.
+	groups := make([]int, sorted[0])
+	for j := range groups {
+		for _, c := range sorted {
+			if c > j {
+				groups[j]++
+			}
+		}
+	}
+
+	// A group of five plus a group of three costs 5160, while two groups
+	// of four cost 5120, so trade as many (5, 3) pairs as possible.
+	fives, threes := 0, 0
+	for _, size := range groups {
+		switch size {
+		case 5:
+			fives++
+		case 3:
+			threes++
+		}
+	}
+	trades := fives
+	if threes < trades {
+		trades = threes
+	}
+	fivesToTrade, threesToTrade := trades, trades
+
+	cost := 0
+	for _, size := range groups {
+		switch size {
+		case 5:
+			if fivesToTrade > 0 {
+				fivesToTrade--
+				size = 4
+			}
+		case 3:
+			if threesToTrade > 0 {
+				threesToTrade--
+				size = 4
+			}
+		}
+		cost += prices[size]
+	}
+	return cost
+}

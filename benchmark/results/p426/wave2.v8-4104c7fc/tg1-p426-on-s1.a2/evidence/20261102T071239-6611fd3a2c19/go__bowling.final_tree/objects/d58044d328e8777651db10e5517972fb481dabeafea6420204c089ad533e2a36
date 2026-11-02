@@ -1,0 +1,139 @@
+package bowling
+
+import "errors"
+
+// Game keeps track of a bowling game: the rolls made so far and the
+// current frame being played.
+type Game struct {
+	rolls        []int
+	frame        int // 1-indexed current frame
+	rollsInFrame int // number of rolls made in the current frame
+	pinsInFrame  int // pins knocked down in the current frame
+}
+
+// NewGame returns a Game ready to accept rolls, starting at frame 1.
+func NewGame() *Game {
+	return &Game{frame: 1}
+}
+
+// Roll records a throw of `pins` pins and advances the game state.
+// It returns an error for an illegal roll.
+func (g *Game) Roll(pins int) error {
+	if g.gameOver() {
+		return errors.New("Cannot roll after game is over")
+	}
+	if pins < 0 {
+		return errors.New("Negative roll is invalid")
+	}
+	if pins > 10 {
+		return errors.New("Pin count exceeds pins on the lane")
+	}
+	if g.frame < 10 {
+		// In frames 1-9 a frame holds at most two rolls, and the two
+		// rolls together cannot exceed the ten pins on the lane.
+		if g.rollsInFrame == 1 && g.pinsInFrame+pins > 10 {
+			return errors.New("Pin count exceeds pins on the lane")
+		}
+	} else if err := g.validateTenthFrame(pins); err != nil {
+		return err
+	}
+
+	g.rolls = append(g.rolls, pins)
+	g.pinsInFrame += pins
+	g.rollsInFrame++
+	g.advanceFrame()
+	return nil
+}
+
+// Score returns the total score of a completed game, or an error if the
+// game is not yet finished.
+func (g *Game) Score() (int, error) {
+	if !g.gameOver() {
+		return 0, errors.New("Score cannot be taken until the end of the game")
+	}
+
+	rolls := g.rolls
+	score := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case rolls[i] == 10:
+			// Strike: 10 plus the next two rolls as bonus.
+			score += 10 + rolls[i+1] + rolls[i+2]
+			i++
+		case rolls[i]+rolls[i+1] == 10:
+			// Spare: 10 plus the next roll as bonus.
+			score += 10 + rolls[i+2]
+			i += 2
+		default:
+			// Open frame: just the pins knocked down.
+			score += rolls[i] + rolls[i+1]
+			i += 2
+		}
+	}
+	return score, nil
+}
+
+// validateTenthFrame checks the extra rules that apply to the 10th frame's
+// bonus rolls. The generic pins range (0-10) has already been checked.
+func (g *Game) validateTenthFrame(pins int) error {
+	switch g.rollsInFrame {
+	case 1:
+		// Second roll of the frame. If the first roll was not a strike,
+		// the two rolls together cannot exceed 10.
+		firstRoll := g.rolls[len(g.rolls)-1]
+		if firstRoll != 10 && pins > 10-firstRoll {
+			return errors.New("Pin count exceeds pins on the lane")
+		}
+	case 2:
+		// Third (fill) roll. If the first fill ball was not a strike,
+		// it and the second fill ball together cannot exceed 10.
+		firstRoll := g.rolls[len(g.rolls)-2]
+		secondRoll := g.rolls[len(g.rolls)-1]
+		if firstRoll == 10 && secondRoll != 10 && pins > 10-secondRoll {
+			return errors.New("Pin count exceeds pins on the lane")
+		}
+	}
+	return nil
+}
+
+// advanceFrame moves to the next frame once the current frame is complete.
+func (g *Game) advanceFrame() {
+	if g.frame < 10 {
+		if g.pinsInFrame == 10 || g.rollsInFrame == 2 {
+			g.frame++
+			g.rollsInFrame = 0
+			g.pinsInFrame = 0
+		}
+	} else if g.tenthFrameComplete() {
+		g.frame = 11 // past the end of the game
+	}
+}
+
+// gameOver reports whether the game has finished.
+func (g *Game) gameOver() bool {
+	if g.frame > 10 {
+		return true
+	}
+	if g.frame == 10 {
+		return g.tenthFrameComplete()
+	}
+	return false
+}
+
+// tenthFrameComplete reports whether the 10th frame has received all of its
+// rolls. A strike or a spare in the 10th frame earns an extra fill ball.
+func (g *Game) tenthFrameComplete() bool {
+	if g.rollsInFrame >= 3 {
+		return true
+	}
+	if g.rollsInFrame < 2 {
+		return false
+	}
+	firstRoll := g.rolls[len(g.rolls)-g.rollsInFrame]
+	secondRoll := g.rolls[len(g.rolls)-1]
+	if firstRoll == 10 || firstRoll+secondRoll == 10 {
+		return false // strike or spare: a fill ball is still owed
+	}
+	return true
+}

@@ -1,0 +1,92 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// This is a refactor of the original character-by-character implementation.
+// Instead of scanning the input one byte at a time while juggling several
+// pieces of state (header level, a "header ended" flag, list depth, ...), the
+// input is split into lines and each line is classified as a header, a list
+// item, or a paragraph line. Consecutive list items are grouped into a single
+// <ul> and consecutive plain lines are grouped into a single <p>.
+func Render(markdown string) string {
+	markdown = applyEmphasis(markdown)
+
+	var html strings.Builder
+	var paragraph []string
+
+	// flushParagraph emits any accumulated paragraph lines as a single <p>.
+	flushParagraph := func() {
+		if len(paragraph) > 0 {
+			html.WriteString("<p>" + strings.Join(paragraph, " ") + "</p>")
+			paragraph = nil
+		}
+	}
+
+	lines := strings.Split(markdown, "\n")
+	for i := 0; i < len(lines); {
+		line := lines[i]
+
+		if level, text, ok := parseHeader(line); ok {
+			flushParagraph()
+			html.WriteString(fmt.Sprintf("<h%d>%s</h%d>", level, text, level))
+			i++
+			continue
+		}
+
+		if isListItem(line) {
+			flushParagraph()
+			html.WriteString("<ul>")
+			for i < len(lines) && isListItem(lines[i]) {
+				html.WriteString("<li>" + itemText(lines[i]) + "</li>")
+				i++
+			}
+			html.WriteString("</ul>")
+			continue
+		}
+
+		paragraph = append(paragraph, line)
+		i++
+	}
+
+	flushParagraph()
+	return html.String()
+}
+
+// applyEmphasis converts the first __...__ pair to <strong> and the first
+// _..._ pair to <em>. The original implementation only ever replaced a single
+// pair of each marker, which is all the test cases exercise, so we keep that
+// behaviour rather than attempting a full emphasis parser.
+func applyEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// parseHeader reports whether line is a header (1-6 '#' characters followed by
+// a space) and, if so, returns its level and the text that follows it.
+func parseHeader(line string) (level int, text string, ok bool) {
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level >= 1 && level <= 6 && level < len(line) && line[level] == ' ' {
+		return level, line[level+1:], true
+	}
+	return 0, "", false
+}
+
+// isListItem reports whether line is an unordered list item ("* " prefix).
+func isListItem(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}
+
+// itemText returns the text of a list item, minus the "* " prefix.
+func itemText(line string) string {
+	return line[len("* "):]
+}

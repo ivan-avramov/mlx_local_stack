@@ -1,0 +1,94 @@
+package markdown
+
+import (
+	"fmt"
+	"regexp"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//
+// The original implementation scanned the input one character at a time and
+// tracked heading level, list state, and whether a header had been seen with
+// several intertwined flags. The rewrite processes the document line by line
+// instead, which matches how markdown is actually structured:
+//
+//   - a line starting with 1-6 '#' characters is a heading; 7 or more '#'
+//     characters are not a heading and fall through to a paragraph
+//   - a line starting with "* " is a list item; consecutive list items are
+//     wrapped in a single <ul>
+//   - every other line is a paragraph
+//
+// Inline emphasis is applied per line: "__bold__" becomes <strong> and
+// "_italic_" becomes <em>. Because '#' and '*' are only special at the start
+// of a line, those symbols inside heading, list item, or paragraph text are
+// left alone, as the tests require.
+func Render(markdown string) string {
+	var html strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if line == "" {
+			continue
+		}
+
+		if inList && !isListItem(line) {
+			html.WriteString("</ul>")
+			inList = false
+		}
+
+		if level, title, ok := parseHeading(line); ok {
+			fmt.Fprintf(&html, "<h%d>%s</h%d>", level, emphasize(title), level)
+		} else if isListItem(line) {
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + emphasize(line[len("* "):]) + "</li>")
+		} else {
+			html.WriteString("<p>" + emphasize(line) + "</p>")
+		}
+	}
+
+	if inList {
+		html.WriteString("</ul>")
+	}
+
+	return html.String()
+}
+
+// parseHeading reports whether line is a heading. A heading starts with 1-6
+// '#' characters followed by a space; the title is the rest of the line.
+func parseHeading(line string) (level int, title string, ok bool) {
+	for level < 7 && level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level < 1 || level > 6 {
+		return 0, "", false
+	}
+	title = line[level:]
+	if strings.HasPrefix(title, " ") {
+		title = title[1:]
+	}
+	return level, title, true
+}
+
+// isListItem reports whether line starts a list item, i.e. begins with "* ".
+func isListItem(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}
+
+var (
+	boldPattern   = regexp.MustCompile(`__([^_]+)__`)
+	italicPattern = regexp.MustCompile(`_([^_]+)_`)
+)
+
+// emphasize converts "__bold__" and "_italic_" markers to <strong> and <em>.
+// Bold is handled first so that "__" pairs are not mistaken for two "_".
+func emphasize(text string) string {
+	text = boldPattern.ReplaceAllString(text, "<strong>$1</strong>")
+	text = italicPattern.ReplaceAllString(text, "<em>$1</em>")
+	return text
+}

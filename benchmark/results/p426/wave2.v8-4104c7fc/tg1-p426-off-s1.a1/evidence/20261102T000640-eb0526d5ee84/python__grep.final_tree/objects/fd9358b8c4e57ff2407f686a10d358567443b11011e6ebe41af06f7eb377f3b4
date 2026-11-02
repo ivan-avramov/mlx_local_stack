@@ -1,0 +1,49 @@
+def grep(pattern, flags, files):
+    """Search files for lines matching a fixed string, return matching lines.
+
+    Supported flags:
+      -n  prepend line numbers
+      -l  output only the names of files containing a match
+      -i  case-insensitive matching
+      -v  invert the match (collect non-matching lines)
+      -x  match only entire lines
+    """
+    flags = set(flags.split())
+    multiple_files = len(files) > 1
+    results = []
+
+    for filename in files:
+        with open(filename) as file:
+            for line_number, line in enumerate(file, 1):
+                line = line.rstrip("\n")
+
+                if "-i" in flags:
+                    haystack = line.lower()
+                    needle = pattern.lower()
+                else:
+                    haystack = line
+                    needle = pattern
+
+                if "-x" in flags:
+                    matched = haystack == needle
+                else:
+                    matched = needle in haystack
+
+                if "-v" in flags:
+                    matched = not matched
+
+                if not matched:
+                    continue
+
+                if "-l" in flags:
+                    results.append(filename + "\n")
+                    break
+
+                prefix = ""
+                if multiple_files:
+                    prefix = filename + ":"
+                if "-n" in flags:
+                    prefix += str(line_number) + ":"
+                results.append(prefix + line + "\n")
+
+    return "".join(results)

@@ -1,0 +1,94 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates a markdown document to HTML.
+//
+// Refactoring note: the original implementation scanned the document one
+// character at a time while juggling several pieces of state (header level,
+// list depth, "header opened" flag, ...). This version instead processes the
+// document line by line, which matches the way markdown is actually written:
+//
+//   - a line starting with 1-6 '#' characters is a header,
+//   - a line starting with '* ' is an unordered list item,
+//   - any other line is a paragraph.
+//
+// Before the line scan, the first bold (__...__) and the first italic
+// (_..._) pair in the document are converted to <strong> and <em> tags,
+// exactly as the original implementation did.
+func Render(markdown string) string {
+	markdown = applyEmphasis(markdown)
+
+	var b strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if isListItem(line) {
+			if !inList {
+				b.WriteString("<ul>")
+				inList = true
+			}
+			b.WriteString("<li>" + line[2:] + "</li>")
+			continue
+		}
+
+		if inList {
+			b.WriteString("</ul>")
+			inList = false
+		}
+
+		if isHeader(line) {
+			b.WriteString(renderHeader(line))
+		} else {
+			b.WriteString("<p>" + line + "</p>")
+		}
+	}
+
+	if inList {
+		b.WriteString("</ul>")
+	}
+
+	return b.String()
+}
+
+// applyEmphasis converts the first bold (__...__) and the first italic
+// (_..._) pair in the document to their HTML equivalents. Only one pair of
+// each is converted, matching the original implementation.
+func applyEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// isHeader reports whether line starts a header.
+func isHeader(line string) bool {
+	return strings.HasPrefix(line, "#")
+}
+
+// isListItem reports whether line starts an unordered list item.
+func isListItem(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}
+
+// renderHeader renders a header line. A run of seven or more '#' characters
+// is not a valid header level, so the line is kept as literal paragraph
+// text, matching the original implementation.
+func renderHeader(line string) string {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+
+	if level >= 7 {
+		return "<p>" + line + "</p>"
+	}
+
+	text := strings.TrimPrefix(line, strings.Repeat("#", level))
+	text = strings.TrimPrefix(text, " ")
+	return fmt.Sprintf("<h%d>%s</h%d>", level, text, level)
+}
