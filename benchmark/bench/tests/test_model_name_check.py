@@ -345,6 +345,26 @@ def test_harvested_wave1_evidence_is_DATA_not_prose():
     assert [v.path for v in found] == ["benchmark/results/p426/README.md"]
 
 
+@pytest.mark.parametrize("path", [
+    "benchmark/results/p426/wave2/tg1-p426-off-s1.a1/receipt.json",
+    "benchmark/results/p426/wave2/tg1-p426-on-pilot.a2/s1/x.manifest.json",
+    "benchmark/results/p426/wave2/run/v8_base.json",
+    "benchmark/results/p426/wave2/pairs/pilot__off-a1__on-a1.json",
+    "benchmark/results/p426/wave2.v8-af0711cf/tg1-p426-off-pilot.a1/pilot/x.manifest.json",
+    "benchmark/results/p426/wave2.v8-af0711cf/run/sequence.json",
+])
+def test_harvested_wave2_records_are_DATA_not_prose_P601(path):
+    """P601: a Wave-2 harvest (B2 spec 11, the P437 harvest) publishes verbatim, sha-manifested records — attempt directories, the
+    run records, the pair dossiers — in `wave2/` or a `wave2.<label>/` namespace (P600); a model directory inventory inside them
+    (`optiq/metadata.json`) cannot be reworded. Prose and scripts beside them stay checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+\"optiq/metadata.json\": \"bfaba2b3\"\n"
+            "+++ b/benchmark/results/p426/wave2/make_historical_walls.py\n@@ -0,0 +1 @@\n+# optiq regressed\n"
+            "+++ b/benchmark/results/p426/wave2.v8-af0711cf/README.md\n@@ -0,0 +1 @@\n+optiq regressed\n")
+    found = MN.diff_violations(diff)
+    assert sorted({v.path for v in found}) == ["benchmark/results/p426/wave2.v8-af0711cf/README.md",
+                                               "benchmark/results/p426/wave2/make_historical_walls.py"]
+
+
 @pytest.mark.parametrize("text", [
     "--production-ref (default the 7207179b pin) names the production tree",
     "the 0b603d03 head carries B1",
