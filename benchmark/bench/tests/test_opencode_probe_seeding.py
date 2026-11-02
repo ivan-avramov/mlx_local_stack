@@ -169,9 +169,8 @@ def _manifest_without_workers(monkeypatch, tmp_path):
 def test_probe_manifest_records_real_registry_mtp_scan(_manifest_without_workers):
     assert provenance.paths.registry_path() == Path(P.REPO) / "main_models.yaml"
     man = provenance.gather(MODEL, profile="deployed", runtime={"client": "opencode"}, router={})
-    # C177 / P369 interim: the daily-driver registry runs the picks MTP-OFF, so the real registry resolves the default
-    # scan; restore `joint_v1` + source "registry" when MTP is re-certified and switched back on.
-    assert man["runtime"]["mtp_verify_scan"] == "per_query"
+    assert man["runtime"]["mtp_verify_scan"] == "joint_v1"
+    assert man["runtime"]["mtp_verify_scan_source"] == "registry"
 
 
 def test_probe_manifest_refuses_unresolved_fake_model_scan(_manifest_without_workers):
