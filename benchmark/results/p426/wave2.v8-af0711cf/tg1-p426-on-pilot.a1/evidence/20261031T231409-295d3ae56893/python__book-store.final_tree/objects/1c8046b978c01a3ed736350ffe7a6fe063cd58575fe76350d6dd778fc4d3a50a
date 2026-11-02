@@ -1,0 +1,32 @@
+from collections import Counter
+
+# Marginal saving (in cents) gained by adding the (s + 1)-th book to a group
+# that currently holds `s` books. The jump from 3 -> 4 books is the most
+# valuable step, which is why two groups of four beat a group of five plus a
+# group of three.
+_MARGINAL = {0: 0, 1: 80, 2: 160, 3: 400, 4: 360}
+
+_DISCOUNT = [0, 0, 5, 10, 20, 25]  # indexed by group size (1..5)
+
+
+def total(basket):
+    counts = Counter(basket)
+    if not counts:
+        return 0
+
+    # The number of groups is the largest number of copies of any single book.
+    groups = [0] * max(counts.values())
+
+    # Place each book's copies into distinct groups, always choosing the group
+    # where the copy yields the greatest marginal saving.
+    for _, copies in sorted(counts.items(), key=lambda kv: -kv[1]):
+        used = set()
+        for _ in range(copies):
+            best = max(
+                (i for i in range(len(groups)) if i not in used),
+                key=lambda i: _MARGINAL[groups[i]],
+            )
+            groups[best] += 1
+            used.add(best)
+
+    return sum(s * 800 * (100 - _DISCOUNT[s]) // 100 for s in groups)

@@ -1,0 +1,43 @@
+from collections import deque
+
+
+class ConnectGame:
+    def __init__(self, board):
+        self.board = [line.split() for line in board.splitlines()]
+
+    def get_winner(self):
+        if self._wins("O"):
+            return "O"
+        if self._wins("X"):
+            return "X"
+        return ""
+
+    def _wins(self, player):
+        rows = len(self.board)
+        if rows == 0:
+            return False
+        cols = len(self.board[0])
+
+        # Player O connects top to bottom, player X connects left to right.
+        if player == "O":
+            start = {(0, c) for c in range(cols) if self.board[0][c] == player}
+            reached = lambda r, c: r == rows - 1
+        else:
+            start = {(r, 0) for r in range(rows) if self.board[r][0] == player}
+            reached = lambda r, c: c == cols - 1
+
+        seen = set(start)
+        queue = deque(start)
+        # Neighbors of (r, c) in the slanted parallelogram grid.
+        neighbors = ((-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0))
+        while queue:
+            r, c = queue.popleft()
+            if reached(r, c):
+                return True
+            for dr, dc in neighbors:
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in seen:
+                    if self.board[nr][nc] == player:
+                        seen.add((nr, nc))
+                        queue.append((nr, nc))
+        return False

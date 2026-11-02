@@ -1,0 +1,52 @@
+def best_hands(hands):
+    scored = [(score_hand(hand), hand) for hand in hands]
+    top = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == top]
+
+
+def score_hand(hand):
+    cards = hand.split()
+    ranks = sorted((rank_value(card) for card in cards), reverse=True)
+    suits = {card[-1] for card in cards}
+    flush = len(suits) == 1
+
+    straight_high = None
+    if len(set(ranks)) == 5:
+        if ranks[0] - ranks[-1] == 4:
+            straight_high = ranks[0]
+        elif ranks == [14, 5, 4, 3, 2]:
+            straight_high = 5
+
+    if straight_high is not None:
+        return (8 if flush else 4, straight_high)
+    if flush:
+        return (5, *ranks)
+
+    counts = {}
+    for rank in ranks:
+        counts[rank] = counts.get(rank, 0) + 1
+    groups = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    tiebreakers = [rank for rank, count in groups for _ in range(count)]
+
+    if counts[groups[0][0]] == 4:
+        return (7, *tiebreakers)
+    if counts[groups[0][0]] == 3 and counts[groups[1][0]] == 2:
+        return (6, *tiebreakers)
+    if counts[groups[0][0]] == 3:
+        return (3, *tiebreakers)
+    if counts[groups[0][0]] == 2 and counts[groups[1][0]] == 2:
+        return (2, *tiebreakers)
+    if counts[groups[0][0]] == 2:
+        return (1, *tiebreakers)
+    return (0, *ranks)
+
+
+FACE_VALUES = {"J": 11, "Q": 12, "K": 13, "A": 14}
+
+
+def rank_value(card):
+    if card.startswith("10"):
+        return 10
+    if card[0] in FACE_VALUES:
+        return FACE_VALUES[card[0]]
+    return int(card[0])

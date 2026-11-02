@@ -1,0 +1,105 @@
+class StackUnderflowError(Exception):
+    pass
+
+
+def _is_number(token):
+    return token.lstrip("-").isdigit()
+
+
+def _pop_two(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop(), stack.pop()
+
+
+def _pop_one(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop()
+
+
+def _run(body, stack):
+    for op in body:
+        op(stack)
+
+
+def _execute(token, stack, words):
+    if _is_number(token):
+        stack.append(int(token))
+    elif token in words:
+        _run(words[token], stack)
+    elif token == "+":
+        b, a = _pop_two(stack)
+        stack.append(a + b)
+    elif token == "-":
+        b, a = _pop_two(stack)
+        stack.append(a - b)
+    elif token == "*":
+        b, a = _pop_two(stack)
+        stack.append(a * b)
+    elif token == "/":
+        b, a = _pop_two(stack)
+        if b == 0:
+            raise ZeroDivisionError("divide by zero")
+        stack.append(a // b)
+    elif token == "dup":
+        if not stack:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack.append(stack[-1])
+    elif token == "drop":
+        _pop_one(stack)
+    elif token == "swap":
+        if len(stack) < 2:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack[-1], stack[-2] = stack[-2], stack[-1]
+    elif token == "over":
+        if len(stack) < 2:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack.append(stack[-2])
+    else:
+        raise ValueError("undefined operation")
+
+
+def _compile(token, words):
+    """Turn a token from a word definition into an operation.
+
+    References to already-defined words are captured at definition time so
+    that redefining a word does not change words that were defined earlier.
+    """
+    if _is_number(token):
+        value = int(token)
+
+        def push(stack):
+            stack.append(value)
+
+        return push
+    if token in words:
+        body = words[token]
+
+        def call(stack):
+            _run(body, stack)
+
+        return call
+    return lambda stack: _execute(token, stack, words)
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    for line in input_data:
+        tokens = line.lower().split()
+        i = 0
+        while i < len(tokens):
+            if tokens[i] == ":":
+                name = tokens[i + 1]
+                if _is_number(name):
+                    raise ValueError("illegal operation")
+                end = tokens.index(";", i + 2)
+                words[name] = [_compile(t, words) for t in tokens[i + 2 : end]]
+                i = end + 1
+            else:
+                _execute(tokens[i], stack, words)
+                i += 1
+
+    return stack
