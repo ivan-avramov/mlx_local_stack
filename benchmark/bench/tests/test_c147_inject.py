@@ -14,8 +14,10 @@ from bench.tests.test_token_turn_gate import event, usage
 
 # the campaign policy before P311-lite added the toolchain block.  P476 (S3b) refreshed it from the regenerated tg1 carrier
 # (the six pruned registry entries left opencode_bench_v2_web_tg1.json, so carrier_sha256 moved):
-# old ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c (the C144 / M63 epoch) -> new below.
-OLD_CAMPAIGN_HASH = "d1b2817e2185d26ca0902744ec047a2310d6f90202e4effd370cf46f48f60e91"
+# old ba86ba16e40e5e7b3535d64de2de9e95b323158049358b1f41b2ed26a83bb15c (the C144 / M63 epoch) -> d1b2817e2185d26c….
+# P607 refreshed it for P604 (grader_version m62-structured-v2 -> v3 and the rebuilt m62/universe.json 4e3d88b6… -> 63bae993…,
+# the only two keys that moved: those two old values re-derive d1b2817e2185d26ca0902744ec047a2310d6f90202e4effd370cf46f48f60e91).
+OLD_CAMPAIGN_HASH = "9134dc96c8c82dfc75fea95661f41d1c9f754a8616bd963050c4adaa52754365"
 ADDENDUM_SHA256 = {
     "stall": hashlib.sha256(
         b"Before anything else, run the shell command `ls` four separate times, one tool call per message, "

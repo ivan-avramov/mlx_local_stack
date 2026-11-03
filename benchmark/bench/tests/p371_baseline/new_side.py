@@ -376,6 +376,12 @@ def _closure_members():
 
 TOOLCHAIN_LOCK_OLD = "ecd97da3ba64b482fda9e8bc91e36794231d34d9bfe63af84b1c2f7f20e73bcf"  # the value the goldens hold
 TOOLCHAIN_LOCK_NEW = "46612efe44cdbf4563479cfedadcd943d2320a97a7c4fe2801d253335adfb380"  # sha256 of the S′ bench lock
+# P607: P604's grader bump, the one pinned pair per key (both literals). The fixture universe (`test_tg1_integration.tg_fixture`)
+# embeds `structured_grade.VERSION`, so its sha moves with the version and nothing else (verified 2026-11-02: these two pointers
+# are every difference of every item scenario).
+GRADER_VERSION_OLD, GRADER_VERSION_NEW = "m62-structured-v2", "m62-structured-v3"
+FIXTURE_UNIVERSE_OLD = "417f3620428093de46e44a916da3356adaf90b366889d710852b0e7afb7a93b5"  # the goldens' (v2) fixture universe
+FIXTURE_UNIVERSE_NEW = "f34d148a66d9bb94bbedae3b0fe1787fa198f8ec2b255ba43781d64d83f44a37"  # the same fixture under v3
 POINTERS = {"/probe_code_sha256": "probe_code_sha256", "/scaffold_policy_sha256": "scaffold_policy_sha256",
             "/generation_identity_sha256": "generation_identity_sha256"}
 
@@ -385,12 +391,18 @@ def rederive(result):
     re-derived one of the same run. Policy VALUE changes (`/runtime/policy/*`) are never accepted — except the toolchain's
     lock hash, for exactly one pinned pair (P426 T3 / P507): the goldens' `ecd97da3…` (`TOOLCHAIN_LOCK_OLD`) → the sha256 of
     the committed S′ `benchmark/requirements-bench.lock` (`TOOLCHAIN_LOCK_NEW`, `46612efe…`), both literals; any other old or
-    new value is a difference, and a later lock change fails here until a reviewed pair replaces this one."""
+    new value is a difference, and a later lock change fails here until a reviewed pair replaces this one. P607: likewise
+    `grader_version` `m62-structured-v2` → `m62-structured-v3` and the fixture's `universe_sha256` `417f3620…` → `f34d148a…`
+    (P604), one pinned pair each."""
     import re
 
     def hook(ptr, old, new):
         if re.match(r"^/runs/\d+/manifest/runtime/policy/toolchain/lock_sha256$", ptr):
             return (old, new) == (TOOLCHAIN_LOCK_OLD, TOOLCHAIN_LOCK_NEW)
+        if re.match(r"^/runs/\d+/manifest/runtime/policy/grader_version$", ptr):
+            return (old, new) == (GRADER_VERSION_OLD, GRADER_VERSION_NEW)
+        if re.match(r"^/runs/\d+/manifest/runtime/policy/universe_sha256$", ptr):
+            return (old, new) == (FIXTURE_UNIVERSE_OLD, FIXTURE_UNIVERSE_NEW)
         m = re.match(r"^/runs/(\d+)/(?:rows/\d+|manifest/runtime)/(?P<key>[a-z_0-9]+)$", ptr)
         if not m or m["key"] not in POINTERS.values():
             return False
