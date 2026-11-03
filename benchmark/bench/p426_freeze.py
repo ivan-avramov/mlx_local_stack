@@ -405,7 +405,7 @@ def suite_receipt_problems(*, receipt, receipt_sha256, off_head, wd, digest_for=
         return ["no stack_suite_receipt path in the build inputs"]
     try:
         raw = expand(receipt, wd).read_bytes()
-    except OSError:
+    except (OSError, ValueError):                       # ValueError: e.g. an embedded NUL (review r1 P4)
         return [f"{Path(receipt).name} cannot be read"]
     problems = []
     if hashlib.sha256(raw).hexdigest() != receipt_sha256:

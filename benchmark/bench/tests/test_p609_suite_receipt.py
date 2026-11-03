@@ -125,3 +125,17 @@ def test_v8_refuses_through_the_default_checks_on_a_fail_receipt(world, capsys, 
     rc = fz.main([str(x) for x in T.v8_argv(world, manifest, legs, out)], ops=world["ops"])
     err = capsys.readouterr().err
     assert rc == 2 and "FAIL" in err and not out.exists()
+
+
+def test_an_unusable_receipt_path_is_a_problem_never_a_traceback(tmp_path):
+    """Review r1 P4: a NUL byte makes the read raise ValueError; spec 16.8 wants a refusal."""
+    assert problems(Path(str(tmp_path / "gate" / "x") + "\0.json"), "0" * 64)
+
+
+def test_the_digest_is_the_pre_push_hooks_own(monkeypatch):
+    """Review r1 P2: the same `local_gate.digest_for` call the hook makes for the stack."""
+    from bench import local_gate as lg
+    seen = []
+    monkeypatch.setattr(lg, "digest_for", lambda repo, sha, live, baselines: seen.append((repo, sha, live, baselines)) or DIGEST)
+    assert fz.gate_policy_digest(OFF) == DIGEST
+    assert seen == [("stack", OFF, lg._stack_repo(), lg._baselines())]
