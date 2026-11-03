@@ -26,3 +26,6 @@ cursor-agent, findings S1–S12, verdict not ready), side agent (P616). All orig
 Post-Accept (designer, behaviour-preserving; allow-shorthand): the naming hook read two local variables named `low` as model shorthand; renamed to
 `below` (p426_signals.py, acceptance flag items) and `lowered` (test_p613_signals_output.py) — the one edit to a frozen test, a
 rename only; 241 / 241 still pass.
+
+Post-Accept 2 (P617): the gate on `7a3cf6b0` failed the P371 R7 invariant (direct chain-row parsing outside `bench.chain_rows`).
+Fixed: rows parsed by `chain_rows.read_rows`; behaviour on the committed data unchanged (sheet byte-identical); 257 tests pass.

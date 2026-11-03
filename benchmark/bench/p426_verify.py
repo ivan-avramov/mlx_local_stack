@@ -27,6 +27,7 @@ import re
 import sys
 from pathlib import Path
 
+from bench import chain_rows as cr
 from bench.p426_harvest import _canon_sha
 
 AXIS = "A7"
@@ -95,25 +96,6 @@ def _parse_json(data, what):
         return json.loads(data.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
         raise RefusalError(f"{what}: unreadable JSON") from None
-
-
-def _parse_jsonl(data, what):
-    rows = []
-    try:
-        text = data.decode("utf-8")
-    except UnicodeDecodeError:
-        raise RefusalError(f"{what}: unreadable (not UTF-8)") from None
-    for n, line in enumerate(text.splitlines(), 1):
-        if not line.strip():
-            continue
-        try:
-            row = json.loads(line)
-        except ValueError:
-            raise RefusalError(f"{what}: line {n} is not JSON") from None
-        if not isinstance(row, dict):
-            raise RefusalError(f"{what}: line {n} is not an object")
-        rows.append(row)
-    return rows
 
 
 def self_hash_ok(doc):
@@ -188,8 +170,9 @@ def _is_dnf_file(path):
     return ".dnf." in Path(path).name
 
 
-def load_rows(reader, sdir, session, where):
-    """{id: row} from `<sdir>/*.jsonl` (excluding `*.dnf.*`); refuses on a missing directory, a bad row, a duplicate key."""
+def session_rows(reader, sdir, session, where):
+    """{id: row} from `<sdir>/*.jsonl` (excluding `*.dnf.*`), parsed by `bench.chain_rows.read_rows` (the one chain-row reader:
+    torn-file and row-shape rules, P617); refuses on a missing directory, a bad row, a duplicate key."""
     if not sdir.is_dir():
         raise RefusalError(f"{where}: session directory {reader._safe_rel(sdir)} is missing")
     files = [f for f in sorted(sdir.glob("*.jsonl")) if not _is_dnf_file(f)]
@@ -198,7 +181,12 @@ def load_rows(reader, sdir, session, where):
     rows = {}
     for f in files:
         rel = reader.rel(f)
-        for row in _parse_jsonl(reader.read_bytes(f, f"{where} rows"), rel):
+        reader.read_bytes(f, f"{where} rows")                 # records the input sha256 (B8 staleness)
+        try:
+            parsed = cr.read_rows(f)
+        except cr.ChainRowsError as exc:
+            raise RefusalError(f"{where}: {rel}: {exc}") from None
+        for row in parsed:
             rid = row.get("id")
             if not isinstance(rid, str) or "/" not in rid:
                 raise RefusalError(f"{where}: {rel}: a row has no `<language>/<item>` id ({rid!r})")
@@ -294,7 +282,7 @@ def load_attempt(reader, name, session, where):
     for doc, what in ((leg, "leg.json"), (chain, "chain.json"), (harvest, "HARVEST.json"), (schedule, "schedule.json")):
         if not isinstance(doc, dict):
             raise RefusalError(f"{where}: {what} is not an object")
-    rows = load_rows(reader, path / session, session, where)
+    rows = session_rows(reader, path / session, session, where)
     dnf = load_dnf(chain, rows, session, where)
     count, ids = check_planned(rows, dnf, schedule, where)
     items = load_items(reader, path / "items", session, rows, dnf, where)

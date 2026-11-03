@@ -328,7 +328,7 @@ def _plain_attempt(reader, adir, session):
     schedule = reader.read_json(adir / "schedule.json", f"{where} schedule.json")
     if not isinstance(chain, dict) or not isinstance(schedule, dict):
         raise RefusalError(f"{where}: chain.json or schedule.json is not an object")
-    rows = V.load_rows(reader, adir / session, session, where)
+    rows = V.session_rows(reader, adir / session, session, where)
     dnf = V.load_dnf(chain, rows, session, where)
     _count, ids = V.check_planned(rows, dnf, schedule, where)
     return dict(name=adir.name, rows=rows, planned_ids=ids)
