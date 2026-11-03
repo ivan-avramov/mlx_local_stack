@@ -75,7 +75,7 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - Never put backticks in an unquoted heredoc that builds a brief (the shell runs them); a re-cut runs under `set -e`, never `;`-chained.
 - File names can look like addresses (`compile@go1.27.3-…count`); a main-bound index must not list private names (P599).
 - Dry-run the harvest over every real tree before relaunch (found P599).
-- With frozen seeds, item behaviour repeats across attempts (`go/crypto-square` ran away identically 5 times): a rerun cures only a
+- (Superseded by P611: tool outputs leak the wall clock, so frozen seeds do NOT repeat item behaviour in general.) With frozen seeds, item behaviour repeats across attempts (`go/crypto-square` ran away identically 5 times): a rerun cures only a
   random cause (P603's pipe race), never a model-driven one (P604).
 - A piped capture of a client that exits can lose its tail at the pipe buffer: capture large outputs to files (P603).
 - A grader's "infrastructure" class must be attributable: protected inputs (tests, go.mod) failing = infra; the model's own files failing
