@@ -81,4 +81,4 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
   = a scored fail (P604 review).
 - A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
 
-Next decision id C274; discussion ids continue from P614.
+Next decision id C274; discussion ids continue from P615.

@@ -67,6 +67,10 @@ is the pattern) or must tolerate textual divergence; (2) the k-copies hazard for
 `--samples` is unchanged (same session); (3) attribution of the divergence mechanism (batch
 composition, Metal reduction order, session-cache state) is OPEN — do not build anything on a
 specific mechanism until measured.
+**Dated note 2026-11-03 (P611 / C273, S′ serving build, tg1 opencode):** across two loaded instances (Wave 2b vs 2c, same seeds) the
+first difference in all 49 diverged items was an input difference (tool-output timestamps / timings 47, Python object addresses 2),
+with every prior assistant message identical — cross-load generation divergence was NOT observed on this build. The older
+observations above stand for their builds.
 
 ## Time-to-outcome (when throughput IS the question)
 
