@@ -1,6 +1,6 @@
 # Handoff — 2026-11-03 (session 15: rehearsal `20261102a` PASS, Wave 2b harvested, OFF gate FAIL → P607 fixed, arms re-cut; gates → push (C270) → Wave 2c launch)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
 P594, C268, …), specs `docs/specs/p586-relaunch-build.md` v1.1, `docs/specs/p603-export-capture.md` (P603 as BUILT differs: the export
 goes to the stored transcript file, no item-record field) and `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §4.5, §5.1, §10, §11, §12, §16.8.
 Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: "i trust you - keep going towards certifying MTP
@@ -29,7 +29,7 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
    (frozen seeds repeat item behaviour — rerun only a random cause).
 4. **Push (C270, approved for this push only)** after a PASS on `main`'s tip: `git push origin <gated sha>:main` (never a later tip),
    `evidence`, `archive/p426-wave2.v8-af0711cf-off`, `archive/p426-wave2.v8-4104c7fc-off`, and `p426-off` (`4adb596a`) as `archive/p426-wave2-off`.
-   ON archives held (P606 (a)); the rehearsal arms `archive/p426-rehearsal.20261102a-{off,on}` held (P608). A FAIL: push nothing, report.
+   ON archives held (P606 (a)); the rehearsal arms `archive/p426-rehearsal.20261102a-{off,on}` stay local (C271 = P608 (a)). A FAIL: push nothing, report.
 5. After Wave 2c: B8 pair verification / B6 signals per spec §12 (client-cut endings per arm + the C269 sensitivity), README evidence, the
    MTP certification call (per-axis signals to the operator). Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `8516cf23` and
    their archive push (P606, operator approval); **P602 = build P383 per plan v4** (four-eyes); C258 crossover (P577 (a)); P503 fixes
@@ -49,12 +49,14 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - **P607** (lead call): the `63415dcb` gate FAILED 13 / 9967 — P604's grader bump never registered with the P371 / C147 identity pins
   (no behaviour defect). Fixed `347cf8d0` + review r1 `e805f3e8` (`docs/reviews/p607/`); arms re-cut; `20261102a` stays valid (the freeze
   never compares rehearsal commits). Follow-up: `benchmark/m65/pilot_universe.json` embeds v2 (stale; rebuild before any M65 use).
+- **P609** (lead call): the freeze now requires a PASS receipt for the exact OFF commit (`1713bbae`; it only checked the sha's
+  shape). Main-only (the freeze runs from `main`); arms unchanged.
 
 ## Worktrees / scratch (each with its resolution)
 
 - `stack-p426-off`, `stack-p426-on` (`p426-off` / `p426-on`): the Wave 2c arms — remove after Wave 2c's harvest and the archive pushes.
   `archive/p426-wave2.v8-*-{off,on}`: superseded arms — OFF pushed with C270, ON after their gates (P606).
-  `archive/p426-rehearsal.20261102a-{off,on}` (`63415dcb` / `8516cf23`): the rehearsal's arms, cited by the Wave 2c v8 — P608.
+  `archive/p426-rehearsal.20261102a-{off,on}` (`63415dcb` / `8516cf23`): the rehearsal's arms, cited by the Wave 2c v8 — stay local (C271); record in the Wave 2c report.
 - `stack-c258x-off` (`c258x-off`): keep for P577; remove after.
 - `$STACK_WORKDIR/p426/wave2/` (first v8) and `p426/wave2b/` (both harvested): delete after an inventory table.
 - `$STACK_WORKDIR/scratch/superseded-wave2-untracked-20261101/`, `superseded-wave2b-untracked/`, `evstage-20261101-wave2v8` (committed
@@ -68,6 +70,7 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - A push needs a PASS receipt on the exact pushed sha: gate the tip before a long run, push the gated sha (`<sha>:main`) so later docs
   commits do not invalidate it.
 - An ON arm (one commit on its OFF arm) needs its own receipt; a tree identical to an ungated `main` commit is no help (P606).
+- A recorded hash of a verdict is not a verdict: a precondition opens what it cites (P609).
 - A version / identity bump runs the FULL gate before its arms are cut (P607: the targeted suites missed 13 pins).
 - A harvest re-run re-stamps HARVEST.json (`created`, self-hash) besides the namespace paths: compare the rest byte for byte.
 
@@ -85,4 +88,4 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
   = a scored fail (P604 review).
 - A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
 
-Next decision id C271; discussion ids continue from P609.
+Next decision id C272; discussion ids continue from P610.
