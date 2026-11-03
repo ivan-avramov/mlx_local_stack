@@ -1,6 +1,6 @@
-# Handoff — 2026-11-03 (session 15: rehearsal PASS, Wave 2b harvested, P607 / P609 fixed, gates PASS, pushed (C270), Wave 2c RUNNING)
+# Handoff — 2026-11-03 (session 15: Wave 2c COMPLETE — 8 legs VALID, 4 dossiers PASS, harvested d23d019d / b6ec7819; next: B6 / B8 (P613))
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P613, P611, P610, P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
 P594, C268, …), specs `docs/specs/p586-relaunch-build.md` v1.1, `docs/specs/p603-export-capture.md` (P603 as BUILT differs: the export
 goes to the stored transcript file, no item-record field) and `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §4.5, §5.1, §10, §11, §12, §16.8.
 Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: "i trust you - keep going towards certifying MTP
@@ -8,23 +8,20 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Is the Wave 2c sequencer running (`bench.p426_wave2 run`, PID 24148 at launch 2026-11-03 01:58Z, out-base
-   `$STACK_WORKDIR/p426/wave2c`, v8 `353ff506…`, legs 1–8 ≈ 17 h)? Running → watch (`wave2c/sequence.log`, each leg's `watch.jsonl`),
-   start nothing alongside; exited → `sequence.log`, each leg's `leg.json`, `pairs/*.json`.
-2. `main` == `origin/main` `62bc46df` + only docs commits after it; `evidence` == `origin/evidence` `e18cad07`; `git status` clean.
-3. Arms: `p426-off` `4adb596a` (pushed as `archive/p426-wave2-off`), `p426-on` `46ca41b9` (tree == `main` `e805f3e8`); worktrees clean.
+1. Nothing running: no `p426_wave2` / `opencode run` / `mlx-serve` processes, :8000 free.
+2. `main` = `origin/main` `62bc46df` + docs commits (`6c7595a5`, `46ef163b`, `840d5b63`, this handoff) + `d23d019d` (Wave 2c data);
+   `evidence` = `origin/evidence` `e18cad07` + `b6ec7819` (Wave 2c evidence). Push needs operator approval: docs-only commits first
+   (`git push origin <last docs sha>:main`), then the data commit (each push's introduced commits must be all-docs or all-data, P541).
+3. Arms `p426-off` `4adb596a` (pushed as `archive/p426-wave2-off`), `p426-on` `46ca41b9` (ON archive waits, P606 (a)).
 
 ## Next, in order
 
-1. **Watch Wave 2c.** A leg stop: diagnose from the records (export + worker telemetry); same-code rerun = `--rerun <leg>
-   --rerun-reason …` (frozen seeds repeat item behaviour — rerun only a random cause). Harvest is automatic per leg (into `main`'s
-   `benchmark/results/p426/wave2/`, untracked until committed `data(bench)`; evidence stage `wave2c/scratch/evidence`).
-2. After Wave 2c: commit the harvest + the evidence stage (as `f16b0112` / `e18cad07`); B8 pair verification / B6 signals per spec §12
-   (client-cut endings per arm + the C269 sensitivity), README evidence, the MTP certification call (per-axis signals to the operator);
-   the Wave 2c report records the rehearsal arms as reproducible (C271).
-3. Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `46ca41b9` and their archive push (P606 (a), operator approval);
-   **P602 = build P383 per plan v4** (four-eyes); C258 crossover (P577 (a)); P503 fixes (C261); P576; the opencode 2.2.5 re-pin (C269 B′);
-   M65 pilot universe rebuild under v3 before any M65 use (P607 follow-up).
+1. **P613 (operator):** B8 / B6 build spec → approval → four-eyes build → SIGNALS.md for Wave 2c (and Wave 1) → the MTP certification
+   call (per-axis signals to the operator; C269 client-cut sensitivity; P611 noise noted).
+2. Push (operator approval): the docs commits, then `d23d019d`, then `evidence`.
+3. Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `46ca41b9` → their archive push (P606 (a)); **P611** (freeze tool-visible
+   mtimes; new probe epoch) proposal; **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
+   2.2.5 re-pin (C269 B′); M65 pilot universe rebuild under v3.
 
 ## State — 2026-11-02
 
@@ -39,7 +36,9 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - **C270 done** 2026-11-03 ≈ 01:58Z: gates PASS on `4adb596a` (9972 passed, receipt `bf536df1…`) and `main` `62bc46df` (9987 passed);
   pushed `main` `eed0da39..62bc46df` (full), `evidence` `05161ba0..e18cad07` (data-only), `archive/p426-wave2.v8-af0711cf-off`,
   `archive/p426-wave2.v8-4104c7fc-off`, `archive/p426-wave2-off` (`4adb596a`). ON archives wait (P606 (a)).
-- **Wave 2c frozen + launched**: v8 `353ff506…` (P609 receipt check passed), build inputs `wave2c/build_inputs.json`.
+- **Wave 2c** (v8 `353ff506…`, 2026-11-03 01:58–17:31Z): all 8 legs VALID, dossiers pilot / s1 / s2 / reload PASS; harvested `main`
+  `d23d019d`, `evidence` `b6ec7819` (re-verified, scanned clean). Descriptive: OFF 83/86, ON 84/86; item wall 455 vs 293 min.
+- **P610 → P611**: cross-attempt divergence is input-side (tool-visible mtimes), equal on both arms; reloads reproduce pilots exactly.
 - **P607** (lead call): the `63415dcb` gate FAILED 13 / 9967 — P604's grader bump never registered with the P371 / C147 identity pins
   (no behaviour defect). Fixed `347cf8d0` + review r1 `e805f3e8` (`docs/reviews/p607/`); arms re-cut; `20261102a` stays valid (the freeze
   never compares rehearsal commits). Follow-up: `benchmark/m65/pilot_universe.json` embeds v2 (stale; rebuild before any M65 use).
@@ -52,7 +51,8 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
   `archive/p426-wave2.v8-*-{off,on}`: superseded arms — OFF pushed with C270, ON after their gates (P606).
   `archive/p426-rehearsal.20261102a-{off,on}` (`63415dcb` / `8516cf23`): the rehearsal's arms, cited by the Wave 2c v8 — stay local (C271); record in the Wave 2c report.
 - `stack-c258x-off` (`c258x-off`): keep for P577; remove after.
-- `$STACK_WORKDIR/p426/wave2/` (first v8) and `p426/wave2b/` (both harvested): delete after an inventory table.
+- `$STACK_WORKDIR/p426/wave2/` (first v8), `p426/wave2b/`, `p426/wave2c/` (all harvested; wave2c = `d23d019d` / `b6ec7819`): delete after an
+  inventory table. `stack-p426-{off,on}` stay until the P606 ON gates and B6 / B8 no longer need the arm logs.
 - `$STACK_WORKDIR/scratch/superseded-wave2-untracked-20261101/`, `superseded-wave2b-untracked/`, `evstage-20261101-wave2v8` (committed
   `58411357`), `evstage-20261102-wave2v8b` (committed `e18cad07`), `p586-4eyes/`, `p602-review/` (the shelved minimal patch),
   `p603-p604-review/`, `p604-universe/`, `harvest-v8b-*.txt`: delete after the push / inventory. `scratch/p594-opencode-2.2.5/`: keep for the re-pin.
@@ -82,4 +82,4 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
   = a scored fail (P604 review).
 - A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
 
-Next decision id C272; discussion ids continue from P610.
+Next decision id C272; discussion ids continue from P614.
