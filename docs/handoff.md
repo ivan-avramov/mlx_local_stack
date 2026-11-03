@@ -16,11 +16,10 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 
 ## Next, in order
 
-1. **P613 (operator):** B8 / B6 build spec → approval → four-eyes build → SIGNALS.md for Wave 2c (and Wave 1) → the MTP certification
+1. **P613 (C272):** B8 / B6 build spec (incl. the C273 noise-floor signal) → approval → four-eyes build → SIGNALS.md for Wave 2c (and Wave 1) → the MTP certification
    call (per-axis signals to the operator; C269 client-cut sensitivity; P611 noise noted).
 2. Push (operator approval): the docs commits, then `d23d019d`, then `evidence`.
-3. Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `46ca41b9` → their archive push (P606 (a)); **P611** (freeze tool-visible
-   mtimes; new probe epoch) proposal; **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
+3. Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `46ca41b9` → their archive push (P606 (a)); **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
    2.2.5 re-pin (C269 B′); M65 pilot universe rebuild under v3.
 
 ## State — 2026-11-02
@@ -75,11 +74,11 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - Never put backticks in an unquoted heredoc that builds a brief (the shell runs them); a re-cut runs under `set -e`, never `;`-chained.
 - File names can look like addresses (`compile@go1.27.3-…count`); a main-bound index must not list private names (P599).
 - Dry-run the harvest over every real tree before relaunch (found P599).
-- (Superseded by P611: tool outputs leak the wall clock, so frozen seeds do NOT repeat item behaviour in general.) With frozen seeds, item behaviour repeats across attempts (`go/crypto-square` ran away identically 5 times): a rerun cures only a
+- (Superseded by C273: tool outputs leak the wall clock; same seeds reproduce short items only, ≈ 2 % of long items flip outcome.) With frozen seeds, item behaviour repeats across attempts (`go/crypto-square` ran away identically 5 times): a rerun cures only a
   random cause (P603's pipe race), never a model-driven one (P604).
 - A piped capture of a client that exits can lose its tail at the pipe buffer: capture large outputs to files (P603).
 - A grader's "infrastructure" class must be attributable: protected inputs (tests, go.mod) failing = infra; the model's own files failing
   = a scored fail (P604 review).
 - A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
 
-Next decision id C272; discussion ids continue from P614.
+Next decision id C274; discussion ids continue from P614.
