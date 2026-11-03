@@ -1,107 +1,137 @@
-# P613 — B8 pair verifier + B6 signals sheet for P426 — SPEC v0 (2026-11-03, for operator approval)
+# P613 — B8 pair verifier + B6 signals sheet for P426 — SPEC v1 (2026-11-03, for operator approval)
 
-Authority: `docs/specs/p426-fable-mtp-recert.md` v4 §1 (attention flags), §3 (order balance / validity), §5–§8, §9 (B8, B6);
-`docs/specs/p426-b2-tg1-wave2.md` §12 (contract to B8 / B6); C172, C173, C204, C217, C235 G1, C269, C273. Where this spec and
-those disagree, those win; record the conflict here.
+Authority: `docs/specs/p426-fable-mtp-recert.md` v4 §1, §3, §5–§9; `docs/specs/p426-b2-tg1-wave2.md` §12; AGENTS.md "Benchmark
+validity" / "Analysis and reporting"; `docs/metrics.md`; C161, C166, C172, C173, C204, C206, C207, C217, C235 G1, C269, C273. On
+conflict those win; record it here. v1 applies cold review round 1 (`docs/reviews/p613/r1.md`, 15 findings, all adopted).
 
 ## 1. Scope
 
-- **B8** `benchmark/bench/p426_verify.py`: decides which ON / OFF pairs are comparable. Fail closed. No statistics.
-- **B6** `benchmark/bench/p426_signals.py`: generates `benchmark/results/p426/SIGNALS.md` + `SIGNALS.json` from committed files only,
-  for B8-accepted pairs only. Deterministic (same inputs → byte-identical outputs). Never hand-edited.
-- **Panel run** (uses the existing B3 `bench/p426_panel.py`, C207 judges): packet export + verdict collection for the subjective
-  family. B6 reads verdicts; missing verdicts are counted, never imputed.
-- Non-goals: new runs, regrading, changing any harvested byte, the ship decision (C204: the operator decides from the sheet).
+- **B8** `benchmark/bench/p426_verify.py`: which ON / OFF pairs are comparable. Fail closed. No statistics.
+- **B6** `benchmark/bench/p426_signals.py`: generates `benchmark/results/p426/SIGNALS.md` + `SIGNALS.json` from committed files, for
+  B8-accepted pairs only. Deterministic (same inputs → byte-identical outputs; no wall-clock time, no absolute paths in the output).
+  Never hand-edited.
+- **Panel run**: the existing B3 `bench/p426_panel.py`; packets + verdicts for the subjective members. B6 reads verdicts; a missing
+  verdict is counted, never imputed.
+- Non-goals: new runs, regrading, changing any harvested byte, the ship decision (C204).
 
-## 2. Inputs (committed paths only; `$STACK_WORKDIR` never read)
+## 2. Inputs (committed only; `$STACK_WORKDIR` never read)
 
-| Axis | Legs / pairs | Rows / results | Receipts / records |
+Allow-list: `benchmark/results/p426/wave1.s2/`, `benchmark/results/p426/wave2/`, and in `benchmark/results/<entry>/` only tunes
+`p426s2-{off,on}-b{1,2}`. Deny-list (refuse if requested as a pair member): `benchmark/results/p426/wave1/`, tunes `p426-{off,on}-*`
+(the S build, never pooled with S′), every `*-smoke`, `archive/`, `wave2.v8-*`. Noise-floor inputs are separate (§4.9).
+
+| Axis | Pair members | Rows / results | Validity |
 |---|---|---|---|
-| A1 math500 | `p426s2-{off,on}-b{1,2}` | `benchmark/results/<entry>/math500.<tune>.jsonl` + `.score.json` | `benchmark/results/p426/wave1.s2/<leg>/<leg>.receipt.json`, `run/frozen.s2.json` |
-| A2 cjudge | same tunes | `cjudge.<tune>.jsonl` (acc null: panel only) | same |
-| A3 vision | same tunes | `vision_gate.<tune>.jsonl` | same |
-| A4 reasoning | same tunes | `reasoning.<tune>.json` | same (descriptive axis) |
-| M1 memory | `m1-p426s2-{off,on}-b{1,2}` | `wave1.s2/<leg>/m1/<entry>/result.json` | same |
-| A7 tg1 | `wave2/` attempts pilot, s1, s2, reload | `<attempt>/<session>/*.jsonl` rows, `items/*.json` (totals, requests) | `<attempt>/{leg,receipt,chain,HARVEST}.json`, `pairs/*.json`, `run/v8_base.json` |
+| A1 math500 | tunes `p426s2-{off,on}-b{1,2}` | `<entry>/math500.<tune>.jsonl` + `.score.json` | receipt `wave1.s2/<leg>/<leg>.receipt.json`: `verdict` VALID, `speed_valid`; `run/frozen.s2.json` |
+| A2 cjudge | same | `<entry>/cjudge.<tune>.jsonl` (`acc` null → panel only) | same |
+| A3 vision | same | `<entry>/vision_gate.<tune>.jsonl` | same |
+| A4 reasoning | same | `<entry>/reasoning.<tune>.json` | same; descriptive |
+| M1 memory | legs `m1-p426s2-{off,on}-b{1,2}` | `wave1.s2/<leg>/m1/<entry>/result.json` | same |
+| A7 tg1 | attempts `wave2/tg1-p426-{off,on}-{s1,s2}.a1` (pairs); `-pilot.a1`, `-reload.a1` (diagnostic) | rows: every `<attempt>/<session>/*.jsonl` (incl. the `L0.pilot.a1` invocation file inside `s1` / `s2`); key (session, id), duplicates refuse; row count == planned slots of `<attempt>/schedule.json`; item records `<attempt>/items/*.json` | `<attempt>/leg.json` `state` VALID, `speed_valid`; `receipt.json`; `HARVEST.json`; `pairs/<session>__off-a1__on-a1.json`; `run/v8_base.json` |
 
-Smoke legs and every `wave2.v8-*` / `archive` namespace are excluded by name; B6 lists them under coverage only.
+The pilot / reload attempts are never pooled with s1 / s2. Arm registry shas come from the receipts / frozen records
+(`registry_off_sha`, `registry_on_sha`), never re-derived from git.
 
-## 3. B8 — rules (each failure names the pair, the rule and both values)
+## 3. B8 — rules (each refusal names the pair, the rule and both values)
 
-Generic, every axis:
-1. Both legs present, self-hash / receipt verdict VALID; a superseded or INVALID attempt is never a pair member.
-2. Arm identity: OFF and ON differ by exactly the restore delta (Wave 1: the three C177 registry lines, the receipt worker argv
-   `--draft-kind mtp --draft-model … --mtp-verify-scan joint_v1` present on ON, absent on OFF; Wave 2: `v8_base` arms, dossier
-   `differences` ⊆ the allowed list). Everything else equal: sampling, budgets, KV, serving pins, item set, seed set, box.
-3. Item / seed sets equal per pair key (A7: session, language, item, seed; Wave 1: tune block, item id, sample seed).
-4. Speed eligibility separate from quality (§3 of the recert spec): a leg with `speed_valid != true` drops the block from speed
-   inference only; one valid block → speed descriptive, labelled "not order-balanced".
-5. A7 only: the pair's dossier exists, self-hashes and reads PASS, and names exactly the two attempts used; HARVEST.json of each
-   attempt re-verifies (every published sha256).
-6. C217 (panel only): a pair whose two output texts are byte-identical is excluded from judging and counted as a tie.
+1. Both members present and valid per the table's validity column; superseded, INVALID or smoke members refuse. A
+   power-invalid (`speed_valid` false) leg stays a quality member, labelled "power-invalid"; a receipt- or transport-invalid one
+   does not (recert §3).
+2. Arm identity: OFF and ON differ by exactly the restore delta — Wave 1: the frozen record's two registry shas and the receipt
+   worker argv (`--draft-kind mtp --draft-model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed-mtp-drafter --mtp-verify-scan
+   joint_v1` on ON only); Wave 2: `v8_base` arms and the dossier `differences` ⊆ the allowed list. Everything else equal (sampling,
+   budgets, KV, serving pins, item set, seed set, box).
+3. Pair keys equal: A7 (session, language, item, seed); Wave 1 (tune block, item id, sample seed).
+4. Speed: a block / session with either member `speed_valid` false leaves speed inference; one valid block → descriptive, "not
+   order-balanced".
+5. A7: the dossier exists, self-hashes, reads PASS and names exactly the two attempts; each attempt's HARVEST.json re-verifies
+   (every published sha256).
+6. Cross-wave code check (Q3): the file list of `git diff <wave1.s2 stack_head_off> <wave2 off_commit>` restricted to
+   `main_models.yaml`, the `src/*` gitlinks and the `identity_closure.python_closure` of `benchmark/run.py`,
+   `benchmark/vision_gate.py`, `benchmark/bench/run_reasoning.py` and the M1 `qualify` entry; non-empty → a flag in the sheet with the
+   list (not a refusal). Both commits must resolve (`f2b61127`, the Wave 1 ON head, has no branch: archive it, P606-style).
+7. C217 identity: A1 / A2 / A4 the content sha (`content_sha256`), A3 the description text sha, A7 the final-tree manifest sha.
 
-Output `benchmark/results/p426/B8.json`: per axis / session the accepted pairs, the rejected pairs with reasons, and the input
-file sha256 set. B6 refuses if `B8.json` is stale against those shas.
+Output `benchmark/results/p426/B8.json` (accepted / rejected pairs with reasons, the cross-wave flag, the sha256 of every input).
+B6 refuses when any input sha differs from `B8.json`.
 
-## 4. B6 — signals (per axis; A7 per session s1 / s2, never pooled across sessions; reload diagnostic only)
+## 4. B6 — signals (A7 per session s1 / s2, never pooled across sessions; Wave 1 per block and both blocks)
 
-- **Quality (mechanical):** `acc_strict@budget` per arm over ALL planned slots (DNF = non-success, labelled `transport_dnf`;
-  budget-hit = fail), conv %, `nonconv_kinds`; paired ON − OFF with a two-stage cluster bootstrap 95 % interval (items, then
-  draws; 10,000 resamples, seed 426) and the axis MDE. Mechanical family {A1, A7-s1, A7-s2}: paired sign-flip permutation test
-  (10,000, seed 426, two-sided, zero differences contribute zero), Holm across the family.
-- **Labels (C172 / C173):** interval excludes 0 → a shown difference; includes 0 → WASH, point estimate labelled "directional
-  (not a shown difference)", plus the loss bound for a lossy lever (−CI lower bound; zero-discordance cells: the exact
-  discordance bound) and "loss not ruled out above X pp" when > 10 pp.
-- **Subjective:** from panel verdicts: per item score = mean over 2 judges × 2 orders (ON win 1, tie 0.5, OFF win 0),
-  length-adjusted (C161 estimator, `p426_panel.length_adjusted`); family {A1, A2, A3, A7-s1, A7-s2} (members with < 5 judged items
-  reported, not tested), same permutation test vs 0.5, Holm; judge model id / client version / prompt sha listed; missing verdicts
-  counted per member; single-family members labelled (C166 / C206).
-- **Memory (M1):** prefill / decode / retire `mx.get_peak_memory` peaks per leg, ON − OFF per block and both blocks; the 256K
-  flags of §1.
-- **Speed:** per item decode rate = Σ max(generated − 1, 0) ÷ Σ decode time over completed requests (A7: `items/*.json` totals;
-  Wave 1: rows); paired per-item ON / OFF ratio, bootstrapped over items within each session / block; acceptance = Σ accepted ÷
-  Σ proposed within the session; per-session wall. Request ordinals are never paired.
-- **Runaway tax (A7, B2 §12 / C269):** budget-hit, turn-cap, exec-timeout, `client_inactivity` (own category, with each item's
-  `client_abort` block), loop and stall kills, per arm and session, plus the per-session union; pooled rates descriptive. The C269
-  sensitivity: the strict delta with and without pairs where either arm has a `client_inactivity` ending.
-- **Noise floor (C273):** cross-attempt outcome-flip rate per arm (reload vs pilot; plus any committed repeated attempt of the same
-  schedule and seeds, e.g. `wave2.v8-4104c7fc` vs `wave2`), with the counts it rests on.
-- **Coverage:** legs done / pending / invalid / superseded per axis; smokes listed, never scored.
-- **Flags (§1 of the recert spec), each with the number that raised it:** axis / session ON − OFF point < −5 pp; Holm p < .05 with
-  OFF better; subjective member Holm p < .05 favouring OFF; ON 256K prefill peak > OFF + 2 GB or > ≈ 48 GB; decode ratio < 1.3× on
-  A1 or A7; pooled acceptance < 0.70; a nonconv kind or tax flag present in ON and absent in OFF. Flags are listed, never vetoes.
-- No composite, no `successes_per_hour`, no `pass@1|converged` ranking (diagnostic column only).
+Statistics reuse `bench/stats.py` and `bench/compare_predictor.py`; never `stats.verdict_label`, never any equivalence / TOST field
+(C172). RNG: `numpy.random.default_rng(426)`; the numpy version is the bench lock's and is printed in the header.
 
-`SIGNALS.md` layout: header (inputs sha set, generator version, B8.json sha), one section per axis in the order A7-s1, A7-s2,
-A1, M1, A2, A3, A4, then flags, noise floor, coverage. Every number traceable to a JSON path in `SIGNALS.json`.
+1. **Quality, mechanical.** Per arm `acc` (lenient), `acc_strict@budget` over ALL planned slots (a DNF and a budget-hit are
+   non-successes; denominator = planned slots), conv %, `nonconv_kinds`. Paired ON − OFF: `stats.paired_delta` (`delta`, `lo`,
+   `hi` only; two-stage percentile bootstrap, 10,000; stage 2 is a no-op at k = 1). MDE: `stats.mde(n, p_d)` with `p_d` = the
+   observed discordance fraction (both reported when it is 0: the default 0.20 row). Mechanical family {A1, A7-s1, A7-s2}:
+   paired sign-flip permutation test on per-item strict differences, T = mean difference, 10,000 sign vectors, two-sided,
+   p = (1 + #{|T*| ≥ |T| − 1e-12}) ÷ 10,001, zero differences contribute zero; `stats.holm` over the family.
+2. **Labels (C172 / C173).** CI excludes 0 → shown difference; includes 0 → WASH, point labelled "directional (not a shown
+   difference)"; lossy-lever loss bound = `compare_predictor._loss_bound` (−CI lower bound; a zero-discordance cell uses the exact
+   one-sided 95 % discordance bound 1 − 0.05^(1/n), n = paired items, in pp of items); > 10 pp → "loss not ruled out above X pp".
+3. **Exclusive solves and edit competence.** Per pair the ON-only and OFF-only strict solves (lists). A7 edit competence per arm:
+   `file_changed`, `test_modified`, `tool_bounds_rejections` counts.
+4. **DNF (C235 G1).** Per arm and cause a table from each attempt's `chain.json` `p426_dnf`; a DNF slot is a non-success for its arm
+   only, the pair stays. Make-up sensitivity: the strict delta with make-up legs substituted, or "no make-up run".
+5. **Subjective.** Per item raw score = mean over judges × orders (ON win 1, tie 0.5, OFF win 0; `p426_panel.item_scores`); the
+   permutation test (as 4.1) runs on raw per-item scores − 0.5. Headline beside it: `p426_panel.length_adjusted` (pooled
+   P(ON preferred at equal length) with its item-cluster interval), lengths as the panel records them per verdict. Family {A1,
+   A2, A3, A7-s1, A7-s2}; a member with < 5 judged items is reported, not tested; Holm m = the number of tested members, fixed by
+   that rule before any p-value is read. C217-identical pairs score 0.5, stay in the test, are labelled "identical outputs; panel
+   not run" and are not counted as judged. A4: draw distribution + panel scores, descriptive, never tested (recert S7). Every
+   member is labelled "conditional on both-pass" with n and the count of one-arm-pass items left out. Per verdict: judge model id,
+   client version, prompt sha; single-family members labelled (C166 / C206).
+6. **Memory (M1).** Prefill / decode / retire `mx.get_peak_memory` peaks per leg; ON − OFF per block and both blocks.
+7. **Speed.** Primary (recert T2): per item decode rate = Σ max(generated − 1, 0) ÷ Σ decode time over completed requests (A7:
+   `items/*.json` `totals`; Wave 1: rows); sensitivity: every request with a decode-time record. Paired per-item ON / OFF ratio;
+   statistic = the geometric mean of per-item ratios with its item bootstrap interval within a session / block; an item with no
+   completed request in either arm is dropped and listed. Acceptance = Σ accepted ÷ Σ proposed within the session. Per-leg wall
+   from the leg records (clean-box chains), descriptive.
+8. **Runaway tax (A7; B2 §12, C269).** Budget-hit, turn-cap, exec-timeout, `client_inactivity` (own category, with each item's
+   `client_abort` block), loop kills, stall kills, per arm and session, plus the per-session union; pooled rates descriptive. C269
+   sensitivity: the strict delta without the pairs where either arm ends `client_inactivity`.
+9. **Noise floor (C273).** Same-epoch: reload vs pilot per arm (5 items each). Cross-epoch, labelled with both `v8_base` shas:
+   outcome flips (pass or convergence differs) between `wave2` and `wave2.v8-4104c7fc` over its VALID attempts with the same
+   schedule sha (pilots, `off-s1.a1`, `on-s1.a2`; the INVALID `on-s1.a1` / `on-s2.a1` excluded), with the denominator.
+10. **Coverage.** Legs done / pending / invalid / superseded per axis; smokes listed, never scored.
+11. **Flags (recert §1), each with its number:** a mechanical axis / session point < −5 pp; Holm p < .05 with OFF better; a
+    subjective member Holm p < .05 favouring OFF; ON 256K prefill peak > OFF + 2 GB or > ≈ 48 GB; decode ratio point < 1.3× on A1
+    or A7 (CI beside it); pooled acceptance < 0.70; a nonconv kind or tax category present in ON and absent in OFF; the B8
+    cross-wave flag. Listed, never vetoes.
+12. Never: a composite, `successes_per_hour`, `pass@1|converged` as a ranking (diagnostic column only).
 
-## 5. Panel run (B3, C207 / C217)
+Layout: header (inputs sha set, generator version, numpy version, B8.json sha), sections A7-s1, A7-s2, A1, M1, A2, A3, A4, flags,
+noise floor, coverage. Every number has a JSON path in `SIGNALS.json`.
 
-Packets for B8-accepted pairs whose outputs differ: A1 both-correct items, A2 all 40, A3 all 20, A7 both-pass items per session
-(final tree + transcript summary). Judges per `judges.json`: Claude Opus 5.5 `blind-judge` (this session) + GPT-5.6 Sol High via
-`cursor-agent` for text / code, Gemini 3.1 Pro for A3 images. Both orders. Retries 0; a failed call is a missing verdict.
-Estimated ≈ 240 items × 2 judges × 2 orders ≈ 960 verdicts; no GPU. Verdicts commit under `benchmark/results/p426/panel/`.
+## 5. Panel run (B3; C207, C217)
 
-## 6. Tests (red first; hermetic fixtures; no `$STACK_WORKDIR`)
+Frozen before any verdict is read: the packet set (B8-accepted, non-identical pairs: A1 both-correct, A2 all 40, A3 all 20, A4
+strict draws, A7 both-pass per session) and the judge list from `judges.json` (two families per modality; model ids, client
+versions, prompt shas recorded). A7 packet = task statement, final-tree diff against the exercise start, the grader result, and a
+mechanical transcript extract (tool-call names and counts; no model-written summary); `leak_problems` runs on every packet.
+Both orders. Retries 0; a failed call is a missing verdict. ≈ 250 items × 2 judges × 2 orders ≈ 1,000 verdicts; no GPU.
+Verdicts commit under `benchmark/results/p426/panel/`.
 
-- B8: one test per rule in §3 (accept + each refusal), stale-B8.json refusal, superseded / smoke exclusion.
-- B6: statistics against hand-computed fixtures (bootstrap determinism with seed 426, permutation p on a known small case, Holm
-  order, zero-discordance bound); strict scoring (DNF and budget-hit as failures); C269 sensitivity; C172 / C173 labels; flags
-  each raised and not raised; byte-identical regeneration; refusal on any missing or unhashed input.
-- Golden on the committed data: A7 per-arm pass counts (s1 OFF 42/43, ON 41/43; s2 OFF 41/43, ON 43/43) and the reload
-  reproduction (5 / 5 both arms) appear exactly in `SIGNALS.json`.
+## 6. Tests (red first)
 
-## 7. Build (four-eyes, this spec as the contract)
+- Hermetic (fixtures under `tmp_path`): one per B8 rule (accept + each refusal, incl. deny-list, duplicate row key, row count ≠
+  planned, stale B8.json); B6 statistics on hand-computed fixtures (permutation p on a known small case, Holm order and m,
+  `paired_delta` reuse at k = 1, the zero-discordance bound), strict scoring with DNF and budget-hit, the C217 0.5 rule, C269,
+  C172 / C173 labels, every flag raised and not raised, byte-identical regeneration, no absolute path in outputs.
+- Golden (separate, marked, reads committed data): A7 strict-input pass counts (s1 OFF 42/43, ON 41/43; s2 OFF 41/43, ON 43/43,
+  the 5 `L0.pilot.a1` rows included), reload == pilot (5 / 5 each arm), B8 accepts the four Wave 2 pairs.
 
-Order: (1) B8 + B6 for A7 (the primary workload) → provisional `SIGNALS.md` with A7 only, labelled PROVISIONAL; (2) the Wave 1
-adapters (A1, M1, A2, A3, A4); (3) the panel run; (4) the final sheet. Roles: an independent test writer from this spec before
-seeing code; an implementer; one cold review per step (≤ 3 rounds). Commits `feat(bench)`; the sheet `data(bench)`. Gate before
-the code push (level full).
+## 7. Build (four-eyes)
+
+(1) B8 + B6 for A7 → PROVISIONAL `SIGNALS.md` (A7 only); (2) the Wave 1 adapters (A1, M1, A2, A3, A4) + the cross-wave check;
+(3) the panel run; (4) the final sheet. Roles: an independent test writer from this spec before seeing code; an implementer; one
+cold review per step (≤ 3 rounds). Commits `feat(bench)`; the sheets `data(bench)`; a gate before the code push (level full).
 
 ## 8. Operator choices
 
-- **Q1 — order.** Recommended: A7 first as above (the call's primary workload, data ready). Alternative: all axes at once.
-- **Q2 — panel.** Recommended: run it in full (≈ 960 verdicts; Claude-side tokens in this session + the Cursor subscription).
-  Alternative: A7 + A1 only first, the rest after the provisional sheet.
-- **Q3 — Wave 1 staleness.** Wave 1 ran on S′ arms before P603 / P604 / P607; none of those touch A1–A4 / M1 generation or
-  grading (P604 is the Go grader, tg1 only). Recommended: use Wave 1 as is, recorded. Alternative: rerun Wave 1 (≈ 20 GPU-h).
+- **Q1 — order.** Recommended: A7 first (primary workload, data ready), PROVISIONAL label. Alternative: all axes at once.
+- **Q2 — panel.** Recommended: the full panel, its packet set and judges frozen before any verdict (≈ 1,000 verdicts: session
+  tokens + the Cursor subscription). A staged panel is not offered: choosing later stages after reading earlier ones is a
+  look-then-decide path.
+- **Q3 — Wave 1 as is.** Recommended: use it, gated by the B8 cross-wave check (§3.6); a non-empty generation-path diff returns to
+  the operator before Wave 1 enters the sheet. Alternative: rerun Wave 1 (≈ 20 GPU-h).
