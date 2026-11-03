@@ -392,9 +392,51 @@ def production_tree_problems(worktree, ref, gitlink) -> list:
     return [f"production tree check failed (git exit {run.returncode}): the ref {str(ref)[:12]} or the gitlink is not in {fork.name}"]
 
 
-def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_ref=None, gitlinks=None) -> list:
+def gate_policy_digest(sha):
+    """The gate policy digest `bench.local_gate` requires of a stack receipt for `sha` today (the pre-push hook's own)."""
+    from . import local_gate as lg
+    return lg.digest_for("stack", sha, lg._stack_repo(), lg._baselines())
+
+
+def suite_receipt_problems(*, receipt, receipt_sha256, off_head, wd, digest_for=None) -> list:
+    """P609: the stated stack suite receipt is a PASS gate receipt (`bench.local_gate`) for exactly the OFF arm's commit under the
+    current gate policy, and its bytes hash to the stated `stack_suite_receipt_sha256`; [] when it is, else every problem."""
+    if not isinstance(receipt, str) or not receipt:
+        return ["no stack_suite_receipt path in the build inputs"]
+    try:
+        raw = expand(receipt, wd).read_bytes()
+    except OSError:
+        return [f"{Path(receipt).name} cannot be read"]
+    problems = []
+    if hashlib.sha256(raw).hexdigest() != receipt_sha256:
+        problems.append(f"{Path(receipt).name}: its sha256 is not the stated stack_suite_receipt_sha256")
+    try:
+        doc = json.loads(raw)
+    except ValueError:
+        doc = None
+    if not isinstance(doc, dict):
+        return problems + [f"{Path(receipt).name} is not a gate receipt"]
+    if doc.get("repo") != "stack":
+        problems.append(f"the receipt is for {doc.get('repo')!r}, not the stack")
+    if doc.get("sha") != off_head:
+        problems.append(f"the receipt is for {str(doc.get('sha'))[:12]}, not the OFF arm's commit {str(off_head)[:12]}")
+    if doc.get("verdict") != "PASS":
+        problems.append(f"the receipt's verdict is {doc.get('verdict')!r}, not PASS")
+    if not problems:
+        try:
+            current = (digest_for or gate_policy_digest)(off_head)
+        except Exception as exc:                        # any failure computing the digest refuses (as the pre-push hook)
+            return [f"the gate policy digest cannot be computed ({type(exc).__name__})"]
+        if doc.get("policy_digest") != current:
+            problems.append("the receipt was made under another gate policy (policy_digest is not the current one)")
+    return problems
+
+
+def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_ref=None, gitlinks=None, off_head=None,
+                   suite_receipt=None, suite_receipt_sha256=None, wd=None) -> list:
     """The real preconditions (spec 16.8: every one goes through `checks`): the restore diff between the two arms, both
-    worktrees' entry points, and for v8 the venvs against the lock, K3 (`--help`) and the production tree at the gitlink."""
+    worktrees' entry points, and for v8 the venvs against the lock, K3 (`--help`), the production tree at the gitlink and (P609)
+    a PASS stack suite receipt for the OFF commit."""
     problems = [f"restore diff: {p}" for p in p426_plan.restore_diff_problems(off_worktree, on_worktree, p426_plan.p426_ids.ENTRY)]
     for arm, wt in (("off", off_worktree), ("on", on_worktree)):
         found = entry_point_problems(wt)
@@ -404,6 +446,9 @@ def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_re
         problems += [f"{arm}: {p}" for p in venv_problems(wt, build)]
         problems += [f"{arm}: {p}" for p in help_problems(wt)]
         problems += [f"{arm}: {p}" for p in production_tree_problems(wt, production_ref, (gitlinks or {}).get("mlx_vlm"))]
+    if kind == "v8":
+        problems += [f"stack suite receipt: {p}" for p in suite_receipt_problems(
+            receipt=suite_receipt, receipt_sha256=suite_receipt_sha256, off_head=off_head, wd=wd)]
     return problems
 
 
@@ -569,7 +614,8 @@ def cmd_v8(a, ops, checks, wd):
         raise Refusal("; ".join(problems))
     settle = max(float(chain_core.P426_SETTLE_BOUND_S), 2 * max(max(r1), walls["max_request_elapsed_s"]))      # spec 16.8: derived
     run_checks(checks, "v8", off_worktree=off, on_worktree=on, build=inputs["build"], production_ref=inputs["production_ref"],
-               gitlinks=dict(gitlinks))
+               gitlinks=dict(gitlinks), off_head=st["off"]["head"], suite_receipt=inputs.get("stack_suite_receipt"),
+               suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], wd=wd)
     return write_record(a.out, dict(
         kind=KIND_V8, build=inputs["build"], off_commit=st["off"]["head"], on_commit=st["on"]["head"],
         off_worktree=portable(off, wd, "--off-worktree"), on_worktree=portable(on, wd, "--on-worktree"),

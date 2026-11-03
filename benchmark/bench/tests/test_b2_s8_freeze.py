@@ -363,6 +363,7 @@ def test_default_checks_run_the_production_tree_check_for_both_arms_in_v8(world,
     monkeypatch.setattr(fz, "entry_point_problems", lambda wt: [])
     monkeypatch.setattr(fz, "venv_problems", lambda wt, build: [])
     monkeypatch.setattr(fz, "help_problems", lambda wt: [])
+    monkeypatch.setattr(fz, "suite_receipt_problems", lambda **kw: [])        # P609: its own tests in test_p609_suite_receipt.py
     monkeypatch.setattr(fz, "production_tree_problems", lambda wt, ref, link: calls.append((Path(wt).name, ref, link)) or ["tree differs"])
     got = fz.default_checks("v8", off_worktree=world["off"], on_worktree=world["on"], build="s2", production_ref="r" * 40,
                             gitlinks={"mlx_vlm": "g" * 40, "mlx_serve": "h" * 40})
