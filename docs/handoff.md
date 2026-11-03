@@ -1,6 +1,6 @@
 # Handoff — 2026-11-03 (session 15: Wave 2c COMPLETE — 8 legs VALID, 4 dossiers PASS, harvested d23d019d / b6ec7819; next: B6 / B8 (P613))
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P613, P611, P610, P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P616, P615, C274, C273, C272, P613, P611, P610, P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
 P594, C268, …), specs `docs/specs/p586-relaunch-build.md` v1.1, `docs/specs/p603-export-capture.md` (P603 as BUILT differs: the export
 goes to the stored transcript file, no item-record field) and `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §4.5, §5.1, §10, §11, §12, §16.8.
 Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: "i trust you - keep going towards certifying MTP
@@ -16,10 +16,14 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 
 ## Next, in order
 
-1. **P613 (C272):** B8 / B6 build spec (incl. the C273 noise-floor signal) → approval → four-eyes build → SIGNALS.md for Wave 2c (and Wave 1) → the MTP certification
+1. **P613:** step 1 DONE (`369831ed` code + 241 tests, four-eyes accepted; provisional A7 sheet `5dd19e23`
+   `benchmark/results/p426/SIGNALS.md`). Next: the gate on `main`'s tip → push (approval); step 2 = the Wave 1 adapters (A1, M1, A2, A3, A4)
+   + the rule-6 cross-wave check (four-eyes, same spec v2); step 3 = the panel run (B3 extended: `build="s2"`, A7 packets); step 4
+   = the final sheet → the MTP certification
    call (per-axis signals to the operator; C269 client-cut sensitivity; P611 noise noted).
 2. Push (operator approval): the docs commits, then `d23d019d`, then `evidence`.
-3. Quiet windows: gates on the ON arms `2a173f8b`, `7a0817d3`, `46ca41b9` → their archive push (P606 (a)); **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
+3. Quiet windows: P606 ON-arm gates (`2a173f8b` PASS, `7a0817d3` PASS, `46ca41b9`) → their archive push (C272); the Wave 1 ON head
+   `f2b61127` (local branch `archive/p426-wave1-s2-on`) needs its own gate + push approval; **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
    2.2.5 re-pin (C269 B′); M65 pilot universe rebuild under v3.
 
 ## State — 2026-11-02
@@ -81,4 +85,4 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
   = a scored fail (P604 review).
 - A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
 
-Next decision id C275; discussion ids continue from P615.
+Next decision id C275; discussion ids continue from P617.
