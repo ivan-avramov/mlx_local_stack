@@ -1,0 +1,429 @@
+.FFFFFF.FF.F.F                                                           [100%]
+=================================== FAILURES ===================================
+______________ ReactTest.test_callback_cells_only_fire_on_change _______________
+
+self = <react_test.ReactTest testMethod=test_callback_cells_only_fire_on_change>
+
+    def test_callback_cells_only_fire_on_change(self):
+        input = InputCell(1)
+        output = ComputeCell([input], lambda inputs: 111 if inputs[0] < 3 else 222)
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        output.add_callback(callback1)
+>       input.value = 2
+        ^^^^^^^^^^^
+
+react_test.py:102: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e37380>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+______________ ReactTest.test_callbacks_can_be_added_and_removed _______________
+
+self = <react_test.ReactTest testMethod=test_callbacks_can_be_added_and_removed>
+
+    def test_callbacks_can_be_added_and_removed(self):
+        input = InputCell(11)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        cb1_observer = []
+        cb2_observer = []
+        cb3_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        callback2 = self.callback_factory(cb2_observer)
+        callback3 = self.callback_factory(cb3_observer)
+        output.add_callback(callback1)
+        output.add_callback(callback2)
+>       input.value = 31
+        ^^^^^^^^^^^
+
+react_test.py:163: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e377a0>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+____________ ReactTest.test_callbacks_can_fire_from_multiple_cells _____________
+
+self = <react_test.ReactTest testMethod=test_callbacks_can_fire_from_multiple_cells>
+
+    def test_callbacks_can_fire_from_multiple_cells(self):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        cb1_observer = []
+        cb2_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        callback2 = self.callback_factory(cb2_observer)
+        plus_one.add_callback(callback1)
+        minus_one.add_callback(callback2)
+>       input.value = 10
+        ^^^^^^^^^^^
+
+react_test.py:143: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e37590>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+________ ReactTest.test_callbacks_do_not_report_already_reported_values ________
+
+self = <react_test.ReactTest testMethod=test_callbacks_do_not_report_already_reported_values>
+
+    def test_callbacks_do_not_report_already_reported_values(self):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        output.add_callback(callback1)
+>       input.value = 2
+        ^^^^^^^^^^^
+
+react_test.py:118: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e35820>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+_ ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change>
+
+    def test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+>       always_two = ComputeCell(
+            [
+                plus_one,
+                minus_one,
+            ],
+            lambda inputs: inputs[0] - inputs[1],
+        )
+
+react_test.py:247: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x108e35400>
+inputs = [<react.ComputeCell object at 0x108e37bf0>, <react.ComputeCell object at 0x108e37c20>]
+compute_function = <function ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change.<locals>.<lambda> at 0x108ebaca0>
+
+    def __init__(self, inputs, compute_function):
+        self.inputs = inputs
+        self.compute_function = compute_function
+        self.callbacks = []
+        self.value = compute_function([input.value for input in inputs])
+        for input in inputs:
+>           input._dependents.append(self)
+            ^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:23: AttributeError
+_ ReactTest.test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change>
+
+    def test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one1 = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+>       minus_one2 = ComputeCell(
+            [
+                minus_one1,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+
+react_test.py:212: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x108e3c110>
+inputs = [<react.ComputeCell object at 0x108e3c1d0>]
+compute_function = <function ReactTest.test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change.<locals>.<lambda> at 0x108ebb1a0>
+
+    def __init__(self, inputs, compute_function):
+        self.inputs = inputs
+        self.compute_function = compute_function
+        self.callbacks = []
+        self.value = compute_function([input.value for input in inputs])
+        for input in inputs:
+>           input._dependents.append(self)
+            ^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:23: AttributeError
+________ ReactTest.test_compute_cells_can_depend_on_other_compute_cells ________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_can_depend_on_other_compute_cells>
+
+    def test_compute_cells_can_depend_on_other_compute_cells(self):
+        input = InputCell(1)
+        times_two = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 2,
+        )
+        times_thirty = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] * 30,
+        )
+>       output = ComputeCell(
+            [
+                times_two,
+                times_thirty,
+            ],
+            lambda inputs: inputs[0] + inputs[1],
+        )
+
+react_test.py:71: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x108e3c950>
+inputs = [<react.ComputeCell object at 0x108e3c920>, <react.ComputeCell object at 0x108e3c8c0>]
+compute_function = <function ReactTest.test_compute_cells_can_depend_on_other_compute_cells.<locals>.<lambda> at 0x108ebb6a0>
+
+    def __init__(self, inputs, compute_function):
+        self.inputs = inputs
+        self.compute_function = compute_function
+        self.callbacks = []
+        self.value = compute_function([input.value for input in inputs])
+        for input in inputs:
+>           input._dependents.append(self)
+            ^^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:23: AttributeError
+_________________ ReactTest.test_compute_cells_fire_callbacks __________________
+
+self = <react_test.ReactTest testMethod=test_compute_cells_fire_callbacks>
+
+    def test_compute_cells_fire_callbacks(self):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        output.add_callback(callback1)
+>       input.value = 3
+        ^^^^^^^^^^^
+
+react_test.py:93: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e3d070>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+___ ReactTest.test_compute_cells_update_value_when_dependencies_are_changed ____
+
+self = <react_test.ReactTest testMethod=test_compute_cells_update_value_when_dependencies_are_changed>
+
+    def test_compute_cells_update_value_when_dependencies_are_changed(self):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+>       input.value = 3
+        ^^^^^^^^^^^
+
+react_test.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e3da30>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+_ ReactTest.test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks _
+
+self = <react_test.ReactTest testMethod=test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks>
+
+    def test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks(
+        self,
+    ):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        cb1_observer = []
+        cb2_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        callback2 = self.callback_factory(cb2_observer)
+        output.add_callback(callback1)
+        output.add_callback(callback2)
+        output.remove_callback(callback1)
+        output.remove_callback(callback1)
+        output.remove_callback(callback1)
+>       input.value = 2
+        ^^^^^^^^^^^
+
+react_test.py:192: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+react.py:13: in value
+    _propagate(self)
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+source = <react.InputCell object at 0x108e3e2d0>
+
+    def _propagate(source):
+        # Find every compute cell that transitively depends on the changed
+        # input, along with its depth (number of hops from the source).
+        affected = {}
+        queue = [(source, 0)]
+        while queue:
+            cell, depth = queue.pop(0)
+>           for dependent in cell._dependents:
+                             ^^^^^^^^^^^^^^^^
+E           AttributeError: 'ComputeCell' object has no attribute '_dependents'
+
+react.py:39: AttributeError
+=========================== short test summary info ============================
+FAILED react_test.py::ReactTest::test_callback_cells_only_fire_on_change - At...
+FAILED react_test.py::ReactTest::test_callbacks_can_be_added_and_removed - At...
+FAILED react_test.py::ReactTest::test_callbacks_can_fire_from_multiple_cells
+FAILED react_test.py::ReactTest::test_callbacks_do_not_report_already_reported_values
+FAILED react_test.py::ReactTest::test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change
+FAILED react_test.py::ReactTest::test_callbacks_should_only_be_called_once_even_if_multiple_dependencies_change
+FAILED react_test.py::ReactTest::test_compute_cells_can_depend_on_other_compute_cells
+FAILED react_test.py::ReactTest::test_compute_cells_fire_callbacks - Attribut...
+FAILED react_test.py::ReactTest::test_compute_cells_update_value_when_dependencies_are_changed
+FAILED react_test.py::ReactTest::test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks
+10 failed, 4 passed in 0.05s

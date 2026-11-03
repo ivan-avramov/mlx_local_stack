@@ -1,0 +1,164 @@
+package ledger
+
+// Refactoring log:
+//
+//  1. Replaced the hand-rolled selection sort (with its m1/m2 boolean-to-sign
+//     maps) with sort.Slice on a copy of the input entries. The input slice
+//     is still never mutated, as before.
+//  2. Removed the goroutine-per-entry fan-out over a channel; the rows are
+//     now formatted in a plain sequential loop. Output is identical, and the
+//     code is far simpler and easier to reason about.
+//  3. Split the single ~200-line function into small helpers: header, row,
+//     date, description, and amount formatting.
+//  4. Validate currency, locale, and dates up front with descriptive errors
+//     instead of errors.New(""). Behavior is unchanged: the same inputs
+//     succeed or fail as before.
+//  5. Kept the original formatting semantics exactly, including the odd ones:
+//     descriptions are truncated by bytes, while the amount column is
+//     right-aligned by runes (so the multi-byte "€" counts as one column).
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"unicode/utf8"
+)
+
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+const (
+	dateWidth        = 10
+	descriptionWidth = 25
+	changeWidth      = 13
+)
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if !validCurrency(currency) {
+		return "", errInvalidCurrency
+	}
+	if !validLocale(locale) {
+		return "", errInvalidLocale
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, entry := range sorted {
+		line, err := formatLine(locale, currency, entry)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+func validCurrency(currency string) bool {
+	return currency == "USD" || currency == "EUR"
+}
+
+func validLocale(locale string) bool {
+	return locale == "en-US" || locale == "nl-NL"
+}
+
+func header(locale string) string {
+	names := map[string][3]string{
+		"en-US": {"Date", "Description", "Change"},
+		"nl-NL": {"Datum", "Omschrijving", "Verandering"},
+	}[locale]
+	return fmt.Sprintf("%-*s | %-*s | %s\n", dateWidth, names[0], descriptionWidth, names[1], names[2])
+}
+
+func formatLine(locale, currency string, entry Entry) (string, error) {
+	date, err := formatDate(locale, entry.Date)
+	if err != nil {
+		return "", err
+	}
+	change := padRight(formatChange(locale, currency, entry.Change), changeWidth)
+	return fmt.Sprintf("%s | %s | %s\n", date, fitDescription(entry.Description), change), nil
+}
+
+func formatDate(locale, date string) (string, error) {
+	if len(date) != 10 || date[4] != '-' || date[7] != '-' {
+		return "", errInvalidDate
+	}
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year, nil
+	}
+	return month + "/" + day + "/" + year, nil
+}
+
+func fitDescription(description string) string {
+	if len(description) > descriptionWidth {
+		return description[:22] + "..."
+	}
+	return description + strings.Repeat(" ", descriptionWidth-len(description))
+}
+
+func formatChange(locale, currency string, change int) string {
+	negative := change < 0
+	if negative {
+		change = -change
+	}
+	symbol := "$"
+	if currency == "EUR" {
+		symbol = "€"
+	}
+	dollars := strconv.Itoa(change / 100)
+	cents := fmt.Sprintf("%02d", change%100)
+	if locale == "nl-NL" {
+		sign := " "
+		if negative {
+			sign = "-"
+		}
+		return fmt.Sprintf("%s %s,%s%s", symbol, groupThousands(dollars, "."), cents, sign)
+	}
+	if negative {
+		return fmt.Sprintf("(%s%s.%s)", symbol, groupThousands(dollars, ","), cents)
+	}
+	return fmt.Sprintf("%s%s.%s ", symbol, groupThousands(dollars, ","), cents)
+}
+
+// groupThousands inserts sep between each group of three digits, counting
+// from the right, e.g. "1234567" -> "1,234,567".
+func groupThousands(s string, sep string) string {
+	var parts []string
+	for len(s) > 3 {
+		parts = append(parts, s[len(s)-3:])
+		s = s[:len(s)-3]
+	}
+	parts = append(parts, s)
+	for i, j := 0, len(parts)-1; i < j; i, j = i+1, j-1 {
+		parts[i], parts[j] = parts[j], parts[i]
+	}
+	return strings.Join(parts, sep)
+}
+
+// padRight right-aligns s in a field of width runes.
+func padRight(s string, width int) string {
+	return strings.Repeat(" ", width-utf8.RuneCountInString(s)) + s
+}

@@ -1,0 +1,81 @@
+package kindergarten
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Garden holds the diagram rows and the class roster, sorted alphabetically.
+type Garden struct {
+	rows     []string
+	children []string
+}
+
+var plantNames = map[byte]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// The diagram argument starts each row with a '\n'.  This allows Go's
+// raw string literals to present diagrams in source code nicely as two
+// rows flush left, for example,
+//
+//     diagram := `
+//     VVCCGG
+//     VVCCGG`
+
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	if !strings.HasPrefix(diagram, "\n") {
+		return nil, errors.New("diagram must start with a newline")
+	}
+	rows := strings.Split(diagram[1:], "\n")
+	if len(rows) != 2 {
+		return nil, errors.New("diagram must have exactly two rows")
+	}
+	if len(rows[0]) != len(rows[1]) {
+		return nil, errors.New("diagram rows must be the same length")
+	}
+	if len(rows[0])%2 != 0 {
+		return nil, errors.New("each row must have an even number of cups")
+	}
+	for i, row := range rows {
+		for j := 0; j < len(row); j++ {
+			if _, ok := plantNames[row[j]]; !ok {
+				return nil, fmt.Errorf("invalid cup code %q in row %d at position %d", row[j], i, j)
+			}
+		}
+	}
+	seen := make(map[string]bool, len(children))
+	for _, child := range children {
+		if seen[child] {
+			return nil, fmt.Errorf("duplicate name %q", child)
+		}
+		seen[child] = true
+	}
+	if len(children) > len(rows[0])/2 {
+		return nil, errors.New("more children than available cups")
+	}
+	sorted := make([]string, len(children))
+	copy(sorted, children)
+	sort.Strings(sorted)
+	return &Garden{rows: rows, children: sorted}, nil
+}
+
+func (g *Garden) Plants(child string) ([]string, bool) {
+	for i, c := range g.children {
+		if c == child {
+			cup := 2 * i
+			return []string{
+				plantNames[g.rows[0][cup]],
+				plantNames[g.rows[0][cup+1]],
+				plantNames[g.rows[1][cup]],
+				plantNames[g.rows[1][cup+1]],
+			}, true
+		}
+	}
+	return nil, false
+}

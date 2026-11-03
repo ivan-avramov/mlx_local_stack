@@ -1,0 +1,106 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll   = errors.New("Negative roll is invalid")
+	errPinCount       = errors.New("Pin count exceeds pins on the lane")
+	errGameOver       = errors.New("Cannot roll after game is over")
+	errGameIncomplete = errors.New("Score cannot be taken until the end of the game")
+)
+
+// Game keeps track of the rolls of a bowling game.
+type Game struct {
+	rolls []int
+}
+
+// NewGame returns a new, empty Game.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// over reports whether the game has been fully played: all ten frames are
+// complete, including the bonus rolls of the tenth frame.
+func (g *Game) over() bool {
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		if i >= len(g.rolls) {
+			return false
+		}
+		if g.rolls[i] == 10 {
+			if frame == 9 {
+				return i+2 < len(g.rolls)
+			}
+			i++
+		} else {
+			if i+1 >= len(g.rolls) {
+				return false
+			}
+			if g.rolls[i]+g.rolls[i+1] == 10 && frame == 9 {
+				return i+2 < len(g.rolls)
+			}
+			i += 2
+		}
+	}
+	return true
+}
+
+// pinsLeft reports how many pins are still standing in the frame currently
+// being rolled.
+func (g *Game) pinsLeft() int {
+	i := 0
+	for i < len(g.rolls) {
+		if g.rolls[i] == 10 {
+			i++
+		} else {
+			if i+1 >= len(g.rolls) {
+				break
+			}
+			i += 2
+		}
+	}
+	if i < len(g.rolls) {
+		return 10 - g.rolls[i]
+	}
+	return 10
+}
+
+// Roll records a throw that knocked down pins pins.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errPinCount
+	}
+	if g.over() {
+		return errGameOver
+	}
+	if pins > g.pinsLeft() {
+		return errPinCount
+	}
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+// Score returns the total score of a completed game.
+func (g *Game) Score() (int, error) {
+	if !g.over() {
+		return 0, errGameIncomplete
+	}
+	total := 0
+	for i, frame := 0, 0; frame < 10; {
+		if g.rolls[i] == 10 {
+			total += 10 + g.rolls[i+1] + g.rolls[i+2]
+			i++
+		} else if g.rolls[i]+g.rolls[i+1] == 10 {
+			total += 10 + g.rolls[i+2]
+			i += 2
+		} else {
+			total += g.rolls[i] + g.rolls[i+1]
+			i += 2
+		}
+		frame++
+	}
+	return total, nil
+}

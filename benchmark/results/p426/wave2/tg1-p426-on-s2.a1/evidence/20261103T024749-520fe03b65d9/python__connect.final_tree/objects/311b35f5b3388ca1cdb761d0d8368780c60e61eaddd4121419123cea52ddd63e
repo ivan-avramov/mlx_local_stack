@@ -1,0 +1,43 @@
+class ConnectGame:
+    def __init__(self, board):
+        # Each row is indented by one space per row to depict the parallelogram.
+        # Strip the indentation and split into individual cells.
+        self.board = [line.strip().split() for line in board.strip().splitlines()]
+        self.height = len(self.board)
+        self.width = len(self.board[0]) if self.height else 0
+
+    def get_winner(self):
+        if self._connects("O"):
+            return "O"
+        if self._connects("X"):
+            return "X"
+        return ""
+
+    def _connects(self, player):
+        # O plays top -> bottom, X plays left -> right.
+        if player == "O":
+            start = [(0, c) for c in range(self.width) if self.board[0][c] == player]
+            goal = lambda r, c: r == self.height - 1
+        else:
+            start = [(r, 0) for r in range(self.height) if self.board[r][0] == player]
+            goal = lambda r, c: c == self.width - 1
+
+        seen = set()
+        stack = list(start)
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in seen:
+                continue
+            seen.add((r, c))
+            if goal(r, c):
+                return True
+            for nr, nc in self._neighbors(r, c):
+                if self.board[nr][nc] == player and (nr, nc) not in seen:
+                    stack.append((nr, nc))
+        return False
+
+    def _neighbors(self, r, c):
+        for dr, dc in ((0, -1), (0, 1), (-1, 0), (-1, 1), (1, -1), (1, 0)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < self.height and 0 <= nc < self.width:
+                yield nr, nc

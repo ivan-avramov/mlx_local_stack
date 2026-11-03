@@ -1,0 +1,38 @@
+package bookstore
+
+import "sort"
+
+// Cost returns the minimum total price, in cents, of the books in the basket,
+// applying the largest possible discount. Each book is one of the five titles
+// of the series, identified by the integers 1 through 5.
+func Cost(books []int) int {
+	var counts [5]int
+	for _, b := range books {
+		counts[b-1]++
+	}
+	// Work with the titles ordered from most to least copies so that each
+	// "round" can take one copy of every title that still has any left.
+	sort.Sort(sort.Reverse(sort.IntSlice(counts[:])))
+
+	// Group the books into rounds of one copy per title. counts[i] is the
+	// number of titles that have more than i copies, so the differences give
+	// how many rounds of each size the natural grouping produces.
+	g5 := counts[4]
+	g4 := counts[3] - counts[4]
+	g3 := counts[2] - counts[3]
+	g2 := counts[1] - counts[2]
+	g1 := counts[0] - counts[1]
+
+	// A group of five plus a group of three costs 3000+2160 = 5160, while two
+	// groups of four cost 2560+2560 = 5120, so convert as many (five, three)
+	// pairs into two fours as possible.
+	k := g5
+	if g3 < k {
+		k = g3
+	}
+	g5 -= k
+	g3 -= k
+	g4 += 2 * k
+
+	return g5*3000 + g4*2560 + g3*2160 + g2*1520 + g1*800
+}

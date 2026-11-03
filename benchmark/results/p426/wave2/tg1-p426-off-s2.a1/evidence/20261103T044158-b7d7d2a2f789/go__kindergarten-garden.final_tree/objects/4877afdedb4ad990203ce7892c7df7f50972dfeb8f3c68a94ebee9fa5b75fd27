@@ -1,0 +1,85 @@
+package kindergarten
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Garden holds a parsed garden diagram and the plants assigned to each child.
+type Garden struct {
+	plants map[string][]string
+}
+
+var plantNames = map[rune]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// NewGarden parses a diagram and assigns cups to the children.
+//
+// The diagram argument starts each row with a '\n'.  This allows Go's
+// raw string literals to present diagrams in source code nicely as two
+// rows flush left, for example,
+//
+//     diagram := `
+//     VVCCGG
+//     VVCCGG`
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	if !strings.HasPrefix(diagram, "\n") {
+		return nil, errors.New("diagram must start with a newline")
+	}
+	rows := strings.Split(diagram[1:], "\n")
+	if len(rows) != 2 {
+		return nil, errors.New("diagram must have exactly two rows")
+	}
+	if len(rows[0]) != len(rows[1]) {
+		return nil, errors.New("diagram rows must be the same length")
+	}
+	if len(rows[0])%2 != 0 {
+		return nil, errors.New("each row must have an even number of cups")
+	}
+	for _, row := range rows {
+		for _, r := range row {
+			if _, ok := plantNames[r]; !ok {
+				return nil, fmt.Errorf("invalid cup code %q", r)
+			}
+		}
+	}
+
+	// Sort a copy so the caller's slice is not modified.
+	sorted := append([]string{}, children...)
+	sort.Strings(sorted)
+	seen := make(map[string]bool, len(sorted))
+	for _, name := range sorted {
+		if name == "" {
+			return nil, errors.New("child name must not be empty")
+		}
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate child name %q", name)
+		}
+		seen[name] = true
+	}
+
+	g := &Garden{plants: make(map[string][]string, len(sorted))}
+	for i, name := range sorted {
+		g.plants[name] = []string{
+			plantNames[rune(rows[0][2*i])],
+			plantNames[rune(rows[0][2*i+1])],
+			plantNames[rune(rows[1][2*i])],
+			plantNames[rune(rows[1][2*i+1])],
+		}
+	}
+	return g, nil
+}
+
+// Plants returns the four plants assigned to the given child, in the
+// order: first row left, first row right, second row left, second row right.
+// ok is false if the child is not in the garden.
+func (g *Garden) Plants(child string) ([]string, bool) {
+	plants, ok := g.plants[child]
+	return plants, ok
+}

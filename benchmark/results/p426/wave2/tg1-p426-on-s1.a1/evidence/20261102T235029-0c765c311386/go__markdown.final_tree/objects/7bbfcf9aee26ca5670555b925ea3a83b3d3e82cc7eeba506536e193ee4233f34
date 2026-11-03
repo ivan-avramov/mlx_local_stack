@@ -1,0 +1,101 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+// The original implementation scanned the input one character at a time and
+// threaded several pieces of state (header level, list depth, "list opened",
+// "header emitted") through a single loop, which made it hard to follow.
+//
+// The rewrite parses the input line by line instead. Each line is one of
+// three things: a header (1-6 leading '#' followed by a space), a list item
+// (leading "* "), or plain paragraph text. Consecutive list items are grouped
+// into a single <ul>, and consecutive paragraph lines into a single <p>.
+// Inline emphasis (__bold__ and _italic_) is applied per line.
+func Render(markdown string) string {
+	var html strings.Builder
+
+	inList := false
+	inParagraph := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if level, ok := headerLevel(line); ok {
+			closeList(&html, &inList)
+			closeParagraph(&html, &inParagraph)
+			html.WriteString(fmt.Sprintf("<h%d>%s</h%d>", level, applyEmphasis(line[level+1:]), level))
+			continue
+		}
+		if strings.HasPrefix(line, "* ") {
+			closeParagraph(&html, &inParagraph)
+			if inList {
+				html.WriteString("</li>")
+			} else {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + applyEmphasis(line[2:]))
+			continue
+		}
+		closeList(&html, &inList)
+		if inParagraph {
+			html.WriteString(" ")
+		} else {
+			html.WriteString("<p>")
+			inParagraph = true
+		}
+		html.WriteString(applyEmphasis(line))
+	}
+
+	closeList(&html, &inList)
+	closeParagraph(&html, &inParagraph)
+
+	return html.String()
+}
+
+// headerLevel reports whether line is a header line and returns its level.
+// A header is 1 to 6 leading '#' characters followed by a space; seven or
+// more '#' characters are ordinary paragraph text.
+func headerLevel(line string) (int, bool) {
+	level := 0
+	for _, r := range line {
+		if r != '#' {
+			break
+		}
+		level++
+	}
+	if level == 0 || level > 6 || len(line) <= level || line[level] != ' ' {
+		return 0, false
+	}
+	return level, true
+}
+
+// applyEmphasis converts the first __bold__ and _italic_ markers in text to
+// their HTML equivalents, matching the original implementation's behavior.
+func applyEmphasis(text string) string {
+	text = strings.Replace(text, "__", "<strong>", 1)
+	text = strings.Replace(text, "__", "</strong>", 1)
+	text = strings.Replace(text, "_", "<em>", 1)
+	text = strings.Replace(text, "_", "</em>", 1)
+	return text
+}
+
+// closeList ends the open list, if any.
+func closeList(html *strings.Builder, inList *bool) {
+	if *inList {
+		html.WriteString("</li></ul>")
+		*inList = false
+	}
+}
+
+// closeParagraph ends the open paragraph, if any.
+func closeParagraph(html *strings.Builder, inParagraph *bool) {
+	if *inParagraph {
+		html.WriteString("</p>")
+		*inParagraph = false
+	}
+}

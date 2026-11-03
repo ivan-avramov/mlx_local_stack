@@ -1,0 +1,40 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode normalizes the plaintext, arranges it into a rectangle as square as
+// possible, and reads it down the columns, left to right.
+func Encode(pt string) string {
+	var b strings.Builder
+	for _, r := range strings.ToLower(pt) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			b.WriteRune(r)
+		}
+	}
+	msg := []rune(b.String())
+	n := len(msg)
+	if n == 0 {
+		return ""
+	}
+
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := (n + c - 1) / c
+
+	chunks := make([]string, c)
+	for j := 0; j < c; j++ {
+		var col strings.Builder
+		for i := 0; i < r; i++ {
+			if i*c+j < n {
+				col.WriteRune(msg[i*c+j])
+			} else {
+				col.WriteRune(' ')
+			}
+		}
+		chunks[j] = col.String()
+	}
+	return strings.Join(chunks, " ")
+}

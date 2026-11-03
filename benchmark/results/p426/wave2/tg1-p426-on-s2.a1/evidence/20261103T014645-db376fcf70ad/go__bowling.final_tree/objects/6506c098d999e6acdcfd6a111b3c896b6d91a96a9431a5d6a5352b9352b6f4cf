@@ -1,0 +1,93 @@
+package bowling
+
+import "errors"
+
+// Game keeps track of a bowling game, recording each roll and the current
+// frame state so that the total score can be computed once the game is over.
+type Game struct {
+	rolls        []int // every roll, in order
+	frame        int   // current frame index, 0-9
+	throwInFrame int   // throws made in the current frame (frames 0-8)
+	pinsLeft     int   // pins still standing in the current set
+	over         bool  // true once the game is complete
+	tenthThrow   int   // number of throws made in the 10th frame
+}
+
+// NewGame returns a Game ready to accept rolls.
+func NewGame() *Game {
+	return &Game{pinsLeft: 10}
+}
+
+// Roll records a throw of the given number of pins, validating it against the
+// rules of bowling. It returns an error if the roll is invalid or the game is
+// already over.
+func (g *Game) Roll(pins int) error {
+	if g.over {
+		return errors.New("cannot roll after game is over")
+	}
+	if pins < 0 || pins > 10 {
+		return errors.New("roll must knock down between 0 and 10 pins")
+	}
+	if pins > g.pinsLeft {
+		return errors.New("pin count exceeds pins on the lane")
+	}
+
+	g.rolls = append(g.rolls, pins)
+	g.pinsLeft -= pins
+
+	if g.frame < 9 {
+		g.throwInFrame++
+		if g.pinsLeft == 0 || g.throwInFrame == 2 {
+			g.frame++
+			g.throwInFrame = 0
+			g.pinsLeft = 10
+		}
+		return nil
+	}
+
+	// The 10th frame may award one or two bonus throws.
+	g.tenthThrow++
+	switch {
+	case g.tenthThrow == 1:
+		if g.pinsLeft == 0 {
+			g.pinsLeft = 10 // strike: new set of pins
+		}
+	case g.tenthThrow == 2:
+		first := g.rolls[len(g.rolls)-2]
+		if first == 10 || first+g.rolls[len(g.rolls)-1] == 10 {
+			if g.pinsLeft == 0 {
+				g.pinsLeft = 10 // strike or spare: new set for the bonus throw
+			}
+		} else {
+			g.over = true // an open frame ends the game
+		}
+	default: // g.tenthThrow >= 3
+		g.over = true
+	}
+	return nil
+}
+
+// Score returns the total score for a completed game, or an error if the game
+// is not yet over.
+func (g *Game) Score() (int, error) {
+	if !g.over {
+		return 0, errors.New("score cannot be taken until the end of the game")
+	}
+
+	score := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case g.rolls[i] == 10:
+			score += 10 + g.rolls[i+1] + g.rolls[i+2]
+			i++
+		case g.rolls[i]+g.rolls[i+1] == 10:
+			score += 10 + g.rolls[i+2]
+			i += 2
+		default:
+			score += g.rolls[i] + g.rolls[i+1]
+			i += 2
+		}
+	}
+	return score, nil
+}

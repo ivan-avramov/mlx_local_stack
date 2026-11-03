@@ -1,0 +1,146 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form
+// "WORD1 + WORD2 + ... + WORDn == RESULT", where each letter stands for a
+// distinct digit and no multi-digit word may start with zero. It returns a
+// map from each letter to its digit, or an error if the puzzle is invalid
+// or has no solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, errors.New("puzzle must contain exactly one '=='")
+	}
+
+	addends := strings.Split(eq[0], "+")
+	for i := range addends {
+		addends[i] = strings.TrimSpace(addends[i])
+	}
+	if len(addends) == 0 || addends[0] == "" {
+		return nil, errors.New("puzzle has no addends")
+	}
+	sum := strings.TrimSpace(eq[1])
+	if sum == "" {
+		return nil, errors.New("puzzle has no result word")
+	}
+
+	words := append(addends, sum)
+
+	// Collect the distinct letters in order of first appearance.
+	var letters []rune
+	seen := map[rune]bool{}
+	for _, w := range words {
+		for _, r := range w {
+			if !seen[r] {
+				seen[r] = true
+				letters = append(letters, r)
+			}
+		}
+	}
+	if len(letters) > 10 {
+		return nil, errors.New("puzzle has more than ten distinct letters")
+	}
+
+	// Letters that lead a multi-digit word may not be zero.
+	leading := map[rune]bool{}
+	for _, w := range words {
+		if len(w) > 1 {
+			leading[rune(w[0])] = true
+		}
+	}
+
+	maxLen := 0
+	for _, w := range words {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+
+	assign := map[rune]int{}
+	used := [10]bool{}
+
+	// solveCol assigns digits to unassigned[i:] in the current column.
+	var solveCol func(col, i int, unassigned []rune, carry int) bool
+	// solveNext collects the unassigned letters of a column and dispatches to solveCol.
+	var solveNext func(col, carry int) bool
+
+	solveCol = func(col, i int, unassigned []rune, carry int) bool {
+		if i == len(unassigned) {
+			// Every letter in this column is assigned: check the column sum.
+			total := carry
+			for _, w := range addends {
+				if col < len(w) {
+					total += assign[rune(w[len(w)-1-col])]
+				}
+			}
+			if col < len(sum) {
+				if assign[rune(sum[len(sum)-1-col])] != total%10 {
+					return false
+				}
+			} else if total%10 != 0 {
+				return false
+			}
+			if col+1 >= maxLen {
+				// No more columns: any remaining carry is invalid.
+				return total/10 == 0
+			}
+			return solveNext(col+1, total/10)
+		}
+
+		l := unassigned[i]
+		for d := 0; d <= 9; d++ {
+			if used[d] {
+				continue
+			}
+			if leading[l] && d == 0 {
+				continue
+			}
+			used[d] = true
+			assign[l] = d
+			if solveCol(col, i+1, unassigned, carry) {
+				return true
+			}
+			used[d] = false
+			delete(assign, l)
+		}
+		return false
+	}
+
+	solveNext = func(col, carry int) bool {
+		// Collect the unassigned letters of this column, trying the result
+		// word's letter first so mismatches are detected as early as possible.
+		var unassigned []rune
+		added := map[rune]bool{}
+		if col < len(sum) {
+			l := rune(sum[len(sum)-1-col])
+			if _, ok := assign[l]; !ok {
+				unassigned = append(unassigned, l)
+				added[l] = true
+			}
+		}
+		for _, w := range addends {
+			if col < len(w) {
+				l := rune(w[len(w)-1-col])
+				if _, ok := assign[l]; !ok && !added[l] {
+					unassigned = append(unassigned, l)
+					added[l] = true
+				}
+			}
+		}
+		return solveCol(col, 0, unassigned, carry)
+	}
+
+	if !solveNext(0, 0) {
+		return nil, errors.New("puzzle has no solution")
+	}
+
+	out := make(map[string]int, len(letters))
+	for _, l := range letters {
+		out[string(l)] = assign[l]
+	}
+	return out, nil
+}

@@ -1,0 +1,217 @@
+package forth
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+type stack []int
+
+var (
+	errEmptyStack   = errors.New("empty stack")
+	errOneValue     = errors.New("only one value on the stack")
+	errDivideByZero = errors.New("divide by zero")
+	errIllegal      = errors.New("illegal operation")
+)
+
+func (s *stack) push(v ...int) {
+	*s = append(*s, v...)
+}
+
+func (s *stack) pop() (int, error) {
+	if len(*s) == 0 {
+		return 0, errEmptyStack
+	}
+	v := (*s)[len(*s)-1]
+	*s = (*s)[:len(*s)-1]
+	return v, nil
+}
+
+func (s *stack) pop2() (int, int, error) {
+	if len(*s) < 2 {
+		return 0, 0, errOneValue
+	}
+	b := (*s)[len(*s)-2]
+	a := (*s)[len(*s)-1]
+	*s = (*s)[:len(*s)-2]
+	return a, b, nil
+}
+
+// parseNumber reports whether tok is an integer literal: an optional
+// leading '-' followed by one or more ASCII digits.
+func parseNumber(tok string) (int, bool) {
+	start := 0
+	if tok[0] == '-' {
+		start = 1
+	}
+	if start >= len(tok) {
+		return 0, false
+	}
+	for i := start; i < len(tok); i++ {
+		if tok[i] < '0' || tok[i] > '9' {
+			return 0, false
+		}
+	}
+	n, err := strconv.Atoi(tok)
+	if err != nil {
+		return 0, false
+	}
+	return n, true
+}
+
+// Forth evaluates the given lines of Forth input and returns the
+// remaining values on the stack.
+func Forth(input []string) ([]int, error) {
+	st := &stack{}
+
+	dict := map[string]func(*stack) error{
+		"+": func(s *stack) error {
+			a, b, err := s.pop2()
+			if err != nil {
+				return err
+			}
+			s.push(a + b)
+			return nil
+		},
+		"-": func(s *stack) error {
+			a, b, err := s.pop2()
+			if err != nil {
+				return err
+			}
+			s.push(b - a)
+			return nil
+		},
+		"*": func(s *stack) error {
+			a, b, err := s.pop2()
+			if err != nil {
+				return err
+			}
+			s.push(a * b)
+			return nil
+		},
+		"/": func(s *stack) error {
+			a, b, err := s.pop2()
+			if err != nil {
+				return err
+			}
+			if a == 0 {
+				return errDivideByZero
+			}
+			s.push(b / a)
+			return nil
+		},
+		"dup": func(s *stack) error {
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a, a)
+			return nil
+		},
+		"drop": func(s *stack) error {
+			_, err := s.pop()
+			return err
+		},
+		"swap": func(s *stack) error {
+			a, b, err := s.pop2()
+			if err != nil {
+				return err
+			}
+			s.push(a, b)
+			return nil
+		},
+		"over": func(s *stack) error {
+			if len(*s) < 2 {
+				return errOneValue
+			}
+			s.push((*s)[len(*s)-2])
+			return nil
+		},
+	}
+
+	// compile resolves a definition body against the dictionary as it
+	// currently stands, so a word captures the meanings of the other
+	// words it uses at the time it is defined.
+	compile := func(body []string) (func(*stack) error, error) {
+		var acts []func(*stack) error
+		for _, tok := range body {
+			if n, ok := parseNumber(tok); ok {
+				n := n
+				acts = append(acts, func(s *stack) error {
+					s.push(n)
+					return nil
+				})
+			} else if w, ok := dict[tok]; ok {
+				acts = append(acts, w)
+			} else {
+				return nil, fmt.Errorf("undefined operation %q", tok)
+			}
+		}
+		return func(s *stack) error {
+			for _, a := range acts {
+				if err := a(s); err != nil {
+					return err
+				}
+			}
+			return nil
+		}, nil
+	}
+
+	var (
+		defining bool
+		name     string
+		body     []string
+	)
+
+	for _, line := range input {
+		for _, tok := range strings.Fields(line) {
+			tok = strings.ToLower(tok)
+
+			if defining {
+				switch {
+				case name == "":
+					if _, isNum := parseNumber(tok); isNum {
+						return nil, errIllegal
+					}
+					name = tok
+				case tok == ";":
+					w, err := compile(body)
+					if err != nil {
+						return nil, err
+					}
+					dict[name] = w
+					defining = false
+				default:
+					body = append(body, tok)
+				}
+				continue
+			}
+
+			if tok == ":" {
+				defining = true
+				name = ""
+				body = nil
+				continue
+			}
+			if n, ok := parseNumber(tok); ok {
+				st.push(n)
+				continue
+			}
+			w, ok := dict[tok]
+			if !ok {
+				return nil, fmt.Errorf("undefined operation %q", tok)
+			}
+			if err := w(st); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	if defining {
+		return nil, errors.New("unterminated definition")
+	}
+
+	return *st, nil
+}

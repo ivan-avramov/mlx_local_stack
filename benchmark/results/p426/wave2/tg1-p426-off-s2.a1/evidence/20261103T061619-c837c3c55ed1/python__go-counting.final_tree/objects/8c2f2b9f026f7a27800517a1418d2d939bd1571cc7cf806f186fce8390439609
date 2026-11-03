@@ -1,0 +1,86 @@
+WHITE = "W"
+BLACK = "B"
+NONE = ""
+
+
+class Board:
+    """Count territories of each player in a Go game
+
+    Args:
+        board (list[str]): A two-dimensional Go board
+    """
+
+    def __init__(self, board):
+        self.board = board
+
+    def territory(self, x, y):
+        """Find the owner and the territories given a coordinate on
+           the board
+
+        Args:
+            x (int): Column on the board
+            y (int): Row on the board
+
+        Returns:
+            (str, set): A tuple, the first element being the owner
+                        of that area.  One of "W", "B", "".  The
+                        second being a set of coordinates, representing
+                        the owner's territories.
+        """
+        if not self._is_valid(x, y):
+            raise ValueError("Invalid coordinate")
+
+        if self.board[y][x] != " ":
+            return NONE, set()
+
+        region, owners = self._flood_fill(x, y)
+        if len(owners) == 1:
+            return owners.pop(), region
+        return NONE, region
+
+    def territories(self):
+        """Find the owners and the territories of the whole board
+
+        Args:
+            none
+
+        Returns:
+            dict(str, set): A dictionary whose key being the owner
+                        , i.e. "W", "B", "".  The value being a set
+                        of coordinates owned by the owner.
+        """
+        territories = {WHITE: set(), BLACK: set(), NONE: set()}
+        for y, row in enumerate(self.board):
+            for x, cell in enumerate(row):
+                if cell != " ":
+                    continue
+                owner, region = self.territory(x, y)
+                territories[owner] |= region
+        return territories
+
+    def _is_valid(self, x, y):
+        return (
+            0 <= y < len(self.board)
+            and 0 <= x < len(self.board[y])
+        )
+
+    def _flood_fill(self, x, y):
+        """Collect the connected empty region containing (x, y) and the
+        set of stone colors bordering it."""
+        region = {(x, y)}
+        owners = set()
+        stack = [(x, y)]
+        while stack:
+            cx, cy = stack.pop()
+            for nx, ny in ((cx + 1, cy), (cx - 1, cy),
+                           (cx, cy + 1), (cx, cy - 1)):
+                if not self._is_valid(nx, ny):
+                    continue
+                cell = self.board[ny][nx]
+                if cell == " ":
+                    if (nx, ny) not in region:
+                        region.add((nx, ny))
+                        stack.append((nx, ny))
+                else:
+                    owners.add(cell)
+        return region, owners

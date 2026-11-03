@@ -1,0 +1,108 @@
+package connect
+
+import "errors"
+
+// ResultOf computes the winner of a game of Hex / Polygon given a board.
+//
+// Each element of lines is one row of the parallelogram board. A cell is one of
+// three characters: '.' for an empty field, 'X' for player X, and 'O' for player
+// O. The rows are the same length; the parallelogram is represented as a plain
+// rectangle because each row is shifted uniformly, which does not affect
+// adjacency.
+//
+// Player X plays from left to right: X wins if its stones connect the left side
+// of the board to the right side. Player O plays from top to bottom: O wins if
+// its stones connect the top side to the bottom side. The result is "X", "O", or
+// "" when neither player has made a connection.
+func ResultOf(lines []string) (string, error) {
+	rows := len(lines)
+	if rows == 0 {
+		return "", nil
+	}
+
+	cols := len(lines[0])
+	grid := make([][]byte, rows)
+	for r, line := range lines {
+		if len(line) != cols {
+			return "", errors.New("board rows have inconsistent lengths")
+		}
+		grid[r] = []byte(line)
+	}
+
+	if connected(grid, 'X',
+		func(r, c int) bool { return c == 0 }, // left side
+		func(r, c int) bool { return c == cols-1 }, // right side
+	) {
+		return "X", nil
+	}
+
+	if connected(grid, 'O',
+		func(r, c int) bool { return r == 0 }, // top side
+		func(r, c int) bool { return r == rows-1 }, // bottom side
+	) {
+		return "O", nil
+	}
+
+	return "", nil
+}
+
+// connected reports whether player's stones form a path from the cells matching
+// startEdge to the cells matching endEdge. It performs a flood fill starting
+// from every one of player's cells on the start edge.
+func connected(grid [][]byte, player byte, startEdge, endEdge func(r, c int) bool) bool {
+	rows := len(grid)
+	cols := len(grid[0])
+
+	visited := make([][]bool, rows)
+	for r := range visited {
+		visited[r] = make([]bool, cols)
+	}
+
+	stack := [][2]int{}
+	for r := 0; r < rows; r++ {
+		for c := 0; c < cols; c++ {
+			if grid[r][c] == player && startEdge(r, c) {
+				visited[r][c] = true
+				stack = append(stack, [2]int{r, c})
+			}
+		}
+	}
+
+	for len(stack) > 0 {
+		cell := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		r, c := cell[0], cell[1]
+
+		if endEdge(r, c) {
+			return true
+		}
+
+		for _, n := range neighbors(r, c) {
+			nr, nc := n[0], n[1]
+			if nr < 0 || nr >= rows || nc < 0 || nc >= cols {
+				continue
+			}
+			if visited[nr][nc] || grid[nr][nc] != player {
+				continue
+			}
+			visited[nr][nc] = true
+			stack = append(stack, [2]int{nr, nc})
+		}
+	}
+
+	return false
+}
+
+// neighbors returns the six cells adjacent to (r, c) on the parallelogram board.
+// Each row is indented by one cell relative to the row above it, so stepping to
+// the next row shifts the column index by one to stay under the same field.
+func neighbors(r, c int) [6][2]int {
+	return [6][2]int{
+		{r, c - 1},   // left
+		{r, c + 1},   // right
+		{r - 1, c},   // upper-left
+		{r - 1, c + 1}, // upper
+		{r + 1, c - 1}, // lower
+		{r + 1, c},   // lower-right
+	}
+}

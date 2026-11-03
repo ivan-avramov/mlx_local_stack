@@ -1,0 +1,117 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form "WORD + WORD == WORD".
+// It returns a mapping from each letter to a distinct digit such that the
+// equation holds, or an error if no solution exists.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, " == ")
+	if len(eq) != 2 {
+		return nil, errors.New("invalid puzzle")
+	}
+	addends := strings.Split(eq[0], " + ")
+	result := eq[1]
+
+	// Letters that start a multi-digit word may not be zero.
+	leading := make(map[rune]bool)
+	for _, w := range append(addends, result) {
+		if len(w) > 1 {
+			leading[rune(w[0])] = true
+		}
+	}
+
+	assignment := make(map[rune]int)
+	used := make(map[int]bool)
+
+	maxLen := len(result)
+	for _, w := range addends {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+
+	// Solve column by column, from least significant to most, using the
+	// running carry to prune the search.
+	var solveCol func(col, carry int) bool
+	solveCol = func(col, carry int) bool {
+		if col == maxLen {
+			return carry == 0
+		}
+
+		addLetters := make([]rune, 0, len(addends))
+		for _, w := range addends {
+			if col < len(w) {
+				addLetters = append(addLetters, rune(w[len(w)-1-col]))
+			}
+		}
+		var resLetter rune
+		if col < len(result) {
+			resLetter = rune(result[len(result)-1-col])
+		}
+
+		// Letters in this column that still need a digit.
+		var unassigned []rune
+		seen := make(map[rune]bool)
+		for _, r := range append(addLetters, resLetter) {
+			if r == 0 {
+				continue
+			}
+			if _, ok := assignment[r]; !ok && !seen[r] {
+				seen[r] = true
+				unassigned = append(unassigned, r)
+			}
+		}
+
+		var assign func(i int) bool
+		assign = func(i int) bool {
+			if i == len(unassigned) {
+				// All letters in the column are assigned: check the
+				// column equation and propagate the carry.
+				sum := carry
+				for _, r := range addLetters {
+					sum += assignment[r]
+				}
+				if resLetter != 0 {
+					if sum%10 != assignment[resLetter] {
+						return false
+					}
+				} else if sum%10 != 0 {
+					return false
+				}
+				return solveCol(col+1, sum/10)
+			}
+			r := unassigned[i]
+			for d := 0; d <= 9; d++ {
+				if used[d] {
+					continue
+				}
+				if leading[r] && d == 0 {
+					continue
+				}
+				assignment[r] = d
+				used[d] = true
+				if assign(i + 1) {
+					return true
+				}
+				delete(assignment, r)
+				used[d] = false
+			}
+			return false
+		}
+		return assign(0)
+	}
+
+	if !solveCol(0, 0) {
+		return nil, errors.New("no solution")
+	}
+
+	out := make(map[string]int, len(assignment))
+	for r, d := range assignment {
+		out[string(r)] = d
+	}
+	return out, nil
+}

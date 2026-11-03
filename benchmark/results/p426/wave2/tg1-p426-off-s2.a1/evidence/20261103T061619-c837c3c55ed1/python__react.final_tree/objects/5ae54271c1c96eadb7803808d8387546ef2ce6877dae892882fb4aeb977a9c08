@@ -1,0 +1,52 @@
+class InputCell:
+    def __init__(self, initial_value):
+        self._value = initial_value
+        self._dependents = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._value = new_value
+        _propagate(self)
+
+
+class ComputeCell:
+    def __init__(self, inputs, compute_function):
+        self.inputs = inputs
+        self.compute_function = compute_function
+        self.callbacks = []
+        self._dependents = []
+        self.value = compute_function([input.value for input in inputs])
+        for input in inputs:
+            input._dependents.append(self)
+
+    def add_callback(self, callback):
+        self.callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        self.callbacks = [cb for cb in self.callbacks if cb is not callback]
+
+
+def _propagate(source):
+    # Find every compute cell that transitively depends on the changed
+    # input, along with its depth (number of hops from the source).
+    affected = {}
+    queue = [(source, 0)]
+    while queue:
+        cell, depth = queue.pop(0)
+        for dependent in cell._dependents:
+            if depth + 1 > affected.get(dependent, -1):
+                affected[dependent] = depth + 1
+                queue.append((dependent, depth + 1))
+
+    # Recompute in topological order (dependencies first), and fire
+    # callbacks only when the value changed from the previous stable state.
+    for cell in sorted(affected, key=affected.get):
+        old_value = cell.value
+        cell.value = cell.compute_function([i.value for i in cell.inputs])
+        if cell.value != old_value:
+            for callback in cell.callbacks:
+                callback(cell.value)

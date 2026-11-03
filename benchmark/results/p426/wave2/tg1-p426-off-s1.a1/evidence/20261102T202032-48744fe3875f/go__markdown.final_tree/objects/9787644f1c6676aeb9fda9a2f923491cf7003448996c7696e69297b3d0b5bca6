@@ -1,0 +1,111 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// The document is processed line by line. Each line is exactly one of:
+//
+//   - a header:    1-6 '#' characters followed by a space, rendered as
+//     <hN>...</hN>. Seven or more '#' characters are plain text.
+//   - a list item: "* " followed by the item text, rendered as
+//     <li>...</li> inside a <ul> that spans consecutive list lines.
+//   - plain text:  accumulated into a single <p> paragraph.
+//
+// This is a rewrite of the original implementation, which scanned the
+// document one character at a time and tracked header and list state
+// with several intertwined flags (header, he, list, listOpened). The
+// line-based structure below keeps all state in two variables (inList
+// and the paragraph buffer) and handles each markdown construct in
+// exactly one place.
+func Render(markdown string) string {
+	markdown = applyEmphasis(markdown)
+
+	var html strings.Builder
+	var paragraph strings.Builder
+	inList := false
+
+	// flushParagraph closes the current paragraph, if any.
+	flushParagraph := func() {
+		if paragraph.Len() > 0 {
+			html.WriteString("<p>" + paragraph.String() + "</p>")
+			paragraph.Reset()
+		}
+	}
+
+	// closeList closes the current list, if any.
+	closeList := func() {
+		if inList {
+			html.WriteString("</ul>")
+			inList = false
+		}
+	}
+
+	for _, line := range strings.Split(markdown, "\n") {
+		level := headerLevel(line)
+		switch {
+		case isListLine(line):
+			flushParagraph()
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + strings.TrimPrefix(line, "* ") + "</li>")
+
+		case level > 0:
+			flushParagraph()
+			closeList()
+			// The space after the '#' run is part of the syntax, so
+			// the header text starts right after it.
+			html.WriteString(fmt.Sprintf("<h%d>%s</h%d>", level, line[level+1:], level))
+
+		default:
+			closeList()
+			if paragraph.Len() > 0 {
+				paragraph.WriteString("\n")
+			}
+			paragraph.WriteString(line)
+		}
+	}
+
+	flushParagraph()
+	closeList()
+
+	return html.String()
+}
+
+// applyEmphasis translates the first pair of double underscores to
+// <strong> and the first pair of single underscores to <em>. Like the
+// original implementation, emphasis is applied to the whole document
+// before line parsing, so underscores inside headers and list items
+// are translated too.
+func applyEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// isListLine reports whether line starts a list item. Only a '*' at the
+// very start of a line is significant; a '*' anywhere else is plain text.
+func isListLine(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}
+
+// headerLevel returns the header level (1-6) if line is a header,
+// otherwise 0. A header is 1-6 '#' characters followed by a space;
+// seven or more '#' characters are plain text.
+func headerLevel(line string) int {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 || level >= len(line) || line[level] != ' ' {
+		return 0
+	}
+	return level
+}

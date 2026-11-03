@@ -1,0 +1,45 @@
+package piglatin
+
+import "strings"
+
+// Sentence translates an English sentence into Pig Latin.
+func Sentence(sentence string) string {
+	words := strings.Fields(sentence)
+	for i, word := range words {
+		words[i] = translate(word)
+	}
+	return strings.Join(words, " ")
+}
+
+func isVowel(c byte) bool {
+	switch c {
+	case 'a', 'e', 'i', 'o', 'u':
+		return true
+	}
+	return false
+}
+
+func translate(word string) string {
+	// Rule 1: words that begin with a vowel, "xr", or "yt" just get "ay" appended.
+	if len(word) > 0 && (isVowel(word[0]) || strings.HasPrefix(word, "xr") || strings.HasPrefix(word, "yt")) {
+		return word + "ay"
+	}
+
+	// Rules 2-4: find where the leading consonant cluster ends.
+	n := len(word)
+	split := n
+	for i := 0; i < n; i++ {
+		c := word[i]
+		if c == 'q' && i+1 < n && word[i+1] == 'u' {
+			// Rule 3: "qu" is moved along with the consonants preceding it.
+			split = i + 2
+			break
+		}
+		if isVowel(c) || (c == 'y' && i > 0) {
+			// Rule 2 (vowel) or Rule 4 ("y" after consonants).
+			split = i
+			break
+		}
+	}
+	return word[split:] + word[:split] + "ay"
+}

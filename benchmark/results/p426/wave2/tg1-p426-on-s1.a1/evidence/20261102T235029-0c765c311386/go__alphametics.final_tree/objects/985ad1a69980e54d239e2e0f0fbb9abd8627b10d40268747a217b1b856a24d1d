@@ -1,0 +1,153 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// Solve finds an assignment of distinct digits to the letters of an
+// alphametics puzzle such that the equation holds. It returns the
+// letter-to-digit mapping, or an error if the puzzle has no solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.SplitN(puzzle, "==", 2)
+	if len(eq) != 2 {
+		return nil, errors.New("puzzle must contain exactly one '=='")
+	}
+	addends := strings.Split(eq[0], "+")
+	for i := range addends {
+		addends[i] = strings.TrimSpace(addends[i])
+	}
+	result := strings.TrimSpace(eq[1])
+
+	// Collect the distinct letters and which of them lead a multi-digit
+	// word and so may not be zero.
+	var letters []rune
+	seen := make(map[rune]bool)
+	leading := make(map[rune]bool)
+	for _, w := range append(append([]string{}, addends...), result) {
+		for i, r := range w {
+			if !seen[r] {
+				seen[r] = true
+				letters = append(letters, r)
+			}
+			if i == 0 && len(w) > 1 {
+				leading[r] = true
+			}
+		}
+	}
+	if len(letters) > 10 {
+		return nil, errors.New("puzzle has more than ten distinct letters")
+	}
+
+	letterIndex := make(map[rune]int, len(letters))
+	for i, r := range letters {
+		letterIndex[r] = i
+	}
+
+	// Build per-column letter lists, working from the rightmost column.
+	// -1 marks a word that does not reach the column.
+	maxCol := 0
+	for _, w := range append(append([]string{}, addends...), result) {
+		if len(w) > maxCol {
+			maxCol = len(w)
+		}
+	}
+	addendCols := make([][]int, maxCol)
+	resultCols := make([]int, maxCol)
+	for c := 0; c < maxCol; c++ {
+		for _, w := range addends {
+			if pos := len(w) - 1 - c; pos >= 0 {
+				addendCols[c] = append(addendCols[c], letterIndex[rune(w[pos])])
+			} else {
+				addendCols[c] = append(addendCols[c], -1)
+			}
+		}
+		if pos := len(result) - 1 - c; pos >= 0 {
+			resultCols[c] = letterIndex[rune(result[pos])]
+		} else {
+			resultCols[c] = -1
+		}
+	}
+
+	value := make([]int, len(letters))
+	for i := range value {
+		value[i] = -1 // unassigned
+	}
+	used := make([]bool, 10)
+
+	// search checks the equation column by column, from right to left.
+	var search func(c, carry int) bool
+	search = func(c, carry int) bool {
+		if c == maxCol {
+			return carry == 0
+		}
+
+		// Assign the still-unassigned addend letters of this column,
+		// then verify the column sum against the result letter.
+		var assign func(i, sum int) bool
+		assign = func(i, sum int) bool {
+			if i == len(addendCols[c]) {
+				total := sum + carry
+				need := total % 10
+				nextCarry := total / 10
+				resLetter := resultCols[c]
+				if resLetter >= 0 {
+					if value[resLetter] == -1 {
+						if used[need] || (need == 0 && leading[letters[resLetter]]) {
+							return false
+						}
+						value[resLetter] = need
+						used[need] = true
+						ok := search(c+1, nextCarry)
+						if !ok {
+							value[resLetter] = -1
+							used[need] = false
+						}
+						return ok
+					}
+					if value[resLetter] != need {
+						return false
+					}
+				} else if need != 0 {
+					// The result word has no digit in this column.
+					return false
+				}
+				return search(c+1, nextCarry)
+			}
+			l := addendCols[c][i]
+			if l < 0 {
+				return assign(i+1, sum)
+			}
+			if value[l] != -1 {
+				return assign(i+1, sum+value[l])
+			}
+			for d := 0; d < 10; d++ {
+				if used[d] {
+					continue
+				}
+				if d == 0 && leading[letters[l]] {
+					continue
+				}
+				value[l] = d
+				used[d] = true
+				if assign(i+1, sum+d) {
+					return true
+				}
+				value[l] = -1
+				used[d] = false
+			}
+			return false
+		}
+		return assign(0, 0)
+	}
+
+	if !search(0, 0) {
+		return nil, errors.New("no solution")
+	}
+
+	out := make(map[string]int, len(letters))
+	for i, r := range letters {
+		out[string(r)] = value[i]
+	}
+	return out, nil
+}

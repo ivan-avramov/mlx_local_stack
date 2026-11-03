@@ -1,0 +1,76 @@
+package dominoes
+
+// Domino represents a single stone: a pair of values.
+type Domino [2]int
+
+// MakeChain returns a chain of all the given dominoes such that the dots on
+// neighboring halves match and the two open ends (first and last) match each
+// other. Dominoes may be flipped. If no such chain exists, ok is false.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+	// A single domino can only form a closed chain if both halves match.
+	if len(input) == 1 {
+		if input[0][0] == input[0][1] {
+			return []Domino{input[0]}, true
+		}
+		return nil, false
+	}
+
+	chain := make([]Domino, 0, len(input))
+	used := make([]bool, len(input))
+
+	var search func() bool
+	search = func() bool {
+		if len(chain) == len(input) {
+			// All dominoes placed: the chain is valid only if it closes.
+			return chain[0][0] == chain[len(chain)-1][1]
+		}
+		if len(chain) == 0 {
+			// Any domino may start the chain, in either orientation.
+			for i, d := range input {
+				if used[i] {
+					continue
+				}
+				used[i] = true
+				chain = append(chain, d)
+				if search() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+			return false
+		}
+		end := chain[len(chain)-1][1]
+		for i, d := range input {
+			if used[i] {
+				continue
+			}
+			if d[0] == end {
+				used[i] = true
+				chain = append(chain, d)
+				if search() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			} else if d[1] == end {
+				used[i] = true
+				chain = append(chain, [2]int{d[1], d[0]})
+				if search() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+		}
+		return false
+	}
+
+	if search() {
+		return chain, true
+	}
+	return nil, false
+}

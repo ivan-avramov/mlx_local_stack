@@ -1,0 +1,35 @@
+from functools import lru_cache
+
+# Price (in cents) of a group of `n` different books.
+GROUP_PRICES = {1: 800, 2: 1520, 3: 2160, 4: 2560, 5: 3000}
+
+
+@lru_cache(maxsize=None)
+def _best(counts):
+    """Minimum price to buy the books described by `counts`.
+
+    `counts` is a tuple of the five per-title counts, sorted in
+    non-increasing order.
+    """
+    if counts == (0, 0, 0, 0, 0):
+        return 0
+
+    best = float("inf")
+    # The titles with remaining copies form a prefix, because `counts`
+    # is sorted in non-increasing order. Try every non-empty subset of
+    # those titles for the next group.
+    available = sum(1 for c in counts if c > 0)
+    for mask in range(1, 1 << available):
+        remaining = tuple(
+            c - 1 if mask & (1 << i) else c for i, c in enumerate(counts)
+        )
+        group_size = bin(mask).count("1")
+        cost = GROUP_PRICES[group_size] + _best(tuple(sorted(remaining, reverse=True)))
+        if cost < best:
+            best = cost
+    return best
+
+
+def total(basket):
+    counts = tuple(sorted((basket.count(i) for i in range(1, 6)), reverse=True))
+    return _best(counts)

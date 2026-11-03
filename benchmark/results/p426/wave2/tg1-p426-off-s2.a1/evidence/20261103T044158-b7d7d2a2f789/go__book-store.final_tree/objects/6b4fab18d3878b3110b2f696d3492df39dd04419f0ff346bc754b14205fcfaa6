@@ -1,0 +1,84 @@
+package bookstore
+
+import "sort"
+
+// Cost returns the cheapest price (in cents) for a basket of books, applying
+// the bookshop's discount schedule and grouping the books to maximize the
+// discount.
+//
+// Each book is one of five titles (1-5). A single copy costs $8 (800 cents).
+// Buying a group of distinct titles earns a discount:
+//
+//	1 book  ->  0% off ->  800
+//	2 books ->  5% off -> 1520
+//	3 books -> 10% off -> 2160
+//	4 books -> 20% off -> 2560
+//	5 books -> 25% off -> 3000
+//
+// The books must be partitioned into groups of distinct titles to minimize the
+// total. The only non-obvious trade-offs are between groups of five and
+// groups of three (5+3 costs 5160 while 4+4 costs 5120) and between groups of
+// four and groups of two (4+2 costs 4080 while 3+3 costs 4320).
+//
+// The strategy: sort the per-title counts in descending order and peel off
+// groups one "layer" at a time. Whenever all five titles are still available
+// but the three most plentiful titles clearly outstrip the two scarcest
+// (c > d), taking a five-group would drain the scarce titles and force
+// three-groups later; instead take a four-group that skips the scarcest title.
+func Cost(books []int) int {
+	var counts [5]int
+	for _, b := range books {
+		counts[b-1]++
+	}
+	sort.Slice(counts[:], func(i, j int) bool { return counts[i] > counts[j] })
+
+	const (
+		group1 = 800
+		group2 = 1520
+		group3 = 2160
+		group4 = 2560
+		group5 = 3000
+	)
+
+	price := 0
+	for counts[0] > 0 {
+		switch {
+		case counts[4] > 0 && counts[2] > counts[3]:
+			// All five titles present, but the top three are more plentiful
+			// than the bottom two: prefer a four-group (skip the scarcest
+			// title) so we don't strand books into three-groups.
+			price += group4
+			counts[0]--
+			counts[1]--
+			counts[2]--
+			counts[3]--
+		case counts[4] > 0:
+			price += group5
+			counts[0]--
+			counts[1]--
+			counts[2]--
+			counts[3]--
+			counts[4]--
+		case counts[3] > 0:
+			price += group4
+			counts[0]--
+			counts[1]--
+			counts[2]--
+			counts[3]--
+		case counts[2] > 0:
+			price += group3
+			counts[0]--
+			counts[1]--
+			counts[2]--
+		case counts[1] > 0:
+			price += group2
+			counts[0]--
+			counts[1]--
+		default:
+			price += group1
+			counts[0]--
+		}
+		sort.Slice(counts[:], func(i, j int) bool { return counts[i] > counts[j] })
+	}
+	return price
+}

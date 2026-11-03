@@ -1,0 +1,63 @@
+package hexadecimal
+
+import (
+	"errors"
+	"fmt"
+)
+
+var (
+	errSyntax = errors.New("syntax error")
+	errRange  = errors.New("range error")
+)
+
+// ParseHex converts a hexadecimal string to its decimal equivalent.
+// It returns an error wrapping errSyntax for invalid input and
+// errRange for values that do not fit in an int64.
+func ParseHex(in string) (int64, error) {
+	if in == "" {
+		return 0, fmt.Errorf("%w: empty input", errSyntax)
+	}
+
+	var out int64
+	for _, r := range in {
+		digit, ok := hexDigit(r)
+		if !ok {
+			return 0, fmt.Errorf("%w: %q is not a valid hexadecimal digit", errSyntax, r)
+		}
+		if out > (1<<63-1-digit)/16 {
+			return 0, fmt.Errorf("%w: value does not fit in an int64", errRange)
+		}
+		out = out*16 + digit
+	}
+	return out, nil
+}
+
+// HandleErrors runs ParseHex on each input and reports "none", "syntax",
+// or "range" for each result, matching the error category.
+func HandleErrors(inputs []string) []string {
+	results := make([]string, len(inputs))
+	for i, in := range inputs {
+		_, err := ParseHex(in)
+		switch {
+		case err == nil:
+			results[i] = "none"
+		case errors.Is(err, errSyntax):
+			results[i] = "syntax"
+		default:
+			results[i] = "range"
+		}
+	}
+	return results
+}
+
+func hexDigit(r rune) (int64, bool) {
+	switch {
+	case r >= '0' && r <= '9':
+		return int64(r - '0'), true
+	case r >= 'a' && r <= 'f':
+		return int64(r-'a') + 10, true
+	case r >= 'A' && r <= 'F':
+		return int64(r-'A') + 10, true
+	}
+	return 0, false
+}

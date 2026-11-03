@@ -1,0 +1,121 @@
+import re
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+_TOKEN_RE = re.compile(r"-?\d+|\S+")
+
+
+def _pop_two(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop(), stack.pop()
+
+
+def _pop_one(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return stack.pop()
+
+
+def _add(stack):
+    b, a = _pop_two(stack)
+    stack.append(a + b)
+
+
+def _subtract(stack):
+    b, a = _pop_two(stack)
+    stack.append(a - b)
+
+
+def _multiply(stack):
+    b, a = _pop_two(stack)
+    stack.append(a * b)
+
+
+def _divide(stack):
+    b, a = _pop_two(stack)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    quotient = abs(a) // abs(b)
+    if (a < 0) != (b < 0):
+        quotient = -quotient
+    stack.append(quotient)
+
+
+def _dup(stack):
+    stack.append(_pop_one(stack))
+    stack.append(stack[-1])
+
+
+def _drop(stack):
+    _pop_one(stack)
+
+
+def _swap(stack):
+    b, a = _pop_two(stack)
+    stack.append(b)
+    stack.append(a)
+
+
+def _over(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    stack.append(stack[-2])
+
+
+_BUILTINS = {
+    "+": _add,
+    "-": _subtract,
+    "*": _multiply,
+    "/": _divide,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def _tokenize(line):
+    return [token.lower() for token in _TOKEN_RE.findall(line)]
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    for line in input_data:
+        tokens = _tokenize(line)
+        queue = list(tokens)
+        while queue:
+            token = queue.pop(0)
+            if token in words:
+                queue = words[token] + queue
+            elif token in _BUILTINS:
+                _BUILTINS[token](stack)
+            elif re.fullmatch(r"-?\d+", token):
+                stack.append(int(token))
+            elif token == ":":
+                # Definition: ": name definition ;" — tokens after the
+                # name are stored as-is so later redefinitions are seen.
+                name = queue.pop(0)
+                if re.fullmatch(r"-?\d+", name):
+                    raise ValueError("illegal operation")
+                end = queue.index(";")
+                # Expand references to already-defined words now, so a
+                # redefinition like ": foo foo 1 + ;" captures the old
+                # body of foo instead of referring to itself forever.
+                body = []
+                for token in queue[:end]:
+                    if token in words:
+                        body += words[token]
+                    else:
+                        body.append(token)
+                words[name] = body
+                queue = queue[end + 1:]
+            else:
+                raise ValueError("undefined operation")
+
+    return stack
