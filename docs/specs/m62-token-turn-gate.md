@@ -290,7 +290,7 @@ Chain cost is estimated from V3/V4 means plus a heavy-tail allowance before any 
   (baseline 0): under tg1 `passed` also requires the solution file to have changed (the M59/M61 rule; F6 removed only
   the second grader). For these two items progress can never register, so only T/N/K/ceilings bound them (historical
   passes stay far below T and N). Coarse universes: go/octal 1 leaf, go/hexadecimal 2.
-- **V1b PASS:** `benchmark/m62/universe.json` sha256 `4e3d88b6…`, 43 items, `m62-structured-v2`.
+- **V1b PASS:** `benchmark/m62/universe.json` sha256 `4e3d88b6…`, 43 items, `m62-structured-v2`. Superseded 2026-11-02 by the P604 rebuild: sha256 `63bae993…`, `m62-structured-v3` (items identical apart from `grader_version`).
 - **V2 PASS** on manifest sha256 `c5312f4e…` (all 8 criteria). Pre-registration correction, stated openly: revision 5
   expected the M59 go/alphametics fixture to stop `(stalled, completed request 40)`, derived from N alone (F10). The
   replay stopped it as `(looping, request 22)`; an independent count confirms an identical-`edit` loop whose 8th call
