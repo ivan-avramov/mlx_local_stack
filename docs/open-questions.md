@@ -14,6 +14,8 @@ is the record that stops it being re-asked.
 ---
 
 ## OPEN — needs operator judgement
+### C282 — RULED 2026-11-04 (operator: "go for round 2"): **P475a fix round 2** — the strict `sdpa_forced` check only under `fused_v1` (the server always emits it there); under other policies an absent / None counter = 0, a present value must be an int ≥ 0 and 0; the test-writer amends its 4 strict-reading tests and adds an `auto` record with the key absent. Next decision id C283.
+
 ### C281 — RULED 2026-11-04 (operator: "go"): **P475a v4 build Go** (`docs/specs/p475a-qualify-kv-arm.md` v4, `574e1304`): four-eyes light in a fork worktree on local branch `p475a-kv-arm` at `1c7c8fa1`; cast Claude Opus 5.5 implementer, Claude Sonnet 5.5 test-writer, GPT-5.6 Sol High + GLM 5.2 read-only panel; fork push with approval. P475 (stack) gets its own Go after. Next decision id C282.
 
 ### C280 — RULED 2026-11-04 (operator: "go for p626"): **P626 — rebuild P475 / P475a**: v4 specs for S′ and the `Qwen3.8-27B-mlx-uniform-4bit`-first order with the parked change-review findings as requirements; four-eyes light builds (P475a fork first, fork push with approval; then P475 stack, gate, push with approval); then the matrix legs. P613 steps 3–4 stay first. Next decision id C281.
