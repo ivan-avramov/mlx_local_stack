@@ -18,3 +18,12 @@
 | Sol P3 / GLM F5 symlinks | major / minor | adopted (fix 5, v1.2) | the live file must be tracked at the live HEAD (git), not merely on disk; symlinks (git mode 120000) refused |
 | Sol P5 / GLM F3 "absent in gated, present in live" ≠ "added later" (untracked live file; deleted then re-added) | scope request / major | adopted (fix 6, v1.2) | the file must be tracked at live HEAD and its adding commit (`git log --diff-filter=A` on live HEAD) must have the gated sha as an ancestor; else not allowed |
 | GLM F4 the `-[...]` tail lists absent-allowed entries | minor | declined | C277's message stays unchanged (its tests pin it) |
+
+## Verify (GPT-5.6 Sol High, GLM 5.2; after fix round 3)
+
+GLM: every opinion finding resolved (F4 declined by design); NOTHING OF SUBSTANCE. Sol:
+
+| Finding | Severity | Disposition | Why |
+|---|---|---|---|
+| Sol v-P1 the v1.2 ancestry rule rejects the motivating commit `8055b219` (divergent from `97db61da`; merge base `10014b4a`) | blocker (verified: `git merge-base --is-ancestor 8055b219 97db61da` → 1) — the designer's v1.2 rule | proposed fix round 4 (operator) | rule: the adding commit descends from `merge-base(<gated sha>, <live HEAD>)` AND is not an ancestor of the gated sha (added on the live side after divergence); a test with the real divergent shape |
+| Sol v-P2 the decision depends on live HEAD, unbound in the digest / `check` | major (claimed; needs live HEAD moved after minting) | adapted (with round 4) | the receipt records `live_head` (sha) for audit; not bound into the policy digest (live HEAD moves on every commit) |

@@ -1,4 +1,4 @@
-# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1.2, 2026-11-04; C283; v1.1 = gated tree first (test-writer F1); v1.2 = the panel's hardening)
+# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1.3, 2026-11-04; v1.3 = divergent-history ancestry; C283; v1.1 = gated tree first (test-writer F1); v1.2 = the panel's hardening)
 
 ## Goal (verbatim in every brief)
 
@@ -21,8 +21,9 @@ failure; every other skip difference fails exactly as today (C277 included).
 - **v1.2 hardening** (each failure keeps the entry in the existing problem): the entry id appears nowhere in the junit; exactly ONE
   dotted prefix is a `.py` file in the live tree (two or more = ambiguous class / module → not allowed); that file is TRACKED at the live
   `HEAD` as a regular file (`git ls-tree HEAD -- <rel>` mode 100644 / 100755, not 120000) — the on-disk working tree is not consulted;
-  and the commit that added it (`git log --diff-filter=A --format=%H -1 HEAD -- <rel>` in live) has the gated sha as an ancestor
-  (`git merge-base --is-ancestor <gated sha> <adding commit>`): the file was added after the gated commit.
+  and the commit that added it (`git log --diff-filter=A --format=%H -1 HEAD -- <rel>` in live) was added on the live side after
+  the histories diverged: it descends from `merge-base(<gated sha>, <live HEAD>)` and is NOT an ancestor of the gated sha (v1.3,
+  verify finding: the motivating archive commit is a divergent branch, not an ancestor). The receipt records `live_head`.
 - A file absent in both trees, present in both, or an entry whose path cannot be derived → stays in the existing problem (unchanged).
 - Nothing else changes (C277's multiset / duplicate / junit-missing rules, `check`, the digest recipe).
 
