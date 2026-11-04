@@ -53,7 +53,9 @@ FROZEN_RUNNERS = {
 }
 # rebase-amendment P520 (S′): the base is stack main 61d31bcd (T3 merged); before: src/mlx-vlm c9543fc4bcd3111b738ba7a29ca772c2c6366817,
 # src/mlx-serve 86921f029d7e55b4d8b5882f2c05ed5e2ce31ef0 (S)
-BASE_GITLINKS = {"src/mlx-vlm": "1c7c8fa166582ac1a1c23ae9063527b2b5215b11",
+# amendment P631 (C285 gitlink bump, P520 precedent): src/mlx-vlm 1c7c8fa1 → d94e38a9 (fork main: P542 + P475a, dev/ and tests
+# only; production mlx_vlm/ byte-identical — the serving identity this pins is unchanged)
+BASE_GITLINKS = {"src/mlx-vlm": "d94e38a9677b7515e1ae64aab6b7ee0d5dbe70c4",
                  "src/mlx-serve": "1ddf6f842f159a62d240f3ac6965fc33cbdb0b0d"}
 
 
