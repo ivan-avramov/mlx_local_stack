@@ -5,6 +5,7 @@ pairs only, per the step-1 contract `docs/specs/p613-step1-contract.md`. Determi
 `SIGNALS.md` / `SIGNALS.json` (no wall-clock time, no absolute path). Refuses (`RefusalError`) when any B8 input changed.
 
 CLI: `python -m bench.p426_signals a7 --results-root <dir> --b8 <B8.json> --out-md <SIGNALS.md> --out-json <SIGNALS.json>`.
+Step 3: `all … --panel <frozen panel dir>` (optional, E1) adds §4.5 `subjective` (`docs/specs/p613-step3-contract.md`).
 """
 from __future__ import annotations
 
@@ -723,7 +724,8 @@ def _session_md(s, rec, prefix="sessions", family_label=FAMILY_LABEL):
 def render_md(signals):
     """Fix 15: dispatches on the record shape — an `all` record (generator_version p613-step2) renders through
     `render_all`; an A7 record renders exactly as step 1."""
-    if isinstance(signals.get("header"), dict) and signals["header"].get("generator_version") == ALL_VERSION:
+    if isinstance(signals.get("header"), dict) and signals["header"].get("generator_version") in (ALL_VERSION,
+                                                                                                 STEP3_VERSION):
         return render_all(signals)
     h = signals["header"]
     lines = [f"# P426 signals — {h['status']}", "",
@@ -844,8 +846,22 @@ def _check_all_b8(rows_root, b8):
             raise RefusalError(f"B8.json inputs union does not cover axis input {rel}")
 
 
-def compute_all(results_root, rows_root, b8, b8_sha256=None):
-    """One signals record: A7 (step 1) + Wave 1 (A1, M1, A2, A3, A4) + the complete mechanical family + flags."""
+def compute_all(results_root, rows_root, b8, b8_sha256=None, panel=None):
+    """One signals record: A7 (step 1) + Wave 1 (A1, M1, A2, A3, A4) + the complete mechanical family + flags.
+    ``panel`` (step 3) = the frozen panel directory: adds §4.5 `subjective`, its flag, and the step-3 header / status;
+    ``panel=None`` returns the step-2 record unchanged (E1: ``--panel`` is optional)."""
+    rec = _compute_all_step2(results_root, rows_root, b8, b8_sha256)
+    if panel is None:
+        return rec
+    subj, panel_header = compute_subjective(panel, results_root, b8, rec, b8_sha256, rows_root=rows_root)
+    rec["subjective"] = subj
+    rec["flags"] = rec["flags"] + subjective_flags(subj)
+    rec["header"] = dict(rec["header"], generator_version=STEP3_VERSION, status=STEP3_STATUS, panel=panel_header)
+    rec["pending"] = {k: v for k, v in rec["pending"].items() if k != "4.5 subjective"}
+    return rec
+
+
+def _compute_all_step2(results_root, rows_root, b8, b8_sha256=None):
     from bench import p426_signals_wave1 as W
     from bench import stats
 
@@ -906,6 +922,253 @@ def compute_all(results_root, rows_root, b8, b8_sha256=None):
                 inputs=all_inputs)
 
 
+# ================================================================================================= §4.5 subjective (step 3)
+STEP3_VERSION = "p613-step3"
+STEP3_STATUS = "PROVISIONAL — final review pending (step 4)"
+SUBJ_FAMILY = ("A1", "A2", "A3", "A7-s1", "A7-s2")
+SUBJ_WAVE1 = ("A1", "A2", "A3")
+SUBJ_MIN_JUDGED = 5
+IDENTICAL_LABEL = "identical outputs; panel not run"
+NOT_TESTED_LABEL = "reported, not tested"
+CONDITIONAL_LABEL = "conditional on both-pass"
+A4_LABEL = "descriptive, never tested (recert S7)"
+
+
+def _verdict_score(row):
+    """ON 1 / tie 0.5 / OFF 0 of one admitted verdict (`p426_panel.item_scores` on that single row, build s2)."""
+    from bench import p426_panel as P
+
+    return P.item_scores([row], build=P.A7_BUILD)[row["item_id"]]["score"]
+
+
+def _provenance(rows):
+    seen = {}
+    for r in rows:
+        key = tuple(str(r.get(k)) for k in ("judge", "family", "model", "client", "client_version", "prompt_sha"))
+        seen[key] = seen.get(key, 0) + 1
+    return [dict(zip(("judge", "family", "model", "client", "client_version", "prompt_sha"), k), verdicts=n)
+            for k, n in sorted(seen.items())]
+
+
+def _panel_files_sha(panel_dir):
+    root = Path(panel_dir)
+    files = {p.relative_to(root).as_posix(): hashlib.sha256(p.read_bytes()).hexdigest()
+             for p in sorted(root.rglob("*")) if p.is_file() and p.name != "FROZEN.json"}
+    return dict(sorted(files.items()))
+
+
+def _canon(doc):
+    return json.dumps(doc, sort_keys=True)
+
+
+def _wave1_member(ax, e, labels):
+    n = e["identical"]
+    return dict(member=ax, identical=n, eligible=e["eligible"], keys=e["keys"], judged=0, score_identical=0.5,
+                tested=False, labels=labels, rule=e["rule"],
+                not_both_correct_left_out=e["not_both_correct"], not_both_correct_keys=e["not_both_correct_keys"],
+                one_arm_pass_left_out=e["one_arm_correct"], pairs_rejected=e["pairs_rejected"],
+                raw_mean=None, mean_with_identical=(0.5 if n else None), permutation_p=None, holm_p=None,
+                length_adjusted=None, planned_verdicts=0, missing_verdicts=0, excluded_items={}, provenance=[],
+                single_family=None)
+
+
+def _a4_draws(signals):
+    out = {}
+    for block, st in sorted(((signals.get("A4") or {}).get("blocks") or {}).items()):
+        q = st.get("quality") if isinstance(st, dict) else None
+        if not isinstance(q, dict):
+            out[block] = dict(status=(st or {}).get("status"))
+            continue
+        out[block] = {arm: dict(strict_draws=q[arm]["strict_draws"], planned=q[arm]["planned"],
+                                budget_hits=q[arm]["budget_hits"]) for arm in ("off", "on")}
+    return out
+
+
+def compute_subjective(panel_dir, results_root, b8, signals, b8_sha256=None, rows_root=None):
+    """§4.5: (`subjective` record, header `panel` block). Items enter through `p426_panel.admit`; the frozen item set
+    must equal the a7_select set recomputed from the B8-accepted data, the frozen Wave 1 eligibility the one recomputed
+    (E3); verdicts only against unchanged packets, bound to this FROZEN.json, provenance from FROZEN (`a7_ingest`)."""
+    from bench import judge_pairwise as jp
+    from bench import p426_panel as P
+    from bench import stats
+
+    panel_dir = Path(panel_dir)
+    frozen, rows, report = P.a7_ingest(panel_dir)              # check_frozen first: missing FROZEN.json refuses
+    if b8_sha256 is not None and frozen.get("b8_sha256") != b8_sha256:
+        raise RefusalError(f"panel FROZEN.json b8_sha256 {frozen.get('b8_sha256')} != B8.json {b8_sha256}")
+    elig = P.wave1_eligibility(Path(results_root).parent if rows_root is None else rows_root, b8)
+    if _canon(frozen.get("wave1")) != _canon(elig):
+        raise RefusalError("panel FROZEN.json wave1 eligibility != the one recomputed from the B8-accepted data")
+    part = P.a7_partition(results_root, b8)
+    want = sorted((s, rid) for s in P.A7_SESSIONS for rid in part[s]["items"])
+    f_items = frozen["items"]
+    got = sorted((i["session"], i["id"]) for i in f_items)
+    if got != want:
+        raise RefusalError(f"panel item set differs from the B8-accepted both-pass non-identical set "
+                           f"(frozen {len(got)}, now {len(want)})")
+    judges = frozen["judges"]
+    labels = [j["label"] for j in judges]
+    families = sorted({j["family"] for j in judges})
+    per_item_planned = len(labels) * len(jp.ORDERS)
+    admitted, adm_excluded = P.admit(rows, labels)
+    excluded_by_item = {it: kind for kind, its in adm_excluded.items() for it in its}
+    valid_by_item = {}
+    for r in rows:
+        if r.get("choice") in ("A", "B", "tie"):
+            valid_by_item[r["item_id"]] = valid_by_item.get(r["item_id"], 0) + 1
+    meta = {i["item"]: i for i in f_items}
+    members = {}
+    for ax in SUBJ_WAVE1:
+        members[ax] = _wave1_member(ax, elig["per_axis"][ax], [IDENTICAL_LABEL, NOT_TESTED_LABEL, CONDITIONAL_LABEL])
+    a4 = _wave1_member("A4", elig["per_axis"]["A4"], [IDENTICAL_LABEL, A4_LABEL, CONDITIONAL_LABEL])
+    a4["draws"] = _a4_draws(signals)
+    for s in P.A7_SESSIONS:
+        ax = f"A7-{s}"
+        p = part[s]
+        s_items = sorted(i["item"] for i in f_items if i["session"] == s)
+        adm = {it: admitted[it] for it in s_items if it in admitted}
+        adm_rows = [r for it in sorted(adm) for r in adm[it]]
+        scores = P.item_scores(adm_rows, build=P.A7_BUILD)
+        vec = sorted([(it.split("/", 1)[1], scores[it]["score"] - 0.5) for it in adm]
+                     + [(rid, 0.0) for rid in p["identical"]])
+        judged = len(adm)
+        planned = len(s_items) * per_item_planned
+        valid = sum(valid_by_item.get(it, 0) for it in s_items)
+        valid_capped = sum(min(valid_by_item.get(it, 0), per_item_planned) for it in s_items)   # fix 10
+        duplicates = sum(max(0, valid_by_item.get(it, 0) - per_item_planned) for it in s_items)
+        la_rows = [dict(item=r["item_id"], score=_verdict_score(r),
+                        log_len_ratio=math.log(meta[r["item_id"]]["len_on"] / meta[r["item_id"]]["len_off"]))
+                   for r in adm_rows]
+        la = None
+        if la_rows:
+            res = P.length_adjusted(la_rows)
+            la = dict(res, ci=list(res["ci"]))
+        fams = sorted({str(r.get("family")) for r in adm_rows})
+        members[ax] = dict(
+            member=ax, identical=len(p["identical"]), keys=None, judged=judged, score_identical=0.5,
+            tested=judged >= SUBJ_MIN_JUDGED,
+            labels=[CONDITIONAL_LABEL] + ([] if judged >= SUBJ_MIN_JUDGED else [NOT_TESTED_LABEL]),
+            one_arm_pass_left_out=len(p["one-arm-pass"]), one_arm_pass_ids=list(p["one-arm-pass"]),
+            neither_pass=len(p["neither-pass"]), packets=len(s_items),
+            item_scores={it: scores[it] for it in sorted(adm)},
+            raw_mean=(sum(scores[it]["score"] for it in adm) / judged if judged else None),
+            mean_with_identical=(0.5 + sum(d for _, d in vec) / len(vec) if vec else None),
+            test_vector_n=len(vec), permutation_p=None, holm_p=None, length_adjusted=la,
+            planned_verdicts=planned, valid_verdicts=valid, duplicate_verdicts=duplicates,
+            missing_verdicts=planned - valid_capped,
+            excluded_items={k: sorted(it for it in s_items if excluded_by_item.get(it) == k)
+                            for k in sorted(set(excluded_by_item.values()))},
+            not_admitted=sorted(it for it in s_items if it not in adm),
+            provenance=_provenance(adm_rows),
+            single_family=(len(fams) < 2) if adm_rows else None)
+        members[ax]["_vec"] = [d for _, d in vec]
+    tested = [m for m in SUBJ_FAMILY if members[m]["tested"]]           # m fixed by the < 5 rule before any p
+    for m in tested:
+        members[m]["permutation_p"] = permutation_p(members[m]["_vec"])
+    adjusted = stats.holm([members[m]["permutation_p"] for m in tested]) if tested else []
+    for m, hp in zip(tested, adjusted):
+        members[m]["holm_p"] = hp
+    for m in members.values():
+        m.pop("_vec", None)
+    frozen_bytes = (panel_dir / P.FROZEN_NAME).read_bytes()
+    files = _panel_files_sha(panel_dir)
+    verdict_files = {k: v for k, v in files.items() if k.endswith(".verdict.json")}
+    header = dict(frozen_sha256=hashlib.sha256(frozen_bytes).hexdigest(), files_sha256=_sha_doc(files),
+                  n_files=len(files), n_verdict_files=len(verdict_files))
+    rec = dict(family=list(SUBJ_FAMILY), tested=tested, m=len(tested), min_judged=SUBJ_MIN_JUDGED,
+               members={m: members[m] for m in SUBJ_FAMILY}, descriptive=dict(A4=a4),
+               judges=[{k: j.get(k) for k in ("label", "family", "client", "model")} for j in judges],
+               families=families, single_family_panel=len(families) < 2,
+               rubric=frozen.get("rubric"), rubric_sha256=frozen.get("rubric_sha256"),
+               evidence_ref=frozen.get("evidence_ref"), counts=frozen.get("counts"),
+               wave1=dict(keys=elig["keys"], eligible=elig["eligible"], identical=elig["identical"],
+                          not_both_correct=elig["not_both_correct"]),
+               ingest=dict(report, rows=len(rows), manifest_rows=frozen["counts"]["planned_verdicts"]),
+               method=("item score = mean over judges x orders (ON 1 / tie 0.5 / OFF 0; p426_panel.item_scores build "
+                       "s2); permutation_p on score - 0.5 over judged + C217-identical (0) items sorted by id; "
+                       "length_adjusted on one row per admitted verdict, log_len_ratio = ln(len_ON / len_OFF) of the "
+                       "final-tree diff characters (the packet carries the diff verbatim); Holm over the tested "
+                       "members; Wave 1 over the panel-eligible keys (E3: A1 both correct, A2 / A3 every key, A4 "
+                       "both strict draws)"))
+    return rec, header
+
+
+def subjective_flags(subj):
+    flags = []
+    for m in subj["tested"]:
+        rec = subj["members"][m]
+        hp, mean = rec["holm_p"], rec["mean_with_identical"]
+        if hp is not None and hp < FLAG_HOLM_P and mean is not None and mean < 0.5:
+            flags.append(dict(flag="subjective_holm_p_off_better", member=m, value=hp, items=[],
+                              text=f"{m} subjective Holm-adjusted p {hp:.4f} < {FLAG_HOLM_P} favouring OFF "
+                                   f"(mean score {mean:.3f})"))
+    return flags
+
+
+def _wave1_line(p, path, r, label):
+    return (f"- {r['member']} (`{p}.{path}`): {r['identical']} / {r['eligible']} panel-eligible keys {IDENTICAL_LABEL} "
+            f"(rule: {r['rule']}); each scores 0.5; judged 0; {label}; not both correct left out "
+            f"{r['not_both_correct_left_out']} of {r['keys']} B8 keys (one arm correct {r['one_arm_pass_left_out']})"
+            + (f"; B8-rejected pairs {_list(r['pairs_rejected'])}" if r["pairs_rejected"] else ""))
+
+
+def _subjective_md(subj):
+    p = "subjective"
+    c = subj.get("counts") or {}
+    ing = subj["ingest"]
+    w1 = subj["wave1"]
+    lines = ["## Subjective panel (§4.5; `subjective`)", "",
+             f"- Two-family blind pairwise panel (C161 / C207), rubric `{subj['rubric']}` (sha256 "
+             f"`{subj['rubric_sha256']}`), evidence ref `{subj['evidence_ref']}`; judges "
+             + ", ".join(f"`{j['label']}` ({j['family']}, {j['client']})" for j in subj["judges"])
+             + ("; **single-family panel (C166 / C206)**" if subj["single_family_panel"] else ""),
+             f"- Frozen before any verdict: {c.get('items')} packets, {c.get('planned_verdicts')} planned verdicts; "
+             f"ingest (`{p}.ingest`): {ing['rows']} bound verdict rows of {ing['manifest_rows']}, missing "
+             f"{ing['missing']}, failed {ing['failed']}, unsealed {ing['unsealed']}, unbound {ing['unbound']}, "
+             f"rejected (provenance != FROZEN) {ing['rejected']}, unparseable {ing['unparseable']}",
+             f"- Wave 1 (`{p}.wave1`, E3): {w1['identical']} / {w1['eligible']} panel-eligible keys identical "
+             f"(of {w1['keys']} B8 keys; {w1['not_both_correct']} not both correct, excluded)",
+             f"- Family {_list(subj['family'])}; tested (judged >= {subj['min_judged']}): {_list(subj['tested'])}; "
+             f"Holm m = {subj['m']} (`{p}.m`)", f"- Method: {subj['method']}", "",
+             "| member | judged | identical (0.5) | raw mean (judged) | mean incl. identical | length-adjusted [95 % CI] "
+             "| permutation p | Holm p | missing verdicts | not admitted | left out (one-arm-pass / not both correct) "
+             "| labels |",
+             "|---|---|---|---|---|---|---|---|---|---|---|---|"]
+    for m in subj["family"]:
+        r = subj["members"][m]
+        la = r["length_adjusted"]
+        la_text = "n/a" if la is None else f"{la['adjusted']:.3f} [{la['ci'][0]:.3f}, {la['ci'][1]:.3f}]"
+        left = r["one_arm_pass_left_out"] if m not in SUBJ_WAVE1 else r["not_both_correct_left_out"]
+        lines.append(f"| {m} | {r['judged']} | {r['identical']} | {_f(r['raw_mean'])} | {_f(r['mean_with_identical'])} | "
+                     f"{la_text} | {_f(r['permutation_p'], 4)} | {_f(r['holm_p'], 4)} | {r['missing_verdicts']} | "
+                     f"{len(r.get('not_admitted') or [])} | {left} | {'; '.join(r['labels'])} |")
+    lines.append("")
+    for m in subj["family"]:
+        r = subj["members"][m]
+        if m in SUBJ_WAVE1:
+            lines.append(_wave1_line(p, f"members.{m}", r, NOT_TESTED_LABEL))
+            continue
+        lines.append(f"- {m} (`{p}.members.{m}`): {r['packets']} packets, judged {r['judged']}, planned verdicts "
+                     f"{r['planned_verdicts']}, valid {r['valid_verdicts']}, missing {r['missing_verdicts']}, "
+                     f"duplicate {r['duplicate_verdicts']}; not admitted {_list(r['not_admitted'])}"
+                     + "".join(f"; {k} {_list(v)}" for k, v in r["excluded_items"].items())
+                     + f"; one-arm-pass left out {_list(r['one_arm_pass_ids'])}; neither-pass {r['neither_pass']}"
+                     + ("; single-family verdicts (C166 / C206)" if r["single_family"] else ""))
+        for pv in r["provenance"]:
+            lines.append(f"  - verdicts {pv['verdicts']}: judge `{pv['judge']}` ({pv['family']}), model `{pv['model']}`, "
+                         f"client `{pv['client']}` {pv['client_version']}, prompt sha `{pv['prompt_sha']}`")
+    a4 = subj["descriptive"]["A4"]
+    lines.append(_wave1_line(p, "descriptive.A4", a4, A4_LABEL))
+    for block, d in a4["draws"].items():
+        if "off" not in d:
+            lines.append(f"  - {block}: {d.get('status')}")
+            continue
+        lines.append(f"  - {block} draw distribution: " + "; ".join(
+            f"{arm.upper()} strict draws {d[arm]['strict_draws']} / {d[arm]['planned']}, budget hits "
+            f"{d[arm]['budget_hits']}" for arm in ("off", "on")))
+    return lines + [""]
+
+
 def _flag_item_text(it):
     from bench import p426_signals_wave1 as W
 
@@ -930,6 +1193,10 @@ def render_all(signals):
              f"- RNG: {h['rng']['paired_delta']}; permutation {h['rng']['permutation']}; bootstrap {h['rng']['bootstrap']}",
              "- Paired deltas read only delta / lo / hi / degenerate / discordance_upper95 of `bench.stats.paired_delta`.",
              "- No composite, no successes_per_hour, no pass@1|converged ranking.", ""]
+    if "panel" in h:
+        pn = h["panel"]
+        lines[-1:-1] = [f"- Panel (`header.panel`): FROZEN.json sha256 `{pn['frozen_sha256']}`; panel files sha set "
+                        f"`{pn['files_sha256']}` ({pn['n_files']} files, {pn['n_verdict_files']} verdict files)"]
     fam = signals["family"]
     fam_label = f"mechanical family {fam['label']} (m = {fam['m']})"
     for s in V.SESSIONS_PAIRED:
@@ -949,7 +1216,10 @@ def render_all(signals):
                                                     f"{fam['method']}"]
     for m in fam["members"]:
         lines.append(f"- {m}: raw p {_f(fam['raw_p'][m], 4)}, Holm p {_f(fam['holm_p'][m], 4)}")
-    lines += ["", "## Flags (`flags`; listed, never vetoes)", ""]
+    lines += [""]
+    if "subjective" in signals:
+        lines += _subjective_md(signals["subjective"])
+    lines += ["## Flags (`flags`; listed, never vetoes)", ""]
     if not signals["flags"]:
         lines.append("- none")
     for f in signals["flags"]:
@@ -984,6 +1254,9 @@ def main(argv=None):
     al.add_argument("--b8", required=True, type=Path)
     al.add_argument("--out-md", required=True, type=Path)
     al.add_argument("--out-json", required=True, type=Path)
+    al.add_argument("--panel", type=Path, default=None,
+                    help="the frozen panel directory (FROZEN.json, packets, verdicts); optional (E1): absent → the "
+                         "step-2 record; present with no readable FROZEN.json → refusal")
     args = ap.parse_args(argv)
     try:
         V.check_out_dirs([args.out_md, args.out_json])
@@ -994,7 +1267,7 @@ def main(argv=None):
             raise RefusalError("B8.json is missing or unreadable") from None
         if args.axis == "all":
             signals = compute_all(args.results_root, args.rows_root, b8,
-                                  b8_sha256=hashlib.sha256(b8_bytes).hexdigest())
+                                  b8_sha256=hashlib.sha256(b8_bytes).hexdigest(), panel=args.panel)
             md = render_all(signals)
         else:
             signals = compute_a7(args.results_root, b8, b8_sha256=hashlib.sha256(b8_bytes).hexdigest())
