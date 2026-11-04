@@ -42,7 +42,7 @@ arm equal to the committed registry uses the base commit. Attention differs by p
 
 ## v4 — rebuild (C280, P626); where v4 and v3 differ, v4 wins
 
-- **Build:** S′ — fork `1c7c8fa166582ac1a1c23ae9063527b2b5215b11` + the P475a commit (its own push first), mlx-serve
+- **Build:** S′ serving (production byte-identical to fork `1c7c8fa166582ac1a1c23ae9063527b2b5215b11`) — the gitlink bumped to fork `main` `fd67082a` + the P475a commit (its own push first), mlx-serve
   `1ddf6f842f159a62d240f3ac6965fc33cbdb0b0d`; the base commit is the stack `main` commit carrying the P475a gitlink bump; arm branches
   `p475-<pick-short>-<arm>` off it (local branches, never a scratchpad).
 - **Committed states (2026-11-04):** both picks serve MTP ON — `Qwen3.8-27B-mlx-uniform-4bit` TQ4 (`kv_bits: 4`, `turboquant`;

@@ -47,8 +47,11 @@ golden fixture and the 16-state design (C203) unchanged; full registry names.
 
 The v3 candidate was lost (P626). v4 = v3 plus the following; where they differ, v4 wins.
 
-- **Base:** the fork at the stack's current gitlink (S′, `1c7c8fa166582ac1a1c23ae9063527b2b5215b11`); work in a fork worktree on a local
-  branch `p475a-kv-arm` (never a session scratchpad); the stack bumps the gitlink only after the fork commit is pushed (approval).
+- **Base:** fork `main` `fd67082a` (pushed; production `mlx_vlm/` outside tests byte-identical to the stack's S′ gitlink `1c7c8fa1`, so
+  serving is unchanged; `dev/p369_phase2/qualify.py` there carries P542 — any entry, either predictor state — which P475a builds on);
+  work in a fork worktree on a local branch `p475a-kv-arm` (never a session scratchpad); the stack bumps the gitlink only after the fork
+  commit is pushed (approval). Where v3's `--predictor on` rule and P542's predictor handling overlap, P542's behaviour stands and
+  `--kv-arm` adds only the KV-arm acceptance.
 - **Entries:** `--kv-arm` and `classify_kv_arm` accept ONLY `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`;
   any other entry → `None` / refusal (Sol r1-1).
 - **Arm values:** the KV keys must form one of the five arm rows of `docs/specs/p475-kv-matrix.md` (N16, AF8, TQ8, AF4, TQ4) exactly —
