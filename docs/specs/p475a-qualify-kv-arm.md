@@ -63,6 +63,10 @@ The v3 candidate was lost (P626). v4 = v3 plus the following; where they differ,
   spurious `sdpa_forced` problem (GLM r1-4).
 - **No dead guard:** the `quantized_kv_start` rule is enforced in one place (the settings comparison); no unreachable second check (GLM r1-5).
 - **Base state:** an arm built on ANY of the 16 accepted states (incl. one where a non-tested entry is MTP-ON) is accepted (GLM SR2).
+- **v4.1 (2026-11-04, review):** `--kv-arm --predictor on` with a NON-EMPTY KV delta refuses ("an MTP-ON KV arm is uncertified;
+  preflight it with --predictor off"); with an empty delta it is today's `--predictor on` (P542's certified-argv binding, C199, never
+  waived). This replaces v3's "served as is" for KV arms. The `sdpa_forced` counter must be present and numeric whenever the expected
+  manifest is known; no attention verdict when it is unknown.
 
 ## v4 acceptance additions
 
