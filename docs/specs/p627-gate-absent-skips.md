@@ -1,4 +1,4 @@
-# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1.1, 2026-11-04; C283; v1.1 = the gated-tree-first rule, test-writer finding F1)
+# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1.2, 2026-11-04; C283; v1.1 = gated tree first (test-writer F1); v1.2 = the panel's hardening)
 
 ## Goal (verbatim in every brief)
 
@@ -18,6 +18,11 @@ failure; every other skip difference fails exactly as today (C277 included).
 - `w` is ABSENT-ALLOWED iff that file does NOT exist in the gated scratch tree AND DOES exist in the live tree (`live`, the policy tree
   the baseline comes from). Then `w` goes to `receipt["baseline_skips_absent"]` (sorted; always present, `[]` otherwise) and is not
   in the "neither skipped nor passed" problem.
+- **v1.2 hardening** (each failure keeps the entry in the existing problem): the entry id appears nowhere in the junit; exactly ONE
+  dotted prefix is a `.py` file in the live tree (two or more = ambiguous class / module → not allowed); that file is TRACKED at the live
+  `HEAD` as a regular file (`git ls-tree HEAD -- <rel>` mode 100644 / 100755, not 120000) — the on-disk working tree is not consulted;
+  and the commit that added it (`git log --diff-filter=A --format=%H -1 HEAD -- <rel>` in live) has the gated sha as an ancestor
+  (`git merge-base --is-ancestor <gated sha> <adding commit>`): the file was added after the gated commit.
 - A file absent in both trees, present in both, or an entry whose path cannot be derived → stays in the existing problem (unchanged).
 - Nothing else changes (C277's multiset / duplicate / junit-missing rules, `check`, the digest recipe).
 
