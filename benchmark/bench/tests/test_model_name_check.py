@@ -377,3 +377,18 @@ def test_a_git_sha_is_not_a_model_size(text):
 
 def test_a_real_size_stand_in_is_still_flagged():
     assert len(MN.violations("the 27B model regressed")) == 1
+
+
+@pytest.mark.parametrize("path", [
+    "benchmark/results/p426/panel/cursor:gpt-5.6-sol-high/batch00/p0050.verdict.json",
+    "benchmark/results/p426/panel/claude-opus-5-5/batch03/p0021.verdict.json",
+    "benchmark/results/p426/panel/cursor:gpt-5.6-sol-high/batch03/p0064.failed.txt",
+])
+def test_panel_verdicts_are_DATA_not_prose_P613(path):
+    """P613 step 3: a judge's verdict is verbatim model OUTPUT bound to its packet; a code word in a rationale ('static', a Go /
+    C keyword) cannot be reworded without tampering with the verdict. The frozen set (FROZEN.json, manifest.jsonl, the
+    packets) and prose beside it stay checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+{{\"choice\": \"A\", \"rationale\": \"a static helper\"}}\n"
+            "+++ b/benchmark/results/p426/panel/FROZEN.json\n@@ -0,0 +1 @@\n+\"note\": \"static\"\n")
+    found = MN.diff_violations(diff)
+    assert [v.path for v in found] == ["benchmark/results/p426/panel/FROZEN.json"]

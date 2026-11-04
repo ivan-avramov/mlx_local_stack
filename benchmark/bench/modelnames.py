@@ -282,6 +282,8 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))
+                # P613 step 3: a judge verdict is verbatim model output bound to its packet (the frozen set stays checked).
+                or (path.startswith("benchmark/results/p426/panel/") and path.endswith((".verdict.json", ".failed.txt")))
             )
             if not is_result_rows and not path.endswith(EXEMPT_PATHS + GENERATED_PATHS):
                 out.extend(violations(raw[1:], path=path, line=new_line, root=root))
