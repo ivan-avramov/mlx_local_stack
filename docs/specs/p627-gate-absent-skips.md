@@ -1,4 +1,4 @@
-# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1, 2026-11-04; C283)
+# P627 — the local gate records a baseline skip whose test file the gated tree does not have (spec v1.1, 2026-11-04; C283; v1.1 = the gated-tree-first rule, test-writer finding F1)
 
 ## Goal (verbatim in every brief)
 
@@ -13,6 +13,8 @@ failure; every other skip difference fails exactly as today (C277 included).
 
 - For each `w` in `W − S` that is not in P (C277's unexplained list): its test file is the path derived from the entry's module part
   (`a.b.c::name` or `a.b.c.Class::name` → the longest dotted prefix that is a `.py` file: `a/b/c.py`), relative to the repo top.
+- **v1.1 gated tree first:** if ANY dotted prefix of the entry's module part is a `.py` file in the gated scratch tree, `w` is not
+  absent-allowed (the module exists there and the test simply was not collected). Only otherwise:
 - `w` is ABSENT-ALLOWED iff that file does NOT exist in the gated scratch tree AND DOES exist in the live tree (`live`, the policy tree
   the baseline comes from). Then `w` goes to `receipt["baseline_skips_absent"]` (sorted; always present, `[]` otherwise) and is not
   in the "neither skipped nor passed" problem.
