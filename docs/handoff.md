@@ -1,75 +1,94 @@
-# Handoff — 2026-11-03 (session 15: Wave 2c COMPLETE — 8 legs VALID, 4 dossiers PASS, harvested d23d019d / b6ec7819; next: B6 / B8 (P613))
+# Handoff — 2026-11-03 (session 15 END: Wave 2c complete + pushed; P613 step 1 (B8 + B6 for A7) accepted, gated, pushed; next: P613 step 2)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P616, P615, C274, C273, C272, P613, P611, P610, P609, C271, P608, P607, C270, P604, P603, P602, P601, P595–P600, C269,
-P594, C268, …), specs `docs/specs/p586-relaunch-build.md` v1.1, `docs/specs/p603-export-capture.md` (P603 as BUILT differs: the export
-goes to the stored transcript file, no item-record field) and `docs/specs/p426-b2-tg1-wave2.md` §1, §4.3, §4.5, §5.1, §10, §11, §12, §16.8.
-Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: "i trust you - keep going towards certifying MTP
-for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope changes; lead calls filed in open-questions as they land.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C275, P617, P616, P615, C274, C273, C272, P613,
+P611, P610, P609, C271, P608, P607, C270, …), then `docs/specs/p613-b8-b6-signals.md` v2 (the B8 / B6 contract; §8 choices ruled C274)
+and `docs/specs/p613-step1-contract.md` (the step-1 interfaces, the model for step 2's contract), `docs/specs/p426-fable-mtp-recert.md`
+v4 §1, §3, §5, §7, §8. Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: "i trust you - keep going
+towards certifying MTP for the picks"; updates every 15–20 min; ask only at Go / Accept / pushes / scope changes; lead calls filed in
+open-questions as they land.
+
+## THE GOAL (what every step converges on)
+
+Decide, with evidence the operator can act on, whether `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` ships with MTP ON (P426; C204:
+the operator makes the call from per-axis signals, no automatic pass / fail). The evidence is ONE generated, deterministic
+`benchmark/results/p426/SIGNALS.md` built only from B8-accepted ON / OFF pairs: A7 tg1 (done, provisional), A1 math500, M1 256K memory,
+A2 cjudge, A3 vision, A4 reasoning (step 2), the subjective panel (step 3), then the final sheet + a recommendation (step 4). After
+that, the same certification for `Qwen3.8-27B-mlx-uniform-4bit` (KV choice, then its MTP re-certification; PLAN). Project goal behind it:
+the best local LLMs for 256K agentic coding on this M5 Max, quality over speed.
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Nothing running: no `p426_wave2` / `opencode run` / `mlx-serve` processes, :8000 free.
-2. `main` = `origin/main` `62bc46df` + docs commits (`6c7595a5`, `46ef163b`, `840d5b63`, this handoff) + `d23d019d` (Wave 2c data);
-   `evidence` = `origin/evidence` `e18cad07` + `b6ec7819` (Wave 2c evidence). Push needs operator approval: docs-only commits first
-   (`git push origin <last docs sha>:main`), then the data commit (each push's introduced commits must be all-docs or all-data, P541).
-3. Arms `p426-off` `4adb596a` (pushed as `archive/p426-wave2-off`), `p426-on` `46ca41b9` (ON archive waits, P606 (a)).
+1. Nothing running: no `p426_wave2` / `opencode run` / `mlx-serve` / `local_gate` processes; :8000 free.
+2. `main` == `origin/main` `afd6d3e9` + this handoff's docs commit (push it docs-only with the next push); `evidence` == `origin/evidence`
+   `b6ec7819`; `git status` clean.
+3. `benchmark/results/p426/SIGNALS.md` regenerates byte-identically: `cd benchmark && PYTHONPATH=. ../.venv-bench/bin/python -m
+   bench.p426_verify a7 --results-root results/p426 --out <tmp>/B8.json && PYTHONPATH=. ../.venv-bench/bin/python -m bench.p426_signals a7
+   --results-root results/p426 --b8 <tmp>/B8.json --out-md <tmp>/S.md --out-json <tmp>/S.json` → `cmp` with the committed three files.
 
 ## Next, in order
 
-1. **P613:** step 1 DONE (`369831ed` code + 241 tests, four-eyes accepted; provisional A7 sheet `5dd19e23`
-   `benchmark/results/p426/SIGNALS.md`). Next: the gate on `main`'s tip → push (approval); step 2 = the Wave 1 adapters (A1, M1, A2, A3, A4)
-   + the rule-6 cross-wave check (four-eyes, same spec v2); step 3 = the panel run (B3 extended: `build="s2"`, A7 packets); step 4
-   = the final sheet → the MTP certification
-   call (per-axis signals to the operator; C269 client-cut sensitivity; P611 noise noted).
-2. Push (operator approval): the docs commits, then `d23d019d`, then `evidence`.
-3. Quiet windows: P606 ON-arm gates (`2a173f8b` PASS, `7a0817d3` PASS, `46ca41b9`) → their archive push (C272); the Wave 1 ON head
-   `f2b61127` (local branch `archive/p426-wave1-s2-on`) needs its own gate + push approval; **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode
-   2.2.5 re-pin (C269 B′); M65 pilot universe rebuild under v3.
+1. **P613 step 2 (four-eyes light, spec v2 §2 / §3 rules 1–4, 6, 7 / §4 for A1, M1, A2, A3, A4).** Write `docs/specs/p613-step2-contract.md`
+   in the step-1 contract's form: the goal paragraph (above, verbatim), the Wave 1 data formats read from the committed files
+   (`benchmark/results/p426/wave1.s2/<leg>/<leg>.receipt.json` `verdict` / `speed_valid`; `run/frozen.s2.json` `stack_head_off` /
+   `stack_head_on` / `registry_{off,on}_sha`; rows `benchmark/results/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed/{math500,cjudge,
+   vision_gate}.p426s2-{off,on}-b{1,2}.jsonl`, `math500.*.score.json`, `reasoning.p426s2-*.json`, `wave1.s2/m1-*/m1/<entry>/result.json`),
+   exact interfaces extending `p426_verify` / `p426_signals` with Wave 1 subcommands (or one `all` command), the rule-6 cross-wave diff
+   (`git diff <frozen.s2 stack_head_off> <v8_base off_commit>` limited to `main_models.yaml`, the `src/*` gitlinks and the
+   `identity_closure.python_closure` of `benchmark/run.py`, `benchmark/vision_gate.py`, `benchmark/bench/run_reasoning.py`, M1 `qualify`;
+   non-empty → a flag + operator before Wave 1 enters the sheet, C274 Q3), the mechanical family {A1 (both blocks), A7-s1, A7-s2} now
+   complete (Holm m = 3), golden numbers (count them from the committed rows first). Wave 1 rows read through `bench.chain_rows` where
+   it applies (P617). Go to the operator (cast, below), then implement + test in two worktrees at `main`'s tip, panel, fix, Accept,
+   commit, gate the tip (full suite — it caught P617), push with approval.
+2. **P613 step 3:** the panel run (spec §5): extend B3 `bench/p426_panel.py` (`build="s2"`; A7 key mapping + packet builder; C217 identity
+   gate first — the S build had 166 / 166 Wave 1 pairs identical, so Wave 1 may contribute ≈ 0 packets); freeze the packet set + judges
+   from `judges.json` before any verdict; Claude `blind-judge` + GPT-5.6 Sol High via `cursor-agent` (Gemini 3.1 Pro for A3 images).
+3. **P613 step 4:** the final sheet; then the MTP certification call to the operator: per-axis signals, flags with their item
+   crosswalks, a recommendation (registry change only with approval; certified triple per PLAN M6d; client configs per AGENTS).
+4. Quiet windows: the Wave 1 ON head `f2b61127` (local branch `archive/p426-wave1-s2-on`) — gate it, then push with approval;
+   **P602 = build P383 per plan v4**; C258 crossover (P577 (a)); P503 fixes (C261); P576; opencode 2.2.5 re-pin (C269 B′); M65 pilot
+   universe rebuild under v3 (P607 follow-up).
 
-## State — 2026-11-02
+**Four-eyes cast on this box** (`~/.config/review-panel/panel.toml`: sol, glm, sonnet; no codex): the auto-mode classifier DENIES a
+write-capable `cursor-agent --force` run (P615), so implementer = a fresh Claude Opus 5.5 session (`claude -p --model opus <!-- allow-shorthand: CLI alias -->
+--setting-sources "project,local" --tools "Read,Edit,Write,Grep,Glob,Bash" --permission-mode acceptEdits`), test-writer = Claude Sonnet
+5.5 (`claude -p`, resumable with `--resume <session_id>`), panel = GPT-5.6 Sol High (`cursor-agent -p --trust --mode ask --model
+gpt-5.6-sol-high`, read-only — allowed). Helpers read only inside their worktree: copy material into `<worktree>/.p613-material/`.
+Briefs are built with Python, never an unquoted heredoc (backticks run).
 
-- **Rehearsal `20261102a`** (arms `63415dcb` / `8516cf23`, 18:29–22:59Z): R1 off / on VALID (4/5 each; `go/crypto-square` fails both:
-  OFF `client_inactivity` at 3662 s, ON `stalled` + client kill), dossier `r1__off-a1__on-a1` PASS; R2 INVALID `reconciliation mismatch
-  (injected)` on `go/beer-song`, chain rc 2 = the P602 ambient-orphan refusal (`orphans_unattributed` not empty; known residual); R3 VALID,
-  `python/beer-song` = `kill_inflight_failed`, `go/crypto-square` = `kill_client_aborted`. As expected throughout.
-- **Wave 2b harvested** as superseded: `main` `f16b0112` (529 files, `wave2.v8-4104c7fc/`, run records + both dossiers), `evidence`
-  `e18cad07` (3584 files, 38 MB; scanned clean). Untracked copies moved to `$STACK_WORKDIR/scratch/superseded-wave2b-untracked/` (byte-identical
-  apart from HARVEST.json paths / `created` / self-hash). The arm worktrees hold no `.env`.
-- **P603 + P604** built in `1eaf8fd6` (grader `m62-structured-v3`, probe `da76b4cb…`, policy `f56705f9…`; never pooled with Wave 2b).
-- **C270 done** 2026-11-03 ≈ 01:58Z: gates PASS on `4adb596a` (9972 passed, receipt `bf536df1…`) and `main` `62bc46df` (9987 passed);
-  pushed `main` `eed0da39..62bc46df` (full), `evidence` `05161ba0..e18cad07` (data-only), `archive/p426-wave2.v8-af0711cf-off`,
-  `archive/p426-wave2.v8-4104c7fc-off`, `archive/p426-wave2-off` (`4adb596a`). ON archives wait (P606 (a)).
-- **Wave 2c** (v8 `353ff506…`, 2026-11-03 01:58–17:31Z): all 8 legs VALID, dossiers pilot / s1 / s2 / reload PASS; harvested `main`
-  `d23d019d`, `evidence` `b6ec7819` (re-verified, scanned clean). Descriptive: OFF 83/86, ON 84/86; item wall 455 vs 293 min.
-- **P610 → P611**: cross-attempt divergence is input-side (tool-visible mtimes), equal on both arms; reloads reproduce pilots exactly.
-- **P607** (lead call): the `63415dcb` gate FAILED 13 / 9967 — P604's grader bump never registered with the P371 / C147 identity pins
-  (no behaviour defect). Fixed `347cf8d0` + review r1 `e805f3e8` (`docs/reviews/p607/`); arms re-cut; `20261102a` stays valid (the freeze
-  never compares rehearsal commits). Follow-up: `benchmark/m65/pilot_universe.json` embeds v2 (stale; rebuild before any M65 use).
-- **P609** (lead call): the freeze now requires a PASS receipt for the exact OFF commit (`1713bbae`; it only checked the sha's
-  shape). Main-only (the freeze runs from `main`); arms unchanged.
+## State — 2026-11-03
+
+- **Wave 2c** (v8 `353ff506…`, arms `4adb596a` OFF / `46ca41b9` ON): 8 legs VALID, dossiers pilot / s1 / s2 / reload PASS; harvested
+  `main` `d23d019d`, `evidence` `b6ec7819`; pushed.
+- **Provisional A7 sheet** (`5dd19e23`, regenerated unchanged after P617): strict s1 OFF 42/43 vs ON 41/43 (−2.3 pp [−7.0, 0.0], WASH,
+  loss bound 7.0 pp ≤ 10), s2 41/43 vs 42/43 (+2.3 pp [0.0, +7.0], WASH); decode ON / OFF 1.65× (s1 [1.63, 1.68], s2 [1.63, 1.67]);
+  ON acceptance 0.775 / 0.770; leg wall OFF 13,654 / 14,464 s vs ON 8,763 / 9,633 s; noise floor 0 / 5 both arms (same epoch), OFF 0 / 48
+  and ON 1 / 48 (cross epoch); flags = cut-off differences + the P611 flip (P616 crosswalk). Holm family PROVISIONAL (A1 pending).
+- **P613 step 1** code `369831ed` + P617 `afd6d3e9` (full gate PASS 10,238); reviews / dispositions `docs/reviews/p613-step1/`.
+- **P606 done:** ON archives pushed (`archive/p426-wave2.v8-af0711cf-on` `2a173f8b`, `…-4104c7fc-on` `7a0817d3`, `archive/p426-wave2-on`
+  `46ca41b9`), each level full on its own receipt. Every Wave 2 arm commit resolves publicly; the rehearsal arms stay local (C271).
+- **C273:** the tool-visible wall clock stays (P611 (A)); 49 / 49 diverged items first differ in a tool output (timestamps 47, ASLR 2).
 
 ## Worktrees / scratch (each with its resolution)
 
-- `stack-p426-off`, `stack-p426-on` (`p426-off` / `p426-on`): the Wave 2c arms — remove after Wave 2c's harvest and the archive pushes.
-  `archive/p426-wave2.v8-*-{off,on}`: superseded arms — OFF pushed with C270, ON after their gates (P606).
-  `archive/p426-rehearsal.20261102a-{off,on}` (`63415dcb` / `8516cf23`): the rehearsal's arms, cited by the Wave 2c v8 — stay local (C271); record in the Wave 2c report.
+- `stack-p426-off`, `stack-p426-on` (`p426-off` / `p426-on`, both pushed as archives): remove after step 2 (rule 6 needs only the commits).
 - `stack-c258x-off` (`c258x-off`): keep for P577; remove after.
-- `$STACK_WORKDIR/p426/wave2/` (first v8), `p426/wave2b/`, `p426/wave2c/` (all harvested; wave2c = `d23d019d` / `b6ec7819`): delete after an
-  inventory table. `stack-p426-{off,on}` stay until the P606 ON gates and B6 / B8 no longer need the arm logs.
-- `$STACK_WORKDIR/scratch/superseded-wave2-untracked-20261101/`, `superseded-wave2b-untracked/`, `evstage-20261101-wave2v8` (committed
-  `58411357`), `evstage-20261102-wave2v8b` (committed `e18cad07`), `p586-4eyes/`, `p602-review/` (the shelved minimal patch),
-  `p603-p604-review/`, `p604-universe/`, `harvest-v8b-*.txt`: delete after the push / inventory. `scratch/p594-opencode-2.2.5/`: keep for the re-pin.
-- `$STACK_WORKDIR/p426/rehearsal/{20261030,…,20261102a}` + manifests + `main-clone-*`: `20261102a` is frozen into the Wave 2c v8; the rest
-  delete after the inventory. `$STACK_WORKDIR/c258x/` (scrub the charger serial before any harvest).
+- Local branches: `archive/p426-wave1-s2-on` (`f2b61127`, gate + push pending), `archive/p426-rehearsal.20261102a-{off,on}` (stay
+  local, C271), `archive/p426-wave2*` (pushed).
+- `$STACK_WORKDIR/p426/wave2/`, `p426/wave2b/`, `p426/wave2c/` (all harvested), `p426/rehearsal/*` (`20261102a` cited by the Wave 2c v8):
+  delete after an inventory table. `$STACK_WORKDIR/scratch/superseded-wave2*-untracked*/`, `evstage-*` (committed), `p586-4eyes/`,
+  `p602-review/` (the shelved minimal patch), `p603-p604-review/`, `p604-universe/`, `harvest-v8b-*.txt`, `gate-*.txt`: delete after the
+  inventory. `scratch/p594-opencode-2.2.5/`: keep for the re-pin. `$STACK_WORKDIR/c258x/` (scrub the charger serial before any harvest).
 
 ## Rules learned (session 15)
 
-- A push needs a PASS receipt on the exact pushed sha: gate the tip before a long run, push the gated sha (`<sha>:main`) so later docs
-  commits do not invalidate it.
-- An ON arm (one commit on its OFF arm) needs its own receipt; a tree identical to an ungated `main` commit is no help (P606).
+- The full suite gates every accepted change before its push — targeted suites missed P607's pins and P617's R7 invariant.
+- A push needs a PASS receipt on the exact pushed sha; push the gated sha (`<sha>:main`), then later docs / data commits on their own.
+- Each push's introduced commits must be all-docs, all-data or gated (P541): push a mixed run in homogeneous slices.
+- An ON arm (one commit on its OFF arm) needs its own receipt (P606); a commit on no branch is lost to `git gc` — branch it at once.
 - A recorded hash of a verdict is not a verdict: a precondition opens what it cites (P609).
-- A version / identity bump runs the FULL gate before its arms are cut (P607: the targeted suites missed 13 pins).
-- A harvest re-run re-stamps HARVEST.json (`created`, self-hash) besides the namespace paths: compare the rest byte for byte.
+- Same seeds do not reproduce a long agentic item: tool outputs leak the clock (P611 / C273); compare transcripts, never trust a rerun.
+- A pre-registered flag can fire on a cut-off asymmetry: every flag carries its items and both arms' endings (P616).
+- A golden number in a contract is counted from the data with the contract's own definition before it is written (strict ≠ lenient).
 
 ## Rules learned (session 14, carried)
 
@@ -78,11 +97,9 @@ for the picks"; updates every 15–20 min; ask only at Accept / pushes / scope c
 - Never put backticks in an unquoted heredoc that builds a brief (the shell runs them); a re-cut runs under `set -e`, never `;`-chained.
 - File names can look like addresses (`compile@go1.27.3-…count`); a main-bound index must not list private names (P599).
 - Dry-run the harvest over every real tree before relaunch (found P599).
-- (Superseded by C273: tool outputs leak the wall clock; same seeds reproduce short items only, ≈ 2 % of long items flip outcome.) With frozen seeds, item behaviour repeats across attempts (`go/crypto-square` ran away identically 5 times): a rerun cures only a
-  random cause (P603's pipe race), never a model-driven one (P604).
 - A piped capture of a client that exits can lose its tail at the pipe buffer: capture large outputs to files (P603).
-- A grader's "infrastructure" class must be attributable: protected inputs (tests, go.mod) failing = infra; the model's own files failing
-  = a scored fail (P604 review).
-- A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602).
+- A grader's "infrastructure" class must be attributable: protected inputs failing = infra; the model's own files failing = a scored
+  fail (P604 review).
+- A planned fix may never have been built: check the code, not the ruling (C180 / P383 → P602; B6 / B8 → P613).
 
-Next decision id C275; discussion ids continue from P617.
+Next decision id C276; discussion ids continue from P619.
