@@ -6,6 +6,8 @@ pairs only, per the step-1 contract `docs/specs/p613-step1-contract.md`. Determi
 
 CLI: `python -m bench.p426_signals a7 --results-root <dir> --b8 <B8.json> --out-md <SIGNALS.md> --out-json <SIGNALS.json>`.
 Step 3: `all … --panel <frozen panel dir>` (optional, E1) adds §4.5 `subjective` (`docs/specs/p613-step3-contract.md`).
+Step 4: `all … --evidence-ref <sha> [--repo <git work tree>]` adds the A7 first-divergence section (C284;
+`bench.p426_signals_divergence`) and status FINAL when every section is present (`docs/specs/p613-step4-contract.md`).
 """
 from __future__ import annotations
 
@@ -724,8 +726,8 @@ def _session_md(s, rec, prefix="sessions", family_label=FAMILY_LABEL):
 def render_md(signals):
     """Fix 15: dispatches on the record shape — an `all` record (generator_version p613-step2) renders through
     `render_all`; an A7 record renders exactly as step 1."""
-    if isinstance(signals.get("header"), dict) and signals["header"].get("generator_version") in (ALL_VERSION,
-                                                                                                 STEP3_VERSION):
+    if isinstance(signals.get("header"), dict) and signals["header"].get("generator_version") in (
+            ALL_VERSION, STEP3_VERSION, STEP4_VERSION):
         return render_all(signals)
     h = signals["header"]
     lines = [f"# P426 signals — {h['status']}", "",
@@ -846,19 +848,65 @@ def _check_all_b8(rows_root, b8):
             raise RefusalError(f"B8.json inputs union does not cover axis input {rel}")
 
 
-def compute_all(results_root, rows_root, b8, b8_sha256=None, panel=None):
+def compute_all(results_root, rows_root, b8, b8_sha256=None, panel=None, evidence_ref=None, repo=None):
     """One signals record: A7 (step 1) + Wave 1 (A1, M1, A2, A3, A4) + the complete mechanical family + flags.
     ``panel`` (step 3) = the frozen panel directory: adds §4.5 `subjective`, its flag, and the step-3 header / status;
-    ``panel=None`` returns the step-2 record unchanged (E1: ``--panel`` is optional)."""
+    ``panel=None`` returns the step-2 record unchanged (E1: ``--panel`` is optional).
+    ``evidence_ref`` (step 4) adds the A7 first-divergence section (`divergence`, C284), its inputs, the header's
+    evidence ref, and status FINAL when every pre-registered section is present; ``None`` → the step-3 record unchanged.
+    ``repo`` = the git work tree holding the ref (None: the one containing ``results_root``).
+    ``evidence_ref`` without ``panel`` refuses (no step-4 header on a sheet without §4.5)."""
+    if evidence_ref is not None and panel is None:
+        raise RefusalError("--evidence-ref requires --panel (the step-4 sheet carries §4.5 subjective)")
     rec = _compute_all_step2(results_root, rows_root, b8, b8_sha256)
-    if panel is None:
+    if panel is not None:
+        subj, panel_header = compute_subjective(panel, results_root, b8, rec, b8_sha256, rows_root=rows_root)
+        rec["subjective"] = subj
+        rec["flags"] = rec["flags"] + subjective_flags(subj)
+        rec["header"] = dict(rec["header"], generator_version=STEP3_VERSION, status=STEP3_STATUS, panel=panel_header)
+        rec["pending"] = {k: v for k, v in rec["pending"].items() if k != "4.5 subjective"}
+    if evidence_ref is None:
         return rec
-    subj, panel_header = compute_subjective(panel, results_root, b8, rec, b8_sha256, rows_root=rows_root)
-    rec["subjective"] = subj
-    rec["flags"] = rec["flags"] + subjective_flags(subj)
-    rec["header"] = dict(rec["header"], generator_version=STEP3_VERSION, status=STEP3_STATUS, panel=panel_header)
-    rec["pending"] = {k: v for k, v in rec["pending"].items() if k != "4.5 subjective"}
+    from bench import p426_signals_divergence as D
+
+    div = D.a7_divergence(results_root, b8, evidence_ref, Path(results_root) if repo is None else repo)
+    div_inputs = div.pop("inputs")
+    rec["divergence"] = dict(div, n_inputs=len(div_inputs))
+    rec["flags"] = rec["flags"] + D.flags(div)
+    rec["inputs"] = dict(sorted({**rec["inputs"], **div_inputs}.items()))
+    final = _final_ready(rec)
+    rec["header"] = dict(rec["header"], generator_version=STEP4_VERSION, evidence_ref=div["evidence_ref"],
+                         evidence_ref_given=div["evidence_ref_given"],
+                         inputs_sha256=_sha_doc(rec["inputs"]), n_inputs=len(rec["inputs"]),
+                         status=FINAL_STATUS if final["ready"] else rec["header"]["status"], final=final)
+    if final["ready"]:
+        rec["pending"] = {k: v for k, v in rec["pending"].items() if k != "final sheet + recommendation"}
     return rec
+
+
+# ======================================================================================================= final (step 4)
+STEP4_VERSION = "p613-step4"
+FINAL_STATUS = "FINAL — P426 certification evidence"
+WAVE1_AXES = ("A1", "M1", "A2", "A3", "A4")
+
+
+def _final_ready(rec):
+    """{ready, missing}: B8, every Wave 1 axis (every block B8-accepted), A7-s1 / s2 accepted, the panel and a complete
+    divergence section present."""
+    missing = []
+    for ax in WAVE1_AXES:
+        blocks = (rec.get(ax) or {}).get("blocks")
+        if not isinstance(blocks, dict) or set(blocks) != set(V.W1_BLOCKS) or any(
+                not isinstance(b, dict) or b.get("status") != "accepted" for b in blocks.values()):
+            missing.append(ax)
+    for s in V.SESSIONS_PAIRED:
+        if ((rec.get("A7") or {}).get("sessions") or {}).get(s, {}).get("status") != "accepted":
+            missing.append(f"A7-{s}")
+    if "subjective" not in rec:
+        missing.append("panel")
+    if not (rec.get("divergence") or {}).get("complete"):
+        missing.append("divergence")
+    return dict(ready=not missing, missing=missing)
 
 
 def _compute_all_step2(results_root, rows_root, b8, b8_sha256=None):
@@ -1197,6 +1245,13 @@ def render_all(signals):
         pn = h["panel"]
         lines[-1:-1] = [f"- Panel (`header.panel`): FROZEN.json sha256 `{pn['frozen_sha256']}`; panel files sha set "
                         f"`{pn['files_sha256']}` ({pn['n_files']} files, {pn['n_verdict_files']} verdict files)"]
+    if "evidence_ref" in h:
+        fin = h["final"]
+        lines[-1:-1] = [f"- Evidence ref (`header.evidence_ref`, the `evidence` branch commit read with `git show`): "
+                        f"`{h['evidence_ref']}` (given as `{h['evidence_ref_given']}`, "
+                        "`header.evidence_ref_given`)",
+                        "- Final (`header.final`): " + ("every pre-registered section present" if fin["ready"] else
+                                                       f"not final, missing {_list(fin['missing'])}")]
     fam = signals["family"]
     fam_label = f"mechanical family {fam['label']} (m = {fam['m']})"
     for s in V.SESSIONS_PAIRED:
@@ -1219,6 +1274,10 @@ def render_all(signals):
     lines += [""]
     if "subjective" in signals:
         lines += _subjective_md(signals["subjective"])
+    if "divergence" in signals:
+        from bench import p426_signals_divergence as D
+
+        lines += D.render_md(signals["divergence"])
     lines += ["## Flags (`flags`; listed, never vetoes)", ""]
     if not signals["flags"]:
         lines.append("- none")
@@ -1235,7 +1294,8 @@ def render_all(signals):
               f"`{cw['wave2_off']}`; files {_list(cw['files'])}; flag {cw['flag']}; entry_equal {cw['entry_equal']}; "
               f"globals_equal {cw['globals_equal']}; gitlinks_equal {cw['gitlinks_equal']}; closure files "
               f"{len(cw['closure_files'])}; qualify {cw['qualify']}"]
-    lines += ["", "## Pending (`pending`)", ""] + [f"- {k}: {v}" for k, v in sorted(signals["pending"].items())]
+    lines += ["", "## Pending (`pending`)", ""] + ([f"- {k}: {v}" for k, v in sorted(signals["pending"].items())]
+                                                   or ["- none"])
     return "\n".join(lines) + "\n"
 
 
@@ -1257,6 +1317,11 @@ def main(argv=None):
     al.add_argument("--panel", type=Path, default=None,
                     help="the frozen panel directory (FROZEN.json, packets, verdicts); optional (E1): absent → the "
                          "step-2 record; present with no readable FROZEN.json → refusal")
+    al.add_argument("--evidence-ref", default=None,
+                    help="the `evidence` branch commit holding the A7 events files (step 4): adds the A7 first-divergence "
+                         "section (C284) and the FINAL status; requires --panel; absent → the step-3 record unchanged")
+    al.add_argument("--repo", type=Path, default=None,
+                    help="the git work tree holding --evidence-ref (default: the one containing --results-root)")
     args = ap.parse_args(argv)
     try:
         V.check_out_dirs([args.out_md, args.out_json])
@@ -1267,7 +1332,8 @@ def main(argv=None):
             raise RefusalError("B8.json is missing or unreadable") from None
         if args.axis == "all":
             signals = compute_all(args.results_root, args.rows_root, b8,
-                                  b8_sha256=hashlib.sha256(b8_bytes).hexdigest(), panel=args.panel)
+                                  b8_sha256=hashlib.sha256(b8_bytes).hexdigest(), panel=args.panel,
+                                  evidence_ref=args.evidence_ref, repo=args.repo)
             md = render_all(signals)
         else:
             signals = compute_a7(args.results_root, b8, b8_sha256=hashlib.sha256(b8_bytes).hexdigest())
