@@ -48,3 +48,7 @@ GLM: all 12 fixes resolved; F1–F3 = the d5 test defects. Sol: fixes resolved e
 | Sol v-P5 / GLM F2–F3 frozen-test defects | test | in d5 | |
 | Sol v-P6 `provenance.json` rewritten on an all-skipped run | minor | residual | per-verdict provenance is correct; scoring unaffected |
 | GLM note `test_fix10` exercises the refusal path, not the cap | test weakness | to the test-writer with round 2 | |
+
+Post-Accept (designer, behaviour-preserving; the naming / PII hooks refused the commit): `p426_panel._a7_leaks` local variable renamed to `lowered`;
+`test_p613s3_golden.py` the `qwen3.8` leak-scan needle line carries `allow-shorthand`; `test_p613s3_export.py` the fake home-path line
+carries `allow-pii-pattern`. Suites before the edit: 826 passed; the three touched files re-run after it.
