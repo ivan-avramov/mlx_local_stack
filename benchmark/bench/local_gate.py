@@ -17,6 +17,7 @@ reachability from the fork's `origin/main`. Threat model: accidental pushes only
 
 import argparse
 import ast
+import collections
 import dataclasses
 import hashlib
 import json
@@ -108,6 +109,17 @@ def skipped_from_junit(path):
         return None
     root = ET.parse(path).getroot()
     return sorted(f"{tc.get('classname')}::{tc.get('name')}" for tc in root.iter("testcase") if tc.find("skipped") is not None)
+
+
+def ran_and_passed_from_junit(path):
+    if not Path(path).exists():
+        return None
+    root = ET.parse(path).getroot()
+    clean = {}
+    for tc in root.iter("testcase"):
+        tid = f"{tc.get('classname')}::{tc.get('name')}"
+        clean[tid] = clean.get(tid, True) and all(tc.find(k) is None for k in ("skipped", "failure", "error"))
+    return sorted(tid for tid, ok in clean.items() if ok)
 
 
 # ------------------------------------------------------------------ steps
@@ -337,14 +349,29 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                 receipt["problems"].append(f"{step.name} left tracked files modified")
                 break
         else:
-            skipped = skipped_from_junit(scratch / ".gate-junit.xml") or []
-            receipt["skipped_tests"] = skipped
-            want = sorted(l for l in (baseline or "").splitlines() if l.strip())
+            junit = scratch / ".gate-junit.xml"
+            skipped = skipped_from_junit(junit)
+            passed_ids = ran_and_passed_from_junit(junit)
+            receipt["skipped_tests"] = skipped or []
+            receipt["baseline_skips_ran"] = []
             if baseline is None:
                 receipt["problems"].append(f"no skip baseline {baseline_file} — review the skipped tests, then commit it")
-            elif skipped != want:
-                receipt["problems"].append(f"skip list != baseline: +{sorted(set(skipped) - set(want))} "
-                                           f"-{sorted(set(want) - set(skipped))}")
+            if skipped is None or passed_ids is None:
+                receipt["problems"].append("pytest junit not written")
+            elif baseline is not None:
+                want = sorted(l for l in baseline.splitlines() if l.strip())
+                passed = set(passed_ids)
+                missing = sorted(set(want) - set(skipped))
+                receipt["baseline_skips_ran"] = [w for w in missing if w in passed]
+                extra = sorted((collections.Counter(skipped) - collections.Counter(want)).elements())
+                if extra:
+                    receipt["problems"].append(f"skip list != baseline: +{extra} -{missing}")
+                duplicated = sorted(w for w, n in collections.Counter(want).items() if n > 1)
+                if duplicated:
+                    receipt["problems"].append(f"skip baseline lists an entry more than once: {duplicated}")
+                unexplained = [w for w in missing if w not in passed]
+                if unexplained:
+                    receipt["problems"].append(f"baseline skip neither skipped nor passed: {unexplained}")
     except (GateError, subprocess.CalledProcessError, OSError) as exc:
         receipt["problems"].append(f"{type(exc).__name__}: {exc}"[:600])
     finally:
