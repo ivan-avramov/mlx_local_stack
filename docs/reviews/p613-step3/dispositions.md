@@ -20,3 +20,31 @@ at first write). Sol ids are its own numbering.
 | GLM S1 a future non-identical Wave 1 pair needs a packet type | scope note | recorded | refusal is the safe behaviour today |
 | Implementer P2 events bound through HARVEST | — | = erratum E2 | |
 | Implementer P4 identical A7 pairs in the permutation vector at 0 | — | kept | spec §4.5: C217-identical pairs score 0.5 and stay in the test |
+| TW d2 A4 absent from §4.5 | gap | adopted (fix 12) | spec §4.5: A4 draw distribution + panel scores, descriptive, never tested (here: 6 / 6 identical → 0.5, not judged) |
+| TW d2 W1, W2, R1–R5, the E1 test, golden 166 | test defects | to the test-writer (d3) | candidate matches the real data (TW evidence copy: 102 / 117 pass) |
+| TW d2 R6 model-name leak variant does not refuse | — | resolved by fix 6 | the export must refuse, not redact |
+| TW d2 R6 `a7_packet` on an identical item | test over-reads the contract | to the test-writer (d3): drop | the contract does not require a refusal there |
+
+## After fix round 1 (test-writer delivery 4: 130 / 134 + 686 regression; verdict merge)
+
+| Finding | Severity | Disposition | Why |
+|---|---|---|---|
+| TW d4 4 failing tests (pre-sealed forged verdict checks the file not the marker; `a7_select` `_ctx` beyond fix 9; A4 table-row markup; "not both correct" wording) | test defects | to the test-writer (d5) | candidate values verified by the test-writer |
+| TW d4 `len_on` / `len_off` editable between export and the first verdict | minor | adapted (procedure) | the frozen panel directory is COMMITTED before any judge runs; git fixes the bytes the verdicts bind to |
+| TW d4 `a7-export` runner needs `MLX_BENCH_RESULTS` (fix 2 regrades A1) | — | test-runner amendment (allowed in d4) | |
+| impl P3 the shared `seal_verdicts` still crashes on malformed JSON (other axes) | out of scope | residual → own proposal later | step 3 uses its own A7 seal path |
+| impl P5 `provenance.json` rewritten per run; `a7-seal` accepts a cursor label | minor | residual | |
+
+## Verify round (GPT-5.6 Sol High, GLM 5.2; both valid)
+
+GLM: all 12 fixes resolved; F1–F3 = the d5 test defects. Sol: fixes resolved except as below.
+
+| Finding | Severity | Disposition | Why |
+|---|---|---|---|
+| Sol v-P1 `a7-seal` seals bare verdicts under ANY frozen judge (incl. the Cursor one) | major | proposed fix round 2 (operator) | a false second-family verdict defeats C206 / C207; `a7-seal` must accept only the `claude-code:blind-judge` client and normalise `client_version` |
+| Sol v-P2 A1 eligibility uses strict items | minor | proposed fix round 2 | AGENTS: the panel judges execution-PASSING outputs (lenient correctness); today strict = lenient (96) |
+| Sol v-P3 A4 eligibility checks only `score == 1.0` | minor | proposed fix round 2 | the strict-draw predicate (+ `budget_hit` false, `finish_reason` stop), consistent with the sheet's A4 |
+| Sol v-P4 / GLM F1 `a7_select` `_ctx` | minor | proposed fix round 2 | the contract signature, as fix 9 did for `a7_packet` |
+| Sol v-P5 / GLM F2–F3 frozen-test defects | test | in d5 | |
+| Sol v-P6 `provenance.json` rewritten on an all-skipped run | minor | residual | per-verdict provenance is correct; scoring unaffected |
+| GLM note `test_fix10` exercises the refusal path, not the cap | test weakness | to the test-writer with round 2 | |
