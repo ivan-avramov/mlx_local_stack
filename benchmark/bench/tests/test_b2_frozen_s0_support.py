@@ -320,9 +320,9 @@ def test_the_fixture_secrets_are_found_by_a_plain_search(tmp_path):
 def test_the_frozen_runner_and_serving_pin_identities_of_the_base_commit():
     for rel, sha in S.FROZEN_RUNNERS.items():
         assert S.sha256_file(S.REPO / rel) == sha, rel
-    got = subprocess.run(["git", "ls-files", "-s", *S.BASE_GITLINKS], cwd=str(S.REPO), capture_output=True, text=True).stdout
+    got = subprocess.run(["git", "ls-files", "-s", *S.LIVE_GITLINKS], cwd=str(S.REPO), capture_output=True, text=True).stdout
     links = {ln.split()[-1]: ln.split()[1] for ln in got.splitlines()}
-    assert links == S.BASE_GITLINKS
+    assert links == S.LIVE_GITLINKS  # P632: the live index, not the arm build (BASE_GITLINKS)
 
 
 def test_the_p426_order_rule_is_a_seeded_permutation():
