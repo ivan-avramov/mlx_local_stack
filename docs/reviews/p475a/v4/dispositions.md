@@ -10,3 +10,13 @@ Sources: panel opinion (GPT-5.6 Sol High P1–P2; GLM 5.2 F1–F3), implementer 
 | GLM F2 `expected_manifest` computed twice | minor | declined | pure function; negligible cost |
 | GLM F3 untested: `--kv-arm` without `--predictor`; `--predictor on` without a summary | test gap | to the test-writer | |
 | impl notes 1, 2, 4, 5 (no 16-state gate for `off` at `fd67082a`; the `classify` closure; the attention rule and exact widths also without the flag) | — | accepted | consistent with v4 and P542 |
+| TW d2 the 7 third-entry / unknown-entry driver tests fail in their own `control()` helper (TQ4 registry, AF8 manifest) | test defect | to the test-writer (d3) | candidate verified by the test-writer's scratch probe |
+| TW frozen AST test "no `quantized_kv_start` literal in `classify_kv_arm`" | test defect (source structure) | to the test-writer (d3): replace with behaviour | four-eyes: tests constrain behaviour, not source; the behaviour (non-zero start refuses) is already tested |
+| TW d2 black / isort not run (not installed in the fork venv) | — | designer at Accept | the fork's pinned formatters via `dev/ci.py` / pre-commit |
+
+## After fix round 1 (test-writer delivery 4: 476 / 476 + 698 neighbours pass; verdict fix then merge)
+
+| Finding | Severity | Disposition | Why |
+|---|---|---|---|
+| TW d4 P1 fix 1 makes every `auto`-attention entry fail on a real worker (introduced by the repair) | major (verified: `mlx_vlm/server/schemas.py` omits `sdpa_forced` when unset under `auto`; `worker.py:1587` records the absent key as `None`) | proposed fix round 2 (operator) | the strict counter check is right only under `fused_v1`, where the server always emits the counter; under other policies an absent / None counter means no forced calls (0); a present value must still be an int ≥ 0 and must be 0 |
+| TW d4 P2 `640.0` rejected | minor | declined | JSON counters are integers |
