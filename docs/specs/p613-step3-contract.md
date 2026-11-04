@@ -80,3 +80,16 @@ exclusions; every hash refusal (object, events, start-tree file); diff text and 
 model name / path in a packet (leak check); A / B balance; freeze refuses with a verdict present; `check_frozen` refuses a changed
 packet; §4.5 numbers on hand-computed verdict fixtures (scores, permutation p, Holm m, < 5 rule, missing counted); byte-identical
 regeneration. Golden (marked): the counts above. Test dir `benchmark/bench/tests/p613s3/`.
+
+## Errata (2026-11-04, after the implementer's report)
+
+- E1 `--panel` is OPTIONAL: absent → `all` writes the step-2 record unchanged (status `PROVISIONAL — subjective panel pending (step 3)`);
+  present → §4.5 and status `PROVISIONAL — final review pending (step 4)`; present with a missing / unreadable FROZEN.json → refusal.
+  (Required broke 12 committed step-2 CLI tests.) The step-2 golden "committed outputs are the `all` outputs" passes `--panel
+  benchmark/results/p426/panel` once the panel is committed.
+- E2 events binding: the evidence-branch events file is the SCRUBBED copy, so it never hashes to the row's raw
+  `evidence_sha256.events`; bind instead through the attempt's `HARVEST.json`: its record for that file has `sha256` == the row's value
+  and `published_sha256` == the sha256 of the bytes read from the evidence ref; else refusal.
+- E3 A1 identity for the panel = the panel-eligible set (both correct, `select`'s math500 rule): 96 keys, all identical; the 4
+  both-wrong keys are "not both correct", excluded and counted. Wave 1 identical over eligible keys: A1 96, A2 40, A3 20, A4 6 = 162
+  (166 B8 keys; 4 not eligible).
