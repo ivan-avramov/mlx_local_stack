@@ -299,6 +299,48 @@ def digest_for(repo, sha, live, baselines):
                          _audits_for(repo, live, sha))
 
 
+def _prefix_paths(entry):
+    """Every dotted prefix of the entry's module part as a relative `.py` path, longest first; [] if underivable."""
+    if "::" not in entry:
+        return []
+    parts = entry.split("::", 1)[0].split(".")
+    if not all(p and p not in ("..", ".") and "/" not in p and "\\" not in p for p in parts):
+        return []
+    return [Path(*parts[:i - 1], parts[i - 1] + ".py") for i in range(len(parts), 0, -1)]
+
+
+def _absent_allowed(entry, *, scratch, live, sha, junit_ids):
+    """P627 v1.3: the baseline entry's test file was added on the live side after the histories diverged."""
+    if entry in junit_ids:
+        return False
+    paths = _prefix_paths(entry)
+    if not paths or any((Path(scratch) / p).is_file() for p in paths):
+        return False  # v1.1 gated tree first
+    tracked = [(p, _git(live, "ls-tree", "HEAD", "--", p.as_posix(), check=False)) for p in paths]
+    tracked = [(p, row) for p, row in tracked if row]
+    if len(tracked) != 1:
+        return False
+    rel, row = tracked[0]
+    if row.split()[0] not in ("100644", "100755"):
+        return False
+    added = _git(live, "log", "--diff-filter=A", "--format=%H", "-1", "HEAD", "--", rel.as_posix(), check=False)
+    if not added:
+        return False
+    base = _git(live, "merge-base", sha, "HEAD", check=False)
+    if not base:
+        return False
+    return _is_ancestor(live, base, added) and not _is_ancestor(live, added, sha)
+
+
+def _is_ancestor(live, a, b):
+    r = subprocess.run(["git", "-C", str(live), "merge-base", "--is-ancestor", a, b], capture_output=True, text=True)
+    return r.returncode == 0
+
+
+def _junit_ids(path):
+    return {f"{tc.get('classname')}::{tc.get('name')}" for tc in ET.parse(path).getroot().iter("testcase")}
+
+
 def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real_busy, dirty=_real_dirty, artifacts=_artifacts):
     live, gate_dir = Path(live), Path(gate_dir)
     if busy():
@@ -313,6 +355,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
     digest = policy_digest(repo, _gate_source(), baseline if baseline is not None else "<none>", parity, audits)
     scratch = gate_dir / "scratch" / f"{repo}-{sha[:12]}-{time.time_ns()}"
     receipt = dict(repo=repo, sha=sha, policy_digest=digest, parity_ref=parity, python="3.12", steps=[], problems=[],
+                   baseline_skips_ran=[], baseline_skips_absent=[], live_head=_git(live, "rev-parse", "HEAD", check=False),
                    started=time.strftime("%Y-%m-%d %H:%M:%S"),
                    not_covered="python 3.10 (fork CI)" if repo == "mlx-vlm" else
                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
@@ -353,7 +396,6 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
             skipped = skipped_from_junit(junit)
             passed_ids = ran_and_passed_from_junit(junit)
             receipt["skipped_tests"] = skipped or []
-            receipt["baseline_skips_ran"] = []
             if baseline is None:
                 receipt["problems"].append(f"no skip baseline {baseline_file} — review the skipped tests, then commit it")
             if skipped is None or passed_ids is None:
@@ -370,6 +412,10 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                 if duplicated:
                     receipt["problems"].append(f"skip baseline lists an entry more than once: {duplicated}")
                 unexplained = [w for w in missing if w not in passed]
+                ids = _junit_ids(junit) if unexplained else set()
+                absent = [w for w in unexplained if _absent_allowed(w, scratch=scratch, live=live, sha=sha, junit_ids=ids)]
+                receipt["baseline_skips_absent"] = sorted(absent)
+                unexplained = [w for w in unexplained if w not in absent]
                 if unexplained:
                     receipt["problems"].append(f"baseline skip neither skipped nor passed: {unexplained}")
     except (GateError, subprocess.CalledProcessError, OSError) as exc:
