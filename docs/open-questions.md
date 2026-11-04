@@ -14,6 +14,8 @@ is the record that stops it being re-asked.
 ---
 
 ## OPEN — needs operator judgement
+### C288 — RULED 2026-11-04 (operator: "go"): **P613 step 4 Go** on `docs/specs/p613-step4-contract.md` (`9cfc8c78`): the generated A7 first-divergence section (C284) + the FINAL status; four-eyes light, cast as steps 2–3. Next decision id C289.
+
 ### C287 — RULED 2026-11-04 (operator: "p627: accepted - continue"): **P627 ACCEPTED** (spec v1.3; four fix rounds; 272 tests): commit, one full gate on the tip carrying step 3 + P631 + P627, re-gate `8055b219` (expected PASS with the two `test_b2_frozen_s0_support` entries in `baseline_skips_absent`), then the push ask (`main` + `archive/p426-wave1-s2-on`). Next decision id C288.
 
 ### P631 — LEAD CALL 2026-11-04 (gate FAIL on the step-3 tip `e2f45998`, 1 / 10,849: `test_b2_frozen_s0_support::test_the_frozen_runner_and_serving_pin_identities_of_the_base_commit`): **the C285 gitlink bump `85535982` (src/mlx-vlm 1c7c8fa1 → d94e38a9) broke the B2 frozen pin `BASE_GITLINKS`**, which compares the live index with the pinned base gitlinks. The established route is the P520 rebase-amendment (the pin moved when the base moved to S′): `BASE_GITLINKS` amended to d94e38a9 with the reason recorded beside it; the bump is dev/ + tests only (production `mlx_vlm/` byte-identical), so the serving identity the pin guards is unchanged. The rest of the gate: 10,848 passed. Regate the tip that carries it (with P627 if accepted).
