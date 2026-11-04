@@ -52,7 +52,7 @@ interfaces and outputs are unchanged and stay green). Step 2 implements spec §2
   `finish_reason`, `backend`}. `…/m1/<entry>/job.json`: `argv` (list), `expect`. `…/m1/report.json`: `predictor`, `reviewed_head`,
   `registry_sha256`, `production`, `versions`, `end_problems`.
 - `p426/ids.json`: `axes.{math500,cjudge,vision}.{block1,block2}` (id lists), `axes.reasoning.{block1,block2}` (task seeds) and
-  `request_seeds` {task seed (str): request seed}.
+  `axes.reasoning.request_seeds` {task seed (str): request seed} (erratum 2026-11-04: the location made explicit).
 - Excluded: `p426/wave1/` (S build), tunes `p426-*`, every `*-smoke` leg / tune (listed in coverage, never scored),
   `p426/wave1.s2/archive/` (listed as superseded). A pair member resolving to any of them → `RefusalError`.
 
@@ -148,7 +148,7 @@ M1 (block). Inputs: every file read, `{repo-relative-to-rows_root path: sha256}`
 - A1 strict = lenient: b1 OFF 49/50, ON 49/50; b2 OFF 47/50, ON 47/50; conv 100 % all; `nonconv_kinds` {} all; exclusive solves none;
   paired delta 0, lo 0, hi 0, degenerate per block and both; loss bound = exact bound 5.82 pp (n 50), 2.95 pp (n 100); MDE `mde(50)`
   0.1772, `mde(100)` 0.1253 (zero discordance → default row); permutation p 1.0; Holm m 3, all adjusted p 1.0.
-- Decode geomean ratio points: A1 b1 1.736, b2 1.729; A2 1.606, 1.543; A3 1.775, 1.727; A4 per draw 1.584–1.656.
+- Decode geomean ratio points: A1 b1 1.736, b2 1.729; A2 1.606, 1.543; A3 1.775, 1.727; A4 per draw b1 1.615, 1.623, 1.584; b2 1.656, 1.634, 1.528 (erratum 2026-11-04: was "1.584–1.656", b2's 1.528 omitted).
 - Acceptance: A1 0.7490 / 0.8038 / both 0.7666 (106153 / 138464); A2 0.5869 / 0.6128 / both 0.6015; A3 0.6343 / 0.5996 / both 0.6168;
   A4 634/708 = 0.8955, 604/680 = 0.8882 (equals `acceptance_pooled`).
 - A2 conv 20/20 each arm and block; A3 self-PASS 10/10 each; A4 strict draws 3/3 each arm and block, budget hits 0.
