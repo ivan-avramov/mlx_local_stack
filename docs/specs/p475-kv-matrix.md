@@ -1,4 +1,4 @@
-# P475 — KV-cache format matrix for the two top picks — SPEC v3, 2026-10-24 (four-eyes light; v3 = C233: measured in the shipped MTP-ON state)
+# P475 — KV-cache format matrix for the two top picks — SPEC v4, 2026-11-04 (four-eyes light; v3 = C233: measured in the shipped MTP-ON state; v4 = C280: rebuild on S′, `Qwen3.8-27B-mlx-uniform-4bit` first, the parked change-review findings as requirements)
 
 v2 applies design review round 1 of 1 (`docs/reviews/p475/design-round1.*`; Cursor `gpt-5.6-sol-high` + `glm-5.2-high`): quality is part
 of the decision (stage 2); TQ4s dropped (the server converts the WHOLE cache on crossing `quantized_kv_start` — a between-context switch,
@@ -39,6 +39,64 @@ only that entry's KV keys AND restoring its MTP lines exactly as the P426 §11 r
 reference arm per pick, `N16-OFF` = native16 with MTP OFF (the committed state of the first pick); a temporary worktree per arm, removed after its legs are harvested. The
 arm equal to the committed registry uses the base commit. Attention differs by pick and is kept as deployed (the first pick ships
 `attention_policy: fused_v1`, the second the default): absolute numbers are not compared across picks.
+
+## v4 — rebuild (C280, P626); where v4 and v3 differ, v4 wins
+
+- **Build:** S′ — fork `1c7c8fa166582ac1a1c23ae9063527b2b5215b11` + the P475a commit (its own push first), mlx-serve
+  `1ddf6f842f159a62d240f3ac6965fc33cbdb0b0d`; the base commit is the stack `main` commit carrying the P475a gitlink bump; arm branches
+  `p475-<pick-short>-<arm>` off it (local branches, never a scratchpad).
+- **Committed states (2026-11-04):** both picks serve MTP ON — `Qwen3.8-27B-mlx-uniform-4bit` TQ4 (`kv_bits: 4`, `turboquant`;
+  MTP CERTIFIED C249, KV PROVISIONAL C202), `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` N16 (`kv_bits: 0`; MTP PROVISIONAL, P426
+  pending). An arm changes only the entry's KV keys; no MTP restore is needed. The reference arm per pick is its committed KV format with
+  MTP OFF (`TQ4-OFF` for the first, `N16-OFF` for the second) — the three C177-style MTP lines commented out, nothing else.
+- **Order:** `Qwen3.8-27B-mlx-uniform-4bit` first (both blocks), its MATRIX table delivered on harvest; then the
+  `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` half only on the operator's word (a format flip there would void P426 Waves 1–2).
+  Canonical `MATRIX.md` = both picks; a one-pick table is `MATRIX.<pick>.md`, labelled partial (R7).
+- **Attention:** each pick as deployed (`fused_v1` for the second; default for the first).
+
+### Requirements from the parked change reviews (`docs/reviews/p475/parked/`; ids = round-reviewer-finding)
+
+Provenance and arms
+- R1 (r1-sol-1) arm identity read from git at leg entry and exit: worktree clean, HEAD == the arm commit, parent == the base, diff ⊆ the
+  entry's KV / MTP keys + the `PROVISIONAL P475 arm` comment, submodule commits == the pins; recorded in the receipt.
+- R2 (r2-sol-1) KV environment overrides (`KV_*`, `TQ_*`, split widths, group size, TurboQuant mode) stripped from router and driver
+  environments; every resolved KV field checked on the worker (`KV cache resolved` line: bits, scheme, split key / value bits and
+  schemes, group size, TurboQuant mode, start), tolerant of absent split fields for non-split arms (TW-3: confirm the real line format on
+  a live worker log before the full run).
+- R3 (TW-2) the worker argv check covers every KV flag incl. `--kv-group-size`.
+Leg lifecycle
+- R4 (r1-sol-2) the gate lock (C227) held as a lease for the whole leg (flock fd kept to teardown).
+- R5 (r2-sol-10) a config / argv / KV-line / predictor precondition failure after load aborts BEFORE the driver launches.
+- R6 (r1-sol-5, r1-glm-2, r1-glm-3) the driver runs in its own session; on timeout or any exit path it is terminated, escalated, reaped
+  and verified gone before watcher stop and stack teardown.
+- R7 (r2-sol-8) teardown proven: worker, listener, wrapper and owned process group gone; an unload failure propagates.
+- R8 (r1-sol-6) the 600 s idle starts after harvest completes.
+Watcher and power
+- R9 (r1-sol-3) the watcher's capacity mode reads `elapsed_s` and gets expected rung durations; its RATE / ETA report content is tested.
+- R10 (r1-sol-4, r2-sol-3) tick count and cadence validated against the measured interval (driver launch → driver exit); `pmset` history
+  reconciled over exactly that interval.
+- R11 (r2-sol-2) watcher lifecycle / coverage failures are `speed_problems` (SPEED_INVALID → replacement), never INVALID.
+- R12 (r2-glm-1) the watcher binds the driver by (pid, create_time), not pid alone.
+Run control
+- R13 (r1-sol-7, r2-glm-3) replacements queued after the ordered block (block order preserved); retry caps explicit options,
+  monotonic on resume; the deciding block has its own cap.
+- R14 (r1-glm-1) NOT_STARTED (a pre-check refusal) is retried after its own idle, bounded, never terminal evidence.
+- R15 (r2-glm-5) a persistently refusing preflight marks that arm refused and the run continues with the others (exit code says so).
+- R16 (r1-glm-4) a deciding block is reported in its own column, never folded into the two-block mean / ratios.
+- R17 (r1-glm-5) the canonical receipt's verdict wins over `.refused-*` variants.
+Harvest, resume, output
+- R18 (r2-sol-4) dossiers staged in a temporary directory and renamed atomically after verification; resume replays a harvest when a
+  receipt exists without its finalized dossier.
+- R19 (r2-sol-5, r2-glm-4) resumed metrics come only from validated harvested dossiers (exactly one ladder file per dossier).
+- R20 (r1-sol-8, r2-sol-6, r2-sol-7) canonical `MATRIX.md` only when complete (every requested pick / arm / block with valid rungs);
+  otherwise `MATRIX.PARTIAL.md` and a nonzero exit; `--picks` rejects empty / duplicate lists; matrix failures propagate.
+Instrument
+- R21 (r2-sol-9) strict rung validity reconciles backend telemetry: `predicted_n == 256`, `prompt_per_second ≈ prompt_n / prompt_ms`
+  (2 %), token counts agree, draft telemetry judged by key presence (ON arms present, OFF absent); `cache_n == 0` accepts a numeric 0
+  of either JSON type (r2-glm-6); opt-in so other callers are unchanged.
+- R22 (r1-glm-6, r1-glm-7) the KV-line parser takes a string or a list of lines and compares `quantized_kv_start` numerically.
+
+Acceptance: v3's criteria plus one red-first test per R1–R22.
 
 ## Stage 1 — memory / speed screen
 

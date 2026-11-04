@@ -1,4 +1,4 @@
-# P475a — fork `qualify` accepts a KV-format arm — SPEC v3, 2026-10-24 (four-eyes light; C230; v2 = design review round 1 of 1, `docs/reviews/p475a/`; v3 = C233)
+# P475a — fork `qualify` accepts a KV-format arm — SPEC v4, 2026-11-04 (four-eyes light; C230; v2 = design review round 1 of 1, `docs/reviews/p475a/`; v3 = C233; v4 = C280: rebuild on S′ with the parked change-review findings as requirements)
 
 ## Goal
 
@@ -42,6 +42,33 @@ golden fixture and the 16-state design (C203) unchanged; full registry names.
    served argv carries the MTP flags and the expected manifest includes the drafter's cache), and refuses when the entry is MTP-OFF; report field; expected manifest from the arm; reference comparison labelled; the
    no-flag path unchanged.
 3. Fork suite ×2 identical skip lists, 0 failed; eight audits green; production diff empty.
+
+## v4 — rebuild (C280, P626)
+
+The v3 candidate was lost (P626). v4 = v3 plus the following; where they differ, v4 wins.
+
+- **Base:** the fork at the stack's current gitlink (S′, `1c7c8fa166582ac1a1c23ae9063527b2b5215b11`); work in a fork worktree on a local
+  branch `p475a-kv-arm` (never a session scratchpad); the stack bumps the gitlink only after the fork commit is pushed (approval).
+- **Entries:** `--kv-arm` and `classify_kv_arm` accept ONLY `Qwen3.8-27B-mlx-uniform-4bit` and `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`;
+  any other entry → `None` / refusal (Sol r1-1).
+- **Arm values:** the KV keys must form one of the five arm rows of `docs/specs/p475-kv-matrix.md` (N16, AF8, TQ8, AF4, TQ4) exactly —
+  integer widths only; a fractional, non-finite or other width / scheme → `None` (Sol r1-2, r1-3). `expected_config` keeps the exact
+  numeric width it serves (no `int()` truncation).
+- **Robust `None`:** malformed YAML structure (`models: [null]`, non-mapping entries) and non-finite numbers return `None`, never raise
+  (Sol r1-3).
+- **Attention rule:** `native_attention` defaults to unset; a missing manifest / template yields only the manifest problem, never a
+  spurious `sdpa_forced` problem (GLM r1-4).
+- **No dead guard:** the `quantized_kv_start` rule is enforced in one place (the settings comparison); no unreachable second check (GLM r1-5).
+- **Base state:** an arm built on ANY of the 16 accepted states (incl. one where a non-tested entry is MTP-ON) is accepted (GLM SR2).
+
+## v4 acceptance additions
+
+4. Driver tests without mocking `classify` / `classify_kv_arm`: a real arm registry as the live `main_models.yaml` for every arm × pick
+   (10), asserting the report's `kv_arm`, the served argv built by mlx-serve's real `_build_command` spelling (`command_problems == []`),
+   the expected manifest, and the attention counters (GLM r1-1, r1-2, SR1; Sol r1-4).
+5. A driver test whose worker record has the WRONG `sdpa_forced` for the arm (e.g. > 0 for AF8 under `fused_v1`) → the entry is not
+   completed, with the `sdpa_forced` problem (GLM r1-3).
+6. Refusal tests: a third entry; a fractional width; `.inf`; `models: [null]`.
 
 ## Non-goals
 
