@@ -1,6 +1,6 @@
-# Handoff — 2026-11-04 (session 16 END: P613 steps 2–3 committed, step 4 candidate READY FOR ACCEPT; P624 / P627 gate rules; P475a in the fork)
+# Handoff — 2026-11-04 (session 17 IN PROGRESS: P632 fixed the main-tip gate FAIL (`65cf2171`, gate running); P633 step-4 verify running)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C288, C287, P631, C286, C285, P629, P628, P627,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C289, P633, P632, C288, C287, P631, C286, C285, P629, P628, P627,
 C284 … C276), then `docs/specs/p613-step4-contract.md` + `docs/reviews/p613-step4/dispositions.md`. Model names: FULL registry names
 only. Review rounds: 3 per artifact (more only on the operator's word). Operator stance: "keep going towards certifying MTP for the
 picks"; bias for quality; updates every 15–20 min; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land.
@@ -12,10 +12,16 @@ operator makes the call from per-axis signals). The evidence is ONE generated `b
 committed in it; step 4 (divergence section + FINAL) is built and waiting for Accept; then the recommendation. After that, the same
 certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, C280 rebuild) comes first.
 
-## Gate results at session end (2026-11-04)
+## Session 17 status (2026-11-04)
 
-- `8055b219` (archive) **PASS** under P627: `baseline_skips_absent` = the two `test_b2_frozen_s0_support` entries → the archive branch is pushable.
-- `e6986d9e` (main tip: step 3 + P631 + P627) **FAIL**, pytest 8 failed / 10,893 passed (the summary tail lists bench/tests/test_b2_frozen_s8_freeze.py::test_new_v8_refuses_a_failed_production_tree_precondition_naming_it; bench/tests/test_b2_s8c_chain.py::test_the_pilot_pair_runs_end_to_end_through_the_real_sequencer_and_the_real_chain; bench/tests/test_b2_s8c_chain.py::test_a_makeup_pair_runs_end_to_end_after_the_pilot_gate; bench/tests/test_b2_s9_harvest.py::test_a_real_p426_leg_harvests_without_a_scrub_refusal; the other failures are above it in the receipt's full log only — rerun the B2 suites to list all 8). **FIRST job next session:** diagnose before anything else. Lead suspects: the `src/mlx-vlm` gitlink bump `85535982` seen by the v8 freeze's production-tree / serving-pin preconditions (P609-style checks; the B2 pin P631 fixed only `BASE_GITLINKS`), or P627's gate-source change (policy digest) seen by tests that open a real receipt. Reproduce: `cd benchmark && ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/test_b2_frozen_s8_freeze.py bench/tests/test_b2_s8c_chain.py bench/tests/test_b2_s9_harvest.py` on `main`. No push of `main` until a PASS receipt exists for the pushed sha.
+- **P632 (C289) done:** the `e6986d9e` FAIL (8) was P631's pin amendment — `BASE_GITLINKS` served both the live-index identity
+  and the build-s2 arm world. Split: `BASE_GITLINKS` = `1c7c8fa1`, `LIVE_GITLINKS` = `d94e38a9` (s0 identity test only); all
+  `test_b2_*` 1,532 passed. Commit `65cf2171`; full gate started on it (receipt `$STACK_WORKDIR/gate/stack-65cf2171…`, log
+  `$STACK_WORKDIR/scratch/p632/gate-65cf2171.log`). If the session died: check the receipt; rerun if absent.
+- **P633 (C289) running:** step-4 verify, round 2 of 3, Sol (`gpt-5.6-sol-high`) + GLM (`glm-5.2-high`) via `cursor-agent --mode ask`,
+  fresh sessions, checkout `$STACK_WORKDIR/worktrees/p613s4-verify` (fixed candidate + frozen-d3 tests, material in `.p633-verify/`);
+  brief + raw outputs `$STACK_WORKDIR/scratch/p633/{brief,verify-sol,verify-glm}.md`. Driver rerun: p613s4 110 passed, 2 skipped.
+- `8055b219` (archive) PASS under P627 (receipt `…-bd64a17d0f68`) → pushable.
 
 ## FIRST — verify (each "no" is a blocker)
 
@@ -58,7 +64,10 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 
 ## Worktrees / scratch (resolve each)
 
-- Keep until step 4 is committed: `$STACK_WORKDIR/worktrees/{p613s4-impl,p613s4-tests,p613s4-panel}`.
+- Keep until step 4 is committed: `$STACK_WORKDIR/worktrees/{p613s4-impl,p613s4-tests,p613s4-panel,p613s4-verify}` (verify outputs
+  harvest into `docs/reviews/p613-step4/verify-{sol,glm}.md`).
+- `p632-diag` (session 17; diagnostic, pin reverted, nothing to harvest — logs in `$STACK_WORKDIR/scratch/p632/`): remove now-safe
+  after the `65cf2171` gate PASS.
 - Remove after the push (all harvested into commits / `docs/reviews`): `{p613s2-impl,p613s2-tests,p613s2-panel,p613s3-impl,p613s3-tests,
   p613s3-panel,p624-impl,p624-tests,p624-panel,p627-impl,p627-tests,p627-panel,p475a-tests,p475a-panel}`; `p475a-impl` (fork worktree,
   branch `p475a-kv-arm` = pushed `d94e38a9`): remove + delete the branch; `p624-wave1-on` (`archive/p426-wave1-s2-on`): after its push.
@@ -76,4 +85,4 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 - Copied helper reports can carry home paths: redact before committing; verbatim judge text can trip the naming hook (programming
   keywords) — model output is data (the P613 exemption), never reworded.
 
-Next decision id C289; discussion ids continue from P632.
+Next decision id C290; discussion ids continue from P634.
