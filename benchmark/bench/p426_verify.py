@@ -17,6 +17,10 @@ Rules (spec `docs/specs/p613-b8-b6-signals.md` v2 §3, step-1 contract `docs/spe
 Every row needs exactly one item record (`items/*.json`, not `*.ready.json` / `*.dnf.*`) slotted to it.
 
 CLI: `python -m bench.p426_verify a7 --results-root <dir> --out <B8.json>`; rc 0 written, rc 2 `REFUSED: <reason>`.
+
+Step 2 (`docs/specs/p613-step2-contract.md`): `verify_wave1` (A1 math500, A2 cjudge, A3 vision, A4 reasoning, M1; rules
+1-4 and 7 per (kind, block)), `cross_wave` (rule 6) and `verify_all` (one record: A7 + Wave 1 + rule 6).
+CLI: `python -m bench.p426_verify all --results-root <p426 dir> --rows-root <results dir> --repo <git top> --out <B8.json>`.
 """
 from __future__ import annotations
 
@@ -43,8 +47,15 @@ DENY_PATTERNS = (
     (re.compile(r"(^|/)archive(/|$)"), "an archive/ member"),
     (re.compile(r"(^|/)wave2\.v8-"), "a superseded wave2.v8-* member"),
     (re.compile(r"(^|/)wave1(/|$)"), "a wave1/ (S build) member"),
-    (re.compile(r"(^|/)p426-(off|on)-"), "an S-build p426-{off,on}-* tune"),
+    (re.compile(r"(^|[/.])p426-(off|on)-"), "an S-build p426-{off,on}-* tune"),
 )
+# Fix 12: absolute / home-relative path tokens in a rejection reason are masked (public repo).
+PATH_TOKEN_RE = re.compile(r"(?<![\w.\-/~$])(?:~[\w.\-]*|\$\{?HOME\}?)?/[^\s'\"`,;()\[\]{}<>]+")
+
+
+def mask_paths(text):
+    """The one masking helper for Wave 1 rejection reasons: every absolute or home-relative path token → `<path>`."""
+    return PATH_TOKEN_RE.sub("<path>", str(text))
 
 
 class RefusalError(Exception):
@@ -56,15 +67,27 @@ class RefusalError(Exception):
 class Reader:
     """Reads files under `results_root`, recording `{relpath: sha256}` of every byte string read."""
 
-    def __init__(self, results_root):
+    def __init__(self, results_root, confine=False):
+        """`confine` (Wave 1, fix 5): every input must resolve (symlinks followed) under the resolved root, else
+        refusal (committed-only inputs). The step-1 A7 reader keeps confine=False (unchanged)."""
         self.root = Path(results_root)
         self.inputs = {}
+        self.confine = confine
 
     def rel(self, path):
         return Path(path).relative_to(self.root).as_posix()
 
+    def check_confined(self, path, what):
+        if not self.confine:
+            return
+        try:
+            Path(path).resolve().relative_to(self.root.resolve())
+        except (OSError, ValueError, RuntimeError):
+            raise RefusalError(f"{what}: input {self._safe_rel(path)} resolves outside rows_root") from None
+
     def read_bytes(self, path, what):
         path = Path(path)
+        self.check_confined(path, what)
         try:
             data = path.read_bytes()
         except (OSError, ValueError) as exc:
@@ -540,6 +563,796 @@ def verify_a7(results_root):
                 allowed_differences=list(ALLOWED_DIFFERENCES))
 
 
+# ===================================================================================================== Wave 1 (step 2)
+# Contract `docs/specs/p613-step2-contract.md`: Wave 1 adapters (A1 math500, A2 cjudge, A3 vision, A4 reasoning, M1),
+# rules 1-4 and 7 per (kind, block) pair, the rule-6 cross-wave code check, and one `all` record (A7 + Wave 1).
+ENTRY = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
+W1 = "wave1.s2"
+W1_KINDS = ("math500", "cjudge", "vision", "reasoning", "m1")
+W1_AXIS = {"math500": "A1", "cjudge": "A2", "vision": "A3", "reasoning": "A4", "m1": "M1"}
+W1_BLOCKS = ("b1", "b2")
+W1_IDS_BLOCK = {"b1": "block1", "b2": "block2"}
+W1_ROWS = {"math500": "math500.{tune}.jsonl", "cjudge": "cjudge.{tune}.jsonl", "vision": "vision_gate.{tune}.jsonl",
+           "reasoning": "reasoning.{tune}.json"}
+W1_MANIFEST = {"math500": "math500.{tune}.manifest.json", "cjudge": "cjudge.{tune}.manifest.json",
+               "vision": "vision_gate.{tune}.manifest.json", "reasoning": "reasoning.{tune}.manifest.json"}
+RESTORE_DELTA = ("--draft-kind mtp", f"--draft-model caslca/{ENTRY}-mtp-drafter", "--mtp-verify-scan joint_v1")
+M1_SERVED_ARM_FIELDS = ("draft_kind", "drafter_loaded", "verify_policy")
+M1_REPORT_EQUAL = ("reviewed_head", "production", "versions")
+SCRUB_PREFIX = "benchmark/results/"
+def _arm_path_re(arm):
+    """Fix 3: only the leg's OWN arm worktree component normalises; the other arm's stays and shows in the delta."""
+    return re.compile(rf"stack-p426-s2-{re.escape(arm)}(?=/|$)")
+CROSS_WAVE_ENTRIES = ("benchmark/run.py", "benchmark/vision_gate.py", "benchmark/bench/run_reasoning.py")
+CROSS_WAVE_FIXED = ("main_models.yaml", "src/mlx-vlm", "src/mlx-serve")
+GITLINKS = ("src/mlx-vlm", "src/mlx-serve")
+QUALIFY_ENTRY = "src/mlx-vlm/dev/p369_phase2/qualify.py"
+
+
+def leg_of(kind, arm, block):
+    return f"{kind}-p426s2-{arm}-{block}"
+
+
+def tune_of(arm, block):
+    return f"p426s2-{arm}-{block}"
+
+
+def sha256_text(text):
+    return hashlib.sha256(text.encode("utf-8")).hexdigest() if isinstance(text, str) else None
+
+
+def check_roots(results_root, rows_root):
+    """rows_root must resolve equal to `bench.generate.results_root()` (A1 regrades through `bench.grade`), and
+    results_root to `rows_root / "p426"`; else refusal."""
+    from bench import generate
+
+    try:
+        rr, gr = Path(rows_root).resolve(), Path(generate.results_root()).resolve()
+        pr, want = Path(results_root).resolve(), (Path(rows_root) / "p426").resolve()
+    except OSError:
+        raise RefusalError("rows_root / results_root is unresolvable") from None
+    if rr != gr:
+        raise RefusalError("rows_root does not resolve to bench.generate.results_root() (A1 regrades through "
+                           "bench.grade, which reads generate.results_root())")
+    if pr != want:
+        raise RefusalError("results_root does not resolve to rows_root/p426")
+
+
+def _w1_member(rows_root, path, where, want_dir=False):
+    """Refuse a Wave 1 pair member path that is missing, resolves outside rows_root, or resolves to a deny-listed
+    location (p426/wave1/, S-build p426-* tunes, smokes, archive/, wave2.v8-*)."""
+    path = Path(path)
+    ok = path.is_dir() if want_dir else path.is_file()
+    if not ok:
+        raise RefusalError(f"{where}: required {'directory' if want_dir else 'file'} "
+                           f"{_rel_or_name(rows_root, path)} is missing")
+    try:
+        rel = path.resolve().relative_to(Path(rows_root).resolve()).as_posix()
+    except (OSError, ValueError):
+        raise RefusalError(f"{where}: {path.name} resolves outside rows_root (deny-listed)") from None
+    for pattern, what in DENY_PATTERNS:
+        if pattern.search(rel):
+            raise RefusalError(f"{where}: {rel} is deny-listed ({what})")
+    return path
+
+
+def _rel_or_name(root, path):
+    try:
+        return Path(path).relative_to(Path(root)).as_posix()
+    except ValueError:
+        return Path(path).name
+
+
+# ---------------------------------------------------------------------------------------------- Wave 1 loading
+def _w1_rows(reader, kind, path, where):
+    """Normalised rows of one leg: [{"id", "seed", "row"}] (A4: id = task seed, seed = sampler_seed)."""
+    if kind in ("math500", "cjudge", "vision"):
+        reader.read_bytes(path, f"{where} rows")                 # records the input sha256 (B8 staleness)
+        try:
+            rows = cr.read_rows(path)
+        except cr.ChainRowsError as exc:
+            raise RefusalError(f"{where}: {reader.rel(path)}: {exc}") from None
+        seed_field = "seed" if kind == "vision" else "sampler_seed"
+        out = []
+        for row in rows:
+            seed = row.get(seed_field)
+            if not isinstance(seed, int) or isinstance(seed, bool):
+                raise RefusalError(f"{where}: {reader.rel(path)}: row {row.get('id')} has no integer {seed_field}")
+            out.append(dict(id=row["id"], seed=seed, row=row))
+        return out, None, None
+    doc = reader.read_json(path, f"{where} reasoning result")
+    try:
+        rec = doc["records"][0]
+        rows = rec["rows"]
+    except (KeyError, IndexError, TypeError):
+        raise RefusalError(f"{where}: {reader.rel(path)} has no records[0].rows") from None
+    if not isinstance(rows, list) or not isinstance(rec, dict):
+        raise RefusalError(f"{where}: {reader.rel(path)} records[0].rows is not a list")
+    out = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise RefusalError(f"{where}: {reader.rel(path)} holds a non-object row")
+        task, seed = row.get("seed"), row.get("sampler_seed")
+        for v, name in ((task, "seed"), (seed, "sampler_seed")):
+            if not isinstance(v, int) or isinstance(v, bool):
+                raise RefusalError(f"{where}: {reader.rel(path)}: a row has no integer {name}")
+        out.append(dict(id=task, seed=seed, row=row))
+    return out, rec, doc
+
+
+def load_w1_leg(reader, kind, arm, block):
+    """Read one Wave 1 leg (receipt, SCRUB manifest and its result files). Refuses on a missing / unreadable /
+    deny-listed required file."""
+    root = reader.root
+    leg, tune = leg_of(kind, arm, block), tune_of(arm, block)
+    where = f"pair {kind} {block} {arm} {leg}"
+    ldir = _w1_member(root, root / "p426" / W1 / leg, where, want_dir=True)
+    receipt = reader.read_json(_w1_member(root, ldir / f"{leg}.receipt.json", where), f"{where} receipt")
+    scrub = reader.read_json(_w1_member(root, ldir / "SCRUB_MANIFEST.json", where), f"{where} SCRUB_MANIFEST.json")
+    for doc, what in ((receipt, "receipt"), (scrub, "SCRUB_MANIFEST.json")):
+        if not isinstance(doc, dict):
+            raise RefusalError(f"{where}: {what} is not an object")
+    out = dict(kind=kind, arm=arm, block=block, leg=leg, tune=tune, dir=ldir, receipt=receipt, scrub=scrub)
+    if kind == "m1":
+        mdir = ldir / "m1" / ENTRY
+        out["result"] = reader.read_json(_w1_member(root, mdir / "result.json", where), f"{where} result.json")
+        out["job"] = reader.read_json(_w1_member(root, mdir / "job.json", where), f"{where} job.json")
+        out["report"] = reader.read_json(_w1_member(root, ldir / "m1" / "report.json", where), f"{where} report.json")
+        for what in ("result", "job", "report"):
+            if not isinstance(out[what], dict):
+                raise RefusalError(f"{where}: {what}.json is not an object")
+        return out
+    edir = root / ENTRY
+    rows_path = _w1_member(root, edir / W1_ROWS[kind].format(tune=tune), where)
+    out["rows_rel"] = reader.rel(rows_path)
+    out["rows"], out["record"], out["doc"] = _w1_rows(reader, kind, rows_path, where)
+    out["manifest"] = reader.read_json(_w1_member(root, edir / W1_MANIFEST[kind].format(tune=tune), where),
+                                       f"{where} manifest")
+    if not isinstance(out["manifest"], dict):
+        raise RefusalError(f"{where}: manifest is not an object")
+    if kind == "math500":
+        out["score"] = reader.read_json(_w1_member(root, edir / f"math500.{tune}.score.json", where),
+                                        f"{where} score.json")
+        if not isinstance(out["score"], dict):
+            raise RefusalError(f"{where}: score.json is not an object")
+    return out
+
+
+def load_ids(reader):
+    ids = reader.read_json(reader.root / "p426" / "ids.json", "p426/ids.json")
+    axes = ids.get("axes") if isinstance(ids, dict) else None
+    if not isinstance(axes, dict):
+        raise RefusalError("p426/ids.json has no axes")
+    out = {}
+    for kind in ("math500", "cjudge", "vision", "reasoning"):
+        ax = axes.get(kind)
+        if not isinstance(ax, dict):
+            raise RefusalError(f"p426/ids.json has no axes.{kind}")
+        blocks = {}
+        for b, key in W1_IDS_BLOCK.items():
+            lst = ax.get(key)
+            if not isinstance(lst, list) or not lst:
+                raise RefusalError(f"p426/ids.json axes.{kind}.{key} is not a non-empty list")
+            if len(set(map(json.dumps, lst))) != len(lst):
+                raise RefusalError(f"p426/ids.json axes.{kind}.{key} lists an item twice")
+            blocks[b] = list(lst)
+        overlap = sorted(set(map(json.dumps, blocks["b1"])) & set(map(json.dumps, blocks["b2"])))
+        if overlap:
+            raise RefusalError(f"p426/ids.json axes.{kind}: blocks overlap ({overlap[:5]})")
+        out[kind] = blocks
+        if kind == "reasoning":
+            rs = ax.get("request_seeds")
+            if not isinstance(rs, dict):
+                raise RefusalError("p426/ids.json axes.reasoning has no request_seeds")
+            out["request_seeds"] = rs
+    return out
+
+
+# ------------------------------------------------------------------------------------------------ Wave 1 rules
+def _w1_receipt_reasons(kind, m):
+    r, leg, arm = m["receipt"], m["leg"], m["arm"]
+    want_kind = "qualify" if kind == "m1" else kind
+    reasons = []
+    if r.get("verdict") != "VALID":
+        reasons.append(f"rule 1: {arm} {leg} receipt verdict {r.get('verdict')!r} != 'VALID'")
+    if r.get("problems") != []:
+        reasons.append(f"rule 1: {arm} {leg} receipt problems {r.get('problems')!r} != []")
+    for field, want in (("name", leg), ("arm", arm), ("kind", want_kind)):
+        if r.get(field) != want:
+            reasons.append(f"rule 1: {arm} {leg} receipt {field} {r.get(field)!r} != {want!r}")
+    if kind == "m1" and m["result"].get("status") != "ok":
+        reasons.append(f"rule 1: {arm} {leg} m1 result.json status {m['result'].get('status')!r} != 'ok'")
+    return reasons
+
+
+def _w1_scrub_reasons(reader, m, soft=False):
+    """Every SCRUB_MANIFEST path under benchmark/results/ re-verifies against rows_root. Returns (reasons, n_ok, n).
+    `soft` (smokes, coverage only): an unreadable / out-of-root file is a recorded problem, not a refusal."""
+    files = m["scrub"].get("files")
+    leg, arm = m["leg"], m["arm"]
+    if not isinstance(files, dict):
+        return [f"rule 1: {arm} {leg} SCRUB_MANIFEST.json has no files map"], 0, 0
+    reasons, ok, n = [], 0, 0
+    for path in sorted(files):
+        rec = files[path]
+        if not isinstance(path, str) or not path.startswith(SCRUB_PREFIX):
+            continue
+        n += 1
+        rel = path[len(SCRUB_PREFIX):]
+        want = rec.get("published_sha256") if isinstance(rec, dict) else None
+        if ".." in rel.split("/") or rel.startswith("/"):
+            reasons.append(f"rule 1: {arm} {leg} SCRUB path {path!r} is not under {SCRUB_PREFIX}")
+            continue
+        try:
+            data = reader.try_read_bytes(reader.root / rel)
+        except RefusalError as exc:
+            if not soft:
+                raise
+            reasons.append(f"rule 1: {arm} {leg} SCRUB file {rel}: {exc}")
+            continue
+        if data is None:
+            reasons.append(f"rule 1: {arm} {leg} SCRUB file {rel} is missing")
+            continue
+        got = hashlib.sha256(data).hexdigest()
+        if got != want:
+            reasons.append(f"rule 1: {arm} {leg} SCRUB file {rel} sha256 {got} != published_sha256 {want}")
+            continue
+        ok += 1
+    return reasons, ok, n
+
+
+def _strip_frozen_sha(pins):
+    return {k: v for k, v in pins.items() if k != "frozen_sha"} if isinstance(pins, dict) else pins
+
+
+def _diff_values(a, b, la="off", lb="on"):
+    """`field: <la> X <lb> Y` for each top-level field that differs (both values named; fix 13)."""
+    if not isinstance(a, dict) or not isinstance(b, dict):
+        return f"{la} {a!r} {lb} {b!r}"
+    missing = object()
+    parts = []
+    for k in sorted(set(a) | set(b), key=str):
+        va, vb = a.get(k, missing), b.get(k, missing)
+        if va != vb:
+            parts.append(f"{k}: {la} {'(absent)' if va is missing else repr(va)} {lb} "
+                         f"{'(absent)' if vb is missing else repr(vb)}")
+    return "; ".join(parts)
+
+
+def _w1_pins_reasons(frozen, frozen_sha, off, on):
+    reasons = []
+    po, pn = off["receipt"].get("pins"), on["receipt"].get("pins")
+    if _strip_frozen_sha(po) != _strip_frozen_sha(pn):
+        reasons.append(f"rule 2a: receipt pins (without frozen_sha) differ between "
+                       f"off and on: {_diff_values(_strip_frozen_sha(po), _strip_frozen_sha(pn))}")
+    for m in (off, on):
+        r, arm, leg = m["receipt"], m["arm"], m["leg"]
+        pins = r.get("pins") if isinstance(r.get("pins"), dict) else {}
+        state = r.get("state") if isinstance(r.get("state"), dict) else {}
+        if _strip_frozen_sha(pins) != frozen:
+            reasons.append(f"rule 2a: {arm} {leg} receipt pins (without frozen_sha) != run/frozen.s2.json: "
+                           f"{_diff_values(_strip_frozen_sha(pins), frozen, arm, 'frozen')}")
+        if pins.get("frozen_sha") != frozen_sha:
+            reasons.append(f"rule 2a: {arm} {leg} pins.frozen_sha {pins.get('frozen_sha')!r} != sha256 of "
+                           f"frozen.s2.json {frozen_sha}")
+        if state.get("frozen_sha") != frozen_sha:
+            reasons.append(f"rule 2a: {arm} {leg} state.frozen_sha {state.get('frozen_sha')!r} != sha256 of "
+                           f"frozen.s2.json {frozen_sha}")
+        want = frozen.get(f"stack_head_{arm}")
+        if state.get("stack_head") != want:
+            reasons.append(f"rule 2a: {arm} {leg} state.stack_head {state.get('stack_head')!r} != "
+                           f"frozen stack_head_{arm} {want!r}")
+    return reasons
+
+
+def _w1_registry_reasons(kind, frozen, registry_git, off, on):
+    reasons = []
+    for m in (off, on):
+        arm, leg = m["arm"], m["leg"]
+        want = frozen.get(f"registry_{arm}_sha")
+        got_git = registry_git[arm]
+        if got_git != want:
+            reasons.append(f"rule 2b: {arm} sha256 of git show stack_head_{arm}:main_models.yaml {got_git} != "
+                           f"frozen registry_{arm}_sha {want!r}")
+        if kind == "m1":
+            got = m["report"].get("registry_sha256")
+            if got != want:
+                reasons.append(f"rule 2b: {arm} {leg} m1 report.registry_sha256 {got!r} != registry_{arm}_sha {want!r}")
+        else:
+            reg = m["manifest"].get("registry")
+            got = reg.get("sha256") if isinstance(reg, dict) else None
+            if got != want:
+                reasons.append(f"rule 2b: {arm} {leg} manifest registry.sha256 {got!r} != registry_{arm}_sha {want!r}")
+    return reasons
+
+
+def worker_argv(cmdline, arm):
+    """Receipt `worker.cmdline` → normalised multiset items: split on " --" after dropping the PID token; the leg's
+    own arm worktree path component `stack-p426-s2-<arm>` → `stack-p426-s2-ARM` (the other arm's is left as is)."""
+    from collections import Counter
+
+    if not isinstance(cmdline, str) or not cmdline.strip():
+        return None
+    first, _, rest = cmdline.strip().partition(" ")
+    if not first.isdigit():
+        return None
+    parts = rest.split(" --")
+    items = [parts[0]] + ["--" + p for p in parts[1:]]
+    own = _arm_path_re(arm)
+    return Counter(own.sub("stack-p426-s2-ARM", p) for p in items)
+
+
+def _foreign_arm_items(items, arm):
+    """argv items naming the OTHER arm's worktree component (fix 3)."""
+    other = _arm_path_re("on" if arm == "off" else "off")
+    return sorted(p for p in (items or {}) if other.search(p))
+
+
+def job_argv(argv, arm):
+    """M1 `job.json` argv list → multiset of "flag value" / "flag" items (paths normalised as for the worker)."""
+    from collections import Counter
+
+    if not isinstance(argv, list) or not all(isinstance(a, str) for a in argv):
+        return None
+    own = _arm_path_re(arm)
+    items, i = [], 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok.startswith("--") and i + 1 < len(argv) and not argv[i + 1].startswith("--"):
+            items.append(f"{tok} {argv[i + 1]}")
+            i += 2
+        else:
+            items.append(tok)
+            i += 1
+    return Counter(own.sub("stack-p426-s2-ARM", p) for p in items)
+
+
+def _w1_argv_reasons(kind, off, on):
+    from collections import Counter
+
+    if kind == "m1":
+        a, b = job_argv(off["job"].get("argv"), "off"), job_argv(on["job"].get("argv"), "on")
+        what = "job.json argv"
+    else:
+        a = worker_argv((off["receipt"].get("worker") or {}).get("cmdline")
+                        if isinstance(off["receipt"].get("worker"), dict) else None, "off")
+        b = worker_argv((on["receipt"].get("worker") or {}).get("cmdline")
+                        if isinstance(on["receipt"].get("worker"), dict) else None, "on")
+        what = "receipt worker.cmdline"
+    if a is None or b is None:
+        return [f"rule 2c: {what} missing or unparsable ({'off' if a is None else 'on'})"]
+    reasons = []
+    for arm, items, m in (("off", a, off), ("on", b, on)):
+        foreign = _foreign_arm_items(items, arm)
+        if foreign:
+            reasons.append(f"rule 2c: {arm} {m['leg']} {what} names the other arm's worktree "
+                           f"(stack-p426-s2-{'on' if arm == 'off' else 'off'}): {foreign}")
+    on_extra, off_extra = sorted((b - a).elements()), sorted((a - b).elements())
+    if Counter(on_extra) != Counter(RESTORE_DELTA):
+        reasons.append(f"rule 2c: {what} ON − OFF {on_extra} != the restore delta {sorted(RESTORE_DELTA)}")
+    if off_extra:
+        reasons.append(f"rule 2c: {what} OFF − ON {off_extra} != []")
+    return reasons
+
+
+def _drafts(kind, row):
+    """[(label, draft dict)] of one row: turn 1 (and A3 turn 2)."""
+    out = [("draft", row.get("draft"))]
+    if kind == "vision":
+        t2 = row.get("turn2")
+        out.append(("turn2.draft", t2.get("draft") if isinstance(t2, dict) else None))
+    return out
+
+
+def _draft_problem(arm, d):
+    if arm == "off" and d is None:
+        return None                                   # A4 OFF rows carry `draft: null`: every draft value null
+    if not isinstance(d, dict):
+        return "no draft object"
+    if arm == "off":
+        bad = sorted(k for k, v in d.items() if v is not None)
+        return f"non-null {bad}" if bad else None
+    n, a = d.get("draft_n"), d.get("draft_n_accepted")
+    if d.get("draft_kind") != "mtp":
+        return f"draft_kind {d.get('draft_kind')!r} != 'mtp'"
+    if not (isinstance(n, int) and not isinstance(n, bool) and n > 0):
+        return f"draft_n {n!r} not > 0"
+    if not (isinstance(a, int) and not isinstance(a, bool) and 0 <= a <= n):
+        return f"draft_n_accepted {a!r} not in [0, draft_n]"
+    return None
+
+
+def _w1_equal_reasons(kind, off, on):
+    """Rule 2d: everything else equal, and the per-row draft state matches the arm."""
+    reasons = []
+    if kind == "m1":
+        ro, rn = off["result"], on["result"]
+        so = {k: v for k, v in (ro.get("served") or {}).items() if k not in M1_SERVED_ARM_FIELDS}
+        sn = {k: v for k, v in (rn.get("served") or {}).items() if k not in M1_SERVED_ARM_FIELDS}
+        if so != sn:
+            reasons.append(f"rule 2d: m1 served (except {list(M1_SERVED_ARM_FIELDS)}) differs: off {so} on {sn}")
+        po = {k: v for k, v in (ro.get("snapshots") or {}).items() if k != "--draft-model"}
+        pn = {k: v for k, v in (rn.get("snapshots") or {}).items() if k != "--draft-model"}
+        if po != pn:
+            reasons.append(f"rule 2d: m1 snapshots (except --draft-model) differ: off {po} on {pn}")
+        for f in M1_REPORT_EQUAL:
+            if off["report"].get(f) != on["report"].get(f):
+                reasons.append(f"rule 2d: m1 report.{f} differs: off {off['report'].get(f)!r} on "
+                               f"{on['report'].get(f)!r}")
+        qo, qn = m1_qualify(off), m1_qualify(on)
+        for f in ("generate_seed",):
+            if qo.get(f) != qn.get(f):
+                reasons.append(f"rule 2d: m1 qualify.{f} differs: off {qo.get(f)!r} on {qn.get(f)!r}")
+        szo, szn = (qo.get("prompt") or {}).get("sized"), (qn.get("prompt") or {}).get("sized")
+        if szo != szn or szo is None:
+            reasons.append(f"rule 2d: m1 qualify.prompt.sized differs or is missing: off {szo!r} on {szn!r}")
+        return reasons
+    for f in ("sampling", "kv"):
+        if off["manifest"].get(f) != on["manifest"].get(f):
+            reasons.append(f"rule 2d: manifest {f} differs between off and on: "
+                           f"{_diff_values(off['manifest'].get(f), on['manifest'].get(f))}")
+    reasons += _w1_budget_reasons(kind, off, on)
+    for m in (off, on):
+        bad = []
+        for r in m["rows"]:
+            for label, d in _drafts(kind, r["row"]):
+                why = _draft_problem(m["arm"], d)
+                if why:
+                    bad.append(f"{r['id']} {label}: {why}")
+        if bad:
+            reasons.append(f"rule 2d: {m['arm']} rows' draft state does not match the arm ({len(bad)}): {bad[:5]}")
+    return reasons
+
+
+SHA256_RE = re.compile(r"[0-9a-f]{64}")
+THINKING_BUDGET = 81920
+BUDGET_ROW_KINDS = ("math500", "cjudge")
+
+
+def _w1_budget_reasons(kind, off, on):
+    """Fix 2: the thinking budget is 81920 everywhere the pair records it — every row manifest's
+    `sampling.thinking_budget`, the A4 file's `params.thinking_budget`, and (A1 / A2) every row's `thinking_budget`,
+    equal per key across the pair; else the pair is rejected with both values."""
+    reasons = []
+    for m in (off, on):
+        samp = m["manifest"].get("sampling")
+        got = samp.get("thinking_budget") if isinstance(samp, dict) else None
+        if got != THINKING_BUDGET:
+            reasons.append(f"rule 2d: {m['arm']} {m['leg']} manifest sampling.thinking_budget {got!r} != "
+                           f"{THINKING_BUDGET}")
+        if kind == "reasoning":
+            params = (m.get("doc") or {}).get("params")
+            got = params.get("thinking_budget") if isinstance(params, dict) else None
+            if got != THINKING_BUDGET:
+                reasons.append(f"rule 2d: {m['arm']} {m['leg']} reasoning params.thinking_budget {got!r} != "
+                               f"{THINKING_BUDGET}")
+    if kind in BUDGET_ROW_KINDS:
+        bo = {json.dumps(r["id"]): r["row"].get("thinking_budget") for r in off["rows"]}
+        bn = {json.dumps(r["id"]): r["row"].get("thinking_budget") for r in on["rows"]}
+        bad = []
+        for k in sorted(set(bo) | set(bn)):
+            vo, vn = bo.get(k), bn.get(k)
+            if vo != vn or vo != THINKING_BUDGET:
+                bad.append(f"{json.loads(k)}: off {vo!r} on {vn!r}")
+        if bad:
+            reasons.append(f"rule 2d: row thinking_budget differs across the pair or != {THINKING_BUDGET} per key "
+                           f"({len(bad)}): {bad[:5]}")
+    return reasons
+
+
+def m1_qualify(m):
+    try:
+        q = m["result"]["requests"][0]["qualify"]
+    except (KeyError, IndexError, TypeError):
+        return {}
+    return q if isinstance(q, dict) else {}
+
+
+def _identity_sha(kind, row):
+    """Rule 7 identity value; A1 / A2 recompute `content_sha256` and refuse a mismatch."""
+    field = "description" if kind == "vision" else "content"
+    text = row.get(field)
+    if not isinstance(text, str):                                  # fix 4: identity text must be a string
+        raise RefusalError(f"rule 7: {kind} row {row.get('id')}: identity text `{field}` is "
+                           f"{type(text).__name__}, not a string")
+    got = sha256_text(text)
+    if kind in ("math500", "cjudge"):
+        want = row.get("content_sha256")
+        if not (isinstance(want, str) and SHA256_RE.fullmatch(want)):
+            raise RefusalError(f"rule 7: {kind} row {row.get('id')}: content_sha256 {want!r} is not a 64-hex sha256")
+        if got != want:
+            raise RefusalError(f"rule 7: {kind} row {row.get('id')}: content_sha256 {want!r} != "
+                               f"sha256(content) {got}")
+    return got
+
+
+def _w1_keys(kind, block, ids, off, on):
+    """Rule 3 + rule 7. Returns (accepted keys, rejected keys, content_sha256 verified count)."""
+    planned = ids[kind][block]
+    verified = 0
+    by_arm = {}
+    for m in (off, on):
+        where = f"pair {kind} {block} {m['arm']} {m['leg']}"
+        rows = m["rows"]
+        seen = {}
+        for r in rows:
+            k = json.dumps(r["id"])
+            if k in seen:
+                raise RefusalError(f"{where}: duplicate row key ({block}, {r['id']})")
+            seen[k] = r
+        if len(rows) != len(planned):
+            raise RefusalError(f"{where}: row count {len(rows)} != block size {len(planned)}")
+        if set(seen) != {json.dumps(x) for x in planned}:
+            stray = sorted(set(seen) - {json.dumps(x) for x in planned})
+            raise RefusalError(f"{where}: row ids != the ids.json {W1_IDS_BLOCK[block]} list (outside: {stray[:5]})")
+        for r in rows:
+            r["identity"] = _identity_sha(kind, r["row"])
+            if kind in ("math500", "cjudge"):
+                verified += 1
+        by_arm[m["arm"]] = seen
+    accepted, rejected = [], []
+    for x in planned:
+        k = json.dumps(x)
+        ro, rn = by_arm["off"][k], by_arm["on"][k]
+        key = [block, x, ro["seed"]]
+        if kind == "reasoning":
+            want = ids["request_seeds"].get(str(x))
+            bad = [f"{arm} sampler_seed {r['seed']} != request_seeds[{x}] {want!r}"
+                   for arm, r in (("off", ro), ("on", rn)) if r["seed"] != want]
+            if bad:
+                rejected.append(dict(key=key, reason="seed mismatch: " + "; ".join(bad)))
+                continue
+        if ro["seed"] != rn["seed"]:                   # fix 16: one key shape per axis, accepted or rejected
+            rejected.append(dict(key=key, reason=f"seed mismatch: off {ro['seed']} on {rn['seed']} "
+                                                 f"(the key is in one arm only; key seed = the OFF seed)"))
+            continue
+        accepted.append(dict(key=key, identical=ro["identity"] is not None and ro["identity"] == rn["identity"],
+                             off_sha256=ro["identity"], on_sha256=rn["identity"]))
+    return accepted, rejected, verified
+
+
+SMOKE_LEG_RE = re.compile(r"^(math500|cjudge|vision|reasoning|m1)-p426s2-(off|on)-smoke$")
+
+
+def _pair_reason(kind, block, off, on, reason):
+    """Fixes 12 / 13: every rejection names the pair (`rule N: pair <kind> <block>: …`) and passes `mask_paths`."""
+    rule, sep, rest = reason.partition(": ")
+    tag = f"pair {kind} {block}"
+    if sep and rule.startswith("rule ") and tag not in rest:
+        reason = f"{rule}: {tag}: {rest}"
+    return mask_paths(reason)
+
+
+def _w1_smoke_scrub(rows_root):
+    """Coverage only (fix 1; never a pair member, never scored, never a refusal): each smoke leg's SCRUB_MANIFEST
+    re-verified through its own reader. A missing / unreadable / mismatched smoke file is recorded in `problems`;
+    the files read stay out of B8 `inputs` and are listed here with their sha256 (`read`)."""
+    base = Path(rows_root) / "p426" / W1
+    out = {}
+    for d in sorted(p for p in base.iterdir() if p.is_dir() and SMOKE_LEG_RE.match(p.name)):
+        sreader = Reader(rows_root, confine=True)
+        problems, ok, n = [], 0, 0
+        try:
+            if not (d / "SCRUB_MANIFEST.json").is_file():
+                problems.append(f"smoke {d.name}: SCRUB_MANIFEST.json is missing")
+            else:
+                scrub = sreader.read_json(d / "SCRUB_MANIFEST.json", f"smoke {d.name} SCRUB_MANIFEST.json")
+                if not isinstance(scrub, dict):
+                    problems.append(f"smoke {d.name}: SCRUB_MANIFEST.json is not an object")
+                else:
+                    r, ok, n = _w1_scrub_reasons(sreader, dict(scrub=scrub, leg=d.name,
+                                                               arm=SMOKE_LEG_RE.match(d.name).group(2)), soft=True)
+                    problems += r
+        except RefusalError as exc:
+            problems.append(f"smoke {d.name}: {exc}")
+        out[d.name] = dict(verified=ok, files=n, problems=[mask_paths(p) for p in problems],
+                           read=dict(sorted(sreader.inputs.items())))
+    return out
+
+
+def verify_wave1(results_root, rows_root, repo):
+    """B8 for Wave 1: one record per (kind, block), kinds math500 / cjudge / vision / reasoning / m1."""
+    check_roots(results_root, rows_root)
+    reader = Reader(rows_root, confine=True)
+    run = reader.root / "p426" / W1 / "run" / "frozen.s2.json"
+    frozen_bytes = reader.read_bytes(_w1_member(reader.root, run, "wave1.s2/run/frozen.s2.json"),
+                                     "wave1.s2/run/frozen.s2.json")
+    frozen = _parse_json(frozen_bytes, "wave1.s2/run/frozen.s2.json")
+    if not isinstance(frozen, dict):
+        raise RefusalError("wave1.s2/run/frozen.s2.json is not an object")
+    frozen_sha = hashlib.sha256(frozen_bytes).hexdigest()
+    ids = load_ids(reader)
+    top = repo_top(repo)
+    registry_git = {}
+    for arm in ("off", "on"):
+        head = frozen.get(f"stack_head_{arm}")
+        commit = resolve_commit(top, head, f"frozen stack_head_{arm}")
+        registry_git[arm] = hashlib.sha256(git_bytes(top, ["show", f"{commit}:main_models.yaml"],
+                                                     f"git show stack_head_{arm}:main_models.yaml")).hexdigest()
+    pairs = []
+    for kind in W1_KINDS:
+        for block in W1_BLOCKS:
+            off, on = (load_w1_leg(reader, kind, arm, block) for arm in ("off", "on"))
+            reasons, scrub_ok, scrub_n = [], 0, 0
+            for m in (off, on):
+                reasons += _w1_receipt_reasons(kind, m)
+            for m in (off, on):
+                r, ok, n = _w1_scrub_reasons(reader, m)
+                reasons += r
+                scrub_ok += ok
+                scrub_n += n
+            reasons += _w1_pins_reasons(frozen, frozen_sha, off, on)
+            reasons += _w1_registry_reasons(kind, frozen, registry_git, off, on)
+            reasons += _w1_argv_reasons(kind, off, on)
+            reasons += _w1_equal_reasons(kind, off, on)
+            reasons = [_pair_reason(kind, block, off, on, r) for r in reasons]
+            if kind == "m1":
+                keys, rejected, verified = [dict(key=[block], identical=False, identity="none (M1)")], [], 0
+            else:
+                keys, rejected, verified = _w1_keys(kind, block, ids, off, on)
+                rejected = [dict(k, reason=mask_paths(k["reason"])) for k in rejected]
+            speed_valid = off["receipt"].get("speed_valid") is True and on["receipt"].get("speed_valid") is True
+            n_ident = sum(1 for k in keys if k["identical"])
+            pairs.append(dict(
+                kind=kind, axis=W1_AXIS[kind], block=block, off=off["leg"], on=on["leg"], tune_off=off["tune"],
+                tune_on=on["tune"], accepted=not reasons, reasons=reasons, speed_valid=speed_valid,
+                labels=[] if speed_valid else ["power-invalid"], keys_accepted=len(keys), keys_rejected=rejected,
+                keys=keys, identical=dict(n=n_ident, of=0 if kind == "m1" else len(keys)),
+                identity_basis={"math500": "content_sha256 (recomputed)", "cjudge": "content_sha256 (recomputed)",
+                                "vision": "sha256(description)", "reasoning": "sha256(content)",
+                                "m1": "none"}[kind],
+                scrub=dict(verified=scrub_ok, files=scrub_n), content_sha256_verified=verified,
+                speed_problems=dict(off=off["receipt"].get("speed_problems"), on=on["receipt"].get("speed_problems")),
+                log=dict(off=off["receipt"].get("log"), on=on["receipt"].get("log"))))
+    smokes = _w1_smoke_scrub(rows_root)
+    full_ok, full_n = sum(p["scrub"]["verified"] for p in pairs), sum(p["scrub"]["files"] for p in pairs)
+    scrub_cov = dict(full_legs=dict(verified=full_ok, files=full_n), smokes=smokes,
+                     smoke_total=dict(verified=sum(s["verified"] for s in smokes.values()),
+                                      files=sum(s["files"] for s in smokes.values())),
+                     note="full legs gate their pair (rule 1); smoke legs are re-verified for coverage only, never "
+                          "scored")
+    scrub_cov["total"] = dict(verified=full_ok + scrub_cov["smoke_total"]["verified"],
+                              files=full_n + scrub_cov["smoke_total"]["files"])
+    return dict(axis="wave1", generator="bench.p426_verify", inputs=dict(sorted(reader.inputs.items())), pairs=pairs,
+                scrub_coverage=scrub_cov,
+                frozen=dict(sha256=frozen_sha, stack_head_off=frozen.get("stack_head_off"),
+                            stack_head_on=frozen.get("stack_head_on"), registry_off_sha=frozen.get("registry_off_sha"),
+                            registry_on_sha=frozen.get("registry_on_sha")),
+                registry_git_sha256=registry_git, restore_delta=sorted(RESTORE_DELTA))
+
+
+# -------------------------------------------------------------------------------------------------------- git
+def repo_top(repo):
+    import subprocess
+
+    try:
+        out = subprocess.run(["git", "rev-parse", "--show-toplevel"], check=True, cwd=Path(repo), capture_output=True)
+    except (OSError, subprocess.CalledProcessError):
+        raise RefusalError("--repo is not a git work tree") from None
+    return Path(out.stdout.decode("utf-8").strip())
+
+
+def git_bytes(top, args, what):
+    import subprocess
+
+    try:
+        return subprocess.run(["git", *args], check=True, cwd=top, capture_output=True).stdout
+    except (OSError, subprocess.CalledProcessError):
+        raise RefusalError(f"{what}: git {args[0]} failed") from None
+
+
+def resolve_commit(top, sha, what):
+    if not isinstance(sha, str) or not re.fullmatch(r"[0-9a-f]{7,64}", sha):
+        raise RefusalError(f"{what}: {sha!r} is not a commit sha")
+    out = git_bytes(top, ["rev-parse", "--verify", "--quiet", f"{sha}^{{commit}}"], f"{what} {sha} does not resolve")
+    return out.decode("utf-8").strip()
+
+
+def _closure_at(top, commit, tmp):
+    """Repo-relative files of the python_closure of CROSS_WAVE_ENTRIES at `commit` (its `*.py` tree only)."""
+    import io
+    import tarfile
+
+    from bench.identity_closure import python_closure
+
+    data = git_bytes(top, ["archive", "--format=tar", commit, "--", ":(glob)**/*.py"], f"git archive {commit}")
+    dest = Path(tmp) / commit
+    dest.mkdir()
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        tar.extractall(dest, filter="data")
+    dres = dest.resolve()
+    files = set()
+    for entry in CROSS_WAVE_ENTRIES:
+        path = dest / entry
+        if not path.is_file():
+            raise RefusalError(f"rule 6: {entry} is missing at {commit}")
+        try:
+            closure = python_closure(path, dest)
+        except (SyntaxError, OSError, ValueError) as exc:
+            raise RefusalError(f"rule 6: python_closure({entry}) at {commit} failed ({type(exc).__name__})") from None
+        files |= {p.resolve().relative_to(dres).as_posix() for p in closure}
+    return files
+
+
+def _registry_doc(top, commit):
+    import yaml
+
+    try:
+        doc = yaml.safe_load(git_bytes(top, ["show", f"{commit}:main_models.yaml"], f"git show {commit}:main_models.yaml"))
+    except yaml.YAMLError:
+        raise RefusalError(f"rule 6: main_models.yaml at {commit} is not YAML") from None
+    if not isinstance(doc, dict):
+        raise RefusalError(f"rule 6: main_models.yaml at {commit} is not a mapping")
+    return doc
+
+
+def _registry_entry(doc):
+    models = doc.get("models")
+    hits = [m for m in models if isinstance(m, dict) and m.get("name") == ENTRY] if isinstance(models, list) else []
+    return hits[0] if len(hits) == 1 else None
+
+
+def _gitlinks(top, commit):
+    out = git_bytes(top, ["ls-tree", commit, "--", *GITLINKS], f"git ls-tree {commit}").decode("utf-8")
+    links = {}
+    for line in out.splitlines():
+        meta, _, path = line.partition("\t")
+        parts = meta.split()
+        if len(parts) == 3 and parts[1] == "commit":
+            links[path] = parts[2]
+    return dict(sorted(links.items()))
+
+
+def cross_wave(repo, wave1_off, wave2_off):
+    """Rule 6: the generation-path file list of `git diff --name-only <wave1_off> <wave2_off>`; non-empty → flag."""
+    import tempfile
+
+    top = repo_top(repo)
+    c1 = resolve_commit(top, wave1_off, "rule 6 wave1_off")
+    c2 = resolve_commit(top, wave2_off, "rule 6 wave2_off")
+    closure = set()
+    with tempfile.TemporaryDirectory(prefix="p426-rule6-") as tmp:
+        for c in (c1, c2) if c1 != c2 else (c1,):
+            closure |= _closure_at(top, c, tmp)
+    closure_files = sorted(closure)
+    paths = list(CROSS_WAVE_FIXED) + [p for p in closure_files if p not in CROSS_WAVE_FIXED]
+    out = git_bytes(top, ["diff", "--name-only", c1, c2, "--", *paths], "rule 6 git diff").decode("utf-8")
+    files = sorted(line for line in out.splitlines() if line)
+    d1, d2 = _registry_doc(top, c1), _registry_doc(top, c2)
+    e1, e2 = _registry_entry(d1), _registry_entry(d2)
+    g1, g2 = _gitlinks(top, c1), _gitlinks(top, c2)
+    return dict(wave1_off=c1, wave2_off=c2, paths=paths, closure_files=closure_files, files=files, flag=bool(files),
+                entry_equal=e1 is not None and e1 == e2, entry_present=dict(wave1_off=e1 is not None,
+                                                                            wave2_off=e2 is not None),
+                globals_equal={k: v for k, v in d1.items() if k != "models"} == {k: v for k, v in d2.items()
+                                                                                 if k != "models"},
+                gitlinks=dict(wave1_off=g1, wave2_off=g2), gitlinks_equal=g1 == g2,
+                qualify=f"covered by gitlink {GITLINKS[0]}", qualify_entry=QUALIFY_ENTRY)
+
+
+def verify_all(results_root, rows_root, repo):
+    """One B8 record: A7 (step 1, unchanged) + Wave 1 + the rule-6 cross-wave check. `inputs` = the union keyed
+    rows_root-relative (A7 inputs are results_root-relative inside `axes.A7` and carry the `p426/` prefix here)."""
+    check_roots(results_root, rows_root)
+    a7 = verify_a7(results_root)
+    w1 = verify_wave1(results_root, rows_root, repo)
+    reader = Reader(rows_root, confine=True)
+    v8 = reader.read_json(Path(rows_root) / "p426" / WAVE / "run" / "v8_base.json", "wave2/run/v8_base.json")
+    if not isinstance(v8, dict):
+        raise RefusalError("wave2/run/v8_base.json is not an object")
+    cw = cross_wave(repo, w1["frozen"]["stack_head_off"], v8.get("off_commit"))
+    union = {f"p426/{k}": v for k, v in a7["inputs"].items()}
+    for src in (w1["inputs"], reader.inputs):
+        for k, v in src.items():
+            if union.get(k, v) != v:
+                raise RefusalError(f"input {k} changed while B8 read it")
+            union[k] = v
+    for k in union:                                   # fix 5: committed-only inputs, A7 included under `all`
+        reader.check_confined(Path(rows_root) / k, "B8 all")
+    return dict(generator="bench.p426_verify", version="p613-step2", axes=dict(A7=a7, wave1=w1), cross_wave=cw,
+                inputs=dict(sorted(union.items())))
+
+
 def dumps(doc):
     return json.dumps(doc, sort_keys=True, indent=1) + "\n"
 
@@ -554,10 +1367,18 @@ def main(argv=None):
     a7 = sub.add_parser("a7")
     a7.add_argument("--results-root", required=True, type=Path)
     a7.add_argument("--out", required=True, type=Path)
+    al = sub.add_parser("all")
+    al.add_argument("--results-root", required=True, type=Path)
+    al.add_argument("--rows-root", required=True, type=Path)
+    al.add_argument("--repo", required=True, type=Path)
+    al.add_argument("--out", required=True, type=Path)
     args = ap.parse_args(argv)
     try:
         check_out_dirs([args.out])
-        doc = verify_a7(args.results_root)
+        if args.axis == "all":
+            doc = verify_all(args.results_root, args.rows_root, args.repo)
+        else:
+            doc = verify_a7(args.results_root)
         write_atomic({args.out: dumps(doc)})
     except RefusalError as exc:
         print(f"REFUSED: {_one_line(exc)}", file=sys.stderr)
