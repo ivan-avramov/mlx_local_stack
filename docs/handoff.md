@@ -12,6 +12,11 @@ operator makes the call from per-axis signals). The evidence is ONE generated `b
 committed in it; step 4 (divergence section + FINAL) is built and waiting for Accept; then the recommendation. After that, the same
 certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, C280 rebuild) comes first.
 
+## Gate results at session end (2026-11-04)
+
+- `8055b219` (archive) **PASS** under P627: `baseline_skips_absent` = the two `test_b2_frozen_s0_support` entries → the archive branch is pushable.
+- `e6986d9e` (main tip: step 3 + P631 + P627) **FAIL**, pytest 8 failed / 10,893 passed (the summary tail lists bench/tests/test_b2_frozen_s8_freeze.py::test_new_v8_refuses_a_failed_production_tree_precondition_naming_it; bench/tests/test_b2_s8c_chain.py::test_the_pilot_pair_runs_end_to_end_through_the_real_sequencer_and_the_real_chain; bench/tests/test_b2_s8c_chain.py::test_a_makeup_pair_runs_end_to_end_after_the_pilot_gate; bench/tests/test_b2_s9_harvest.py::test_a_real_p426_leg_harvests_without_a_scrub_refusal; the other failures are above it in the receipt's full log only — rerun the B2 suites to list all 8). **FIRST job next session:** diagnose before anything else. Lead suspects: the `src/mlx-vlm` gitlink bump `85535982` seen by the v8 freeze's production-tree / serving-pin preconditions (P609-style checks; the B2 pin P631 fixed only `BASE_GITLINKS`), or P627's gate-source change (policy digest) seen by tests that open a real receipt. Reproduce: `cd benchmark && ../.venv-bench/bin/python -m pytest -q -p no:cacheprovider bench/tests/test_b2_frozen_s8_freeze.py bench/tests/test_b2_s8c_chain.py bench/tests/test_b2_s9_harvest.py` on `main`. No push of `main` until a PASS receipt exists for the pushed sha.
+
 ## FIRST — verify (each "no" is a blocker)
 
 1. Nothing running (`local_gate`, `cursor-agent`, `claude -p`); :8000 free.
