@@ -1,6 +1,6 @@
-# Handoff — 2026-11-04 (session 17 END-state: P426 DONE — `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP ON CERTIFIED (C291); P642 race fixed; tip `1c36c451` gate PASS; push ask pending; next P475 Go)
+# Handoff — 2026-11-04 (session 17: P426 DONE + pushed; P475 stage 1 four-eyes build IN FLIGHT (C292), contract `docs/specs/p475-stage1-contract.md` v1.1)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P644, P643, P642, C291, P640, P638, C290, C289, P633, P632, C288, C287, P631, C286, C285, P629, P628, P627,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C292, P644, P643, P642, C291, P640, P638, C290, C289, P633, P632, C288, C287, P631, C286, C285, P629, P628, P627,
 C284 … C276), then `docs/specs/p613-step4-contract.md` + `docs/reviews/p613-step4/dispositions.md`. Model names: FULL registry names
 only. Review rounds: 3 per artifact (more only on the operator's word). Operator stance: "keep going towards certifying MTP for the
 picks"; bias for quality; updates every 15–20 min; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land.
@@ -40,13 +40,16 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 
 ## Next, in order
 
-1. **Push ask** (if not done at session end): `main` `67df67e6..` — gated tip `1c36c451` (level full) + the docs-only tail.
-2. **P475 Go (operator)** — `docs/specs/p475-kv-matrix.md` v4 (R1–R22), stage 1 for `Qwen3.8-27B-mlx-uniform-4bit` first. Facts
-   to refresh in the spec at Go (no design change): the P475a gitlink is in (`85535982`, fork `d94e38a9`, pushed); the first pick's
-   MTP is now CERTIFIED P426. Four-eyes light build (cast as P613), then the matrix legs (≈ 13 h GPU for this pick's two blocks).
-   P628 (`fused_v1` refuses quantized KV) matters only for the `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` half (operator's word).
-3. Open small items: P644 (AGENTS C114 wording, operator), P643 (timing test, proposal), the two P642 process gaps (gate keeps no
-   failure detail; an approved fix went unqueued). 4. After the KV choice: `Qwen3.8-27B-mlx-uniform-4bit` MTP ON vs OFF re-certification on S′ (P426 process, tooling reused).
+1. **P475 stage 1 build (C292 Go), four-eyes light**, contract `docs/specs/p475-stage1-contract.md` v1.1 (`bc3ad13e`):
+   `Qwen3.8-27B-mlx-uniform-4bit` only; arms N16 / AF8 / TQ8 / AF4 / TQ4 (base) / TQ4-OFF. Cast: implementer Claude Opus 5.5
+   (`claude -p`, worktree `$STACK_WORKDIR/worktrees/p475s1-impl`), test-writer Claude Sonnet 5.5 (`claude -p`, resumable, worktree
+   `p475s1-tests`, tests in `benchmark/bench/tests/p475s1/`), panel GPT-5.6 Sol High + GLM 5.2 read-only (`p475s1-panel`). Outputs
+   `$STACK_WORKDIR/scratch/p475s1/{impl,tw-d1}-out.json` (session ids inside). Next: freeze the d1 tests (copy + time) BEFORE revealing
+   the candidate → d2 (resume the test-writer session) → panel opinion → one fix round → Accept ask → commit → gate → push ask → on
+   the box: `prepare`, preflights, N16 smoke (grid 8192), full run (≈ 13 h GPU).
+2. Open small items: P643 (timing test, proposal), the two P642 process gaps (gate keeps no failure detail; an approved fix went
+   unqueued).
+3. After the KV choice: `Qwen3.8-27B-mlx-uniform-4bit` MTP ON vs OFF re-certification on S′ (P426 process, tooling reused).
 
 ## Worktrees / scratch (resolve each)
 
@@ -69,4 +72,4 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 - Copied helper reports can carry home paths: redact before committing; verbatim judge text can trip the naming hook (programming
   keywords) — model output is data (the P613 exemption), never reworded.
 
-Next decision id C292; discussion ids continue from P645.
+Next decision id C293; discussion ids continue from P646.
