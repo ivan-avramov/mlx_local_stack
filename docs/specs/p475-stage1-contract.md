@@ -1,4 +1,4 @@
-# P475 stage 1 — build contract (v1.1, 2026-11-04 — v1.1 adds the ops interface before dispatch; operator Go C292; four-eyes light)
+# P475 stage 1 — build contract (v1.2, 2026-11-05 — v1.1 the ops interface; v1.2 the round-1 fix dispositions (`docs/reviews/p475s1/dispositions.md`); operator Go C292; four-eyes light)
 
 Refines `docs/specs/p475-kv-matrix.md` v4 for the build. Where this contract and the spec differ, this contract wins; where the spec's
 v3 text and v4 differ, v4 wins (and both lose to this file). The lost candidate's code does not exist: R1–R22 are restated here as
@@ -14,7 +14,7 @@ backend prefill tok/s, decode tok/s, MTP acceptance) that the operator weighs as
 
 ## Facts (v4.1 refresh, 2026-11-04)
 
-- Base = stack `main` at dispatch (the P475a gitlink is in: fork `d94e38a9`, mlx-serve `1ddf6f84`; production `mlx_vlm/` byte-identical
+- Base = the stack `main` commit that carries the accepted stage-1 code (v1.2, Sol P1: the arm worktrees run the instrument from the base; the P475a gitlink is in: fork `d94e38a9`, mlx-serve `1ddf6f84`; production `mlx_vlm/` byte-identical
   to S′ `1c7c8fa1`). `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP is CERTIFIED P426 (C291).
 - The committed entry (`main_models.yaml`): `kv_bits: 4`, `kv_quant_scheme: turboquant`, `quantized_kv_start: 0`,
   `max_kv_cache_size` = `kv_prealloc_tokens` = 262144, `draft_kind: mtp` + `draft_model`, no `mtp_verify_scan` (per_query), no
@@ -38,7 +38,7 @@ mlx-serve refuses `fused_v1` / `joint_v1` with `kv_bits` ≠ 0; operator's word 
 
 | Arm | Entry keys changed from the base (nothing else in the file) | Predictor |
 |---|---|---|
-| N16 | `kv_bits: 0`, `kv_quant_scheme` removed | ON |
+| N16 | `kv_bits: 0` (the scheme line stays as in the base — the fork's `--kv-arm` gate and spec v4; v1.2, Sol P2) | ON |
 | AF8 | `kv_bits: 8`, `kv_quant_scheme: uniform` | ON |
 | TQ8 | `kv_bits: 8`, `kv_quant_scheme: turboquant` | ON |
 | AF4 | `kv_bits: 4`, `kv_quant_scheme: uniform` | ON |
@@ -63,7 +63,7 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
    - the measured prompt = the rung's context + a fixed committed decode carrier `benchmark/bench/data/p475_decode_carrier.txt`
      (a code-continuation instruction) instead of the retrieval question; `max_tokens` = 256 with deployed sampling, thinking as deployed;
      `retrieval_acc` null;
-   - `rung_problems(row, predictor) -> [str]` (R21): `completion_tokens == predicted_n == 256`, `finish_reason == "length"`,
+   - `rung_problems(row, predictor) -> [str]` (R21): `peak_memory_gb_cumulative` and `predicted_per_second` finite and > 0 (v1.2, Sol P4); `completion_tokens == predicted_n == 256`, `finish_reason == "length"`,
      `cache_n` numerically 0 (int or float), `|prompt_per_second − prompt_n / (prompt_ms / 1000)| ≤ 2 %`, `prompt_n` == the row's prompt
      tokens; ON: `draft_kind == "mtp"`, `draft_n > 0`, `0 ≤ draft_n_accepted ≤ draft_n`, `draft_rounds > 0`; OFF: every drafter key
      absent or null. A rung with problems is recorded with them and the run exits nonzero.
@@ -77,7 +77,8 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
      the record goes to `$STACK_WORKDIR/p475/preflight/<arm>.json`. A refusing arm is retried at most `--max-preflight` (default 2)
      times; then the arm is marked refused, the run continues with the others and exits nonzero (R15).
    - `run [--blocks 2] [--max-replacements 4] [--max-not-started 3] [--max-deciding 1] [--smoke]`: plan → legs → replacements → deciding
-     block; resumable from `$STACK_WORKDIR/p475/state.json` (caps monotonic on resume, R13).
+     block; resumable from `$STACK_WORKDIR/p475/state.json` (caps monotonic on resume, R13). The measurement-block count and the
+     deciding block's identity / completion are persisted at the first leg; changing `--blocks` after any leg exists refuses (v1.2, Sol P7).
    - `matrix`: regenerate the table from harvested dossiers only.
    All side effects go through the ops object below (`p475_kv.RealOps` implements it; tests pass a fake). `run_leg(leg, arm, ops,
    cfg) -> receipt dict` and `run(args, ops) -> int` take it explicitly.
@@ -99,6 +100,7 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
 | `spawn(argv, env, cwd, session=True)` | `{"pid", "create_time"}` |
 | `wait(proc, timeout)` | rc or None on timeout |
 | `signal_group(proc, sig)` | None |
+| `group_alive(pgid)` | bool — any live member of that process group (v1.2, Sol P5) |
 | `start_watch(argv)` / `stop_watch(handle)` | handle / None |
 | `read_text(path)` / `pmset_log(start, end)` | str / str |
 | `run(argv, cwd, env, timeout)` | `subprocess.CompletedProcess` (preflight `qualify.py`) |
@@ -109,7 +111,9 @@ rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JS
 
 ## Leg lifecycle (`run_leg`)
 
-1. Pre-check, any failure → receipt `NOT_STARTED`, nothing started: power 140 W / 28 V / battery > 20 %; `:8000` free; no busy process
+1. Pre-check, any failure → receipt `NOT_STARTED`, nothing started: the arm worktree's instrument files (`bench/run_capacity.py`,
+   `bench/capacity_ladder.py`, `bench/kv_line.py`, `bench/data/p475_decode_carrier.txt`, `m1/bench_watch.py`) byte-identical to the
+   orchestrator checkout's (v1.2, Sol P1); power 140 W / 28 V / battery > 20 %; `:8000` free; no busy process
    (ChainOps `BUSY` + `run_capacity`); the lease `p426_locks.acquire("chain", wd)` (opposes the local gate) held to teardown (R4);
    ≥ 600 s since the later of `$STACK_WORKDIR/p475/LAST_LEG_END` and `$STACK_WORKDIR/p426/LAST_LEG_END`; destinations absent; the arm's
    preflight PASS; arm identity at entry (R1: worktree clean, HEAD == the arm commit, its parent == the base (TQ4: HEAD == base), diff
@@ -123,32 +127,36 @@ rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JS
    --out-tag p475-<leg> --p475-strict --expected-rung-seconds …` with the arm worktree's `.venv-bench` python, cwd the arm worktree's
    `benchmark/`, env: `MLX_SERVE_CONFIG` = the arm registry, `MLX_BENCH_SESSION_PREFIX=p475-<leg>`, KV names stripped. Own session;
    timeout derived from the expected durations × 3; on timeout or any exit path the driver's group is terminated, escalated, reaped and
-   verified gone before the watcher stops and teardown starts (R6).
+   verified empty with `group_alive` (signalled while any member lives, also after a normal leader exit; v1.2) before the watcher stops and teardown starts (R6).
 5. Watcher: `bench_watch` capacity mode bound by (pid, create_time), started right after the driver spawns. Its failures (no report,
    early exit, power-receipt failure, tick count < (driver interval − 600) // 300, a gap > 2 × interval, `pmset -g log` battery
    interval inside driver launch → driver exit) are `speed_problems` (SPEED_INVALID → replacement), never INVALID (R9–R11).
-6. Teardown proven (R7): `ChainOps.stop_stack`; then the worker pid, the `:8000` listener, the router, its wrapper and the spawned
-   process group verified gone; an unload refusal or a survivor → INVALID. Arm identity re-read at exit (R1).
+6. Teardown proven (R7): `ChainOps.stop_stack`; then the worker pid, the `:8000` listener, the router, its wrapper and the router's
+   process group (`group_alive`) verified gone; an unload refusal or a survivor → INVALID. Arm identity re-read at exit (R1).
 7. Receipt `$STACK_WORKDIR/p475/legs/<leg>/receipt.json`, written atomically, never overwritten (a second write goes to
    `receipt.refused-<ns>.json`; the canonical receipt wins on read, R17): verdict VALID / INVALID / NOT_STARTED, `speed_valid`,
    `problems`, `speed_problems`, arm identity entry + exit, worker argv, the parsed KV line, preflight ref, router / worker identity,
    driver interval, watcher verdict, power readings.
 8. Harvest (VALID or INVALID legs): stage `benchmark/results/p475/<leg>.stage/` (receipt, ladder rows, manifest, watch ticks, KV line,
-   worker argv), every file through `p426_harvest.Scrub` + piicheck, verify, then rename to `benchmark/results/p475/<leg>/` (R18);
-   scrubbed full worker / router logs to `$STACK_WORKDIR/p475/evidence-stage/<leg>/` (the designer commits them to `evidence`). Then
+   worker argv), every file through `p426_harvest.Scrub`, piicheck and `p426_harvest.Gate.check(..., dest="main")` (credentials, foreign e-mail
+   addresses; v1.2, Sol P6), verify, then rename to `benchmark/results/p475/<leg>/` (R18);
+   scrubbed full worker / router logs to `$STACK_WORKDIR/p475/evidence-stage/<leg>/` (a destination like the others: absent at
+   pre-check, never overwritten; v1.2, TW F2) (the designer commits them to `evidence`). Then
    write `LAST_LEG_END` (R8). Resume replays harvest for a receipt without its finalized dossier.
 
 ## Run control
 
 - Order: block 1 N16 → AF8 → TQ8 → AF4 → TQ4 → TQ4-OFF; block 2 the reverse; leg name `u4-<arm-lower>-b<k>.a<n>`; smoke
-  `u4-n16-smoke.a<n>`.
-- INVALID → the run stops (exit nonzero). SPEED_INVALID → a replacement of the same arm and block, queued after the block's ordered
+  `u4-n16-smoke.a<n>` then `u4-tq4-smoke.a<n>` (`--smoke` runs both; v1.2).
+- INVALID (smoke legs included) → the run stops (exit nonzero), and a resume stops again at a standing INVALID leg (v1.2, TW F1). SPEED_INVALID → a replacement of the same arm and block, queued after the block's ordered
   legs (block order preserved), bounded by `--max-replacements` (R13). NOT_STARTED → retried after its own 600 s idle, bounded by
   `--max-not-started`, never evidence (R14).
 - Instability (per arm and rung, from the two blocks' ratios vs N16 for each metric): a direction reversal (one ratio > 1, the other
   < 1) or `|r1 − r2| > |mean − 1| / 2` triggers one deciding block (block-1 order) under `--max-deciding` (R16 reports it in its own
-  column, never in the two-block mean).
-- Resumed metrics come only from finalized, validated dossiers with exactly one ladder file each (R19).
+  column, never in the two-block mean). A flag left unresolved (cap spent or 0) exits nonzero and is labelled on the table (v1.2, TW F6).
+- Resumed metrics come only from finalized, validated dossiers with exactly one ladder file each (R19), whose receipt's model, base,
+  arm commit, gitlinks and leg identity equal the run's; a second usable dossier for the same arm / block / attempt slot refuses
+  (v1.2, Sol P3).
 
 ## Output (`matrix`)
 
@@ -156,7 +164,8 @@ rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JS
 hand-edited: per arm × rung, block 1 / block 2 / mean (and deciding, own column) for cumulative peak GB, backend prefill tok/s, decode
 tok/s, ON acceptance; the paired block ratios vs N16 and the instability flags; replaced, refused and NOT_STARTED legs listed;
 "descriptive (two order-balanced speed-valid legs per arm, no interval claimed)". Written only when every arm has two speed-valid
-legs with valid rungs; otherwise `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.PARTIAL.md` and exit nonzero (R20).
+legs with valid rungs; otherwise `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.PARTIAL.md` and exit nonzero (R20). Exactly one of the two exists after any
+  regeneration: writing one atomically removes the other (v1.2, Sol P8).
 
 ## Acceptance
 
@@ -165,8 +174,9 @@ legs with valid rungs; otherwise `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.PARTIAL.md
    unchanged default `run_capacity` output, ABBA order, idle from harvest end, power / busy / lock refusals, replacement queue,
    instability trigger, harvest staging + resume, matrix completeness.
 2. The existing suites touched (`run_capacity`, `capacity_*`, `bench_watch`, `chain_ops`, `p426_*`) pass unchanged.
-3. After Accept (designer, on the box): `prepare`; one preflight per codec family (N16, AF8 / AF4, TQ8 / TQ4) passes; a smoke leg
-   (N16, grid 8192) VALID with the live KV line and the OFF / ON drafter-key shape recorded; then the full run.
+3. After Accept (designer, on the box): `prepare`; one preflight per codec family (N16, AF8 / AF4, TQ8 / TQ4) passes; two smoke legs
+   (N16 and TQ4, grid 8192; v1.2, GLM F1: the worker CLI sets `KV_BITS` only on a quantized arm) VALID with the live KV line, the
+   worker environment, the backend telemetry identities (`prompt_n`, `prompt_per_second`) and the drafter-key shape recorded; then the full run.
 
 ## Non-goals
 
