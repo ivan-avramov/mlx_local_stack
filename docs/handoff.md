@@ -1,6 +1,6 @@
-# Handoff — 2026-11-04 (session 17 IN PROGRESS: P632 fixed the main-tip gate FAIL (`65cf2171`, gate running); P633 step-4 verify running)
+# Handoff — 2026-11-04 (session 17 IN PROGRESS: P632 fixed; P613 step 4 ACCEPTED + committed, FINAL sheet `3ad97c5e`; gates running; MTP call (P637) with the operator)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C289, P633, P632, C288, C287, P631, C286, C285, P629, P628, P627,
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: P638, C290, C289, P633, P632, C288, C287, P631, C286, C285, P629, P628, P627,
 C284 … C276), then `docs/specs/p613-step4-contract.md` + `docs/reviews/p613-step4/dispositions.md`. Model names: FULL registry names
 only. Review rounds: 3 per artifact (more only on the operator's word). Operator stance: "keep going towards certifying MTP for the
 picks"; bias for quality; updates every 15–20 min; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land.
@@ -14,14 +14,19 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 
 ## Session 17 status (2026-11-04)
 
-- **P632 (C289) done:** the `e6986d9e` FAIL (8) was P631's pin amendment — `BASE_GITLINKS` served both the live-index identity
-  and the build-s2 arm world. Split: `BASE_GITLINKS` = `1c7c8fa1`, `LIVE_GITLINKS` = `d94e38a9` (s0 identity test only); all
-  `test_b2_*` 1,532 passed. Commit `65cf2171`; full gate started on it (receipt `$STACK_WORKDIR/gate/stack-65cf2171…`, log
-  `$STACK_WORKDIR/scratch/p632/gate-65cf2171.log`). If the session died: check the receipt; rerun if absent.
-- **P633 (C289) running:** step-4 verify, round 2 of 3, Sol (`gpt-5.6-sol-high`) + GLM (`glm-5.2-high`) via `cursor-agent --mode ask`,
-  fresh sessions, checkout `$STACK_WORKDIR/worktrees/p613s4-verify` (fixed candidate + frozen-d3 tests, material in `.p633-verify/`);
-  brief + raw outputs `$STACK_WORKDIR/scratch/p633/{brief,verify-sol,verify-glm}.md`. Driver rerun: p613s4 110 passed, 2 skipped.
-- `8055b219` (archive) PASS under P627 (receipt `…-bd64a17d0f68`) → pushable.
+- **P632 (C289) done** (`65cf2171`): `BASE_GITLINKS` = `1c7c8fa1` (build-s2 arm world), `LIVE_GITLINKS` = `d94e38a9` (s0 identity
+  only). Its gate: pytest 10,912 passed, FAIL only on a stale skip (P638).
+- **P613 step 4 ACCEPTED (C290)** after verify P633 (Sol + GLM: all 7 resolved; GLM M1–M3 = P634–P636 declined): code + tests
+  `81c39a00` (suites 935 passed, 3 skipped); FINAL sheet `3ad97c5e` (byte-identical twice, B8 identical; the two step-4
+  committed-sheet goldens bind and pass).
+- **P638** (`fdfcef48`): p613s2 committed-sheet golden added to `benchmark/gate/stack.skips.txt` (superseded by steps 3–4; the
+  `b4b69886` precedent). The baseline is in the policy digest → every receipt must be re-earned under it.
+- **Gates running (serial; `gate/RUNNING` is a persistent flock file — never wait for its absence):** `fdfcef48` (log
+  `$STACK_WORKDIR/scratch/p633/gate-fdfcef48.log`), then `8055b219` under the new digest (expected PASS, the p613s2 entry in
+  `baseline_skips_absent`). If the session died: check `$STACK_WORKDIR/gate/stack-{fdfcef48,8055b219}*` receipts; rerun if absent.
+- **P637 — the MTP call is with the operator** (ship ON as `CERTIFIED P426 2026-11-04` recommended; per-axis table in the session-17
+  transcript = the FINAL sheet). On "ship": the P426 §11 restore in one commit (the `46ca41b9` registry + seeding-test hunks,
+  `CERTIFIED P426 2026-11-04`, README / campaign-results rows; no client sampling change), gate, push ask.
 
 ## FIRST — verify (each "no" is a blocker)
 
@@ -85,4 +90,4 @@ certification for `Qwen3.8-27B-mlx-uniform-4bit`, whose KV choice (P475 matrix, 
 - Copied helper reports can carry home paths: redact before committing; verbatim judge text can trip the naming hook (programming
   keywords) — model output is data (the P613 exemption), never reworded.
 
-Next decision id C290; discussion ids continue from P634.
+Next decision id C291; discussion ids continue from P639.
