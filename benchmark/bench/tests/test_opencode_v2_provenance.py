@@ -257,7 +257,7 @@ def _activation_runner(run, overlay, *, config_line, activation_line, activation
     def fake(cmd, **kw):
         endpoint = cmd[3]
         if calls is not None:
-            calls.append((endpoint, kw.get("env", {}).get("OPENCODE_PRINT_LOGS")))
+            calls.append((endpoint, kw.get("env", {}).get("OPENCODE_PRINT_LOGS"), cmd, kw))
         if endpoint == "/api/config":
             return subprocess.CompletedProcess(cmd, 0, json.dumps(documents(run, overlay)), line if config_line else "")
         return subprocess.CompletedProcess(cmd, activation_rc, json.dumps({"data": []}), line if activation_line else "")
@@ -273,7 +273,12 @@ def test_plugin_proof_comes_from_the_activation_call(tmp_path, require):
     env = {**env, "OPENCODE_PRINT_LOGS": "1"} if require == "print_logs" else env
     assert P.opencode_v2_destination(tmp_path, env, "model", run, "opencode", overlay, runner=fake, **kw) \
         == "http://127.0.0.1:12345/v1"
-    assert [c[0] for c in calls] == ["/api/config", "/api/integration"] and calls[1][1] == "1"
+    assert [c[0] for c in calls] == ["/api/config", "/api/integration"]
+    assert calls[1][1] == env.get("OPENCODE_PRINT_LOGS")   # the caller's env as passed, never forced
+    _, _, cmd, kw = calls[1]                                # P642 (Sol P2): every subprocess parameter, not one key
+    assert cmd == ["opencode", "api", "GET", "/api/integration", "--standalone"]
+    assert kw["env"] == env and kw["cwd"] == str(tmp_path) and kw["timeout"] == 120
+    assert kw["stdin"] == subprocess.DEVNULL and kw["capture_output"] is True and kw["text"] is True
 
 
 def test_plugin_proof_in_the_config_call_alone_refuses(tmp_path):

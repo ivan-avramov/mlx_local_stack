@@ -2044,8 +2044,17 @@ def opencode_v2_destination(
             if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):
                 refuse("pre-check plugin missing or sha256 differs from the repository plugin")
             loaded = False
-            proof_stderr = activation.stderr if scaffold == "opencode-v2-web-tg1" else r.stderr
-            for line in proof_stderr.splitlines():
+            if scaffold != "opencode-v2-web-tg1":
+                # P433 / C209: config.get returns before plugin activation logs; integration.list awaits it.
+                # The caller's env as passed: without its logging request the proof stays impossible.
+                activation = (runner or subprocess.run)(
+                    [str(opencode_bin), "api", "GET", "/api/integration", "--standalone"],
+                    cwd=str(scratch), env=env,
+                    capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL,
+                )
+                if activation.returncode:
+                    refuse(f"plugin activation discovery exit {activation.returncode}")
+            for line in activation.stderr.splitlines():
                 try:
                     fields = dict(
                         token.split("=", 1) for token in shlex.split(line) if "=" in token

@@ -1087,7 +1087,7 @@ def test_real_missing_print_logs_refuses(probe, real_binary, monkeypatch, tmp_pa
             return original(scratch, env, *args, **kwargs)
 
         monkeypatch.setattr(provenance, "opencode_v2_destination", without_logging)
-        with pytest.raises(SystemExit, match="plugin") as exc:
+        with pytest.raises(SystemExit, match="lacks loading plugin") as exc:   # P642 (Sol P1): the missing-log refusal itself
             f["run"]("one")
         assert not mock.chats and not f["out"].exists()
         print("REFUSED: real binary discovery without OPENCODE_PRINT_LOGS: " + str(exc.value))
