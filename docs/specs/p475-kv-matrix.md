@@ -1,4 +1,4 @@
-# P475 — KV-cache format matrix for the two top picks — SPEC v4, 2026-11-04 (four-eyes light; v3 = C233: measured in the shipped MTP-ON state; v4 = C280: rebuild on S′, `Qwen3.8-27B-mlx-uniform-4bit` first, the parked change-review findings as requirements)
+# P475 — KV-cache format matrix for the two top picks — SPEC v4 (v4.1 facts and the stage-1 build: `docs/specs/p475-stage1-contract.md`, C292), 2026-11-04 (four-eyes light; v3 = C233: measured in the shipped MTP-ON state; v4 = C280: rebuild on S′, `Qwen3.8-27B-mlx-uniform-4bit` first, the parked change-review findings as requirements)
 
 v2 applies design review round 1 of 1 (`docs/reviews/p475/design-round1.*`; Cursor `gpt-5.6-sol-high` + `glm-5.2-high`): quality is part
 of the decision (stage 2); TQ4s dropped (the server converts the WHOLE cache on crossing `quantized_kv_start` — a between-context switch,
