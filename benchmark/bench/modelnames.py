@@ -41,6 +41,10 @@ _P426_WAVE1 = re.compile(r"^benchmark/results/p426/wave1(\.[a-z][a-z0-9]{0,7})?/
 # P601: harvested Wave-2 records (B2 spec 11, the same P437 harvest) — attempt directories, run records, pair dossiers — in `wave2/` or a
 # `wave2.<label>/` namespace (P600): data too. Prose and scripts beside them (`wave2/make_historical_walls.py`, READMEs) stay checked.
 _P426_WAVE2 = re.compile(r"^benchmark/results/p426/wave2(\.[a-z0-9][a-z0-9.-]*)?/(tg1-p426-[a-z0-9-]+\.a\d+|run|pairs)/")
+# P650 / C293: a panel member's or helper's raw report under `docs/reviews/<item>/` is verbatim model output — data. The designer's
+# files beside it (dispositions, notes) stay checked.
+_REVIEW_OUTPUT = re.compile(
+    r"^docs/reviews/[a-z0-9][a-z0-9.-]*/(?:(?:change-round\d+|opinion|verify|panel)-[a-z0-9.-]+|[a-z0-9-]+-report)\.md$")
 # P518 / C246: the sha256-pinned verbatim copy of a committed registry + seeding test (T3's OFF fixture) — data, not prose.
 _PINNED_OFF_FIXTURE = "benchmark/bench/tests/fixtures/p426_off/"
 
@@ -278,7 +282,7 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # EvalPlus grader output *_samples_eval_results.json, which embeds the
             # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
             # P437: harvested Wave-1 evidence is a verbatim, sha-manifested copy (registry, receipts, logs) — data too.
-            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or path.startswith("benchmark/results/") and (
+            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or _REVIEW_OUTPUT.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))
