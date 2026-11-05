@@ -28,3 +28,20 @@ Candidate on the d2 tests: 433 / 434 frozen, 161 / 161 implementer, 557 touched-
 
 Adopted findings go once to a fresh implementer session (the fix round); the test-writer's d3 adds a failing-case test per adopted
 defect; then the panel's verify (round 2 of 3).
+
+## Verify — round 2 of 3 (2026-11-05)
+
+Fix implementer: Claude Opus 5.5 (`claude -p`, fresh session `b463ca94…`; P651 added in the same session by C293). Test-writer d3 (same
+session `51237d4c…`): fixture amended to the v1.2 facts, four v1.1-only tests amended, 60 + 18 failing-case tests (red on the round-1
+candidate) — frozen `512 passed` (+1), implementer `242 passed`, touched `557 passed`; verdict merge. Panel verify (fresh sessions,
+checkout with the fixed candidate): GLM 5.2 — every adopted row resolved, H1 / H2 operational notes; GPT-5.6 Sol High — 9 resolved, 4
+new findings:
+
+| Finding | By | Disposition |
+|---|---|---|
+| vP1 a VALID dossier can lack `watch.jsonl` / the capacity manifest (harvest skips missing sources) | Sol, major, confirmed | → operator (second fix round recommended) |
+| vP2 `RealOps.spawn` leaks a started driver if create-time capture raises; a failed router start loses group ownership | Sol, major, confirmed | spawn half → operator (second round); router half declined (inside `chain_ops`, a non-goal) |
+| vP3 matrix accepts off-plan block dossiers (a stale `b4`) | Sol, major, confirmed | → operator (second round; cheap) — receipts are already bound to base / arm commits, so only a same-run stale dossier triggers it |
+| vP4 standalone `matrix` exits 0 on an unresolved flag | Sol, minor, confirmed | → operator (second round; one line) |
+| H1 operator e-mail falls back to `git config user.email` | GLM, minor | residual: the live run passes `--operator-email` or relies on the box's git setting |
+| H2 the instrument check assumes the orchestrator checkout is at the base | GLM, minor | residual: fails closed; the designer runs from the base commit |
