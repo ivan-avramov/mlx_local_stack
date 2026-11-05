@@ -27,7 +27,7 @@ machine, not a dedicated benchmarker. All out-of-repo artifacts live in the dedi
 
 ### Current campaign goal (C218, 2026-10-23)
 
-Certify the top two picks of each category in their ideal config (MTP state + KV format), ON vs OFF on the shipped stack (arms = stack commits, C218); B and C share them: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (P426: Wave 1 done, B2 → Wave 2 → ship call), then `Qwen3.8-27B-mlx-uniform-4bit` (KV choice: native16 first, R6 only if needed; then its MTP re-certification). Other published entries later (P475); registry pruning after P426 (P476). Quality over wall-clock.
+Certify the top two picks of each category in their ideal config (MTP state + KV format), ON vs OFF on the shipped stack (arms = stack commits, C218); B and C share them: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (P426: **CERTIFIED MTP ON 2026-11-04**, C291), then `Qwen3.8-27B-mlx-uniform-4bit` (KV choice: native16 first, R6 only if needed; then its MTP re-certification). Other published entries later (P475); registry pruning after P426 (P476). Quality over wall-clock.
 
 ### Active execution order — approved 2026-09-09 (hygiene pass 2026-09-12: every row below is closed or tagged; NO authorized GPU work is queued — next work is an operator choice, see handoff)
 

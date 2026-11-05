@@ -2,6 +2,24 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-11-04 — P426 FINAL: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP ON CERTIFIED on S′ — no quality loss shown on any axis, 1.6–1.75× decode, +0.31 GB at 256K (C291)
+
+Generated sheet `benchmark/results/p426/SIGNALS.md` (FINAL, `p613-step4`; B8 `111808d5…`, inputs set `b1d04f0a…`, evidence `b6ec7819`); arms = stack commits on S′ (fork `1c7c8fa1`, mlx-serve `1ddf6f84`, mlx 0.32.4), OFF `4adb596a` / ON `46ca41b9`, paired seeds; m5max-128. Spec `docs/specs/p426-fable-mtp-recert.md`; C204: per-axis signals, the operator decides.
+
+| axis | OFF | ON | ON − OFF (95 % CI) | speed ON / OFF |
+|---|---|---|---|---|
+| A7 opencode tg1 s1 (acc_strict@budget) | 42/43 | 41/43 | −2.3 pp [−7.0, 0.0], WASH, MDE 6.5 pp | decode 1.65× |
+| A7 opencode tg1 s2 | 41/43 | 42/43 | +2.3 pp [0.0, +7.0], WASH | decode 1.65× |
+| A1 math500 (b1 + b2) | 96/100 | 96/100 | 0.0 pp, 0 discordant, loss bound 3.0 pp | decode 1.73× |
+| A2 cjudge / A3 vision / A4 128K reasoning | 40/40, 20/20, 6/6 | identical outputs | — | 1.57×, 1.75×, 1.61× |
+| M1 256K memory | 37.66 GB prefill peak | 37.97 GB | +0.31 GB | decode 1.20× |
+
+- Mechanical family Holm (A1, A7-s1, A7-s2): every member p 1.0. Subjective two-family blind panel (Claude Opus 5.5 `blind-judge` + GPT-5.6 Sol High, both orders, length-adjusted): A7-s1 0.728 [0.475, 1.000], A7-s2 0.670 [0.433, 0.826], Holm 0.196 — WASH, "no quality loss shown" (not "improves", not equivalence; C286 / C172). Wave 1 members identical outputs (0.5, reported, not tested).
+- Mechanism: Wave 1 outputs byte-identical on 166 / 166 keys; A7 first divergence 0 / 86 generation-first (35 identical, 49 environment — clock / ASLR in tool output, 2 cut-off). This bounds only the identical-context prefix: **439 / 439 assistant messages generated under identical context are identical**; after the first tool-output difference only the outcome measures speak (P640).
+- The one A7-s1 discordant item `go/bottle-song` (ON looping, OFF pass) splits at message 0 and flipped between two ON epochs in the cross-epoch noise floor (1 / 48) — noise reading, not a mechanism proof.
+- Flags (never vetoes): draft acceptance 0.60 (cjudge) / 0.62 (vision) < 0.70 (P620) with decode still 1.57× / 1.75×; runaway-tax ON-only kinds are cut-off asymmetries (P616); rule-6 cross-wave `main_models.yaml` other entries only (C276).
+- **Recommendation adopted (C291):** ship ON, `CERTIFIED P426 2026-11-04`. B / C implication: none for the order (MTP is a serving lever); the B / C first pick now ships certified ON on S′. Next: the same certification for `Qwen3.8-27B-mlx-uniform-4bit` after its KV choice (P475).
+
 ## 2026-10-22 — P405 R5: codec ABBA for `Qwen3.6-27B-Opus-Distill-OptiQ-4bit` — same shape as the uniform pick at 256K; TurboQuant ≈ 6 % slower at 8K
 
 **What:** as the 2026-10-21 `Qwen3.8-27B-mlx-uniform-4bit` R5 (C197 / C200 / P411 second pick): arm A affine, arm B TurboQuant 4-bit
