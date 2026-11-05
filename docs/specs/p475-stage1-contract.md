@@ -1,4 +1,4 @@
-# P475 stage 1 — build contract (v1, 2026-11-04; operator Go C292; four-eyes light)
+# P475 stage 1 — build contract (v1.1, 2026-11-04 — v1.1 adds the ops interface before dispatch; operator Go C292; four-eyes light)
 
 Refines `docs/specs/p475-kv-matrix.md` v4 for the build. Where this contract and the spec differ, this contract wins; where the spec's
 v3 text and v4 differ, v4 wins (and both lose to this file). The lost candidate's code does not exist: R1–R22 are restated here as
@@ -79,7 +79,33 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
    - `run [--blocks 2] [--max-replacements 4] [--max-not-started 3] [--max-deciding 1] [--smoke]`: plan → legs → replacements → deciding
      block; resumable from `$STACK_WORKDIR/p475/state.json` (caps monotonic on resume, R13).
    - `matrix`: regenerate the table from harvested dossiers only.
-   All ops (git, processes, HTTP, clock, power, sleep) go through an injectable ops object for mocked tests.
+   All side effects go through the ops object below (`p475_kv.RealOps` implements it; tests pass a fake). `run_leg(leg, arm, ops,
+   cfg) -> receipt dict` and `run(args, ops) -> int` take it explicitly.
+
+## Ops interface (`p475_kv.Ops`, a `typing.Protocol`; the test seam)
+
+| Method | Returns / raises |
+|---|---|
+| `power()` | `{"watts": float, "volts": float, "battery": int}` |
+| `port_listener(port)` | the listening pid or None |
+| `busy()` | list of busy process descriptions (empty = quiet) |
+| `lease()` | a context manager holding `p426_locks.acquire("chain", wd)`; raises `p426_locks.LockRefused` |
+| `now()` / `monotonic()` / `sleep(s)` | epoch seconds / monotonic seconds / None |
+| `worktree_state(wt)` | `{"head", "clean", "gitlinks"}` as `chain_ops.worktree_state` |
+| `git(wt, *args)` | stdout str (e.g. `rev-parse`, `diff`); raises on rc ≠ 0 |
+| `stack(wt, registry, predictor)` | a router handle with `start_router()`, `load(model) -> {pid, create_time, cmdline}`, `expected_worker_argv(registry, model) -> list`, `stop_stack() -> int`, `unload_ok() -> bool` |
+| `proc_alive(pid, create_time)` | bool |
+| `proc_env(pid)` | dict |
+| `spawn(argv, env, cwd, session=True)` | `{"pid", "create_time"}` |
+| `wait(proc, timeout)` | rc or None on timeout |
+| `signal_group(proc, sig)` | None |
+| `start_watch(argv)` / `stop_watch(handle)` | handle / None |
+| `read_text(path)` / `pmset_log(start, end)` | str / str |
+| `run(argv, cwd, env, timeout)` | `subprocess.CompletedProcess` (preflight `qualify.py`) |
+
+Fixed formats the fake reproduces: the `KV cache resolved:` line above; worker argv lists as `_build_command` emits them; capacity ladder
+rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JSON ticks; `pmset -g ac` / `pmset -g log` text as
+`chain_ops.parse_power` / `p426_leg.battery_window` parse it.
 
 ## Leg lifecycle (`run_leg`)
 
