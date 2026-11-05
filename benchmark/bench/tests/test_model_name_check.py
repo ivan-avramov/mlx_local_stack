@@ -392,3 +392,34 @@ def test_panel_verdicts_are_DATA_not_prose_P613(path):
             "+++ b/benchmark/results/p426/panel/FROZEN.json\n@@ -0,0 +1 @@\n+\"note\": \"static\"\n")
     found = MN.diff_violations(diff)
     assert [v.path for v in found] == ["benchmark/results/p426/panel/FROZEN.json"]
+
+
+@pytest.mark.parametrize("path", [
+    "docs/reviews/p475s1/change-round1-glm.md",
+    "docs/reviews/p475s1/change-round2-sol.md",
+    "docs/reviews/p642/opinion-sol.md",
+    "docs/reviews/p613-step4/verify-glm.md",
+    "docs/reviews/p613-step4/panel-sol.md",
+    "docs/reviews/p475s1/tw-d2-report.md",
+    "docs/reviews/p475s1/impl-report.md",
+])
+def test_verbatim_review_outputs_are_DATA_not_prose_P650(path):
+    """P650 / C293: a panel member's or helper's raw report is verbatim model OUTPUT; an ordinary word ('static', 'low',
+    'the quantized') cannot be reworded without tampering with the record. The designer's own files beside it stay checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+a static helper at low cost; the quantized arms\n"
+            "+++ b/docs/reviews/p475s1/dispositions.md\n@@ -0,0 +1 @@\n+a static helper\n")
+    found = MN.diff_violations(diff)
+    assert [v.path for v in found] == ["docs/reviews/p475s1/dispositions.md"]
+
+
+@pytest.mark.parametrize("path", [
+    "docs/reviews/p475s1/dispositions.md",
+    "docs/reviews/p475s1/notes.md",
+    "docs/reviews/change-round1-glm.md",            # not inside an item directory
+    "docs/reviews/p475s1/sub/change-round1-glm.md",  # nested
+    "docs/specs/p475s1/change-round1-glm.md",
+    "docs/reviews/p475s1/change-round1-glm.txt",
+])
+def test_the_review_output_exemption_is_narrow_P650(path):
+    diff = f"+++ b/{path}\n@@ -0,0 +1 @@\n+a static helper\n"
+    assert [v.path for v in MN.diff_violations(diff)] == [path]
