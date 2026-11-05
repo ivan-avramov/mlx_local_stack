@@ -246,3 +246,54 @@ def test_destination_documents(tmp_path, monkeypatch, mutation):
         assert cmd == [str(tmp_path / "opencode"), "api", "GET", "/api/config", "--standalone"]
         assert kw["cwd"] == str(tmp_path) and kw["env"]["PWD"] == str(tmp_path)
         assert kw["timeout"] == 120 and kw["stdin"] == subprocess.DEVNULL
+
+
+# P642 / P433 (C209): the noretry.js load proof comes from the activation call, which awaits plugin activation
+# (2.0.20 `integration.list` awaits `Plugin.awaitActivation`; `config.get` does not — a race under load).
+def _activation_runner(run, overlay, *, config_line, activation_line, activation_rc=0, calls=None):
+    plugin = (run / "cfg/opencode/plugins/noretry.js").resolve()
+    line = f'msg="loading plugin" id={plugin} entrypoint={plugin.as_uri()} role=server\n'
+
+    def fake(cmd, **kw):
+        endpoint = cmd[3]
+        if calls is not None:
+            calls.append((endpoint, kw.get("env", {}).get("OPENCODE_PRINT_LOGS")))
+        if endpoint == "/api/config":
+            return subprocess.CompletedProcess(cmd, 0, json.dumps(documents(run, overlay)), line if config_line else "")
+        return subprocess.CompletedProcess(cmd, activation_rc, json.dumps({"data": []}), line if activation_line else "")
+    return fake
+
+
+@pytest.mark.parametrize("require", ["require_plugin", "print_logs"])
+def test_plugin_proof_comes_from_the_activation_call(tmp_path, require):
+    run, env, _, _, overlay = fixture_env(tmp_path)
+    calls = []
+    fake = _activation_runner(run, overlay, config_line=False, activation_line=True, calls=calls)
+    kw = dict(require_plugin=True) if require == "require_plugin" else {}
+    env = {**env, "OPENCODE_PRINT_LOGS": "1"} if require == "print_logs" else env
+    assert P.opencode_v2_destination(tmp_path, env, "model", run, "opencode", overlay, runner=fake, **kw) \
+        == "http://127.0.0.1:12345/v1"
+    assert [c[0] for c in calls] == ["/api/config", "/api/integration"] and calls[1][1] == "1"
+
+
+def test_plugin_proof_in_the_config_call_alone_refuses(tmp_path):
+    run, env, _, _, overlay = fixture_env(tmp_path)
+    fake = _activation_runner(run, overlay, config_line=True, activation_line=False)
+    with pytest.raises(P.ServedConfigError, match="lacks loading plugin"):
+        P.opencode_v2_destination(tmp_path, env, "model", run, "opencode", overlay, require_plugin=True, runner=fake)
+
+
+def test_failed_activation_call_refuses(tmp_path):
+    run, env, _, _, overlay = fixture_env(tmp_path)
+    fake = _activation_runner(run, overlay, config_line=True, activation_line=True, activation_rc=3)
+    with pytest.raises(P.ServedConfigError, match="activation discovery exit 3"):
+        P.opencode_v2_destination(tmp_path, env, "model", run, "opencode", overlay, require_plugin=True, runner=fake)
+
+
+def test_no_activation_call_without_a_plugin_requirement(tmp_path):
+    run, env, _, _, overlay = fixture_env(tmp_path)
+    env = {k: v for k, v in env.items() if k != "OPENCODE_PRINT_LOGS"}
+    calls = []
+    fake = _activation_runner(run, overlay, config_line=False, activation_line=False, calls=calls)
+    P.opencode_v2_destination(tmp_path, env, "model", run, "opencode", overlay, runner=fake)
+    assert [c[0] for c in calls] == ["/api/config"]
