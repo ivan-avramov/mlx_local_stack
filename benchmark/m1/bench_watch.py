@@ -266,8 +266,27 @@ def _parse_args(argv=None):
                     help="P426 B5: where the first power failure is receipted (sticky; read by the leg wrapper)")
     ap.add_argument("--flat-escalate", type=int, default=FLAT_TICKS_TO_ESCALATE,
                     help="flat ticks before INVESTIGATE (reasoning rungs persist only when complete)")
+    ap.add_argument("--driver-create-time", type=float, default=None,
+                    help="P475 R12: bind the driver by (pid, create_time) (proc_guard.start_time), in any mode")
+    ap.add_argument("--capacity-rows", default=None,
+                    help="P475 capacity mode: the run_capacity ladder journal; --out is then the append-only JSON tick journal")
+    ap.add_argument("--expected-rung-seconds", default=None,
+                    help="capacity mode: comma-separated expected duration per rung, in grid order (RATE / ETA)")
     args = ap.parse_args(argv)
-    if args.chain_json:
+    if args.driver_create_time is not None and args.driver_pid is None:
+        ap.error("--driver-create-time needs --driver-pid")
+    if args.capacity_rows and args.chain_json:
+        ap.error("--capacity-rows and --chain-json are separate modes")
+    if args.capacity_rows:
+        if args.driver_pid is None:
+            ap.error("--capacity-rows needs --driver-pid")
+        try:
+            args.expected = [float(x) for x in (args.expected_rung_seconds or "").split(",")]
+        except ValueError:
+            args.expected = None
+        if not args.expected or any(not (x > 0 and x != float("inf")) for x in args.expected):
+            ap.error("--capacity-rows needs --expected-rung-seconds: one positive duration per rung")
+    elif args.chain_json:
         if args.driver_pid is None:
             ap.error("--chain-json needs --driver-pid")
     else:
@@ -563,12 +582,18 @@ def _driver_state(pid, bound):
     return ("alive" if cur == bound else "gone"), bound
 
 
+def _initial_bound(args):
+    """R12: the driver's identity start time — the given `--driver-create-time`, else the first readable one."""
+    given = getattr(args, "driver_create_time", None)
+    return given if given is not None else _pid_start(args.driver_pid)
+
+
 def run_p426(args, *, power, clock, sleep, intervals=None) -> int:
     """The tick loop. `power()` is the per-tick meter reading; the battery log is read once, at exit: by `intervals(lo, hi)` when
     given (the default pmset source), else from the last reading's `on_battery_intervals` (an injected power source)."""
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
-    bound = _pid_start(args.driver_pid)
+    bound = _initial_bound(args)
     start, lines, n = clock(), [], 0
     last = {}
     while True:
@@ -603,8 +628,115 @@ def run_p426(args, *, power, clock, sleep, intervals=None) -> int:
     return 0
 
 
+# ---------------------------------------------------------------------------------------------------------------------
+# P475 capacity mode (R9–R12): JSON ticks over a `run_capacity` ladder journal, RATE / ETA from each rung's `elapsed_s`
+# against the expected rung durations; the same power fields, driver binding and closing exit line as the P426 mode, so
+# `speed_verdict(journal)` reads it unchanged.
+# ---------------------------------------------------------------------------------------------------------------------
+def _ladder_rows(path):
+    rows = []
+    try:
+        text = Path(path).read_text(errors="replace")
+    except OSError:
+        return rows
+    for line in text.splitlines():
+        try:
+            row = json.loads(line)
+        except json.JSONDecodeError:
+            continue                                    # a partially written last line
+        if isinstance(row, dict):
+            rows.append(row)
+    return rows
+
+
+def capacity_view(rows_path, expected, since_start_s):
+    """The tick's capacity report: rungs done of planned, the per-rung elapsed vs expected, RATE (actual ÷ expected over the
+    completed rungs), ETA (remaining expected × RATE, never below the current rung's elapsed), errors and a CORRECTION? note."""
+    rows = _ladder_rows(rows_path)
+    planned = len(expected)
+    done = len(rows)
+    elapsed = [r.get("elapsed_s") if _number(r.get("elapsed_s")) else None for r in rows]
+    known = [(e, x) for e, x in zip(elapsed, expected) if e is not None]
+    actual_s = sum(e for e, _ in known)
+    expected_done_s = sum(x for _, x in known)
+    ratio = (actual_s / expected_done_s) if expected_done_s else None
+    remaining = expected[done:] if done < planned else []
+    current_expected = remaining[0] if remaining else None
+    current_elapsed = max(0.0, since_start_s - sum(e for e in elapsed if e is not None)) if remaining else None
+    scale = ratio if ratio is not None else 1.0
+    eta = sum(remaining) * scale
+    if current_elapsed is not None and remaining:
+        eta = max(eta, sum(remaining[1:]) * scale + max(0.0, current_expected * scale - current_elapsed))
+    pred_eta = sum(remaining)
+    errors = sum(1 for r in rows if r.get("execution_status") == "error" or r.get("error"))
+    problems = sum(1 for r in rows if r.get("rung_problems"))
+    over = current_elapsed is not None and current_elapsed > CORRECTION_RATIO * current_expected
+    correction = (ratio is not None and ratio > CORRECTION_RATIO) or over or errors > 0 or problems > 0
+    rate_txt = f"x{ratio:.2f} of expected" if ratio is not None else "no completed rung yet"
+    if correction:
+        why = []
+        if ratio is not None and ratio > CORRECTION_RATIO:
+            why.append(f"completed rungs ran {rate_txt}")
+        if over:
+            why.append(f"current rung {current_elapsed:.0f}s > {CORRECTION_RATIO}x its expected {current_expected:.0f}s")
+        if errors:
+            why.append(f"{errors} error rung(s)")
+        if problems:
+            why.append(f"{problems} rung(s) with strict problems")
+        note = ("CORRECTION?: " + "; ".join(why) + f" — ETA {eta / 60:.0f}min vs predicted {pred_eta / 60:.0f}min; "
+                "compare the cost of a corrected re-run against finishing the leg")
+    else:
+        note = f"finish: ETA {eta / 60:.0f}min vs predicted {pred_eta / 60:.0f}min ({rate_txt})"
+    return dict(
+        progress=dict(done=done, planned=planned),
+        rungs=[dict(ctx=r.get("ctx"), elapsed_s=e, expected_s=x, ratio=(e / x) if e is not None and x else None)
+               for r, e, x in zip(rows, elapsed, expected)],
+        current_rung=dict(index=done, expected_s=current_expected, elapsed_s=current_elapsed) if remaining else None,
+        rate=dict(actual_s=actual_s, expected_s=expected_done_s, ratio=ratio),
+        eta=dict(eta_s=eta, pred_eta_s=pred_eta, remaining=len(remaining)),
+        errors=errors, rung_problems=problems, correction=correction, note=note)
+
+
+def run_capacity_watch(args, *, power, clock, sleep, intervals=None) -> int:
+    """The capacity-mode tick loop: one JSON line per tick to `--out`, then one `exit_state` line with the window."""
+    out = Path(args.out)
+    out.parent.mkdir(parents=True, exist_ok=True)
+    bound = _initial_bound(args)
+    start, n, last = clock(), 0, {}
+    while True:
+        state, bound = _driver_state(args.driver_pid, bound)
+        try:
+            reading = power()
+        except Exception:  # noqa: BLE001 — an unreadable meter is a failed reading
+            reading = None
+        reading = reading if isinstance(reading, dict) else {}
+        now = clock()
+        meter = dict(watts=reading.get("watts"), volts=reading.get("volts"), battery=reading.get("battery"))
+        tick = dict(tick=n, t=now, at=_iso(now), interval_s=args.interval, mode="capacity", **meter,
+                    power_ok=not _power_problems(meter),
+                    driver_alive={"alive": True, "gone": False}.get(state), driver=dict(pid=args.driver_pid, start=bound),
+                    **capacity_view(args.capacity_rows, args.expected, now - start))
+        _append(out, tick)
+        last = reading
+        n += 1
+        if state == "gone":
+            break
+        sleep(args.interval)
+    end = clock()
+    try:
+        raw = intervals(start, end) if intervals is not None else last.get("on_battery_intervals")
+    except Exception:  # noqa: BLE001
+        raw = None
+    _append(out, dict(exit_state="driver_exited", t=end, at=_iso(end), interval_s=args.interval, ticks=n, mode="capacity",
+                      window=dict(start=start, end=end), battery_intervals=_overlap(raw, start, end)))
+    return 0
+
+
 def main(argv=None, *, power=None, clock=None, sleep=None) -> int:
     args = _parse_args(argv)
+    if args.capacity_rows:
+        return run_capacity_watch(args, power=power or pmset_power, clock=clock or time.time, sleep=sleep or time.sleep,
+                                  intervals=None if power else pmset_battery_intervals)
     if args.chain_json:
         return run_p426(args, power=power or pmset_power, clock=clock or time.time, sleep=sleep or time.sleep,
                         intervals=None if power else pmset_battery_intervals)
@@ -613,9 +745,13 @@ def main(argv=None, *, power=None, clock=None, sleep=None) -> int:
     state = {m: {"prev": None, "flat": 0, "rates": [], "started": False, "ticks": 0} for m in models}
     out = Path(args.out)
     power = PowerState(args.power_receipt)
+    bound = args.driver_create_time
 
     while True:
-        alive = _pid_alive(args.driver_pid) if args.driver_pid else _alive(args.driver_pattern)
+        if args.driver_pid and bound is not None:       # R12: (pid, create_time), never the pid alone
+            alive = _driver_state(args.driver_pid, bound)[0] != "gone"
+        else:
+            alive = _pid_alive(args.driver_pid) if args.driver_pid else _alive(args.driver_pattern)
         at = time.strftime('%H:%M:%S')
         blocks = [f"===== {at}  driver={'ALIVE' if alive else 'GONE'} =====", power.tick(read_power(), at)]
         for m in models:

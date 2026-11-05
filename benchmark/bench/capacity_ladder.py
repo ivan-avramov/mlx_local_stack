@@ -88,13 +88,83 @@ def validate_completion(out):
                 "raw_timings": {**raw, "peak_memory": None}}, allow_nan=False)
 
 
+# ---------------------------------------------------------------- P475 strict rungs (opt-in; `carrier=` / `--p475-strict`)
+P475_MAX_TOKENS = 256
+P475_TIMING_KEYS = ("prompt_ms", "prompt_per_second", "prompt_n", "cache_n", "predicted_n", "predicted_per_second")
+P475_DRAFT_KEYS = ("draft_kind", "draft_n", "draft_n_accepted", "draft_rounds")
+P475_PREFILL_TOLERANCE = 0.02
+
+
+def _num(v):
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+
+
+def p475_fields(out) -> dict:
+    """P475: the backend's own telemetry of one measured request, persisted verbatim. Drafter keys are copied only when the
+    server sent them (absent stays absent, JSON null stays None: the OFF / ON key shape is evidence)."""
+    raw = (out or {}).get("raw_timings") or {}
+    fields = {k: raw.get(k) for k in P475_TIMING_KEYS}
+    fields["peak_memory_gb_cumulative"] = raw.get("peak_memory")
+    fields.update({k: raw[k] for k in P475_DRAFT_KEYS if k in raw})
+    fields["session_id"] = (out or {}).get("session_id")
+    return fields
+
+
+def rung_problems(row, predictor) -> list[str]:
+    """P475 R21: the strict validity of one measured rung. `predictor` is "on" (or "mtp") / "off"."""
+    if not isinstance(row, dict):
+        return ["row is not an object"]
+    problems = []
+    for key in ("peak_memory_gb_cumulative", "predicted_per_second"):      # v1.2 (Sol P4): the tradeoff metrics themselves
+        v = row.get(key)
+        if not (_num(v) and v > 0):
+            problems.append(f"{key}={v!r} (need finite and > 0)")
+    if row.get("execution_status") != "completed":
+        problems.append(f"execution_status={row.get('execution_status')!r} ({row.get('error')})")
+    ct, pn = row.get("completion_tokens"), row.get("predicted_n")
+    if not (_num(ct) and _num(pn) and ct == pn == P475_MAX_TOKENS):
+        problems.append(f"completion_tokens={ct!r} predicted_n={pn!r} (need both == {P475_MAX_TOKENS})")
+    if row.get("finish_reason") != "length":
+        problems.append(f"finish_reason={row.get('finish_reason')!r} (need 'length')")
+    cache_n = row.get("cache_n")
+    if not (_num(cache_n) and cache_n == 0):
+        problems.append(f"cache_n={cache_n!r} (need numeric 0)")
+    pps, prompt_n, prompt_ms = row.get("prompt_per_second"), row.get("prompt_n"), row.get("prompt_ms")
+    if not (_num(pps) and _num(prompt_n) and _num(prompt_ms) and prompt_ms > 0 and prompt_n > 0):
+        problems.append(f"backend prefill telemetry missing or non-positive (prompt_per_second={pps!r}, prompt_n={prompt_n!r}, "
+                        f"prompt_ms={prompt_ms!r})")
+    else:
+        derived = prompt_n / (prompt_ms / 1000)
+        if abs(pps - derived) > P475_PREFILL_TOLERANCE * derived:
+            problems.append(f"prompt_per_second {pps} differs from prompt_n / prompt_ms = {derived:.3f} by more than 2 %")
+    if not (_num(prompt_n) and prompt_n == row.get("prompt_tokens")):
+        problems.append(f"prompt_n={prompt_n!r} != prompt_tokens={row.get('prompt_tokens')!r}")
+    if predictor in ("on", "mtp"):
+        dn, da, dr = row.get("draft_n"), row.get("draft_n_accepted"), row.get("draft_rounds")
+        if row.get("draft_kind") != "mtp":
+            problems.append(f"draft_kind={row.get('draft_kind')!r} (ON: need 'mtp')")
+        if not (_num(dn) and dn > 0):
+            problems.append(f"draft_n={dn!r} (ON: need > 0)")
+        if not (_num(da) and _num(dn) and 0 <= da <= dn):
+            problems.append(f"draft_n_accepted={da!r} (ON: need 0 <= accepted <= draft_n)")
+        if not (_num(dr) and dr > 0):
+            problems.append(f"draft_rounds={dr!r} (ON: need > 0)")
+    elif predictor == "off":
+        present = [k for k in P475_DRAFT_KEYS if row.get(k) is not None]
+        if present:
+            problems.append(f"OFF rung carries drafter key(s) {present}")
+    else:
+        problems.append(f"unknown predictor {predictor!r}")
+    return problems
+
+
 def run_ladder(driver, model: str, chars_per_token: float,
                idle_baseline_gb: float, model_pid: int | None,
                params: dict,
                grid=DEFAULT_GRID, memory_target_gb: float = MEMORY_TARGET_GB,
                sampler_factory=MemorySampler,
                request_timeout: float = 7200.0,
-               on_start=None, on_record=None) -> list[dict]:
+               on_start=None, on_record=None, carrier: str | None = None) -> list[dict]:
     """Measure MLX prefill peak plus sampled RSS/system memory at each requested rung.
 
     The target flag is descriptive and never stops the ladder. A failed request is
@@ -108,7 +178,8 @@ def run_ladder(driver, model: str, chars_per_token: float,
         if on_start:
             on_start(ctx)
         context, needles = build_context(ctx, chars_per_token)
-        messages = [{"role": "user", "content": context + "\n\n" + make_question(needles)}]
+        tail = carrier if carrier is not None else make_question(needles)   # P475: the fixed decode carrier
+        messages = [{"role": "user", "content": context + "\n\n" + tail}]
         sampler = sampler_factory(pid=model_pid)
         try:
             with sampler:
@@ -126,6 +197,8 @@ def run_ladder(driver, model: str, chars_per_token: float,
                    "draft": None, "acceptance": None, "sdpa": None, "verify": None,
                    "error": f"{type(e).__name__}: {str(e)[:160]}",
                    "error_kind": "timeout" if _is_timeout_error(e) else "request_error"}
+            if carrier is not None:
+                row.update(p475_fields(None))
             records.append(row)
             if on_record:
                 on_record(row)
@@ -161,6 +234,9 @@ def run_ladder(driver, model: str, chars_per_token: float,
                "acceptance": _acceptance_from_draft(draft),
                "sdpa": _sdpa_from_raw(out.get("raw_timings") or {}),
                "verify": _verify_from_raw(out.get("raw_timings") or {})}
+        if carrier is not None:
+            row["retrieval_acc"] = None
+            row.update(p475_fields(out))
         records.append(row)
         if on_record:
             on_record(row)

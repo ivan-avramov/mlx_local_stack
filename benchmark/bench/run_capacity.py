@@ -14,18 +14,37 @@ from . import client, provenance
 from .driver import MlxServeDriver
 from .instrument import MemorySampler, await_model_pid, system_used_gb
 from .model_params import params_for, profile_names, registry_context_limit
-from .capacity_ladder import run_ladder, DEFAULT_GRID, validate_completion
+from .capacity_ladder import (run_ladder, DEFAULT_GRID, validate_completion, rung_problems,  # noqa: F401 (re-export)
+                               P475_MAX_TOKENS)
 from .capacity_monitor import CapacityMonitor
 from .convergence import resolved_thinking_budget, is_converged
 from .scorecard import capacity_retrieval_scorecard, MEMORY_TARGET_GB
 
 RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 _CAL_FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
+P475_CARRIER = Path(__file__).resolve().parent / "data" / "p475_decode_carrier.txt"
 
 
 def calibrate_cpt(driver, model: str) -> float:
+    return _calibrate(driver, model)[0]
+
+
+def served_predictor(model: str) -> str:
+    """P475: "on" when the served registry entry declares the MTP predictor (`draft_kind: mtp` + `draft_model`), else "off"."""
+    from .model_params import _registry_models
+    entry = _registry_models().get(model)
+    if entry is None:
+        raise ValueError(f"{model} is not a models: entry of the served registry")
+    return "on" if entry.get("draft_kind") == "mtp" and entry.get("draft_model") else "off"
+
+
+def _calibrate(driver, model: str):
     out = driver.complete(model, [{"role": "user", "content": _CAL_FILLER * 200}],
                           {"max_tokens": 1, "temperature": 0.0}, timeout=120)
+    return _cpt_of(out), out
+
+
+def _cpt_of(out) -> float:
     chars = len(_CAL_FILLER * 200)
     try:
         validate_completion(out)
@@ -52,7 +71,11 @@ def main(argv=None) -> int:
                     help="derived per-request timeout: 262K prefill precedent ~2200s plus headroom")
     ap.add_argument("--no-preload", action="store_true")
     ap.add_argument("--seed", type=int, default=0, help="explicit seed shared across the capacity rungs")
+    ap.add_argument("--p475-strict", action="store_true",
+                    help="P475: fixed decode carrier, max_tokens 256, backend telemetry persisted, strict rung validity")
     args = ap.parse_args(argv)
+    if args.p475_strict and not os.environ.get("MLX_BENCH_SESSION_PREFIX"):
+        ap.error("--p475-strict needs MLX_BENCH_SESSION_PREFIX (a unique session id per request)")
     try:
         grid = tuple(int(x) for x in args.grid.split(","))
         expected = ([float(x) for x in args.expected_rung_seconds.split(",")]
@@ -96,6 +119,11 @@ def _run(ap, args, grid, expected, router, guard) -> int:
     except provenance.ProvenancePreflightError as e:
         print(f"[capacity] REFUSED: {e}", file=sys.stderr, flush=True)
         return 3
+    strict = bool(getattr(args, "p475_strict", False))
+    carrier = predictor = None
+    if strict:
+        carrier = P475_CARRIER.read_text()
+        predictor = served_predictor(args.model)
     out_dir.mkdir(parents=True, exist_ok=True)
 
     with CapacityMonitor(len(grid), expected) as monitor:
@@ -112,7 +140,12 @@ def _run(ap, args, grid, expected, router, guard) -> int:
                 print("[capacity] ERROR: model process not found; cannot sample its RSS", flush=True)
                 return 1
             monitor.stage("calibration")
-            cpt = calibrate_cpt(driver, args.model)
+            calibration_sid = None
+            if strict:
+                cpt, cal_out = _calibrate(driver, args.model)
+                calibration_sid = (cal_out or {}).get("session_id")
+            else:
+                cpt = calibrate_cpt(driver, args.model)
             try:        # M57: re-resolve once the model is loaded, before any measured request
                 provenance.assert_serving_state(args.model, expect=serving_entry)
             except provenance.ServedConfigError:
@@ -121,16 +154,35 @@ def _run(ap, args, grid, expected, router, guard) -> int:
                 raise
             print(f"[capacity] {args.model} cpt={cpt:.2f} grid={grid} "
                   f"memory_target={args.memory_target_gb}GB (guideline)", flush=True)
-            params = {**params_for(args.model, profile=args.sampling_profile),
-                      "max_tokens": 256, "thinking_budget": 256, "seed": args.seed}
+            if strict:      # P475: deployed sampling and thinking; only the output length is fixed
+                overrides = {"max_tokens": P475_MAX_TOKENS, "seed": args.seed}
+            else:
+                overrides = {"max_tokens": 256, "thinking_budget": 256, "seed": args.seed}
+            params = {**params_for(args.model, profile=args.sampling_profile), **overrides}
             context_limit = registry_context_limit(args.model)
+            seen_sessions = {calibration_sid} if calibration_sid else set()
+            strict_failures = []
 
             def save(row):
-                row["thinking_budget"] = params["thinking_budget"]
+                row["thinking_budget"] = params.get("thinking_budget")
                 row["resolved_thinking_budget"] = resolved_thinking_budget(
                     row, context_limit=context_limit, max_tokens=params["max_tokens"])
                 row["converged"] = (is_converged(row)
                                     if row["resolved_thinking_budget"] is not None else None)
+                if strict:
+                    found = rung_problems(row, predictor)
+                    sid = row.get("session_id")
+                    if not sid:
+                        found.append("request without a session id")
+                    elif sid in seen_sessions:
+                        found.append(f"session id {sid} reused")
+                    seen_sessions.add(sid)
+                    if not calibration_sid:
+                        found.append("calibration request without a session id")
+                    row["predictor"] = predictor
+                    row["rung_problems"] = found
+                    if found:
+                        strict_failures.append(f"ctx {row.get('ctx')}: " + "; ".join(found))
                 journal.write(json.dumps(row, allow_nan=False) + "\n")
                 journal.flush()
                 monitor.record(row)
@@ -139,7 +191,8 @@ def _run(ap, args, grid, expected, router, guard) -> int:
                                  model_pid=model_pid, params=params, grid=grid,
                                  memory_target_gb=args.memory_target_gb,
                                  sampler_factory=MemorySampler, request_timeout=args.request_timeout,
-                                 on_start=lambda ctx: monitor.stage(f"rung {ctx}"), on_record=save)
+                                 on_start=lambda ctx: monitor.stage(f"rung {ctx}"), on_record=save,
+                                 **({"carrier": carrier} if strict else {}))
         monitor.stage("reporting")
         sc = capacity_retrieval_scorecard(args.model, records, memory_target_gb=args.memory_target_gb)
         sc["idle_baseline_gb"] = round(idle_baseline, 2)
@@ -153,15 +206,21 @@ def _run(ap, args, grid, expected, router, guard) -> int:
             json.dump(sc, f, indent=2, allow_nan=False)
         manifest_ok = True
         man = None
+        runtime = {"probe": "capacity_ladder", "grid": list(grid),
+                   "capacity_schema_version": 2,
+                   "memory_target_gb": args.memory_target_gb,
+                   "expected_rung_seconds": expected,
+                   "idle_baseline_gb": round(idle_baseline, 2)}
+        if strict:
+            import hashlib
+            runtime["p475_strict"] = dict(predictor=predictor, calibration_session_id=calibration_sid,
+                                          session_prefix=os.environ.get("MLX_BENCH_SESSION_PREFIX"),
+                                          decode_carrier=P475_CARRIER.name,
+                                          decode_carrier_sha256=hashlib.sha256(carrier.encode()).hexdigest(),
+                                          rung_problems=strict_failures)
         try:
             man = provenance.gather(args.model, profile=args.sampling_profile,
-                                    overrides={"max_tokens": 256, "thinking_budget": 256, "seed": args.seed},
-                                    runtime={"probe": "capacity_ladder", "grid": list(grid),
-                                             "capacity_schema_version": 2,
-                                             "memory_target_gb": args.memory_target_gb,
-                                             "expected_rung_seconds": expected,
-                                             "idle_baseline_gb": round(idle_baseline, 2)},
-                                    router=router)
+                                    overrides=overrides, runtime=runtime, router=router)
         except provenance.ServedConfigError:
             raise                           # M57: a serving-state refusal is never swallowed
         except Exception as exc:
@@ -184,7 +243,9 @@ def _run(ap, args, grid, expected, router, guard) -> int:
               f"max_completed_ctx={sc['max_completed_ctx']} "
               f"max_within_memory_target_ctx={sc['max_within_memory_target_ctx']} "
               f"retrieval_coscore_max_passing_ctx={sc['retrieval_coscore_max_passing_ctx']}", flush=True)
-        monitor.exit_code = 0 if sc["grid_completed"] and manifest_ok else 1
+        if strict and strict_failures:
+            print("[capacity] P475 strict: rung problems: " + " | ".join(strict_failures), flush=True)
+        monitor.exit_code = 0 if sc["grid_completed"] and manifest_ok and not (strict and strict_failures) else 1
         return monitor.exit_code
 
 
