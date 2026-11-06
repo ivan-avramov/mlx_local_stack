@@ -84,3 +84,19 @@ def test_the_full_smoke_run_completes_with_clean_worktrees(w):
     ops = H.ready(w)
     assert H.run_all(w, ops=ops, smoke=True) == 0
     assert all(not v for v in w.untracked.values())
+
+
+# ------------------------------------------------------------------------------------------- C298: archived dossiers
+def test_dossiers_archived_under_results_archive_are_not_loaded(w):
+    import shutil
+    ops = H.ready(w)
+    assert H.run_all(w, ops=ops, smoke=True) == 0
+    live = w.main / "benchmark/results/p475"
+    loaded, _ = H.K().load_dossiers(H.cfg(w))
+    assert sorted(r["leg"] for r in loaded) == ["u4-n16-smoke.a1", "u4-tq4-smoke.a1"]
+    arch = live / "archive" / ("e" * 12)
+    arch.mkdir(parents=True)
+    shutil.move(str(live / "u4-n16-smoke.a1"), str(arch / "u4-n16-smoke.a1"))
+    loaded, problems = H.K().load_dossiers(H.cfg(w))
+    assert [r["leg"] for r in loaded] == ["u4-tq4-smoke.a1"]
+    assert not any("archive" in p for p in problems)
