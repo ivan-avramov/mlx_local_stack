@@ -500,6 +500,7 @@ def recorded_identity_problems(arm, ident, recorded):
 def prepare(ops, cfg, arms=ARMS):
     """Create / verify every arm branch and worktree (idempotent); a dirty or diverged arm refuses. Returns the problems."""
     problems = []
+    (cfg.workdir / "p369" / "phase2").mkdir(parents=True, exist_ok=True)   # C296 (P656 3): the fork qualify's lock dir
     for arm in arms:
         wt, br = cfg.worktree(arm), branch_name(arm)
         try:
@@ -542,6 +543,42 @@ def _ensure_venvs(ops, cfg, wt):
                  "uv venv .venv-bench")
         _checked(ops.run(["uv", "pip", "sync", "--python", str(bench / "bin" / "python"), "benchmark/requirements-bench.lock"],
                          str(wt), env, 3600), "uv pip sync .venv-bench")
+    _ensure_fork_venv(ops, cfg, wt, env)
+
+
+FORK_VENV_EXCLUDE = ("mlx-vlm", "mlx-serve", "mlx-local-stack")
+
+
+def fork_constraints(freeze_text):
+    """The arm `.venv`'s pins as constraints for the fork venv: no editable / direct-URL lines, no fork or stack project."""
+    out = []
+    for line in (freeze_text or "").splitlines():
+        s = line.strip()
+        if not s or s.startswith(("#", "-")) or " @ " in s:
+            continue
+        name = re.split(r"[=<>!~;\[ ]", s, 1)[0].strip().lower().replace("_", "-")
+        if name in FORK_VENV_EXCLUDE:
+            continue
+        out.append(s)
+    return "".join(f"{x}\n" for x in out)
+
+
+def _ensure_fork_venv(ops, cfg, wt, env):
+    """C296 (P656 3): `src/mlx-vlm/.venv` (qualify's `fork_versions` interpreter), the fork installed editable with the arm
+    `.venv`'s own versions as constraints."""
+    fork = Path(wt) / "src" / "mlx-vlm"
+    venv = fork / ".venv"
+    if (venv / "bin" / "python").exists():
+        return
+    arm_py = Path(wt) / ".venv" / "bin" / "python"
+    freeze = _checked(ops.run(["uv", "pip", "freeze", "--python", str(arm_py)], str(wt), env, 600), "uv pip freeze (arm .venv)")
+    cpath = cfg.p475 / "fork-venv" / f"{Path(wt).name}.constraints.txt"
+    cpath.parent.mkdir(parents=True, exist_ok=True)
+    cpath.write_text(fork_constraints(getattr(freeze, "stdout", "")))
+    _checked(ops.run(["uv", "venv", "--python", "3.12", "--python-preference", "only-managed", str(venv)], str(fork), env, 1800),
+             "uv venv (fork)")
+    _checked(ops.run(["uv", "pip", "install", "--python", str(venv / "bin" / "python"), "-e", str(fork), "-c", str(cpath)],
+                     str(fork), env, 3600), "uv pip install (fork)")
 
 
 def _checked(cp, what):
@@ -584,36 +621,60 @@ def read_preflight(cfg, arm):
     return doc if isinstance(doc, dict) else None
 
 
+class _NotStarted(Exception):
+    """C296 (P656): an environmental refusal before `qualify` runs (port / busy / lease / leftover out dir)."""
+
+
+STDERR_TAIL = 4000
+
+
+def _tail(text):
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", "replace")
+    return (text or "")[-STDERR_TAIL:]
+
+
 def preflight(arm, ops, cfg, max_retries=None):
     """The fork's qualify `--kv-arm --predictor off --entry <pick>` on the arm worktree; a refusal is retried at most
-    `max_retries` times, then the arm is REFUSED. A final record (PASS / REFUSED) is never redone."""
+    `max_retries` times, then the arm is REFUSED. A final record (PASS / REFUSED) is never redone. C296 (P656): an
+    environmental refusal (port / busy / lease / leftover out dir) records NOT_STARTED, consumes no attempt and is never final."""
     max_retries = cfg.max_preflight if max_retries is None else max_retries
     rec = read_preflight(cfg, arm)
     if rec and rec.get("status") in ("PASS", "REFUSED"):
         return rec
     attempts = list((rec or {}).get("attempts") or [])
-    rec = dict(arm=arm, model=cfg.model, base=cfg.base, status="PENDING", attempts=attempts, max_retries=max_retries)
+    not_started = list((rec or {}).get("not_started") or [])
+    rec = dict(arm=arm, model=cfg.model, base=cfg.base, status="PENDING", attempts=attempts, max_retries=max_retries,
+               not_started=not_started)
     while len(attempts) < 1 + max_retries:
         n = len(attempts) + 1
         out = cfg.p475 / "preflight" / f"{arm}.a{n}"
         att = dict(attempt=n, out=str(out), problems=[], started=ops.now())
         try:
             with contextlib.ExitStack() as stack:
-                if ops.port_listener(PORT) is not None:
-                    raise P475Error(f":{PORT} is bound")
-                busy = ops.busy()
-                if busy:
-                    raise P475Error("busy processes: " + "; ".join(map(str, busy))[:400])
-                stack.enter_context(ops.lease())
-                if out.exists():
-                    raise P475Error(f"{out} exists")
+                try:
+                    if ops.port_listener(PORT) is not None:
+                        raise P475Error(f":{PORT} is bound")
+                    busy = ops.busy()
+                    if busy:
+                        raise P475Error("busy processes: " + "; ".join(map(str, busy))[:400])
+                    stack.enter_context(ops.lease())
+                    if out.exists():
+                        raise P475Error(f"{out} exists")
+                except Exception as exc:  # noqa: BLE001 — nothing ran: not an attempt
+                    raise _NotStarted(f"{type(exc).__name__}: {exc}") from None
                 links = (ops.worktree_state(cfg.worktree(arm)) or {}).get("gitlinks") or {}
                 reviewed = links.get("src/mlx-vlm")
                 if not reviewed:
                     raise P475Error("the arm worktree's src/mlx-vlm gitlink is unknown")
                 argv = preflight_argv(arm, cfg, out, reviewed)
                 att["argv"] = argv
-                cp = ops.run(argv, str(cfg.worktree(arm)), strip_kv(dict(os.environ)), PREFLIGHT_TIMEOUT_S)
+                try:
+                    cp = ops.run(argv, str(cfg.worktree(arm)), strip_kv(dict(os.environ)), PREFLIGHT_TIMEOUT_S)
+                except Exception as exc:  # noqa: BLE001 — a timeout (group reaped by RealOps.run) keeps its stderr
+                    att["stderr_tail"] = _tail(getattr(exc, "stderr", None))
+                    raise
+                att["stderr_tail"] = _tail(getattr(cp, "stderr", None))
                 att["returncode"] = getattr(cp, "returncode", None)
                 if att["returncode"] != 0:
                     att["problems"].append(f"qualify exit {att['returncode']}")
@@ -621,7 +682,12 @@ def preflight(arm, ops, cfg, max_retries=None):
                 report = json.loads(text) if text else None
                 att["report"] = {k: (report or {}).get(k) for k in ("predictor", "entries", "kv_arm", "production", "registry_sha256")}
                 att["problems"] += preflight_report_problems(report, cfg.model)
-        except Exception as exc:  # noqa: BLE001 — a refusal of this attempt (lock, busy, I/O, timeout)
+        except _NotStarted as exc:
+            not_started.append(dict(reason=str(exc), at=ops.now()))
+            rec["status"] = "NOT_STARTED"
+            _atomic_json(cfg.preflight_record(arm), rec)
+            return rec
+        except Exception as exc:  # noqa: BLE001 — a refusal of this attempt (I/O, timeout, qualify)
             att["problems"].append(f"{type(exc).__name__}: {exc}")
         att["ended"] = ops.now()
         attempts.append(att)
@@ -1701,6 +1767,8 @@ def _ensure_preflight(arm, ops, cfg, state, log):
     if not rec or rec.get("status") not in ("PASS", "REFUSED"):
         log(f"preflight {arm}")
         rec = preflight(arm, ops, cfg)
+    if rec.get("status") == "NOT_STARTED":
+        raise _Stop(f"preflight {arm} NOT_STARTED: {(rec.get('not_started') or [{}])[-1].get('reason')}")
     if rec.get("status") != "PASS":
         if arm not in state["refused_arms"]:
             state["refused_arms"].append(arm)
@@ -1735,6 +1803,25 @@ def _run_block(block, ops, cfg, state, log, order=None):
     return unfilled
 
 
+FULL_SHA = re.compile(r"^[0-9a-f]{40}$")
+
+
+def resolve_base(base, ops, repo):
+    """C296 (P655): `--base` as the full commit sha it names (`rev-parse --verify <base>^{commit}`); unresolvable refuses.
+    Without an `ops` only a full sha is accepted."""
+    if ops is None:
+        if not FULL_SHA.match(base):
+            raise P475Error(f"--base {base!r} is not a full commit sha (no git to resolve it)")
+        return base
+    try:
+        full = ops.git(repo, "rev-parse", "--verify", "--quiet", f"{base}^{{commit}}").strip()
+    except Exception as exc:  # noqa: BLE001 — rc != 0: no such commit
+        raise P475Error(f"--base {base!r} does not name a commit ({type(exc).__name__}: {exc})") from None
+    if not FULL_SHA.match(full):
+        raise P475Error(f"--base {base!r} resolved to {full!r}, not a full commit sha")
+    return full
+
+
 def config_from_args(args, ops=None, default_head=False):
     workdir = getattr(args, "workdir", None) or os.environ.get("STACK_WORKDIR")
     if not workdir:
@@ -1742,6 +1829,8 @@ def config_from_args(args, ops=None, default_head=False):
     repo = Path(getattr(args, "repo", None) or Path(__file__).resolve().parents[2])
     p475 = Path(workdir) / P475_DIR
     base = getattr(args, "base", None)
+    if base:
+        base = resolve_base(base, ops, repo)
     recorded = None
     try:
         recorded = json.loads((p475 / "state.json").read_text()).get("base")
@@ -2102,10 +2191,25 @@ class RealOps:
             raise RuntimeError(f"pmset -g log exited {r.returncode}")
         return r.stdout
 
-    def run(self, argv, cwd, env, timeout):
+    def run(self, argv, cwd, env, timeout, grace=10):
+        """`subprocess.run` semantics (CompletedProcess; TimeoutExpired on timeout), but the child leads its own process
+        group and on a timeout or an interrupt the whole group is signalled TERM -> KILL and reaped before returning
+        (C296 / P656 5: a timed-out `qualify` left its `worker.py` behind). The TimeoutExpired carries the output so far."""
         import subprocess
-        return subprocess.run([str(a) for a in argv], cwd=cwd, env=env, capture_output=True, text=True, timeout=timeout,
-                              stdin=subprocess.DEVNULL)
+        p = subprocess.Popen([str(a) for a in argv], cwd=cwd, env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            out, err = p.communicate(timeout=timeout)
+        except BaseException as exc:
+            self._kill_spawned(p, p.pid, grace=grace)
+            try:
+                out, err = p.communicate(timeout=grace)
+            except Exception:  # noqa: BLE001
+                out, err = "", ""
+            if isinstance(exc, subprocess.TimeoutExpired):
+                raise subprocess.TimeoutExpired(p.args, timeout, output=out, stderr=err) from None
+            raise
+        return subprocess.CompletedProcess(p.args, p.returncode, out, err)
 
 
 def _p475_chain_class():

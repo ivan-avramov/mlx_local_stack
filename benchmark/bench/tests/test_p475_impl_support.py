@@ -262,6 +262,12 @@ class FakeOps:
 
     def git(self, wt, *args):
         self.calls.append(("git", str(wt), args))
+        commit = next((x for x in args if str(x).endswith("^{commit}")), None)
+        if args[:1] == ("rev-parse",) and commit is not None:      # C296 (P655): the base resolved in the repo
+            rev = str(commit)[: -len("^{commit}")]
+            if rev and BASE.startswith(rev):
+                return BASE + "\n"
+            raise RuntimeError("git rev-parse failed (rc 128)")
         a = self.arms[self.arm_of(wt)]
         if args[:1] == ("rev-parse",) and args[1].startswith("refs/heads/"):
             return a["branch_tip"] + "\n"

@@ -60,6 +60,18 @@ BASE_REGISTRY = f"""models:
 
 GEN_DEFAULTS = {"temperature": 0.6, "top_p": 0.95}
 
+# `uv pip freeze` of an arm `.venv` as uv prints it (C296 / P656 3): pins, the two editable forks and the stack project
+FREEZE = """accelerate==1.10.0
+mlx==0.32.4
+mlx-audio==0.6.2
+mlx-lm==0.31.3
+mlx-metal==0.32.4
+-e file://{wt}/src/mlx-serve
+-e file://{wt}/src/mlx-vlm
+mlx-local-stack @ file://{wt}
+transformers==5.15.0
+"""
+
 
 class Cfg(dict):
     """Attribute-or-key access (the contract does not say which `cfg` is)."""
@@ -250,6 +262,11 @@ class World:
         self.wait_hook = None              # f(), called inside every ops.wait (a test may raise an interrupt)
         self.spawn_raises = False
         self.sleep_hook = None             # f(seconds), called after every ops.sleep (a test may raise to interrupt a run)
+        # C296 (S18): P655 / P656 knobs
+        self.unresolvable = set()           # revisions `rev-parse --verify <rev>^{commit}` refuses in the repo
+        self.qualify_stderr = ""            # the stderr every qualify run returns (the no_report mode keeps its own)
+        self.uv_rc = 0                      # the exit status of every `uv` call
+        self.arm_freeze = FREEZE            # `uv pip freeze --python <arm>/.venv/bin/python` stdout ({wt} = the worktree)
 
     # ------------------------------------------------------------------ small helpers
     def ev(self, name, **kw):
@@ -283,7 +300,7 @@ class World:
             (wt / "logs").mkdir(parents=True, exist_ok=True)
             (wt / "benchmark" / "results").mkdir(parents=True, exist_ok=True)
             (wt / "main_models.yaml").write_text(BASE_REGISTRY)
-            for venv in (".venv", ".venv-bench"):        # prepare would `uv sync` a worktree without them
+            for venv in (".venv", ".venv-bench", "src/mlx-vlm/.venv"):   # prepare would build a worktree's missing venvs
                 (wt / venv / "bin").mkdir(parents=True, exist_ok=True)
                 (wt / venv / "bin" / "python").write_text("")
             self.install_instrument(wt)
@@ -507,6 +524,16 @@ class FakeOps:
         if branch is not None:                                     # `rev-parse [--verify] refs/heads/<arm branch>`, in the repo or a worktree
             named = next(a for a in ARMS if branch == f"refs/heads/p475-u4-{arm_lower(a)}")
             return w.arm_commit[named] + "\n"
+        commit = next((a for a in flat if a.endswith("^{commit}")), None)
+        if arm is None and commit is not None:                     # C296 (P655): `rev-parse --verify <rev>^{commit}` in the repo
+            rev = commit[: -len("^{commit}")]
+            if rev in w.unresolvable or not rev:
+                raise RuntimeError("git rev-parse failed in repo (rc 128)")
+            if w.base.startswith(rev):
+                return w.base + "\n"
+            if re.fullmatch(r"[0-9a-f]{40}", rev):
+                return rev + "\n"
+            raise RuntimeError("git rev-parse failed in repo (rc 128)")
         if arm is None:
             return w.base + "\n" if "rev-parse" in args else ""
         if "diff" in args:                                         # `diff --name-only <base> <head>`
@@ -684,6 +711,17 @@ class FakeOps:
         w = self.w
         w.ev("run", argv0=str(argv[0]))
         w.run_calls.append(SimpleNamespace(argv=list(argv), cwd=str(cwd), env=dict(env or {}), timeout=timeout))
+        if str(argv[0]) == "uv":                                   # C296 (P656 3): prepare's venv builds
+            argv = [str(a) for a in argv]
+            if w.uv_rc != 0:
+                return subprocess.CompletedProcess(argv, w.uv_rc, "", "uv: failed")
+            if "freeze" in argv:
+                return subprocess.CompletedProcess(argv, 0, w.arm_freeze.format(wt=cwd), "")
+            if "venv" in argv:
+                target = Path(next(a for a in reversed(argv) if not a.startswith("-") and a != "venv" and a != "3.12"))
+                (target / "bin").mkdir(parents=True, exist_ok=True)
+                (target / "bin" / "python").write_text("")
+            return subprocess.CompletedProcess(argv, 0, "", "")
         arm = w.arm_of(argv[argv.index("--stack-root") + 1]) if "--stack-root" in argv else None
         n = w.preflight_calls.get(arm, 0)
         w.preflight_calls[arm] = n + 1
@@ -693,6 +731,8 @@ class FakeOps:
         out.mkdir(parents=True, exist_ok=True)
         if mode == "no_report":
             return subprocess.CompletedProcess(argv, 1, "", "refused")
+        if mode == "timeout":                                      # C296 (P656 5): RealOps.run raises after reaping the group
+            raise subprocess.TimeoutExpired(argv, timeout, output="", stderr=w.qualify_stderr or "qualify: still running")
         # qualify.py's report.json: per-entry status under `entries`, no top-level status; `kv_arm` under --kv-arm
         report = {"predictor": "off", "entries": {PICK: {"status": "COMPLETED"}}, "kv_arm": {"entry": PICK, "delta": {}}}
         rc = 0
@@ -703,7 +743,7 @@ class FakeOps:
         elif mode == "rc1":
             rc = 1
         (out / "report.json").write_text(json.dumps(report))
-        return subprocess.CompletedProcess(argv, rc, "", "")
+        return subprocess.CompletedProcess(argv, rc, "", w.qualify_stderr)
 
 
 def watch_journal(start, end, d, mode):
