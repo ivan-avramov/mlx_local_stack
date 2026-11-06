@@ -1,4 +1,4 @@
-# P475 stage 1 — build contract (v1.2, 2026-11-05 — v1.1 the ops interface; v1.2 the round-1 fix dispositions (`docs/reviews/p475s1/dispositions.md`); operator Go C292; four-eyes light)
+# P475 stage 1 — build contract (v1.3, 2026-11-05 — v1.1 the ops interface; v1.2 the round-1 fix dispositions (`docs/reviews/p475s1/dispositions.md`); v1.3 C296 / C297 on-box fixes; operator Go C292; four-eyes light)
 
 Refines `docs/specs/p475-kv-matrix.md` v4 for the build. Where this contract and the spec differ, this contract wins; where the spec's
 v3 text and v4 differ, v4 wins (and both lose to this file). The lost candidate's code does not exist: R1–R22 are restated here as
@@ -124,7 +124,8 @@ rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JS
    flag, R3); worker environment carries no stripped name; `kv_line_problems` on the log text written since the load began;
    predictor state (ON: exact MTP flags; OFF: no draft flag) per `ChainOps.load`. Any failure → teardown, receipt INVALID.
 4. Driver: `run_capacity --model <pick> --grid 8192,131072,196608,260096 (smoke: 8192) --sampling-profile deployed --seed 0
-   --out-tag p475-<leg> --p475-strict --expected-rung-seconds …` with the arm worktree's `.venv-bench` python, cwd the arm worktree's
+   --out-tag p475-<leg> --out-dir $STACK_WORKDIR/p475/legs/<leg>/capacity --p475-strict --expected-rung-seconds …` (C297: the
+   leg writes nothing in its arm worktree; R1's "clean" holds at entry and exit) with the arm worktree's `.venv-bench` python, cwd the arm worktree's
    `benchmark/`, env: `MLX_SERVE_CONFIG` = the arm registry, `MLX_BENCH_SESSION_PREFIX=p475-<leg>`, KV names stripped. Own session;
    timeout derived from the expected durations × 3; on timeout or any exit path the driver's group is terminated, escalated, reaped and
    verified empty with `group_alive` (signalled while any member lives, also after a normal leader exit; v1.2) before the watcher stops and teardown starts (R6).

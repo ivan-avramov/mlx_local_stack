@@ -190,8 +190,12 @@ class Config:
     def out_tag(self, leg):
         return f"p475-{leg}"
 
+    def capacity_dir(self, leg):
+        """C297 (S18-P1 (c)): `run_capacity --out-dir`; a leg writes nothing in its arm worktree (R1 stays strict)."""
+        return self.leg_dir(leg) / "capacity"
+
     def capacity_outputs(self, arm, leg):
-        d = self.worktree(arm) / "benchmark" / "results" / self.model
+        d = self.capacity_dir(leg)
         tag = self.out_tag(leg)
         return dict(rows=d / f"capacity_ladder.{tag}.jsonl", manifest=d / f"capacity_ladder.{tag}.manifest.json",
                     scorecard=d / f"capacity_retrieval.{tag}.json")
@@ -803,7 +807,8 @@ def driver_argv(arm, leg, cfg, block):
     expected = cfg.expected_for(arm, block)
     return [str(wt / ".venv-bench" / "bin" / "python"), "-m", "bench.run_capacity", "--model", cfg.model,
             "--grid", ",".join(str(c) for c in cfg.grid(block)), "--sampling-profile", "deployed", "--seed", "0",
-            "--out-tag", cfg.out_tag(leg), "--p475-strict", "--expected-rung-seconds", ",".join(f"{x:g}" for x in expected)]
+            "--out-tag", cfg.out_tag(leg), "--out-dir", str(cfg.capacity_dir(leg)), "--p475-strict",
+            "--expected-rung-seconds", ",".join(f"{x:g}" for x in expected)]
 
 
 def watch_argv(arm, leg, cfg, block, proc, rows_path):

@@ -209,7 +209,7 @@ def test_a_replayed_harvest_never_overwrites_differing_evidence(w):
     ev = w.wd / "p475" / "evidence-stage" / smoke
     ev.mkdir(parents=True)
     (ev / "planted.txt").write_text("another operator's evidence")
-    out = w.wt("N16") / "benchmark/results" / PICK / f"capacity_ladder.p475-{smoke}.jsonl"
+    out = w.wd / "p475/legs" / smoke / "capacity" / f"capacity_ladder.p475-{smoke}.jsonl"   # C297: the leg dir, not the worktree
     out.write_text(json.dumps(strict_row("N16", 8192, prefix=f"p475-{smoke}")) + "\n")
     w.row_mutate = None
     assert H.run_all(w, smoke=True) != 0

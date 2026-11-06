@@ -38,14 +38,14 @@ def _failed_n16_smoke_harvest(w):
     except Exception:           # noqa: BLE001
         pass
     assert not H.dossier(w, SMOKE).exists()
-    out = w.wt("N16") / "benchmark/results" / PICK / f"capacity_ladder.p475-{SMOKE}.jsonl"
+    out = w.wd / "p475/legs" / SMOKE / "capacity" / f"capacity_ladder.p475-{SMOKE}.jsonl"   # C297: the leg dir, not the worktree
     out.write_text(json.dumps(strict_row("N16", 8192, prefix=f"p475-{SMOKE}")) + "\n")
     w.row_mutate = None
 
 
 SOURCES = {
     "watch_journal": lambda w: (w.wd / "p475/legs" / SMOKE / "watch.jsonl"),
-    "capacity_manifest": lambda w: (w.wt("N16") / "benchmark/results" / PICK / f"capacity_ladder.p475-{SMOKE}.manifest.json"),
+    "capacity_manifest": lambda w: (w.wd / "p475/legs" / SMOKE / "capacity" / f"capacity_ladder.p475-{SMOKE}.manifest.json"),  # C297
 }
 
 

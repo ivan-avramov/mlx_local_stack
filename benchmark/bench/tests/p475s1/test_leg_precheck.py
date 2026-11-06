@@ -124,8 +124,8 @@ def test_no_leg_end_file_at_all_is_a_clean_start(w):
 @pytest.mark.parametrize("make", [
     lambda w, leg: (w.main / "benchmark/results/p475" / leg).mkdir(parents=True),
     lambda w, leg: (w.main / "benchmark/results/p475" / f"{leg}.stage").mkdir(parents=True),
-    lambda w, leg: (w.wt("AF8") / "benchmark/results" / PICK).mkdir(parents=True) or
-    (w.wt("AF8") / "benchmark/results" / PICK / f"capacity_ladder.p475-{leg}.jsonl").write_text("{}\n"),
+    lambda w, leg: (w.wd / "p475/legs" / leg / "capacity").mkdir(parents=True) or     # C297: the leg dir, not the worktree
+    (w.wd / "p475/legs" / leg / "capacity" / f"capacity_ladder.p475-{leg}.jsonl").write_text("{}\n"),
 ])
 def test_an_existing_destination_refuses(w, make):
     # class: exercises new behaviour (never overwrite a harvested or half-harvested leg)

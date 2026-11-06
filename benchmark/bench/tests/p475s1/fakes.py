@@ -267,6 +267,9 @@ class World:
         self.qualify_stderr = ""            # the stderr every qualify run returns (the no_report mode keeps its own)
         self.uv_rc = 0                      # the exit status of every `uv` call
         self.arm_freeze = FREEZE            # `uv pip freeze --python <arm>/.venv/bin/python` stdout ({wt} = the worktree)
+        # C297 (S18-P1): a driver write under an arm worktree leaves it dirty (untracked), as on the box (P659)
+        self.untracked = {}                 # arm -> set of worktree-relative paths a driver wrote
+        self.driver_ignores_out_dir = False
 
     # ------------------------------------------------------------------ small helpers
     def ev(self, name, **kw):
@@ -356,7 +359,7 @@ class World:
         return self.arm_head.get(arm, self.arm_commit[arm])
 
     def clean(self, arm):
-        return self.arm_clean.get(arm, True)
+        return self.arm_clean.get(arm, True) and not self.untracked.get(arm)
 
     def parent(self, arm):
         return self.arm_parent.get(arm, "a" * 40 if arm == "TQ4" else self.base)
@@ -544,6 +547,8 @@ class FakeOps:
         if "ls-tree" in args:                                      # the BASE's gitlinks
             return "".join(f"160000 commit {sha}\t{p}\n" for p, sha in w.base_gitlinks().items())
         if "status" in args:
+            if w.untracked.get(arm):
+                return "".join(f"?? {r}\n" for r in sorted(w.untracked[arm]))
             return "" if w.clean(arm) else " M main_models.yaml\n"
         if "rev-parse" in args:
             ref = flat[-1] if flat else "HEAD"
@@ -601,7 +606,10 @@ class FakeOps:
         grid = [int(x) for x in argv[argv.index("--grid") + 1].split(",")] if "--grid" in argv else list(FULL_GRID)
         model = argv[argv.index("--model") + 1] if "--model" in argv else PICK
         prefix = d.env.get("MLX_BENCH_SESSION_PREFIX", "p475-leg")
-        out = Path(d.cwd) / "results" / model
+        if "--out-dir" in argv and not w.driver_ignores_out_dir:
+            out = Path(argv[argv.index("--out-dir") + 1])
+        else:
+            out = Path(d.cwd) / "results" / model
         out.mkdir(parents=True, exist_ok=True)
         rows = []
         for i, ctx in enumerate(grid):
@@ -613,6 +621,12 @@ class FakeOps:
         (out / f"capacity_ladder.{tag}.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
         (out / f"capacity_retrieval.{tag}.json").write_text(json.dumps({"model": model, "records": rows}))
         (out / f"capacity_ladder.{tag}.manifest.json").write_text(json.dumps({"model": model, "probe": "capacity_ladder"}))
+        wt = w.wt(arm) if arm else None
+        if wt is not None and (out == wt or wt in out.parents):
+            rel = out.relative_to(wt)
+            w.untracked.setdefault(arm, set()).update(
+                str(rel / f"{stem}.{tag}.{ext}") for stem, ext in
+                (("capacity_ladder", "jsonl"), ("capacity_retrieval", "json"), ("capacity_ladder", "manifest.json")))
         d.rc = w.driver_rc
         d.end_mono = self.monotonic()
         d.end_epoch = w.epoch

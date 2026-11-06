@@ -115,7 +115,7 @@ def test_a_refused_harvest_keeps_the_receipt_and_does_not_start_the_idle_clock(w
 
 
 def fix_source_rows(w):
-    out = w.wt("N16") / "benchmark/results" / PICK / f"capacity_ladder.p475-{SMOKE}.jsonl"
+    out = w.wd / "p475/legs" / SMOKE / "capacity" / f"capacity_ladder.p475-{SMOKE}.jsonl"   # C297: the leg dir, not the worktree
     out.write_text(json.dumps(strict_row("N16", 8192, prefix=f"p475-{SMOKE}")) + "\n")
 
 

@@ -65,6 +65,7 @@ def main(argv=None) -> int:
                     help="rough target only (default 48); --gate-gb is a deprecated spelling, not a stop rule")
     ap.add_argument("--sampling-profile", required=True, choices=profile_names())
     ap.add_argument("--out-tag", help="fresh suffix for ladder, scorecard and manifest; never overwrite")
+    ap.add_argument("--out-dir", help="directory for ladder, scorecard and manifest (default: results/<model>/; C297)")
     ap.add_argument("--expected-rung-seconds",
                     help="comma-separated matched baseline durations in grid order, for daemon rate/ETA assessment")
     ap.add_argument("--request-timeout", type=float, default=7200.0,
@@ -102,7 +103,7 @@ def main(argv=None) -> int:
 
 
 def _run(ap, args, grid, expected, router, guard) -> int:
-    out_dir = Path(RESULTS) / args.model
+    out_dir = Path(args.out_dir) if getattr(args, "out_dir", None) else Path(RESULTS) / args.model
     cl = "capacity_ladder" + (f".{args.out_tag}" if args.out_tag else "")
     cr = "capacity_retrieval" + (f".{args.out_tag}" if args.out_tag else "")
     destinations = [out_dir / f"{cl}.jsonl", out_dir / f"{cr}.json", out_dir / f"{cl}.manifest.json"]
