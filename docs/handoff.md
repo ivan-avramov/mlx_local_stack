@@ -18,7 +18,11 @@ operator weighs the table; stage 2 quality only for formats kept), then its MTP 
 
 1. Nothing running: no router on :8000, no `bench.p475_kv`, no `qualify` / `worker.py` (check by command-line substring in a python
    filter — never put BUSY markers such as `mlx_vlm.server` / `mlx-serve` / `run_capacity` in your own command line: they refuse legs).
-2. `origin/main` = local `main` (session-17 tip); forks `../mlx-vlm` = `d94e38a9`, `../mlx-serve` = `1ddf6f84`, both = their origin.
+2. **Pending push (session 17 end):** local `main` is ahead of `origin/main` (`1514f4b7`) by `c85bb865` (the INVALID smoke dossier,
+   a results commit — the pre-push hook needs a full gate) + docs-only tail (`e86a39e3`, this note). A detached gate on `e86a39e3` was
+   started at session end (log `$STACK_WORKDIR/scratch/p475s1/gate-e86a39e3.log`; receipt `$STACK_WORKDIR/gate/stack-e86a39e3…json`).
+   If the receipt is PASS: **ask the operator to push** (`git push origin e86a39e3:refs/heads/main`, then `main` for the docs tail);
+   if absent or FAIL: re-run / diagnose first. Forks `../mlx-vlm` = `d94e38a9`, `../mlx-serve` = `1ddf6f84`, both = their origin.
 3. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-{n16,af8,tq8,af4,tq4,tq4-off}` on local branches `p475-u4-*` off base `1554bfe1`
    (each diff = exactly its registry keys + `# PROVISIONAL P475 arm` comment; each has `.venv`, `.venv-bench` and a hand-built fork
    venv `src/mlx-vlm/.venv` pinned to the arm `.venv`'s versions).
