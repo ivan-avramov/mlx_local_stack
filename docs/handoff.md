@@ -1,12 +1,13 @@
-# Handoff — 2026-11-05 (session 18, clean boundary: C296 (1) + C297 + C298 built; `e86a39e3` pushed; six OFF preflights PASS + both smokes VALID on `15d90757`; next: P658 (a) in the fork)
+# Handoff — 2026-11-06 (session 18: P658 (a) accepted + fork pushed `e3e38397`; stack step 2 built `97672222`; full stack gate on `9adbae45` running; next: stack push ask, re-prepare, OFF preflights + ON engagement checks, smokes, full run)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C298, S18-P4, S18-P3, C297, S18-P2, S18-P1,
-C296, P659 …), then `docs/specs/p475-stage1-contract.md` (v1.3) and `docs/reviews/p475s1/dispositions.md`. Model names: FULL
-registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to certified picks; ask only at Go /
-Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean boundaries.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C301, C300, S18-P8, C299, C298, S18-P4, S18-P3,
+C297 …), then `docs/specs/p475-stage1-contract.md` (v1.4), `docs/specs/p658-qualify-engagement-only.md` and
+`docs/reviews/p658/dispositions.md`. Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for
+quality; drive to certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh
+session at clean boundaries.
 
-Discussion ids restarted at P1 in session 18; durable records cite them as `S18-P<n>` (historical P1–P659 unchanged). Next decision id
-C299; next discussion id S18-P5 (a new session may restart at its own `S19-P1`).
+Discussion ids restarted at P1 in session 18; durable records cite them as `S18-P<n>`. Next decision id C302; next discussion id
+S18-P11 (a new session may restart at `S19-P1`).
 
 ## THE GOAL
 
@@ -17,64 +18,62 @@ operator weighs the table; stage 2 quality only for formats kept), then its MTP 
 ## FIRST — verify (each "no" is a blocker)
 
 1. Nothing running: no router on :8000, no P475 orchestrator / `qualify` / `worker.py`. Check with a script file, never with the
-   patterns in your own argv (session 18 tripped its own check once).
-2. Pushes: `origin/main` = `e86a39e3` (pushed session 18; gate PASS 11,870 / 9 skipped / 1 xfailed). Local `main` carries the
-   ungated session-18 commits from `8ce7befa` on: code `53e2e321` (C296 (1)), `bc07cabc` (C297), test `5920015e` (C298 guard),
-   data `d13b13ff` (old-base dossier archived), `7c030035` (smokes), docs. They go out with the step-2 stack gate; no push without an
-   in-turn ask. Forks `../mlx-vlm` = `d94e38a9`, `../mlx-serve` = `1ddf6f84`, both = origin.
-3. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-{n16,af8,tq8,af4,tq4,tq4-off}` on local branches `p475-u4-*` off base `15d90757`
-   (each clean, diff = `main_models.yaml` only; `.venv`, `.venv-bench` and the fork venv built by `prepare`).
+   patterns in your own argv.
+2. Gate: the full stack gate on `9adbae45` was started at 2026-11-06 ≈ 09:10 local (log `$STACK_WORKDIR/scratch/p475s1/gate-9adbae45.log`,
+   receipt `$STACK_WORKDIR/gate/stack-9adbae45…json`). PASS → push ask for `origin/main` `e86a39e3..9adbae45` (+ the docs-only tail);
+   FAIL → diagnose (P643 is the known load-sensitive test).
+3. Forks: `../mlx-vlm` = origin = `e3e38397` (pushed session 18); `../mlx-serve` = `1ddf6f84`. The stack gitlink `src/mlx-vlm` =
+   `e3e38397` from `97672222` on.
+4. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-*` are on the OLD base `15d90757` (fork gitlink `d94e38a9`): re-prepare (Next 2)
+   before any preflight.
 
 ## Done in session 18
 
-- `53e2e321` **C296 (1)** (red tests first, `test_c296_fixes.py`): P655 `--base` resolved to the full sha; P656 1–2 environmental
-  preflight refusals = `NOT_STARTED` (no attempt, never final; `run` stops, never refuses the arm), proven live (`LockRefused:
-  gate/RUNNING`, 0 attempts); P656 3 `prepare` builds `p369/phase2/` + the fork venv (pins from the arm `.venv` freeze); P656 4–5
-  stderr tail kept, `RealOps.run` reaps the process group on timeout.
-- `bc07cabc` **C297 / S18-P1 (c)**: `run_capacity --out-dir`; legs write to `$STACK_WORKDIR/p475/legs/<leg>/capacity/`; R1 strict
-  (the ruled P659 exit-only tolerance superseded). Fakes dirty a worktree on any driver write. Contract v1.3.
-- **S18-P2:** P426 / C258 worktrees removed (logs in `$STACK_WORKDIR/archive/session18-worktrees/`), `p426-{off,on}` deleted,
-  `c258x-off` → local `archive/c258x-off`.
-- **Re-prepare on `15d90757`:** old `$STACK_WORKDIR/p475/` + N16 worktree leftovers in `$STACK_WORKDIR/archive/p475-base-1554bfe1/`;
-  old arm branches → local `archive/p475-u4-<arm>-1554bfe1`.
-- **Six MTP-OFF preflights PASS**, first attempt (17–36 min each); manifests as session 17 (48 DeltaNet `ArraysCache` untouched;
-  N16 16 native; AF8 / AF4 16 affine gs 64; TQ8 / TQ4 / TQ4-OFF 15 TurboQuant mse + layer 63 native). Runner
-  `$STACK_WORKDIR/p475/pf_runner.py` (P656 item 6 workaround: `cd benchmark; P475_ARMS=<arms> ../.venv-bench/bin/python - <
-  $STACK_WORKDIR/p475/pf_runner.py`).
-- **Smokes VALID** (`7c030035`): `u4-n16-smoke.a2`, `u4-tq4-smoke.a1` — speed-valid, harvested, worktrees clean, no teardown
-  survivors. **D1 answered:** psutil shows no `KV_*` / `TQ_*` in the TQ4 worker env → R2's "absent" guard stands. `u4-n16-smoke.a1`
-  on this base was NOT_STARTED on the name collision (S18-P4 → C298: archive old-base dossiers under `results/p475/archive/<base12>/`
-  at every re-prepare; required, the matrix's arm-commit check spans all top-level dossiers). Teardown escalates SIGKILL on the
-  router's launcher wrapper every leg (also in the P426 RUNLOGs: existing ChainOps behaviour). Scrubbed worker / router logs wait in
-  `$STACK_WORKDIR/p475/evidence-stage/` for the evidence push after the full run.
+- **C296 (1)** `53e2e321`: P655 base resolution; P656 1–5 (NOT_STARTED preflights, proven live; `prepare` builds `p369/phase2/` + the
+  fork venv; stderr tail; process-group reap).
+- **C297** `bc07cabc`: `run_capacity --out-dir`; legs write under `$STACK_WORKDIR/p475/legs/<leg>/capacity/`; R1 strict.
+- **S18-P2**: the P426 / C258 worktrees removed. **C298** `5920015e` / `d13b13ff`: old-base dossiers archived under
+  `results/p475/archive/<base12>/`.
+- On base `15d90757`: six OFF preflights PASS; smokes `u4-n16-smoke.a2` + `u4-tq4-smoke.a1` VALID (`7c030035`); D1 answered (psutil
+  shows no `KV_*` / `TQ_*` in the worker env).
+- **P658 (a)** four-eyes light (C299 Go, C300 Accept; `docs/reviews/p658/`): fork `a1e23203` (frozen tests) + `e3e38397`
+  (`qualify --kv-arm --predictor on --engagement-only`; drafter-cache K3 check; `engagement_only: true, certifies: false`;
+  `bench.p475_kv` in `LAUNCHER_MODULES`). Fork gate PASS 10,008; pushed (C301).
+- **Stack step 2** `97672222` (C301): gitlink → `e3e38397` + `LIVE_GITLINKS`; `preflight --arm A --engagement` for the five MTP-ON
+  arms (records `$STACK_WORKDIR/p475/engagement/`); the leg pre-check needs OFF + engagement PASS on this base (S18-P3); contract v1.4.
+  The CLI preflight works again (no stdin workaround).
 
 ## Next, in order
 
-1. **P658 (a), fork four-eyes light** (`../mlx-vlm`, `dev/` only, production byte-identical): `qualify --kv-arm --predictor on
-   --engagement-only` (build the served MTP-ON path; target + drafter manifests vs expectation; no exactness / certification legs) +
-   P656 item 6 (the quiet-box scan, `orchestrate.REFUSED_MODULES` incl. `bench`, exempts the caller's own ancestor chain). Cast as
-   P475a (implementer Claude Opus 5.5, test-writer Claude Sonnet 5.5 via `claude -p`; panel GPT-5.6 Sol High + GLM 5.2 read-only).
-   Fork gate `dev/ci.py`; **fork push needs its own ask**.
-2. **Stack:** gitlink bump to the fork commit + `LIVE_GITLINKS` in `bench/tests/b2_frozen_support.py` (P632: never move
-   `BASE_GITLINKS`); `p475_kv` calls the ON engagement check for ON arms; S18-P3 if approved; **one full gate**; push ask.
-3. Re-prepare on that base (archive `$STACK_WORKDIR/p475/` whole; `git mv` this base's dossiers to
-   `results/p475/archive/15d90757…12/` per C298), OFF preflights + ON engagement checks, the two smokes, then the full run (12 legs,
-   ≈ 13 h GPU; ≥ 600 s idle; 140 W / 28 V). Harvest → generated `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` → operator; push ask for
-   results + scrubbed logs to `evidence`.
+1. Gate receipt → stack push ask.
+2. Re-prepare on the gated base: archive `$STACK_WORKDIR/p475/` whole to `$STACK_WORKDIR/archive/p475-base-15d90757/`; `git mv`
+   `results/p475/u4-n16-smoke.a2` + `u4-tq4-smoke.a1` to `results/p475/archive/15d90757…12/` (C298, `data(bench)`); remove the six arm
+   worktrees (submodules clean → `--force`), rename their branches to local `archive/p475-u4-<arm>-15d90757`; `prepare --base <gated>`.
+3. The six OFF preflights + five ON engagement checks (`python -m bench.p475_kv preflight --arm A [--engagement]`, detached, one after
+   another; ≈ 2 h 45 min OFF + ≈ 2–3 h ON). Show the operator the ON target + drafter manifests.
+4. The two smokes (`run --smoke`), then the full run (12 legs, ≈ 13 h GPU; ≥ 600 s idle; 140 W / 28 V). Harvest → generated
+   `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` → operator; push ask for results + scrubbed logs to `evidence`.
 
-Open, lower priority: S18-P3 (a final preflight record is reused whatever its base), P643, P642's two process gaps.
+Open, lower priority: S18-P8 (fork `-n 4`-only flake), P643, P642's two process gaps.
 
 ## Worktrees / scratch (resolve each)
 
-- Keep: the six `p475-u4-*` arm worktrees + branches (serve P475 stage 1 until the step-3 re-prepare; their legs are harvested).
+- Keep until Next 2: the six `p475-u4-*` arm worktrees + branches (base `15d90757`; their legs harvested).
+- Remove after the stack push: fork worktrees `$STACK_WORKDIR/worktrees/p658-impl`, `p658-tests`, `$STACK_WORKDIR/scratch/p658/
+  panel-checkout` (all harvested into `docs/reviews/p658/` and the fork commits) and the fork local branches `p658-impl`, `p658-tests`.
 - Local archive branches (no push): `archive/p475-u4-*-1554bfe1`, `archive/c258x-off`.
 
 ## Rules learned (session 18)
 
-- An approved fix can be incomplete: trace it across every leg that reuses the same state (the P659 exit-only tolerance vs the
-  entry check on an arm's second leg).
-- Make the fake reproduce the real-box fact first (driver writes dirty the worktree); the red test then is the box failure verbatim.
-- A busy check that greps `ps` must not run with its patterns in its own argv — put it in a script file.
-- `git worktree remove` refuses worktrees with submodules: verify the submodules clean first, then `--force`.
-- The pre-push hook needs the machine config in the pushing shell (`STACK_WORKDIR`); source it first.
-- Names are per run but dossiers are committed per name: archive the previous base's dossiers at each re-prepare (C298).
+- An approved fix can be incomplete: trace it across every leg that reuses the same state (P659's exit-only tolerance vs the entry
+  check on an arm's second leg).
+- Make the fake reproduce the real-box fact first; the red test then is the box failure verbatim.
+- A busy check that greps `ps` must not carry its patterns in its own argv — use a script file.
+- `git worktree remove` refuses worktrees with submodules: verify the submodules clean, then `--force`.
+- The pre-push hook needs the machine config sourced in the pushing shell.
+- Names are per run, dossiers per name: archive the previous base's dossiers at each re-prepare (C298).
+- A shared venv's editable install makes a worktree's `import mlx_vlm` resolve to the main checkout: check a worktree-only failure on a
+  pristine baseline worktree before blaming the candidate.
+- Black reformatting can change docstrings (AST differs only there); check ASTs rather than trusting black's skipped safety check.
+- The naming hook reads "low" as a model shorthand (allow-shorthand); verbatim helper outputs go under `docs/reviews/<item>/` as `*-report.md` /
+  `opinion-*` (C293 data names).
