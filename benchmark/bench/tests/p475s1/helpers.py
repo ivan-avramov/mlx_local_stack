@@ -55,6 +55,9 @@ def ready(w, arms=ARMS):
     assert prepare(w, ops) == []
     for a in arms:
         assert preflight_ok(w, a, ops=ops), f"preflight {a} did not pass on the fake"
+        if K().predictor_of(a) == "on":                # C301: the ON engagement check of every MTP-ON arm
+            rec = K().preflight(a, ops, cfg(w), kind="engagement")
+            assert rec["status"] == "PASS", f"engagement {a} did not pass on the fake"
     w.events.clear()                   # the leg under test starts from a clean event log (setup used the lease too)
     w.run_calls.clear()
     w.git_calls.clear()

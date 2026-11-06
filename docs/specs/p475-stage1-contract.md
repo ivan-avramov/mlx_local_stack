@@ -1,4 +1,4 @@
-# P475 stage 1 — build contract (v1.3, 2026-11-05 — v1.1 the ops interface; v1.2 the round-1 fix dispositions (`docs/reviews/p475s1/dispositions.md`); v1.3 C296 / C297 on-box fixes; operator Go C292; four-eyes light)
+# P475 stage 1 — build contract (v1.3, 2026-11-05 — v1.1 the ops interface; v1.2 the round-1 fix dispositions (`docs/reviews/p475s1/dispositions.md`); v1.3 C296 / C297 on-box fixes; v1.4 C301 ON engagement check + records bound to the base; operator Go C292; four-eyes light)
 
 Refines `docs/specs/p475-kv-matrix.md` v4 for the build. Where this contract and the spec differ, this contract wins; where the spec's
 v3 text and v4 differ, v4 wins (and both lose to this file). The lost candidate's code does not exist: R1–R22 are restated here as
@@ -75,7 +75,14 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
    - `preflight --arm A`: the fork's `qualify.py --kv-arm --predictor off --entry <pick>` against the arm worktree (argv built as
      `p426_plan` builds its qualify argv, plus `--kv-arm`); PASS needs `report.json` status COMPLETED and `kv_arm.entry` == the pick;
      the record goes to `$STACK_WORKDIR/p475/preflight/<arm>.json`. A refusing arm is retried at most `--max-preflight` (default 2)
-     times; then the arm is marked refused, the run continues with the others and exits nonzero (R15).
+     times; then the arm is marked refused, the run continues with the others and exits nonzero (R15). C296: an environmental
+     refusal (port / busy / lease / leftover attempt dir) is NOT_STARTED: no attempt consumed, never final.
+   - `preflight --arm A --engagement` (C301; MTP-ON arms N16 / AF8 / TQ8 / AF4 / TQ4 only): the fork's `qualify.py --kv-arm
+     --predictor on --engagement-only --entry <pick>` (fork P658 (a): the served MTP-ON path's target + drafter cache manifests,
+     uncertified); PASS also needs `predictor: on`, `engagement_only: true`, `certifies: false`; records under
+     `$STACK_WORKDIR/p475/engagement/<arm>.json`, same attempt / NOT_STARTED rules. `run` takes the OFF preflight, then the
+     engagement check, per arm. S18-P3: a record whose `base` != the run's is neither final nor accepted (NOT_STARTED; the old record
+     kept as evidence).
    - `run [--blocks 2] [--max-replacements 4] [--max-not-started 3] [--max-deciding 1] [--smoke]`: plan → legs → replacements → deciding
      block; resumable from `$STACK_WORKDIR/p475/state.json` (caps monotonic on resume, R13). The measurement-block count and the
      deciding block's identity / completion are persisted at the first leg; changing `--blocks` after any leg exists refuses (v1.2, Sol P7).
@@ -116,7 +123,7 @@ rows as `run_capacity --p475-strict` writes them; `bench_watch` capacity-mode JS
    orchestrator checkout's (v1.2, Sol P1); power 140 W / 28 V / battery > 20 %; `:8000` free; no busy process
    (ChainOps `BUSY` + `run_capacity`); the lease `p426_locks.acquire("chain", wd)` (opposes the local gate) held to teardown (R4);
    ≥ 600 s since the later of `$STACK_WORKDIR/p475/LAST_LEG_END` and `$STACK_WORKDIR/p426/LAST_LEG_END`; destinations absent; the arm's
-   preflight PASS; arm identity at entry (R1: worktree clean, HEAD == the arm commit, its parent == the base (TQ4: HEAD == base), diff
+   preflight PASS and, on an MTP-ON arm, its engagement PASS, both on this base (C301); arm identity at entry (R1: worktree clean, HEAD == the arm commit, its parent == the base (TQ4: HEAD == base), diff
    of the arm commit ⊆ the arm's keys + comment, gitlinks == the base's).
 2. Router: `ChainOps(repo=<arm WT>, overlay=<arm WT>/main_models.yaml, predictor="mtp"|"off")` with every `KV_*` / `TQ_*` name (and
    `p426_secrets.STACK_DEFINED_KV_TQ_NAMES`) removed from the router environment (R2); `start_router`; `load(model)`.

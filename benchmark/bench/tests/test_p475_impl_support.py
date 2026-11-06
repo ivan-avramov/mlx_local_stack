@@ -214,8 +214,11 @@ class FakeOps:
     def add_all(self, cfg, preflight=True):
         for arm in K.ARMS:
             self.add_arm(cfg, arm)
-            if preflight:
-                K._atomic_json(cfg.preflight_record(arm), dict(arm=arm, status="PASS", attempts=[]))
+            if preflight:                              # C301: bound to the base (S18-P3); ON arms also carry the engagement PASS
+                K._atomic_json(cfg.preflight_record(arm), dict(arm=arm, status="PASS", attempts=[], base=cfg.base))
+                if K.predictor_of(arm) == "on":
+                    K._atomic_json(cfg.preflight_record(arm, "engagement"),
+                                   dict(arm=arm, kind="engagement", status="PASS", attempts=[], base=cfg.base))
 
     def arm_of(self, wt):
         for arm in self.arms:

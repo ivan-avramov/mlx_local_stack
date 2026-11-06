@@ -270,6 +270,8 @@ class World:
         # C297 (S18-P1): a driver write under an arm worktree leaves it dirty (untracked), as on the box (P659)
         self.untracked = {}                 # arm -> set of worktree-relative paths a driver wrote
         self.driver_ignores_out_dir = False
+        # C301 (S18-P10): the ON engagement check (`qualify --kv-arm --predictor on --engagement-only`)
+        self.engagement_plan = {}           # arm -> list of "pass" | "refuse" | "certifies" | "no_flag" | "predictor_off"
 
     # ------------------------------------------------------------------ small helpers
     def ev(self, name, **kw):
@@ -737,9 +739,11 @@ class FakeOps:
                 (target / "bin" / "python").write_text("")
             return subprocess.CompletedProcess(argv, 0, "", "")
         arm = w.arm_of(argv[argv.index("--stack-root") + 1]) if "--stack-root" in argv else None
-        n = w.preflight_calls.get(arm, 0)
-        w.preflight_calls[arm] = n + 1
-        plan = w.preflight_plan.get(arm, [])
+        engagement = "--engagement-only" in argv
+        key = f"{arm}:engagement" if engagement else arm
+        n = w.preflight_calls.get(key, 0)
+        w.preflight_calls[key] = n + 1
+        plan = (w.engagement_plan if engagement else w.preflight_plan).get(arm, [])
         mode = plan[n] if n < len(plan) else (plan[-1] if plan else "pass")
         out = Path(argv[argv.index("--out") + 1])
         out.mkdir(parents=True, exist_ok=True)
@@ -749,6 +753,14 @@ class FakeOps:
             raise subprocess.TimeoutExpired(argv, timeout, output="", stderr=w.qualify_stderr or "qualify: still running")
         # qualify.py's report.json: per-entry status under `entries`, no top-level status; `kv_arm` under --kv-arm
         report = {"predictor": "off", "entries": {PICK: {"status": "COMPLETED"}}, "kv_arm": {"entry": PICK, "delta": {}}}
+        if engagement:                                             # the fork's P658 (a) report fields
+            report.update(predictor="on", engagement_only=True, certifies=False)
+            if mode == "certifies":
+                report["certifies"] = True
+            elif mode == "no_flag":
+                report.pop("engagement_only")
+            elif mode == "predictor_off":
+                report["predictor"] = "off"
         rc = 0
         if mode == "refuse":
             report["entries"][PICK]["status"], rc = "REFUSED", 1

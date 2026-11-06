@@ -108,6 +108,14 @@ def branch_name(arm):
     return f"p475-{PICK_SHORT}-{arm_lower(arm)}"
 
 
+KINDS = ("off", "engagement")      # C301: the OFF preflight (kv manifest) and the ON engagement check (P658 (a))
+
+
+def kinds_for(arm):
+    """C301: every arm needs its OFF preflight; an MTP-ON arm also its ON engagement check."""
+    return ("off", "engagement") if predictor_of(arm) == "on" else ("off",)
+
+
 def predictor_of(arm):
     """"on" for every arm but TQ4-OFF (the committed MTP state), "off" for TQ4-OFF."""
     arm_lower(arm)
@@ -170,8 +178,14 @@ class Config:
     def receipt_path(self, leg):
         return self.leg_dir(leg) / "receipt.json"
 
-    def preflight_record(self, arm):
-        return self.p475 / "preflight" / f"{arm}.json"
+    def preflight_dir(self, kind="off"):
+        """C301: the OFF preflight records under `preflight/`, the ON engagement records under `engagement/`."""
+        if kind not in KINDS:
+            raise P475Error(f"unknown preflight kind {kind!r}")
+        return self.p475 / ("preflight" if kind == "off" else "engagement")
+
+    def preflight_record(self, arm, kind="off"):
+        return self.preflight_dir(kind) / f"{arm}.json"
 
     @property
     def results(self):
@@ -592,21 +606,29 @@ def _checked(cp, what):
 
 
 # ============================================================================================ preflight (R15)
-def preflight_argv(arm, cfg, out_dir, reviewed_head):
+def preflight_argv(arm, cfg, out_dir, reviewed_head, kind="off"):
     wt = cfg.worktree(arm)
     fork = wt / "src" / "mlx-vlm"
     argv = [str(wt / ".venv" / "bin" / "python"), str(fork / "dev" / "p369_phase2" / "qualify.py"),
             "--stack-root", str(wt), "--fork-root", str(fork), "--out", str(out_dir),
-            "--reviewed-head", reviewed_head, "--entry", cfg.model, "--predictor", "off"]
+            "--reviewed-head", reviewed_head, "--entry", cfg.model, "--predictor", "on" if kind == "engagement" else "off"]
     if cfg.production_ref:
         argv += ["--production-ref", cfg.production_ref]
-    return argv + ["--kv-arm"]
+    argv += ["--kv-arm"]
+    return argv + (["--engagement-only"] if kind == "engagement" else [])
 
 
-def preflight_report_problems(report, model):
+def preflight_report_problems(report, model, kind="off"):
     if not isinstance(report, dict):
         return ["no report.json"]
     problems = []
+    if kind == "engagement":                     # C301: uncertified MTP-ON engagement evidence (fork P658 (a)), nothing else
+        if report.get("predictor") != "on":
+            problems.append(f"report predictor {report.get('predictor')!r} (need 'on')")
+        if report.get("engagement_only") is not True:
+            problems.append(f"report engagement_only {report.get('engagement_only')!r} (need true)")
+        if report.get("certifies") is not False:
+            problems.append(f"report certifies {report.get('certifies')!r} (need false)")
     state = (report.get("entries") or {}).get(model) or {}
     if state.get("status") != "COMPLETED":
         problems.append(f"qualify status {state.get('status')!r} (need COMPLETED)")
@@ -617,9 +639,9 @@ def preflight_report_problems(report, model):
     return problems
 
 
-def read_preflight(cfg, arm):
+def read_preflight(cfg, arm, kind="off"):
     try:
-        doc = json.loads(cfg.preflight_record(arm).read_text())
+        doc = json.loads(cfg.preflight_record(arm, kind).read_text())
     except (OSError, ValueError):
         return None
     return doc if isinstance(doc, dict) else None
@@ -638,21 +660,31 @@ def _tail(text):
     return (text or "")[-STDERR_TAIL:]
 
 
-def preflight(arm, ops, cfg, max_retries=None):
+def preflight(arm, ops, cfg, max_retries=None, kind="off"):
     """The fork's qualify `--kv-arm --predictor off --entry <pick>` on the arm worktree; a refusal is retried at most
     `max_retries` times, then the arm is REFUSED. A final record (PASS / REFUSED) is never redone. C296 (P656): an
-    environmental refusal (port / busy / lease / leftover out dir) records NOT_STARTED, consumes no attempt and is never final."""
+    environmental refusal (port / busy / lease / leftover out dir) records NOT_STARTED, consumes no attempt and is never final.
+    C301: `kind="engagement"` is the ON engagement check of an MTP-ON arm (`--predictor on --engagement-only`, its own records);
+    S18-P3: a record taken on another base is not final — NOT_STARTED, returned unwritten, the old record kept as evidence."""
     max_retries = cfg.max_preflight if max_retries is None else max_retries
-    rec = read_preflight(cfg, arm)
+    if kind not in kinds_for(arm):
+        raise P475Error(f"{arm} has no {kind} check (MTP-OFF arms take only the OFF preflight)")
+    rec = read_preflight(cfg, arm, kind)
+    if rec is not None and rec.get("base") != cfg.base:
+        return dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="NOT_STARTED", attempts=[], max_retries=max_retries,
+                    not_started=[dict(reason=f"{cfg.preflight_record(arm, kind)} was taken on base {rec.get('base')!r}, not "
+                                             f"{cfg.base} (archive $STACK_WORKDIR/{P475_DIR}/ whole before a re-prepare)",
+                                      at=ops.now())],
+                    stale_record=str(cfg.preflight_record(arm, kind)))
     if rec and rec.get("status") in ("PASS", "REFUSED"):
         return rec
     attempts = list((rec or {}).get("attempts") or [])
     not_started = list((rec or {}).get("not_started") or [])
-    rec = dict(arm=arm, model=cfg.model, base=cfg.base, status="PENDING", attempts=attempts, max_retries=max_retries,
+    rec = dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="PENDING", attempts=attempts, max_retries=max_retries,
                not_started=not_started)
     while len(attempts) < 1 + max_retries:
         n = len(attempts) + 1
-        out = cfg.p475 / "preflight" / f"{arm}.a{n}"
+        out = cfg.preflight_dir(kind) / f"{arm}.a{n}"
         att = dict(attempt=n, out=str(out), problems=[], started=ops.now())
         try:
             with contextlib.ExitStack() as stack:
@@ -671,7 +703,7 @@ def preflight(arm, ops, cfg, max_retries=None):
                 reviewed = links.get("src/mlx-vlm")
                 if not reviewed:
                     raise P475Error("the arm worktree's src/mlx-vlm gitlink is unknown")
-                argv = preflight_argv(arm, cfg, out, reviewed)
+                argv = preflight_argv(arm, cfg, out, reviewed, kind)
                 att["argv"] = argv
                 try:
                     cp = ops.run(argv, str(cfg.worktree(arm)), strip_kv(dict(os.environ)), PREFLIGHT_TIMEOUT_S)
@@ -685,11 +717,11 @@ def preflight(arm, ops, cfg, max_retries=None):
                 text = _read_optional(ops, out / "report.json")
                 report = json.loads(text) if text else None
                 att["report"] = {k: (report or {}).get(k) for k in ("predictor", "entries", "kv_arm", "production", "registry_sha256")}
-                att["problems"] += preflight_report_problems(report, cfg.model)
+                att["problems"] += preflight_report_problems(report, cfg.model, kind)
         except _NotStarted as exc:
             not_started.append(dict(reason=str(exc), at=ops.now()))
             rec["status"] = "NOT_STARTED"
-            _atomic_json(cfg.preflight_record(arm), rec)
+            _atomic_json(cfg.preflight_record(arm, kind), rec)
             return rec
         except Exception as exc:  # noqa: BLE001 — a refusal of this attempt (I/O, timeout, qualify)
             att["problems"].append(f"{type(exc).__name__}: {exc}")
@@ -698,10 +730,10 @@ def preflight(arm, ops, cfg, max_retries=None):
         if not att["problems"]:
             rec["status"] = "PASS"
             break
-        _atomic_json(cfg.preflight_record(arm), rec)
+        _atomic_json(cfg.preflight_record(arm, kind), rec)
     if rec["status"] != "PASS":
         rec["status"] = "REFUSED"
-    _atomic_json(cfg.preflight_record(arm), rec)
+    _atomic_json(cfg.preflight_record(arm, kind), rec)
     return rec
 
 
@@ -929,10 +961,15 @@ def run_leg(leg, arm, ops, cfg):
             present = [str(d) for d in _destinations(leg, arm, cfg) if Path(d).exists()]
             if present:
                 pre.append(f"destinations exist: {present}")
-            pf = read_preflight(cfg, arm)
-            receipt["preflight"] = dict(record=str(cfg.preflight_record(arm)), status=(pf or {}).get("status"))
-            if (pf or {}).get("status") != "PASS":
-                pre.append(f"preflight of {arm} is {(pf or {}).get('status')!r}, not PASS")
+            for kind in kinds_for(arm):                     # C301: the OFF preflight, and on ON arms the engagement check
+                pf = read_preflight(cfg, arm, kind)
+                key, what = ("preflight", "preflight") if kind == "off" else ("engagement", "engagement check")
+                receipt[key] = dict(record=str(cfg.preflight_record(arm, kind)), status=(pf or {}).get("status"),
+                                    base=(pf or {}).get("base"))
+                if (pf or {}).get("status") != "PASS":
+                    pre.append(f"{what} of {arm} is {(pf or {}).get('status')!r}, not PASS")
+                elif pf.get("base") != cfg.base:               # S18-P3
+                    pre.append(f"{what} of {arm} was taken on base {pf.get('base')!r}, not {cfg.base}")
             shas, found = instrument_problems(arm, cfg)
             receipt["instrument"] = shas
             pre += found
@@ -1604,7 +1641,7 @@ def matrix(cfg, blocks=None):
     deciding = sorted({b for (_, b) in values if b in recorded_deciding and b not in order_blocks})
     missing = [f"{arm} b{b}" for arm in ARMS for b in order_blocks
                if set(((values.get((arm, b)) or {}).keys())) != set(GRID) or _metric_cells_missing(values, arm, b)]
-    refused = [a for a in ARMS if (read_preflight(cfg, a) or {}).get("status") == "REFUSED"]
+    refused = [a for a in ARMS if any((read_preflight(cfg, a, k) or {}).get("status") == "REFUSED" for k in kinds_for(a))]
     complete = not missing and not problems and not refused
     flags = instability(values, (1, 2))
     unresolved = set(unresolved_flags(values, flags, deciding))
@@ -1768,18 +1805,22 @@ def _attempt(arm, block, ops, cfg, state, log):
 
 
 def _ensure_preflight(arm, ops, cfg, state, log):
-    rec = read_preflight(cfg, arm)
-    if not rec or rec.get("status") not in ("PASS", "REFUSED"):
-        log(f"preflight {arm}")
-        rec = preflight(arm, ops, cfg)
-    if rec.get("status") == "NOT_STARTED":
-        raise _Stop(f"preflight {arm} NOT_STARTED: {(rec.get('not_started') or [{}])[-1].get('reason')}")
-    if rec.get("status") != "PASS":
-        if arm not in state["refused_arms"]:
-            state["refused_arms"].append(arm)
-        save_state(cfg, state)
-        log(f"arm {arm} REFUSED by its preflight; the run continues with the others")
-        return False
+    """The arm's OFF preflight, then (MTP-ON arms, C301) its ON engagement check; NOT_STARTED (incl. a record of another base,
+    S18-P3) stops the run, a REFUSED one refuses the arm."""
+    for kind in kinds_for(arm):
+        what = "preflight" if kind == "off" else "engagement check"
+        rec = read_preflight(cfg, arm, kind)
+        if not rec or rec.get("status") not in ("PASS", "REFUSED") or rec.get("base") != cfg.base:
+            log(f"{what} {arm}")
+            rec = preflight(arm, ops, cfg, kind=kind)
+        if rec.get("status") == "NOT_STARTED":
+            raise _Stop(f"{what} {arm} NOT_STARTED: {(rec.get('not_started') or [{}])[-1].get('reason')}")
+        if rec.get("status") != "PASS":
+            if arm not in state["refused_arms"]:
+                state["refused_arms"].append(arm)
+            save_state(cfg, state)
+            log(f"arm {arm} REFUSED by its {what}; the run continues with the others")
+            return False
     return True
 
 
@@ -2268,6 +2309,8 @@ def parse_args(argv=None):
     pf = sub.add_parser("preflight")
     pf.add_argument("--arm", required=True, choices=ARMS)
     pf.add_argument("--max-preflight", type=int, default=2)
+    pf.add_argument("--engagement", action="store_true",
+                    help="the ON engagement check of an MTP-ON arm (qualify --predictor on --engagement-only; C301)")
     r = sub.add_parser("run")
     r.add_argument("--blocks", type=int, default=2)
     r.add_argument("--max-replacements", type=int, default=4)
@@ -2308,8 +2351,13 @@ def main(argv=None, ops=None) -> int:
             print(f"PROBLEM: {p}", file=sys.stderr)
         return 1 if problems else 0
     if args.cmd == "preflight":
-        rec = preflight(args.arm, ops, cfg, max_retries=args.max_preflight)
-        print(json.dumps(dict(arm=args.arm, status=rec["status"], attempts=len(rec["attempts"]))))
+        kind = "engagement" if getattr(args, "engagement", False) else "off"
+        try:
+            rec = preflight(args.arm, ops, cfg, max_retries=args.max_preflight, kind=kind)
+        except P475Error as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 2
+        print(json.dumps(dict(arm=args.arm, kind=kind, status=rec["status"], attempts=len(rec["attempts"]))))
         return 0 if rec["status"] == "PASS" else 1
     rc, path = matrix(cfg)
     print(f"{path.name} (rc {rc})")
