@@ -76,7 +76,9 @@ worktrees (submodules at the base gitlinks, `.venv` and `.venv-bench` via `uv sy
      `p426_plan` builds its qualify argv, plus `--kv-arm`); PASS needs `report.json` status COMPLETED and `kv_arm.entry` == the pick;
      the record goes to `$STACK_WORKDIR/p475/preflight/<arm>.json`. A refusing arm is retried at most `--max-preflight` (default 2)
      times; then the arm is marked refused, the run continues with the others and exits nonzero (R15). C296: an environmental
-     refusal (port / busy / lease / leftover attempt dir) is NOT_STARTED: no attempt consumed, never final.
+     refusal (port / busy / lease / leftover attempt dir; C302: power 140 W / 28 V / battery > 20 %) is NOT_STARTED: no attempt
+     consumed, never final. C302: so is a `qualify` that refused before its measurement loop (nonzero exit, a report without
+     `started` whose every entry is NOT_RUN); its output dir is kept as `<arm>.a<n>.not-started-<k>`.
    - `preflight --arm A --engagement` (C301; MTP-ON arms N16 / AF8 / TQ8 / AF4 / TQ4 only): the fork's `qualify.py --kv-arm
      --predictor on --engagement-only --entry <pick>` (fork P658 (a): the served MTP-ON path's target + drafter cache manifests,
      uncertified); PASS also needs `predictor: on`, `engagement_only: true`, `certifies: false`; records under

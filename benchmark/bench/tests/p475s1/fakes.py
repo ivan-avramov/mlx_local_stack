@@ -99,6 +99,9 @@ def leg_name(arm, block, attempt=1):
 
 # ---------------------------------------------------------------------------------------------------- fixed formats
 def pmset_texts(watts=140, volts=28, batt=80):
+    if watts is None or volts is None:                     # C302: on battery, as `pmset -g ac` / `-g batt` print it
+        return ("No adapter attached.\n",
+                f"Now drawing from 'Battery Power'\n -InternalBattery-0 (id=1)\t{batt}%; discharging; 2:50 remaining present: true\n")
     ac = f"Wattage = {int(watts)}W\nCurrent = 4800mA\nVoltage = {int(volts * 1000)}mV\n"
     bt = f"Now drawing from 'AC Power'\n -InternalBattery-0 (id=1)\t{batt}%; charging; 0:42 remaining present: true\n"
     return ac, bt
@@ -749,6 +752,16 @@ class FakeOps:
         out.mkdir(parents=True, exist_ok=True)
         if mode == "no_report":
             return subprocess.CompletedProcess(argv, 1, "", "refused")
+        if mode in ("env_refused", "started_not_run"):            # C302: qualify's own refusal, as the box recorded it (S18-P12)
+            doc = {"predictor": "on" if engagement else "off", "kv_arm": {"entry": PICK, "delta": {}},
+                   "entries": {PICK: {"status": "NOT_RUN", "arm": "mtp_off", "reason": "not reached"}},
+                   "finished": "2026-11-06T11:43:10"}
+            if mode == "started_not_run":                          # it began the measurement loop, then stopped
+                doc["started"] = "2026-11-06T11:43:00"
+            (out / "report.json").write_text(json.dumps(doc))
+            err = ("refused: [\"power {'watts': None, 'volts': None, 'battery': 84, 'ac_ok': False, 'battery_ok': True}\"]"
+                   if mode == "env_refused" else "interrupted")
+            return subprocess.CompletedProcess(argv, 1, "", w.qualify_stderr or err)
         if mode == "timeout":                                      # C296 (P656 5): RealOps.run raises after reaping the group
             raise subprocess.TimeoutExpired(argv, timeout, output="", stderr=w.qualify_stderr or "qualify: still running")
         # qualify.py's report.json: per-entry status under `entries`, no top-level status; `kv_arm` under --kv-arm

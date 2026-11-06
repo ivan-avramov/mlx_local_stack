@@ -647,6 +647,21 @@ def read_preflight(cfg, arm, kind="off"):
     return doc if isinstance(doc, dict) else None
 
 
+def qualify_refused_before_start(returncode, report, stderr_tail):
+    """C302 (S18-P12 b): `qualify` refused before its measurement loop — a nonzero exit, a report without `started` whose every
+    entry is NOT_RUN (its own preflight: power, process census, …). Returns the reason (its last `refused:` line), else None.
+    A run with no report (a configuration refusal) or one that started still counts as an attempt."""
+    if returncode == 0 or not isinstance(report, dict) or "started" in report:
+        return None
+    entries = report.get("entries")
+    if not isinstance(entries, dict) or not entries:
+        return None
+    if any(not isinstance(e, dict) or e.get("status") != "NOT_RUN" for e in entries.values()):
+        return None
+    lines = [ln.strip() for ln in (stderr_tail or "").splitlines() if ln.strip().startswith("refused:")]
+    return "qualify " + (lines[-1] if lines else "refused before any entry started")[:400]
+
+
 class _NotStarted(Exception):
     """C296 (P656): an environmental refusal before `qualify` runs (port / busy / lease / leftover out dir)."""
 
@@ -689,6 +704,9 @@ def preflight(arm, ops, cfg, max_retries=None, kind="off"):
         try:
             with contextlib.ExitStack() as stack:
                 try:
+                    power = ops.power()                       # C302 (S18-P12 a): as the leg pre-check
+                    if not power_ok(power):
+                        raise P475Error(f"power {power} (need 140 W / 28 V / battery > 20 %)")
                     if ops.port_listener(PORT) is not None:
                         raise P475Error(f":{PORT} is bound")
                     busy = ops.busy()
@@ -716,7 +734,13 @@ def preflight(arm, ops, cfg, max_retries=None, kind="off"):
                     att["problems"].append(f"qualify exit {att['returncode']}")
                 text = _read_optional(ops, out / "report.json")
                 report = json.loads(text) if text else None
-                att["report"] = {k: (report or {}).get(k) for k in ("predictor", "entries", "kv_arm", "production", "registry_sha256")}
+                att["report"] = {k: (report or {}).get(k) for k in ("predictor", "entries", "kv_arm", "production", "registry_sha256",
+                                                                     "started")}
+                refused = qualify_refused_before_start(att["returncode"], report, att.get("stderr_tail"))
+                if refused is not None:                       # C302 (S18-P12 b): nothing was measured — not an attempt
+                    aside = out.with_name(f"{out.name}.not-started-{len(not_started) + 1}")
+                    os.rename(out, aside)                     # kept as evidence; the attempt number is free again
+                    raise _NotStarted(f"{refused} (qualify output kept in {aside.name})")
                 att["problems"] += preflight_report_problems(report, cfg.model, kind)
         except _NotStarted as exc:
             not_started.append(dict(reason=str(exc), at=ops.now()))
