@@ -1,12 +1,12 @@
-# Handoff — 2026-11-05 (session 17 END: P426 shipped MTP ON (C291); P475 stage-1 build ACCEPTED + on the box; next: the C296 fixes, then P658 in the fork)
+# Handoff — 2026-11-05 (session 18, IN PROGRESS: C296 (1) + C297 built; arms re-prepared on `15d90757`; gate on `e86a39e3` running; next: push ask, OFF preflights, smokes, then P658 in the fork)
 
-THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C296, P659, P658, P656, P655, P654, C295 …
-C289), then `docs/specs/p475-stage1-contract.md` (v1.2) and `docs/reviews/p475s1/dispositions.md`. Model names: FULL registry names
-only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to certified picks; ask only at Go / Accept / pushes /
-scope changes; lead calls filed as they land; offer a fresh session at clean boundaries.
+THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: S18-P3, C297, S18-P2, S18-P1, C296, P659 …),
+then `docs/specs/p475-stage1-contract.md` (v1.3) and `docs/reviews/p475s1/dispositions.md`. Model names: FULL registry names only.
+Review rounds: 3 per artifact. Operator stance: bias for quality; drive to certified picks; ask only at Go / Accept / pushes / scope
+changes; lead calls filed as they land; offer a fresh session at clean boundaries.
 
-**Discussion ids restart at P1 in session 18 (operator, 2026-11-05).** In durable records (open-questions, commits, handoff) cite a
-new id as `S18-P<n>` so it cannot collide with the historical P1–P659; decision ids continue as C297.
+Discussion ids restarted at P1 in session 18; durable records cite them as `S18-P<n>` (historical P1–P659 unchanged). Next decision id
+C298; next discussion id S18-P4.
 
 ## THE GOAL
 
@@ -16,75 +16,53 @@ operator weighs the table; stage 2 quality only for formats kept), then its MTP 
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Nothing running: no router on :8000, no `bench.p475_kv`, no `qualify` / `worker.py` (check by command-line substring in a python
-   filter — never put BUSY markers such as `mlx_vlm.server` / `mlx-serve` / `run_capacity` in your own command line: they refuse legs).
-2. **Pending push (session 17 end):** local `main` is ahead of `origin/main` (`1514f4b7`) by `c85bb865` (the INVALID smoke dossier,
-   a results commit — the pre-push hook needs a full gate) + docs-only tail (`e86a39e3`, this note). A detached gate on `e86a39e3` was
-   started at session end (log `$STACK_WORKDIR/scratch/p475s1/gate-e86a39e3.log`; receipt `$STACK_WORKDIR/gate/stack-e86a39e3…json`).
-   If the receipt is PASS: **ask the operator to push** (`git push origin e86a39e3:refs/heads/main`, then `main` for the docs tail);
-   if absent or FAIL: re-run / diagnose first. Forks `../mlx-vlm` = `d94e38a9`, `../mlx-serve` = `1ddf6f84`, both = their origin.
-3. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-{n16,af8,tq8,af4,tq4,tq4-off}` on local branches `p475-u4-*` off base `1554bfe1`
-   (each diff = exactly its registry keys + `# PROVISIONAL P475 arm` comment; each has `.venv`, `.venv-bench` and a hand-built fork
-   venv `src/mlx-vlm/.venv` pinned to the arm `.venv`'s versions).
+1. Nothing running: no router on :8000, no P475 orchestrator / `qualify` / `worker.py` (check with a script file such as the one
+   below — never put BUSY markers in your own command line: session 18 tripped its own check once).
+2. Pushes: `origin/main` = `1514f4b7`. Local `main` carries `c85bb865` (results) … `e86a39e3` (gate receipt pending at this
+   writing: `$STACK_WORKDIR/gate/stack-e86a39e3…json`) and the session-18 commits `8ce7befa` … `15d90757` + this note. No push
+   without an in-turn ask.
+3. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-{n16,af8,tq8,af4,tq4,tq4-off}` on local branches `p475-u4-*` off base `15d90757`
+   (each clean, diff = `main_models.yaml` only; `.venv`, `.venv-bench` and the fork venv built by `prepare`).
 
-## State at session end
+## Done in session 18
 
-- **P475 stage 1 code** (`1554bfe1`, gate PASS 11,870, pushed): `bench.p475_kv` + `bench.kv_line` + `run_capacity --p475-strict` +
-  `bench_watch` capacity mode; frozen tests `bench/tests/p475s1` (537). Four-eyes light, two fix rounds (C294), accepted C295.
-- **On the box:** `prepare` done (with the full sha; P655). **All six MTP-OFF preflights PASS** (records `$STACK_WORKDIR/p475/preflight/
-  <ARM>.json`, bound to base `1554bfe1`): N16 16 native; AF8 / AF4 16 affine (gs 64); TQ8 / TQ4 / TQ4-OFF 15 TurboQuant + layer 63
-  native; all 48 Gated DeltaNet `ArraysCache` leaves untouched (P654: the KV path never converts them — no state-dtype instrumentation
-  needed). False records from environmental refusals are kept aside as `*.p656-*.json` / `preflight/archive/`.
-- **Smoke `u4-n16-smoke.a1` INVALID** (P659: `run_capacity` writes into the arm worktree, R1 exit-clean fails) — everything else held
-  live: KV line native, `prompt_n == prompt_tokens`, prefill rate re-derived 0.0 % off (GLM F3 resolved), drafter counters present, N16
-  worker env clean, teardown proven. Its dossier is committed under `benchmark/results/p475/u4-n16-smoke.a1/` (evidence). A resume
-  STOPS at it by design: archive `$STACK_WORKDIR/p475/legs/u4-n16-smoke.a1` (move aside) before the next smoke.
-- **Not yet answered:** D1 (does psutil show the worker's in-process `KV_BITS` on a quantized arm?) — the TQ4 smoke records it.
+- `53e2e321` **C296 (1) part 1** (red tests first, `test_c296_fixes.py`): P655 `--base` resolved to the full sha; P656 1–2
+  environmental preflight refusals = `NOT_STARTED` (no attempt, never final; `run` stops, never refuses the arm) — **proven live**
+  (N16 during the gate: `LockRefused: gate/RUNNING`, 0 attempts); P656 3 `prepare` builds `p369/phase2/` + the fork venv (pins
+  from the arm `.venv` freeze; proven: mlx 0.32.4 / transformers 5.15.0); P656 4–5 stderr tail kept, `RealOps.run` reaps the group.
+- `bc07cabc` **C297 / S18-P1 (c)**: `run_capacity --out-dir`; legs write to `$STACK_WORKDIR/p475/legs/<leg>/capacity/`; R1 stays
+  strict (the ruled P659 exit-only tolerance superseded: it left each arm's second leg refused). Fakes now dirty a worktree on any
+  driver write. Contract v1.3. P475 + capacity suites 895 passed.
+- **S18-P2 done:** `stack-p426-{off,on}` / `stack-c258x-off` removed (logs in `$STACK_WORKDIR/archive/session18-worktrees/`),
+  local `p426-{off,on}` deleted (commits on `origin/archive/p426-wave2-*`), `c258x-off` → local `archive/c258x-off`.
+- **Re-prepare:** old `$STACK_WORKDIR/p475/` + the N16 worktree's logs / smoke outputs archived in
+  `$STACK_WORKDIR/archive/p475-base-1554bfe1/`; old arm branches → local `archive/p475-u4-<arm>-1554bfe1`; `prepare --base
+  15d90757` clean.
 
-## Next, in order (C296)
+## Next, in order
 
-1. **Stack fixes, designer-small, red tests first, one commit** (P659, P655, P656 items 1–5): exit identity tolerates exactly the leg's
-   three capacity outputs; `--base` resolved to a full sha before use / record; environmental preflight refusals (lease / busy / port /
-   leftover out dir) are `NOT_STARTED`, consume no attempt, never final; `prepare` creates `$STACK_WORKDIR/p369/phase2/` and the fork
-   venv (`uv venv --python 3.12` in `src/mlx-vlm`, `uv pip install -e . -c <freeze of the arm .venv minus mlx-vlm/mlx-serve/stack>`);
-   the preflight record keeps `qualify`'s stderr tail and reaps its process group on timeout. Commit (no gate yet — one gate later).
-2. **Smokes on the current base** with the fixed orchestrator (D1 + a VALID pipeline): archive the INVALID smoke leg dir, then
-   `nohup …/.venv-bench/bin/python -m bench.p475_kv run --smoke` (detached; wait on the pid; see FIRST 1).
-3. **P658 (a), fork four-eyes light** (`../mlx-vlm`, `dev/` only, production byte-identical): `qualify --kv-arm --predictor on
-   --engagement-only` (build the served MTP-ON path; target + drafter manifests vs expectation; no exactness / certification legs) +
-   P656 item 6 (the quiet-box scan, `orchestrate.REFUSED_MODULES` incl. `bench`, exempts the caller's own ancestor chain — today the CLI
-   `preflight` refuses itself; workaround: call `bench.p475_kv.preflight()` from a stdin-launched `python -`). Cast as P475a
-   (implementer Claude Opus 5.5, test-writer Claude Sonnet 5.5 via `claude -p`; panel GPT-5.6 Sol High + GLM 5.2 read-only). Fork gate
-   `dev/ci.py`; **fork push needs its own ask** (the session-17 approval covered that turn's pushes only).
-4. **Stack gitlink bump** to the fork commit + `LIVE_GITLINKS` in `bench/tests/b2_frozen_support.py` (P632: never move
-   `BASE_GITLINKS`); the stack `p475_kv` wired to call the ON engagement check for ON arms; **one full gate** for 1 + 4; **push ask**.
-5. Re-`prepare` on the new base (fresh arm worktrees; old ones removed after archiving), OFF preflights + ON engagement checks, the two
-   smokes (N16, TQ4), then the full run (12 legs, ≈ 13 h GPU; ≥ 600 s idle; 140 W / 28 V). Harvest → generated
+1. Gate receipt for `e86a39e3`: PASS → push ask (`git push origin e86a39e3:refs/heads/main`); FAIL → diagnose.
+2. The six MTP-OFF preflights after the gate (stdin workaround for P656 item 6: `cd benchmark; P475_ARMS=N16,AF8,TQ8,AF4,TQ4,TQ4-OFF
+   ../.venv-bench/bin/python - < <runner>` calling `bench.p475_kv.preflight()`; the runner is in the session-18 scratchpad —
+   recreate it from that description if gone). `run` reuses PASS records.
+3. Smokes (N16, TQ4) detached: `run --smoke`; D1 answered by the TQ4 smoke; expect a short list of fail-closed integration bugs.
+4. P658 (a) fork four-eyes light (as C296 (2)): `qualify --kv-arm --predictor on --engagement-only` + P656 item 6; fork gate; fork
+   push ask.
+5. Stack gitlink bump + `LIVE_GITLINKS` (P632), S18-P3 if approved, the ON engagement check wired for ON arms; one stack gate; push
+   ask. Re-prepare on that base, OFF preflights + ON engagement checks, smokes, full run (12 legs, ≈ 13 h GPU). Harvest → generated
    `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` → operator; push ask for results + scrubbed logs to `evidence`.
 
-Push points (advised in C296): the fork after its gate; the stack once (fixes + bump, one gate); the results after harvest.
-
-Open, lower priority: P643 (a load-sensitive timing test, C261 route), P642's two process gaps (the gate keeps no failure detail; an
-approved fix went unqueued — C209 sat two weeks).
+Open, lower priority: S18-P3 (preflight record bound to its base), P643, P642's two process gaps.
 
 ## Worktrees / scratch (resolve each)
 
-- Keep: the six `p475-u4-*` arm worktrees + branches (until re-prepared on the new base in step 5; their legs' outputs are harvested).
-- Carried from P426: `stack-p426-off`, `stack-p426-on`, `stack-c258x-off` (+ local `archive/p426-*` branches), `$STACK_WORKDIR/p426/*`
-  — P426 is done: propose their resolution (harvest check → remove).
-- Session-17 removals archived in `$STACK_WORKDIR/archive/session17-worktrees/` (p613s*, p624*, p627*, p475a-*, p632-diag,
-  p613s4-verify, p475s1-*).
+- Keep: the six `p475-u4-*` arm worktrees + branches (serve P475 stage 1 until the step-5 re-prepare).
+- Local archive branches (no push): `archive/p475-u4-*-1554bfe1`, `archive/c258x-off`.
 
-## Rules learned (session 17)
+## Rules learned (session 18)
 
-- Before amending a shared pin, list every reader and run their suites (P631 → P632); split two roles that share one constant.
-- `gate/RUNNING` is a persistent flock file: wait on the previous receipt's appearance, never on the file's absence.
-- A flake is a mechanism: reproduce under load (8-core busy loop) with `--showlocals` and full logs; check `open-questions` — the
-  P642 race was P433, approved and never built.
-- Fakes miss real-box facts: short vs full shas, real commit hooks, real files written into worktrees, the fork's quiet-box scan
-  matching the caller. Run the accepted tool on the box early (smoke-sized) and expect a short list of fail-closed integration bugs.
-- `subprocess.run(timeout=…)` kills only the child: reap the group (an orphaned `qualify` worker refused the next run).
-- Engagement proof and exactness certification are different questions; check the proof covers the state you measure (MTP ON).
-- zsh does not word-split: pass file lists with `--pathspec-from-file` or arrays.
-
-Next decision id C297; discussion ids restart at P1 (cite as `S18-P<n>` in durable records).
+- An approved fix can be incomplete: trace it across every leg that reuses the same state (the P659 exit-only tolerance vs the
+  entry check on an arm's second leg).
+- Make the fake reproduce the real-box fact first (driver writes dirty the worktree); the red test then is the box failure verbatim.
+- A busy check that greps `ps` must not run with its patterns in its own argv — put it in a script file.
+- `git worktree remove` refuses worktrees with submodules: verify the submodules clean first, then `--force`.
