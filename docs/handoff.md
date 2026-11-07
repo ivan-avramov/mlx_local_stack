@@ -1,4 +1,4 @@
-# Handoff — 2026-11-06 (session 18: P658 (a) accepted + fork pushed `e3e38397`; stack step 2 built `97672222`; full stack gate on `9adbae45` running; next: stack push ask, re-prepare, OFF preflights + ON engagement checks, smokes, full run)
+# Handoff — 2026-11-06 (session 18: P475 stage-1 FULL RUN in progress on base `35c15d7d` since 18:22 local; all 11 checks PASS; both smokes VALID; `origin/main` = `35c15d7d`)
 
 THE one handoff. Read this, then `docs/open-questions.md` top entries (newest first: C301, C300, S18-P8, C299, C298, S18-P4, S18-P3,
 C297 …), then `docs/specs/p475-stage1-contract.md` (v1.4), `docs/specs/p658-qualify-engagement-only.md` and
@@ -17,15 +17,13 @@ operator weighs the table; stage 2 quality only for formats kept), then its MTP 
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Nothing running: no router on :8000, no P475 orchestrator / `qualify` / `worker.py`. Check with a script file, never with the
-   patterns in your own argv.
-2. Gate: the full stack gate on `9adbae45` was started at 2026-11-06 ≈ 09:10 local (log `$STACK_WORKDIR/scratch/p475s1/gate-9adbae45.log`,
-   receipt `$STACK_WORKDIR/gate/stack-9adbae45…json`). PASS → push ask for `origin/main` `e86a39e3..9adbae45` (+ the docs-only tail);
-   FAIL → diagnose (P643 is the known load-sensitive test).
-3. Forks: `../mlx-vlm` = origin = `e3e38397` (pushed session 18); `../mlx-serve` = `1ddf6f84`. The stack gitlink `src/mlx-vlm` =
-   `e3e38397` from `97672222` on.
-4. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-*` are on the OLD base `15d90757` (fork gitlink `d94e38a9`): re-prepare (Next 2)
-   before any preflight.
+1. The full run: `python -m bench.p475_kv run` (pid in `$STACK_WORKDIR/p475/run.pid`, log `$STACK_WORKDIR/p475/run.log`, RUNLOG
+   `$STACK_WORKDIR/p475/RUNLOG.md`), started 2026-11-06 18:22 local, ≈ 13 h + replacements. Alive? → wait (never kill a BUSY run;
+   verify a wedge before any kill). Exited? → read its RUNLOG / exit code; a resume is `run` again (state.json; caps monotonic).
+2. Pushes: `origin/main` = `35c15d7d` (gate PASS 11,950; C302 pre-authorized push done). Local tail: `c037cf5a` (smoke dossiers)
+   + docs; push with the results after the harvest (ask). Forks: `../mlx-vlm` = origin = `e3e38397`; `../mlx-serve` = `1ddf6f84`.
+3. Arm worktrees `$STACK_WORKDIR/worktrees/p475-u4-*` on base `35c15d7d` (fork gitlink `e3e38397`), serving the run: never touch
+   them while it runs.
 
 ## Done in session 18
 
@@ -39,20 +37,24 @@ operator weighs the table; stage 2 quality only for formats kept), then its MTP 
 - **P658 (a)** four-eyes light (C299 Go, C300 Accept; `docs/reviews/p658/`): fork `a1e23203` (frozen tests) + `e3e38397`
   (`qualify --kv-arm --predictor on --engagement-only`; drafter-cache K3 check; `engagement_only: true, certifies: false`;
   `bench.p475_kv` in `LAUNCHER_MODULES`). Fork gate PASS 10,008; pushed (C301).
+- **S18-P12 / C302** `4a6a4fd6`: preflight power pre-check + `qualify`'s pre-run refusals are NOT_STARTED (found when the box
+  ran on battery: six false REFUSED records, kept in `$STACK_WORKDIR/archive/p475-base-9adbae45/`). Gate `35c15d7d` PASS 11,950;
+  pushed `e86a39e3..35c15d7d`.
+- **On base `35c15d7d`:** six OFF preflights + five ON engagement checks PASS, first attempt each (ON: every drafter cache one native
+  `KVCache` == its template, K3; target manifests as the arms; MTP-ON 256K-class decode N16 13.1 / AF8 6.3 / TQ8 6.7 / AF4 6.9 / TQ4
+  9.7 tok/s, descriptive); smokes `u4-n16-smoke.a1` + `u4-tq4-smoke.a1` VALID (`c037cf5a`; within ≈ 1 % of the `15d90757` smokes).
 - **Stack step 2** `97672222` (C301): gitlink → `e3e38397` + `LIVE_GITLINKS`; `preflight --arm A --engagement` for the five MTP-ON
   arms (records `$STACK_WORKDIR/p475/engagement/`); the leg pre-check needs OFF + engagement PASS on this base (S18-P3); contract v1.4.
   The CLI preflight works again (no stdin workaround).
 
 ## Next, in order
 
-1. Gate receipt → stack push ask.
-2. Re-prepare on the gated base: archive `$STACK_WORKDIR/p475/` whole to `$STACK_WORKDIR/archive/p475-base-15d90757/`; `git mv`
-   `results/p475/u4-n16-smoke.a2` + `u4-tq4-smoke.a1` to `results/p475/archive/15d90757…12/` (C298, `data(bench)`); remove the six arm
-   worktrees (submodules clean → `--force`), rename their branches to local `archive/p475-u4-<arm>-15d90757`; `prepare --base <gated>`.
-3. The six OFF preflights + five ON engagement checks (`python -m bench.p475_kv preflight --arm A [--engagement]`, detached, one after
-   another; ≈ 2 h 45 min OFF + ≈ 2–3 h ON). Show the operator the ON target + drafter manifests.
-4. The two smokes (`run --smoke`), then the full run (12 legs, ≈ 13 h GPU; ≥ 600 s idle; 140 W / 28 V). Harvest → generated
-   `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` → operator; push ask for results + scrubbed logs to `evidence`.
+1. When the run ends: verify its exit and the harvested dossiers under `benchmark/results/p475/` (12 legs + any replacements /
+   deciding block); `python -m bench.p475_kv matrix` → `MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` (generated, never hand-edited);
+   commit `data(bench)`; README / campaign-results evidence update; the matrix to the operator with mechanisms, trends and the
+   KV-format recommendation (the operator weighs the table; stage 2 quality only for formats kept).
+2. Push ask: results + the docs tail to `main`; scrubbed logs (`$STACK_WORKDIR/p475/evidence-stage/`) to `evidence`.
+3. Then the `Qwen3.8-27B-mlx-uniform-4bit` MTP ON vs OFF re-certification on the chosen format (THE GOAL).
 
 Open, lower priority: S18-P8 (fork `-n 4`-only flake), P643, P642's two process gaps.
 
