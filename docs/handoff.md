@@ -5,7 +5,7 @@ C310, C309 …). Model names: FULL registry names only. Review rounds: 3 per art
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Discussion ids: session 19 used `S19-P1 … S19-P4`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C311**.
+Discussion ids: session 19 used `S19-P1 … S19-P5`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C311**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -38,7 +38,7 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 ## Next, in order (C310 plan)
 
-1. **S19-P4 → the operator:** go / no-go on 1.2. Lead rec: go, D1 + D2 first (one stride-aware multi-query decode kernel,
+1. **S19-P4 + S19-P5 → the operator:** go / no-go on 1.2; S19-P5 (operator challenge) replaces the prefill track P1 → P2 with P2′, a fused TQ4 flash prefill on the Neural Accelerators (MLX `steel_attention_nax` + a TQ4 tile loader). Lead rec: go, D1 + D2 first (one stride-aware multi-query decode kernel,
    per-query bit-identical to the singleton kernel), then P1 → P2 (prefill: dequantize in rotated space + fused SDPA, then a fused
    unpack kernel), D3 deferred. On go: prototypes in the fork's `dev/` with microbenchmarks against `PROBE.md` → the operator;
    Push 3 (fork) when cited. Then 1.3 (production, four-eyes strict) → Push 4 / 5; 1.4 (P475 matrix for the pick incl. the deferred
