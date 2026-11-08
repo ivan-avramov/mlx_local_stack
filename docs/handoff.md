@@ -5,7 +5,7 @@ C310, C309 …). Model names: FULL registry names only. Review rounds: 3 per art
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Discussion ids: session 19 used `S19-P1 … S19-P5`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C311**.
+Decisions: session 19 ruled C311. Discussion ids: session 19 used `S19-P1 … S19-P5`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C312**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -38,12 +38,13 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 ## Next, in order (C310 plan)
 
-1. **S19-P4 + S19-P5 → the operator:** go / no-go on 1.2; S19-P5 (operator challenge) replaces the prefill track P1 → P2 with P2′, a fused TQ4 flash prefill on the Neural Accelerators (MLX `steel_attention_nax` + a TQ4 tile loader). Lead rec: go, D1 + D2 first (one stride-aware multi-query decode kernel,
-   per-query bit-identical to the singleton kernel), then P1 → P2 (prefill: dequantize in rotated space + fused SDPA, then a fused
-   unpack kernel), D3 deferred. On go: prototypes in the fork's `dev/` with microbenchmarks against `PROBE.md` → the operator;
-   Push 3 (fork) when cited. Then 1.3 (production, four-eyes strict) → Push 4 / 5; 1.4 (P475 matrix for the pick incl. the deferred
-   in-situ profilers `MLX_VLM_PREFILL_PROFILE` / `MLX_VLM_MTP_PROFILE`; quality for both picks; MTP ON vs OFF on TQ4) → Push 6.
-2. **Push 2** (report + scripts) — asked at the end of session 19; if not yet done, ask again.
+1. **M72 1.2 (C311 GO):** D1 + D2 first — one stride-aware multi-query TQ4 decode kernel in the fork's `dev/` (k-token verify
+   block in one pass; reads the full-cap buffer, no layout copy; per query bit-identical to `_fused_mse_decode_2pass_1_kernel`'s
+   singleton result), microbenchmark against `benchmark/results/m72/PROBE.md` (extend `m72_tq4_probe.py`) → the operator; Push 3
+   (fork) when cited. Then P2′ (fused TQ4 flash prefill on the Neural Accelerators: MLX `steel_attention_nax.h` + a TQ4 unpack tile
+   loader; first a tensor-op `matmul2d` microkernel ≥ 3× its NAX-off time — spike F's lead: no `const` element types; the scratch
+   GEMM's `K = 0` descriptor hung). P1 is reference only; D3 deferred. Then 1.3 (four-eyes strict) → Push 4 / 5; 1.4 → Push 6.
+2. **Push 2** — approved by the operator (C311); done at the end of session 19 if `origin/main` = the session-19 tip.
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
 
