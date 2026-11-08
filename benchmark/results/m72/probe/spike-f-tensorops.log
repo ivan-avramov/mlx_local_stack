@@ -1,0 +1,26 @@
+========================================================================
+SPIKE F — Metal 4 TensorOps via mx.fast.metal_kernel  (Apple M5 Max)
+mlx 0.32.4
+========================================================================
+  [metal_tensor_include] OK — compiled+ran (|out| sum=16.00)
+  [mpp_include] OK — compiled+ran (|out| sum=16.00)
+  [matmul2d_full] FAIL:
+      [metal::Device] Unable to build metal library from source
+      In file included from mlx/backend/metal/kernels/utils.h:542:
+      In file included from /System/Library/Frameworks/MetalPerformancePrimitives.framework/Headers/MetalPerformancePrimitives.h:10:
+      In file included from /System/Library/Frameworks/MetalPerformancePrimitives.framework/Headers/MPPTensorOpsMatMul2d.h:389:
+      /System/Library/Frameworks/MetalPerformancePrimitives.framework/Headers/__impl/MPPTensorOpsMatMul2dImpl.h:6021:13: error: static_assert failed due to requirement '__tensor_ops_detail::__assert_false_v<float>' "Unsupported type"
+                  static_assert(__tensor_ops_detail::__assert_false_v<destinationValueType>, "Unsupported type");
+                  ^             ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+      /System/Library/Frameworks/MetalPerformancePrimitives.framework/Headers/MPPTensorOpsMatMul2d.h:415:24: note: in instantiation of function template specialization 'mpp::tensor_ops::__mutmul2d_detail::__run<{64, 32, 32, false, false, false, 0}, metal::execution_simdgroups<4>, metal::tensor<const device half, metal::extents<int, 32, 64>, metal::tensor_inline>, metal::tensor<const device half, metal::extents<int, 32, 32>, metal::tensor_inline>, metal::tensor<device float, metal::extents<int, 32, 64>, metal::tensor_inline>>' requested here
+          __mutmul2d_detail::__run<Descriptor, Scope, LeftOperandType,
+                             ^
+      mlx/backend/metal/kernels/utils.h:563:25: note: in instantiation of function template specialization 'mpp::tensor_ops::matmul2d<{64, 32, 32, false, false, false, 0}, metal::execution_simdgroups<4>>::run<metal::tensor<const device half, metal::extents<int, 32, 64>, metal::tensor_inline>, metal::tensor<const device half, metal::extents<int, 32, 32>, metal::tensor_inline>, metal::tensor<device float, metal::extents<int, 32, 64>, metal::tensor_inline>, void>' requested here
+              if (k == 0) op0.run(mA, mB, mC); else opA.run(mA, mB, mC);
+                              ^
+      In file inc
+
+VERDICT: if (1) already FAILs, the JIT path cannot reach Metal 4 tensors ->
+the M5 NA must be reached via MLX built-in ops (mx.matmul / decomposed), not
+a hand-written mx.fast.metal_kernel. If (3) runs, a fused TensorOps kernel is viable.
+DONE
