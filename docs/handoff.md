@@ -1,82 +1,70 @@
-# Handoff — 2026-11-07 (session 18 END: P475 stage 1 DONE; C309 — THE GOAL met for both picks; `Qwen3.8-27B-mlx-uniform-4bit` ships as is (TQ4 + MTP ON, CERTIFIED C258); next: M72 TQ4 spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, M73)
+# Handoff — 2026-11-07 (session 19: M72 step 1.1 probe DONE; S19-P4 (go / no-go on the 1.2 prototypes) with the operator; Push 2 asked)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M66–M73, then `docs/open-questions.md` top entries (newest first: S18-P20,
-S18-P19, C307, S18-P18, C306 … C296). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias
-for quality; drive to certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a
-fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
+THE one handoff. Read this, then `docs/PLAN.md` rows M66–M74, then `docs/open-questions.md` top entries (newest first: S19-P4,
+C310, C309 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to
+certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
+boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Discussion ids: session 18 used `S18-P1 … S18-P20` in records; a new session restarts at P1 and cites `S19-P<n>`. Next decision id
-**C311**.
+Discussion ids: session 19 used `S19-P1 … S19-P4`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C311**.
 
-## THE GOAL — MET (C309)
+## THE GOAL — MET (C309); Phase 2 = M72
 
-Both picks certified in their shipped config: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON (`CERTIFIED P426
-2026-11-04`, C291); `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant 4 KV + MTP ON (`CERTIFIED` C258, 2026-10-30). Next goal (Phase 2,
-C307 (3) / C308): the TQ4 performance spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (M72) — if TQ4 can beat native16 there,
-certify that combination.
+Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON, P426 / C291;
+`Qwen3.8-27B-mlx-uniform-4bit` TQ4 + MTP ON, C258). M72: can TQ4 beat native16 for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Nothing running: no router on :8000, no P475 orchestrator / `qualify` / `worker.py` / `run_capacity` (check from a script file;
-   never with the patterns in your own argv).
-2. Pushes: `origin/main` = `35c15d7d`. Local `main` carries data + docs since (`c037cf5a` … this note): the P475 dossiers and
-   generated matrix, README / lab-notebook evidence, decisions. **No push until this model's work completes** (C306 (2)): then one
-   full stack gate and one push ask (data commits need the full gate; the pre-push hook needs the machine config sourced). Forks:
-   `../mlx-vlm` = origin = `e3e38397`; `../mlx-serve` = `1ddf6f84`; stack gitlink `src/mlx-vlm` = `e3e38397`.
-3. No worktrees: the stack has only its main checkout; the fork only `main` (session 18 removed the P475 arm worktrees and the
-   P658 helper worktrees; all harvested).
-4. Power: 140 W / 28 V before any GPU work, gated strictly (session 18 lost a queue to an unplugged adapter; `preflight()` now
-   refuses it as NOT_STARTED, C302, but check before launching anyway).
+1. Nothing running: no router on :8000, no probe / `qualify` / `worker.py` / `run_capacity` (check from a script file; never with
+   the patterns in your own argv).
+2. Pushes: `origin/main` = `f27e7ec1` unless Push 2 happened (then = the session-19 tip). Local `main` carries the M72 probe
+   (scripts, results, records). Forks unchanged: `../mlx-vlm` = origin = `e3e38397`; `../mlx-serve` = `1ddf6f84`; stack gitlink
+   `src/mlx-vlm` = `e3e38397`.
+3. No worktrees (stack: main checkout only; fork: `main` only).
+4. Power: 140 W / 28 V before any GPU work (the probe refuses otherwise; check anyway).
 
-## Done in session 18 (details in open-questions C296–C307)
+## Done in session 19
 
-- P475 stage-1 build fixed on the box: C296 (1) `53e2e321` (base resolution, NOT_STARTED preflights, fork venv, process-group
-  reap), C297 `bc07cabc` (`run_capacity --out-dir`: legs write under the leg dir), C298 (old-base dossiers archived), C301
-  `97672222` (ON engagement check + records bound to their base; gitlink → `e3e38397`), C302 `4a6a4fd6` (power / qualify pre-run
-  refusals are NOT_STARTED). Gates: `9adbae45` PASS 11,937; `35c15d7d` PASS 11,950 (pushed).
-- P658 (a) four-eyes light (C299 / C300; `docs/reviews/p658/`): fork `qualify --kv-arm --predictor on --engagement-only`
-  (drafter-cache K3 check) + `bench.p475_kv` in `LAUNCHER_MODULES`; fork gate PASS 10,008; pushed.
-- **P475 stage 1 DONE** on base `35c15d7d`: 11 checks PASS (OFF kv manifests; ON target + drafter manifests, every drafter cache
-  one native `KVCache` == template); smokes VALID; full run 18 valid legs + 1 replacement (an 8 s battery blip), the deciding block
-  b3 run as pre-registered (C304; its trigger was the degenerate near-unity case, S18-P13). Matrix
-  `benchmark/results/p475/MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` (`a4ef6f96`); README evidence `02d0d0a9`; mechanism (two-term
-  fit: the KV format changes only the context-proportional attention cost; TQ4 decode ≈ ⅕ of native16's effective KV bandwidth)
-  in `docs/lab-notebook.md` 2026-11-07. At 260K: N16 46.08 GB / 275.7 prefill / 15.03 decode tok/s; TQ4 29.30 / 128.8 / 12.72.
+- FIRST checks passed; Phase 0 was already complete (`origin/main` = `f27e7ec1`, `evidence` = `eddf2e9c`).
+- **M72 step 1.1 probe DONE** (≈ 10 min GPU, ≈ 1.5 h wall, within the time box): `benchmark/spikes/m72_tq4_probe.py` (per-layer
+  microbenchmark through the fork's production dispatch), `m72_run_probe.sh` (ABA NAX on / off / on, 10-min idles),
+  `m72_probe_report.py` → generated `benchmark/results/m72/PROBE.md`; report `benchmark/results/m72/REPORT.md`; spikes G / H rerun at
+  4-bit (`SPIKE_BITS`). Validated against P475 (TQ4 prefill −7…−8 %, MTP OFF decode −5…−8 %; MTP ON tok/s +7…+18 % optimistic).
+  Mechanisms (lab notebook 2026-11-07 session 19): sub-cap layout copy (+44 % per decode call), per-query MTP verify (largest decode
+  loss), TurboQuant prefill off the Neural Accelerators (dequantize + fused SDPA moves it on, no new attention kernel). Potential vs
+  shipped at 260K: decode MTP ON 0.72× → 1.31× (multi-query verify) → 1.51× (+ no copy) → 1.93× (ceiling, uncertain kernel
+  rewrite); prefill 0.35× → 0.83× (generic ops) → ≈ 1.00× (fused unpack); ≈ 12 GB less KV.
+- Instrument revisions (both before any result was used; superseded outputs in `$STACK_WORKDIR/m72/superseded-instrument-v{1,2}/`):
+  v1 byte ceilings read a sliced buffer (a copy); v2's at-cap checkpoint hid the layout copy.
 
-## Next, in order (C310: the plan forward, with push points)
+## Next, in order (C310 plan)
 
-0. **Phase 0 (session 18, done if `origin/main` = the gated tip):** P475 logs on `evidence` (`eddf2e9c`), a full stack gate on the
-   tip, **Push 1** `main` + `evidence`. If `origin/main` is still `35c15d7d`, check the gate receipt and push (pre-approved by C310
-   only for that gate).
-1. **Phase 1 = M72 — the focus:** the TQ4 performance spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` against its baseline
-   (native16 + `fused_v1`), time-boxed, no pre-set bar. **1.1 Probe** (≈ a day, little GPU; a quiet box, power gated): per-kernel split
-   of TQ4 prefill / decode at 128K / 256K, the forced-off Neural Accelerator control `MLX_METAL_GPU_ARCH=applegpu_g16s`, decode
-   effective KV bandwidth, the cost of MTP verify blocks, the ceiling of each fix → the operator; **Push 2** (report + scripts).
-   Then, each on the operator's go: **1.2** prototype kernels in the fork's `dev/` (fused decode first, then the never-built fused
-   flash prefill) with microbenchmarks → the operator; **Push 3** (fork) when cited. **1.3** the production kernel (four-eyes strict;
-   fork gate) → **Push 4**; stack gitlink bump + gate → **Push 5**. **1.4** a P475 matrix for that pick (`p475_kv` parametrized by
-   pick first), then, if TQ4 wins, quality vs native16 (covering BOTH picks: it also closes the TQ4 residual of
-   `Qwen3.8-27B-mlx-uniform-4bit`, C309 addendum) + MTP ON vs OFF on TQ4 (the P426 harness parametrized by entry), then the
-   registry → **Push 6**. Read first: `docs/open-questions.md` S18-P18, S18-P21, P477; the fork's `mlx_vlm/turboquant.py`
-   (`mse_prefill`, `_mse_prefill_fused` = never built, `TQ_FUSED_PREFILL`, `TQ_PREFILL_IMPL`); `docs/lab-notebook.md` 2026-08-31
-   (Neural Accelerators active) and 2026-11-07 (the two-term fit).
-2. **Phase 2 = M73 (S18-P20)**, a parallel CPU track: the sequential early-stopping design (four-eyes strict; decision from the
-   boundary, sizes from full-set estimates via revisit; AGENTS.md wording to the operator) → **Push 7**; aim before 1.4.
-3. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67 (fork gate + push), M68, M69, M70 (needs Go), M74 (the
-   open-questions audit) → one stack gate, **Push 8**.
+1. **S19-P4 → the operator:** go / no-go on 1.2. Lead rec: go, D1 + D2 first (one stride-aware multi-query decode kernel,
+   per-query bit-identical to the singleton kernel), then P1 → P2 (prefill: dequantize in rotated space + fused SDPA, then a fused
+   unpack kernel), D3 deferred. On go: prototypes in the fork's `dev/` with microbenchmarks against `PROBE.md` → the operator;
+   Push 3 (fork) when cited. Then 1.3 (production, four-eyes strict) → Push 4 / 5; 1.4 (P475 matrix for the pick incl. the deferred
+   in-situ profilers `MLX_VLM_PREFILL_PROFILE` / `MLX_VLM_MTP_PROFILE`; quality for both picks; MTP ON vs OFF on TQ4) → Push 6.
+2. **Push 2** (report + scripts) — asked at the end of session 19; if not yet done, ask again.
+3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
+4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
 
-Push policy (C310): push at every boundary where results or code are committed, within a day; never leave results only on this box;
-each push is its own ask unless pre-authorized.
-
-Queued after the GPU work (C303): M67 (S18-P8, fork `-n 4` flake), M68 (P643), M69 (P642 gap 1). Open: M70 (S18-P13, R16 floor).
+Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
+pre-authorized.
 
 ## Archives (local, no push)
 
+- `$STACK_WORKDIR/m72/superseded-instrument-v1/`, `…-v2/` (probe outputs of the superseded instruments; not cited).
 - `$STACK_WORKDIR/archive/p475-base-{1554bfe1,15d90757,9adbae45,35c15d7d}/` (run state, worktree logs; the `9adbae45` one holds
   the six false power-refused records); `$STACK_WORKDIR/archive/session18-worktrees/` (P426 / C258 logs).
 - Branches: `archive/p475-u4-<arm>-{1554bfe1,15d90757,9adbae45,35c15d7d}`, `archive/c258x-off`.
 - Scrubbed P475 worker / router logs for `evidence`: `$STACK_WORKDIR/archive/p475-base-35c15d7d/p475/evidence-stage/` (and the
   earlier bases' archives) — pushed with the results (C306 (2)).
+
+## Rules learned (session 19)
+
+- Measure a preallocated cache just below the cap, never at it: at exactly the cap the slice is contiguous and hides the copy that
+  row-contiguous custom kernels make on every call.
+- A byte-ceiling reduction over a sliced view measures a copy; read contiguous copies.
+- An earlier spike with no recorded outcome is not evidence: rerun it (minutes) before building on its premise.
 
 ## Rules learned (session 18)
 

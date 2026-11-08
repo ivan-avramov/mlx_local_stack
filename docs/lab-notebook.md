@@ -4783,3 +4783,22 @@ affine prefill 1.1–1.2×, affine decode **2.1–2.3×**. TQ4 reads ≈ 4× few
 in decode: decode attention here is bound by the quantized-kernel path (dequantization; affine runs with no forced fused-SDPA
 calls, `sdpa_forced == 0`), not by memory bandwidth. On this box KV quantization buys memory, never speed; how much speed it costs
 scales with the attention share, i.e. with context. Matrix: `benchmark/results/p475/MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md`.
+
+## 2026-11-07 (session 19) — M72 probe: where TurboQuant 4's attention time goes (M5 Max, shapes of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`)
+
+Per-layer microbenchmark (`benchmark/spikes/m72_tq4_probe.py`, the fork's production dispatch, caches preallocated to the cap as
+served; validated against P475 within ≈ 8 % for prefill and MTP OFF decode). Three mechanisms, none of them "no fused kernel":
+(1) **Layout copy.** Below the cap a TurboQuant state is a time-slice of the full-cap buffer, non-contiguous across heads; the
+custom Metal kernels copy such inputs before running, +42–44 % per decode call at 128K–260K (at exactly the cap the copy
+vanishes, which hid it from an at-cap checkpoint). Native SDPA reads the strided slice directly. (2) **Per-query MTP verify.** A
+3-token verify block runs three decode calls over three different slices, i.e. three reads and three copies: 2.9× a single call,
+1.7× native16's joint call at 260K. (3) **Off the Neural Accelerators.** TurboQuant's prefill loop is 1.36× slower with NAX forced
+off (only the surrounding MLX ops), native16 `fused_v1` 3.3–3.6×; dequantizing to bf16 and calling the fused SDPA moves TQ4 onto
+them (2.6–2.9×). Decode is 1.00 in both formats (single-query, bandwidth / latency bound). The decode kernel itself, on a contiguous
+state, is already ≈ 0.9× native16's time at 260K while reading ≈ ¼ of the bytes, at 131 vs 361 GB/s achievable; spike H's
+compute-side optimizations rerun at 4-bit give 1.00×, so the remaining gap is the access pattern. Corrects 2026-11-07's "TQ4
+decode is bound by dequantization": it is bound by the copy, the verify loop and memory access, in that order of size.
+Transferable: on unified-memory GPUs a preallocated cache read through a time-slice is free for strided-aware library kernels and
+a full copy for row-contiguous custom kernels; measure decode just below the cap, never at it. Report:
+`benchmark/results/m72/REPORT.md`.
+
