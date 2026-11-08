@@ -4771,3 +4771,15 @@ Found by the ReviewBench cold review (R1, R8), verified against the code and aga
 - **Review record.** Six Codex verdicts + prompts copied, scrubbed (repo-absolute paths → `<repo>`), into `benchmark/chains/c147/reviews/`; docs repointed. Older reviews stay on the `evidence` branch.
 - **Tooling traps** that had lived only in session memory (interactive `rm`/`cp`, ugrep, self-matching `pgrep`, buffering monitors, orphan pty shells, `TMPDIR`, Codex invocation, venv drift) now in `docs/box-notes.md`.
 - **Open — P265.** Quality rows pair across the two boxes (identical quantizations, sampling, scaffold); latency/thermal/capacity do not. The project charter still selects for 64 GB; whether the 128 GB box becomes the target is the operator's call.
+
+## 2026-11-07 — P475 stage 1: why KV-format costs grow with context (M5 Max, `Qwen3.8-27B-mlx-uniform-4bit`, MTP ON)
+
+Per-token time fits `t(n) = fixed + c·n` (from the 8K and 260K rungs; it predicts 131K / 196K within ≈ 1–7 %). The fixed part (the
+weights: projections / MLP and the 48 Gated DeltaNet layers, whose state does not grow) is the same in every arm (prefill ≈ 1.0 ms,
+decode ≈ 15–18 ms per token). The KV format changes only `c`, the 16 full-attention layers reading the cache. At 8K that part is
+≈ 8–19 % of a token's time, so even a 2.6× slower attention shows as ≈ 13 %; at 260K it is 72–88 %, and the ratio converges on the
+attention-path ratio. Per context token vs native16: TurboQuant prefill **2.6×**, TurboQuant 4 decode **1.2×**, TQ8 decode 1.9×,
+affine prefill 1.1–1.2×, affine decode **2.1–2.3×**. TQ4 reads ≈ 4× fewer KV bytes yet costs more per context token than native16
+in decode: decode attention here is bound by the quantized-kernel path (dequantization; affine runs with no forced fused-SDPA
+calls, `sdpa_forced == 0`), not by memory bandwidth. On this box KV quantization buys memory, never speed; how much speed it costs
+scales with the attention share, i.e. with context. Matrix: `benchmark/results/p475/MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md`.
