@@ -1,4 +1,4 @@
-# Handoff — 2026-11-07 (session 18 END: P475 stage 1 DONE; C307 — `Qwen3.8-27B-mlx-uniform-4bit` ships native16 with MTP certified; TQ4 spike performance-first; harness early stopping; next: M71, M73 design, M72)
+# Handoff — 2026-11-07 (session 18 END: P475 stage 1 DONE; C308 — focus on the TQ4 spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; `Qwen3.8-27B-mlx-uniform-4bit` deferred as shipped; next: M72, M73)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M66–M73, then `docs/open-questions.md` top entries (newest first: S18-P20,
 S18-P19, C307, S18-P18, C306 … C296). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias
@@ -6,7 +6,7 @@ for quality; drive to certified picks; ask only at Go / Accept / pushes / scope 
 fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
 Discussion ids: session 18 used `S18-P1 … S18-P20` in records; a new session restarts at P1 and cites `S19-P<n>`. Next decision id
-**C308**.
+**C309**.
 
 ## THE GOAL
 
@@ -42,20 +42,18 @@ the P475 matrix), then its MTP ON vs OFF certification on native16 (M71, option 
   fit: the KV format changes only the context-proportional attention cost; TQ4 decode ≈ ⅕ of native16's effective KV bandwidth)
   in `docs/lab-notebook.md` 2026-11-07. At 260K: N16 46.08 GB / 275.7 prefill / 15.03 decode tok/s; TQ4 29.30 / 128.8 / 12.72.
 
-## Next, in order (PLAN rows)
+## Next, in order (PLAN rows; C308 reordered)
 
-1. **M71 (1):** the two-retained-session memory check on native16 for `Qwen3.8-27B-mlx-uniform-4bit` under daily-driver settings
-   (`MLX_VLM_CACHE_SESSION_MAX=2`), ≈ 1 h GPU; result to the operator (46.08 GB single-session vs ≈ 48 GB guidance on the 64 GB
-   target).
-2. **S18-P19 to the operator:** the MTP certification option (rec (a): P426 Wave 1 + Wave 2 for this entry, ≈ 30 h GPU; (b) Wave 1
-   only, a scope cut). Then **M71 (2)**: parametrize the P426 harness by entry (design → approval → red tests first; frozen P426
-   tests unchanged), **M71 (3)** the certification run, **M71 (4)** registry `kv_bits: 0` + annotation + README in one commit, one
-   gate, the one push.
-3. **M73 (S18-P20):** design the sequential early-stopping harness (four-eyes strict; group-sequential looks, alpha spending,
-   futility by conditional power, seeded-random item order, resumable revisit; AGENTS.md wording to the operator). If the operator
-   picks S18-P19 (b) or wants Wave 2 to stop early, M73 lands before M71 (3).
-4. **M72 (S18-P18):** the TQ4 performance spike — probe first (per-kernel split, forced-off Neural Accelerator control, decode
-   effective bandwidth), in GPU gaps only, never during measured legs.
+1. **M72 — the focus:** the TQ4 performance spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` against its baseline (native16
+   + `fused_v1`), time-boxed, no pre-set bar. Probe first (≈ a day, little GPU; a quiet box, power gated): per-kernel split of TQ4
+   prefill / decode at 128K / 256K, the forced-off Neural Accelerator control `MLX_METAL_GPU_ARCH=applegpu_g16s`, decode effective
+   KV bandwidth, the ceiling of each fix. Then the operator: go / no-go on a fused decode kernel prototype (fork `dev/` first;
+   four-eyes for any production kernel), its expected gain stated. Read first: `docs/open-questions.md` S18-P18, S18-P21, P477;
+   the fork's `mlx_vlm/turboquant.py` (`mse_prefill`, `_mse_prefill_fused` = never built, `TQ_FUSED_PREFILL`, `TQ_PREFILL_IMPL`);
+   `docs/lab-notebook.md` 2026-08-31 (Neural Accelerators active) and 2026-11-07 (the two-term fit).
+2. **M73 (S18-P20):** design the sequential early-stopping harness (four-eyes strict; decision from the boundary, sizes from
+   full-set estimates via revisit).
+3. **M71 — DEFERRED (C308):** `Qwen3.8-27B-mlx-uniform-4bit` stays as shipped (TQ4, MTP ON, `PROVISIONAL` C247) until M72 answers.
 
 Queued after the GPU work (C303): M67 (S18-P8, fork `-n 4` flake), M68 (P643), M69 (P642 gap 1). Open: M70 (S18-P13, R16 floor).
 
