@@ -19,7 +19,7 @@ import time
 import numpy as np
 import mlx.core as mx
 
-D = 256; BITS = 3; N_KV = 4; R = 6; N_Q = N_KV * R; EPT = D // 32; NB = 512
+D = 256; BITS = int(__import__("os").environ.get("SPIKE_BITS", "3")); N_KV = 4; R = 6; N_Q = N_KV * R; EPT = D // 32; NB = 512
 G = 2; GROUPS = R // G
 MASK = (1 << BITS) - 1
 PWv = (D * BITS + 31) // 32
@@ -137,7 +137,7 @@ if __name__ == "__main__":
     print(f"SPIKE G — decode compute-bound vs latency-bound  ({mx.device_info()['device_name']})")
     print(f"  G={G} (tile-reuse), NB={NB}, peak~310 GB/s (M2) / ~558 (M5)")
     print("=" * 70)
-    for T in (65536, 131072, 200000):
+    for T in (65536, 131072, 200000, 262144):
         run(T)
     print("\nreadonly>>full => compute-bound (headroom in per-token compute);"
           "\nreadonly~=full => latency-bound (faster compute won't help).")

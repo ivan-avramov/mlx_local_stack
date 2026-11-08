@@ -16,7 +16,7 @@ import time
 import numpy as np
 import mlx.core as mx
 
-D = 256; BITS = 3; N_KV = 4; R = 6; N_Q = N_KV * R; EPT = D // 32; NB = 512
+D = 256; BITS = int(__import__("os").environ.get("SPIKE_BITS", "3")); N_KV = 4; R = 6; N_Q = N_KV * R; EPT = D // 32; NB = 512
 G = 2; GROUPS = R // G; MASK = (1 << BITS) - 1; PWv = (D * BITS + 31) // 32
 
 
@@ -156,7 +156,7 @@ if __name__ == "__main__":
         of = merge(*pf); oo = merge(*po); mx.eval(of, oo)
         print("opt vs full max-abs-diff:", mx.max(mx.abs(of - oo)).item(), "(want < 1e-4)")
         sys.exit(0)
-    for T in (65536, 131072, 200000):
+    for T in (65536, 131072, 200000, 262144):
         kpk, knm, vpk, vnm, q, cb = make_kv(T)
         ins = [q, kpk, knm, vpk, vnm, cb]
         kv_gb = (N_KV * GROUPS * T * PWv * 4 * 2) / 1e9
