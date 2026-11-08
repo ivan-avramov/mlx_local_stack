@@ -1,4 +1,4 @@
-# Handoff — 2026-11-07 (session 18 END: P475 stage 1 DONE; C308 — focus on the TQ4 spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`; `Qwen3.8-27B-mlx-uniform-4bit` deferred as shipped; next: M72, M73)
+# Handoff — 2026-11-07 (session 18 END: P475 stage 1 DONE; C309 — THE GOAL met for both picks; `Qwen3.8-27B-mlx-uniform-4bit` ships as is (TQ4 + MTP ON, CERTIFIED C258); next: M72 TQ4 spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, M73)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M66–M73, then `docs/open-questions.md` top entries (newest first: S18-P20,
 S18-P19, C307, S18-P18, C306 … C296). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias
@@ -6,13 +6,14 @@ for quality; drive to certified picks; ask only at Go / Accept / pushes / scope 
 fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
 Discussion ids: session 18 used `S18-P1 … S18-P20` in records; a new session restarts at P1 and cites `S19-P<n>`. Next decision id
-**C309**.
+**C310**.
 
-## THE GOAL
+## THE GOAL — MET (C309)
 
-Certify the two picks in their ideal config. `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`: DONE — native16, MTP ON
-`CERTIFIED P426 2026-11-04` (C291), kept as-is (C307 (1)). `Qwen3.8-27B-mlx-uniform-4bit`: ships **native16** (C307 (2), from
-the P475 matrix), then its MTP ON vs OFF certification on native16 (M71, option per S18-P19).
+Both picks certified in their shipped config: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON (`CERTIFIED P426
+2026-11-04`, C291); `Qwen3.8-27B-mlx-uniform-4bit` TurboQuant 4 KV + MTP ON (`CERTIFIED` C258, 2026-10-30). Next goal (Phase 2,
+C307 (3) / C308): the TQ4 performance spike for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` (M72) — if TQ4 can beat native16 there,
+certify that combination.
 
 ## FIRST — verify (each "no" is a blocker)
 
@@ -53,7 +54,7 @@ the P475 matrix), then its MTP ON vs OFF certification on native16 (M71, option 
    `docs/lab-notebook.md` 2026-08-31 (Neural Accelerators active) and 2026-11-07 (the two-term fit).
 2. **M73 (S18-P20):** design the sequential early-stopping harness (four-eyes strict; decision from the boundary, sizes from
    full-set estimates via revisit).
-3. **M71 — DEFERRED (C308):** `Qwen3.8-27B-mlx-uniform-4bit` stays as shipped (TQ4, MTP ON, `PROVISIONAL` C247) until M72 answers.
+3. **M71 — CLOSED (C309):** `Qwen3.8-27B-mlx-uniform-4bit` ships as is (TQ4 + MTP ON, CERTIFIED C258).
 
 Queued after the GPU work (C303): M67 (S18-P8, fork `-n 4` flake), M68 (P643), M69 (P642 gap 1). Open: M70 (S18-P13, R16 floor).
 
