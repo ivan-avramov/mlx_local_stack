@@ -55,7 +55,8 @@ certify that combination.
    Then, each on the operator's go: **1.2** prototype kernels in the fork's `dev/` (fused decode first, then the never-built fused
    flash prefill) with microbenchmarks → the operator; **Push 3** (fork) when cited. **1.3** the production kernel (four-eyes strict;
    fork gate) → **Push 4**; stack gitlink bump + gate → **Push 5**. **1.4** a P475 matrix for that pick (`p475_kv` parametrized by
-   pick first), then, if TQ4 wins, quality vs native16 + MTP ON vs OFF on TQ4 (the P426 harness parametrized by entry), then the
+   pick first), then, if TQ4 wins, quality vs native16 (covering BOTH picks: it also closes the TQ4 residual of
+   `Qwen3.8-27B-mlx-uniform-4bit`, C309 addendum) + MTP ON vs OFF on TQ4 (the P426 harness parametrized by entry), then the
    registry → **Push 6**. Read first: `docs/open-questions.md` S18-P18, S18-P21, P477; the fork's `mlx_vlm/turboquant.py`
    (`mse_prefill`, `_mse_prefill_fused` = never built, `TQ_FUSED_PREFILL`, `TQ_PREFILL_IMPL`); `docs/lab-notebook.md` 2026-08-31
    (Neural Accelerators active) and 2026-11-07 (the two-term fit).
