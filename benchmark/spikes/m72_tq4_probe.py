@@ -9,6 +9,11 @@ data-independent), no model load. Calls the fork's production dispatch (`models.
 Run (bare process; caps set below per docs/box-notes.md):
   PYTHONPATH=../mlx-vlm uv run python benchmark/spikes/m72_tq4_probe.py --out <json>
 NAX-off control: the same with MLX_METAL_GPU_ARCH=applegpu_g16s in the environment.
+
+M72 step 1.2 (D1 + D2): ``--mode mq`` measures the fork's dev prototype ``dev/m72_mq_decode.py`` (stride-aware
+multi-query TQ4 decode) against matched in-process baselines (native16 SDPA / joint, TQ4 production decode / per-query
+verify) for k = 1..5, after an exactness sweep (per query, bit-identical to the production singleton path) that includes
+a negative control. Prefill is not measured in this mode.
 """
 
 import argparse
@@ -20,9 +25,11 @@ import statistics
 import subprocess
 import sys
 import time
+from pathlib import Path
 
 import mlx.core as mx
 
+import mlx_vlm
 from mlx_vlm import turboquant as tq_mod
 from mlx_vlm.attention_policy import FusedV1Policy
 from mlx_vlm.models.base import scaled_dot_product_attention
@@ -263,10 +270,132 @@ def measure_checkpoint(T, tq, K, V, policy):
     return res
 
 
+# ---------------- M72 1.2: D1 + D2 prototype (--mode mq) ----------------
+MQ_LENGTHS = (1, 2, 3, 4, 5)
+MQ_SWEEP_CAP = 40960
+# lengths crossing the 8192 / 32768 block-count thresholds and tpb boundaries (verify blocks may straddle both)
+MQ_SWEEP_T = (4096, 8190, 8193, 8320, 9000, 16385, 32766, 32770, 33025, 40000)
+
+
+def fork_dev_module():
+    dev = Path(mlx_vlm.__file__).resolve().parents[1] / "dev"
+    sys.path.insert(0, str(dev))
+    import m72_mq_decode
+
+    return m72_mq_decode
+
+
+def fork_sha():
+    root = Path(mlx_vlm.__file__).resolve().parents[1]
+    try:
+        sha = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True, text=True,
+                             timeout=10).stdout.strip()
+        dirty = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "--", "mlx_vlm", "dev"],
+                               capture_output=True, text=True, timeout=10).stdout.strip()
+    except Exception as exc:
+        return {"error": repr(exc)}
+    return {"head": sha, "dirty_paths": dirty.splitlines()}
+
+
+def bits_equal(a, b):
+    return a.shape == b.shape and a.dtype == b.dtype and bool(mx.all(a.view(mx.uint16) == b.view(mx.uint16)).item())
+
+
+def singleton_reference(tq, ks, vs, q):
+    k = q.shape[2]
+    if k == 1:
+        return scaled_dot_product_attention(q, ks, vs, cache=tq, scale=SCALE, mask=None)
+    return per_query_attention(q, ks, vs, cache=tq, scale=SCALE, mask="causal")
+
+
+def mq_exactness_sweep(mqm):
+    """Small cache: every sweep length x k x G, bit-compared with the production singleton path per query."""
+    tq = TurboQuantKVCache(bits=4, max_kv_size=MQ_SWEEP_CAP, prealloc_tokens=MQ_SWEEP_CAP)
+    rows, off = [], 0
+    for T in MQ_SWEEP_T:
+        kc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        vc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        tq.update_and_fetch(kc, vc)
+        mx.eval(tq.keys, tq.values)
+        off = T
+        ksr, vsr = tq.state
+        ks, vs = tq_mod._QuantizedStateProxy(ksr, T, NKV), tq_mod._QuantizedStateProxy(vsr, T, NKV)
+        for k in MQ_LENGTHS:
+            q = mx.random.normal((1, NQ, k, D)).astype(DT)
+            ref = singleton_reference(tq, ks, vs, q)
+            lens = [T - k + 1 + j for j in range(k)]
+            for G in (2, 1):
+                got = mqm.mq_decode_attention(tq, q, SCALE, lens, heads_per_group=G)
+                rows.append({"T": T, "k": k, "G": G, "classes": len(mqm._classes(lens, R)),
+                             "bit_identical": bits_equal(got, ref)})
+    # negative controls on the last state: lengths shifted by one token, and the joint (multi-query) TQ path
+    T = MQ_SWEEP_T[-1]
+    q = mx.random.normal((1, NQ, 3, D)).astype(DT)
+    ref = singleton_reference(tq, ks, vs, q)
+    shifted = mqm.mq_decode_attention(tq, q, SCALE, [T - 3 + j for j in range(3)])
+    joint = joint_attention(q, ks, vs, cache=tq, scale=SCALE, mask="causal")
+    neg = {"shifted_lengths_bit_identical": bits_equal(shifted, ref),
+           "joint_tq_path_bit_identical": bits_equal(joint.astype(ref.dtype), ref),
+           "joint_tq_path_vs_ref": maxdiff(joint, ref)}
+    n_ok = sum(r["bit_identical"] for r in rows)
+    log(f"mq exactness sweep: {n_ok}/{len(rows)} bit-identical, multi-class cases "
+        f"{sum(r['classes'] > 1 for r in rows)}; negative controls {neg}")
+    del tq
+    mx.clear_cache()
+    return {"rows": rows, "n": len(rows), "n_bit_identical": n_ok, "negative_controls": neg}
+
+
+def measure_checkpoint_mq(T, tq, K, V, policy, mqm):
+    res = {"T": T}
+    ks_raw, vs_raw = tq.state
+    ks = tq_mod._QuantizedStateProxy(ks_raw, T, NKV)
+    vs = tq_mod._QuantizedStateProxy(vs_raw, T, NKV)
+    Kt, Vt = K[:, :, :T, :], V[:, :, :T, :]
+    tq_bytes = tq_state_bytes(ks_raw) + tq_state_bytes(vs_raw)
+    res["bytes"] = {"tq4_kv": tq_bytes, "native16_kv": 2 * NKV * T * D * 2}
+    ks_c_raw = tq_mod.TurboQuantMSEState(mx.contiguous(ks_raw.norms), mx.contiguous(ks_raw.indices))
+    vs_c_raw = tq_mod.TurboQuantMSEState(mx.contiguous(vs_raw.norms), mx.contiguous(vs_raw.indices))
+    mx.eval(ks_c_raw, vs_c_raw)
+    ki, vi, kn, vn = ks_c_raw.indices, vs_c_raw.indices, ks_c_raw.norms, vs_c_raw.norms
+    res["read_tq4_bytes"] = timeit(lambda: [mx.sum(ki), mx.sum(vi), mx.sum(kn), mx.sum(vn)])
+    out = {}
+    for k in MQ_LENGTHS:
+        q = mx.random.normal((1, NQ, k, D)).astype(DT)
+        lens = [T - k + 1 + j for j in range(k)]
+        ref = singleton_reference(tq, ks, vs, q)
+        row = {"lengths": lens, "classes": len(mqm._classes(lens, R))}
+        if k == 1:
+            row["native16"] = timeit(lambda: scaled_dot_product_attention(q, Kt, Vt, cache=None, scale=SCALE,
+                                                                          mask=None, policy=policy))
+            row["tq4_production"] = timeit(lambda: scaled_dot_product_attention(q, ks, vs, cache=tq, scale=SCALE,
+                                                                                mask=None))
+        else:
+            row["native16_joint"] = timeit(lambda: joint_attention(q, Kt, Vt, cache=None, scale=SCALE,
+                                                                   mask="causal"))
+            row["tq4_production"] = timeit(lambda: per_query_attention(q, ks, vs, cache=tq, scale=SCALE,
+                                                                       mask="causal"))
+        for G in (2, 1):
+            row[f"mq_g{G}"] = timeit(lambda G=G: mqm.mq_decode_attention(tq, q, SCALE, lens, heads_per_group=G))
+            row[f"mq_g{G}_bit_identical"] = bits_equal(mqm.mq_decode_attention(tq, q, SCALE, lens,
+                                                                               heads_per_group=G), ref)
+            row[f"mq_g{G}"]["eff_GBps"] = tq_bytes / (row[f"mq_g{G}"]["median_ms"] * 1e-3) / 1e9
+        out[str(k)] = row
+    res["mq"] = out
+    base1 = out["1"]
+    log(f"T={T} mq: k=1 n16 {base1['native16']['median_ms']:.3f} / tq4 prod {base1['tq4_production']['median_ms']:.3f}"
+        f" / mq g2 {base1['mq_g2']['median_ms']:.3f} ms; k=3 n16 joint {out['3']['native16_joint']['median_ms']:.3f}"
+        f" / tq4 per-query {out['3']['tq4_production']['median_ms']:.3f} / mq g2 {out['3']['mq_g2']['median_ms']:.3f}"
+        f" / g1 {out['3']['mq_g1']['median_ms']:.3f} ms; exact "
+        f"{all(r[f'mq_g{G}_bit_identical'] for r in out.values() for G in (2, 1))}")
+    mx.clear_cache()
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-t", type=int, default=CAP)
+    ap.add_argument("--mode", choices=("full", "mq"), default="full")
     args = ap.parse_args()
 
     mx.set_cache_limit(4 << 30)
@@ -280,12 +409,17 @@ def main():
         "MLX_METAL_GPU_ARCH": os.environ.get("MLX_METAL_GPU_ARCH"), "python": platform.python_version(),
         "shapes": {"n_q": NQ, "n_kv": NKV, "head_dim": D, "dtype": "bfloat16", "chunk": CHUNK, "cap": CAP},
         "tq": {"bits": 4, "mode": "mse", "seed": tq_mod.DEFAULT_TURBOQUANT_SEED}, "power_start": p0,
-        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mode": args.mode,
     }
     log(f"start {meta['device']['architecture']} MLX_METAL_GPU_ARCH={meta['MLX_METAL_GPU_ARCH']} power {p0}")
 
     mx.random.seed(72)
     policy = FusedV1Policy()
+    mqm = None
+    if args.mode == "mq":
+        mqm = fork_dev_module()
+        meta["fork"] = fork_sha()
+        meta["mq_exactness"] = mq_exactness_sweep(mqm)
     tq = TurboQuantKVCache(bits=4, max_kv_size=CAP, prealloc_tokens=CAP)
     K = mx.zeros((1, NKV, CAP, D), dtype=DT)
     V = mx.zeros((1, NKV, CAP, D), dtype=DT)
@@ -316,7 +450,10 @@ def main():
             if not power_ok(p):
                 log(f"ABORT: power state {p}")
                 sys.exit(4)
-            r = measure_checkpoint(off, tq, K, V, policy)
+            if mqm is not None:
+                r = measure_checkpoint_mq(off, tq, K, V, policy, mqm)
+            else:
+                r = measure_checkpoint(off, tq, K, V, policy)
             r["power"] = p
             r["kv_append_chunk_ms"] = {"tq4_mean_last64": statistics.mean(upd_tq[-64:]) * 1e3,
                                        "native16_mean_last64": statistics.mean(upd_n16[-64:]) * 1e3}
