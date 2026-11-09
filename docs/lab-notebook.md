@@ -4802,3 +4802,17 @@ Transferable: on unified-memory GPUs a preallocated cache read through a time-sl
 a full copy for row-contiguous custom kernels; measure decode just below the cap, never at it. Report:
 `benchmark/results/m72/REPORT.md`.
 
+
+## 2026-11-09 (session 20) — M72 D1 + D2: a one-pass multi-query TQ4 verify kernel is bound by per-query work, not by the read (M5 Max, shapes of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`)
+
+Prototype `dev/m72_mq_decode.py` (fork `65583e27`): one pass-1 launch for a k-token MTP verify block over the full-cap buffer
+(no layout copy), per query bit-identical to the shipped singleton. Generated `benchmark/results/m72/D1D2.md`. Removing the copy
+(D2) gives exactly the predicted gain: k = 1 2.01 vs 2.87 ms at 260K, and 1.00× at the contiguous cap where no copy exists. One pass
+for the block (D1) does not make the block cost one pass: every extra query adds ≈ 1.5–1.6 ms per layer at 260K, about what one more
+query adds to native16's joint call (≈ 1.5 ms). Both kernels spend their time in the per-query, per-token chain (dot, cross-lane
+reduction, online softmax, V update), not in reading or dequantizing the state; G = 2 heads per simdgroup also spills registers at
+k ≥ 4. Bit-identity to the singleton pins its partition and per-token order, which is the costly part, so an exact kernel tops out
+near native16's joint call (k = 3: 5.73 vs 4.97 ms). Transferable: before projecting a "load once, serve k queries" gain, check that
+the single-query kernel is bandwidth-bound (here it ran at 131 of 361 GB/s, which already said it was not); amortizing many queries
+needs matrix units (a tiny flash-attention tile), not more queries per simdgroup. Also: a stuck-busy GPU (100 % idle utilization,
+≈ 1 ms tiny-op floor) cleared on reboot; check idle utilization and the floor before every measured pass.

@@ -1,11 +1,12 @@
-# Handoff — 2026-11-07 (session 19: M72 step 1.1 probe DONE; S19-P4 (go / no-go on the 1.2 prototypes) with the operator; Push 2 asked)
+# Handoff — 2026-11-09 (session 20: M72 1.2 D1 + D2 MEASURED; S20-P2 (next step after an exact verify kernel fell short) with the operator; Push 3 / stack push asked)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M66–M74, then `docs/open-questions.md` top entries (newest first: S19-P4,
-C310, C309 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to
+THE one handoff. Read this, then `docs/PLAN.md` rows M66–M74, then `docs/open-questions.md` top entries (newest first: S20-P2,
+S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 19 ruled C311. Discussion ids: session 19 used `S19-P1 … S19-P5`; a new session restarts at P1 and cites `S20-P<n>`. Next decision id **C312**.
+Decisions: session 20 ruled none (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P2`; a new session
+restarts at P1 and cites `S21-P<n>`. Next decision id **C312**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -16,37 +17,34 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 1. Nothing running: no router on :8000, no probe / `qualify` / `worker.py` / `run_capacity` (check from a script file; never with
    the patterns in your own argv).
-2. Pushes: `origin/main` = `f27e7ec1` unless Push 2 happened (then = the session-19 tip). Local `main` carries the M72 probe
-   (scripts, results, records). Forks unchanged: `../mlx-vlm` = origin = `e3e38397`; `../mlx-serve` = `1ddf6f84`; stack gitlink
-   `src/mlx-vlm` = `e3e38397`.
+2. Pushes: `origin/main` = `ebae76c8` unless the session-20 push happened (then = the session-20 tip). Fork `../mlx-vlm`: local
+   `main` = `65583e27` (the D1 + D2 prototype, `dev/m72_mq_decode.py`), origin = `e3e38397` unless Push 3 happened; `../mlx-serve` =
+   `1ddf6f84`; stack gitlink `src/mlx-vlm` = `e3e38397` (dev-only change, no bump).
 3. No worktrees (stack: main checkout only; fork: `main` only).
-4. Power: 140 W / 28 V before any GPU work (the probe refuses otherwise; check anyway).
+4. Power 140 W / 28 V, **and GPU idle utilization ≈ 0 % with a tiny-op floor ≈ 0.17 ms** before any GPU work (S20-P1: a stuck-busy
+   GPU read 100 % / ≈ 1 ms and cleared only on reboot). Script: `benchmark/results/m72/d1d2/floor.py`; launcher pattern
+   `benchmark/results/m72/d1d2/run_mq.sh`.
 
-## Done in session 19
+## Done in session 20
 
-- FIRST checks passed; Phase 0 was already complete (`origin/main` = `f27e7ec1`, `evidence` = `eddf2e9c`).
-- **M72 step 1.1 probe DONE** (≈ 10 min GPU, ≈ 1.5 h wall, within the time box): `benchmark/spikes/m72_tq4_probe.py` (per-layer
-  microbenchmark through the fork's production dispatch), `m72_run_probe.sh` (ABA NAX on / off / on, 10-min idles),
-  `m72_probe_report.py` → generated `benchmark/results/m72/PROBE.md`; report `benchmark/results/m72/REPORT.md`; spikes G / H rerun at
-  4-bit (`SPIKE_BITS`). Validated against P475 (TQ4 prefill −7…−8 %, MTP OFF decode −5…−8 %; MTP ON tok/s +7…+18 % optimistic).
-  Mechanisms (lab notebook 2026-11-07 session 19): sub-cap layout copy (+44 % per decode call), per-query MTP verify (largest decode
-  loss), TurboQuant prefill off the Neural Accelerators (dequantize + fused SDPA moves it on, no new attention kernel). Potential vs
-  shipped at 260K: decode MTP ON 0.72× → 1.31× (multi-query verify) → 1.51× (+ no copy) → 1.93× (ceiling, uncertain kernel
-  rewrite); prefill 0.35× → 0.83× (generic ops) → ≈ 1.00× (fused unpack); ≈ 12 GB less KV.
-- Instrument revisions (both before any result was used; superseded outputs in `$STACK_WORKDIR/m72/superseded-instrument-v{1,2}/`):
-  v1 byte ceilings read a sliced buffer (a copy); v2's at-cap checkpoint hid the layout copy.
+- Morning (before a reboot): prototype `dev/m72_mq_decode.py` + `m72_tq4_probe.py --mode mq` + `m72_mq_report.py`; timing blocked
+  (S20-P1). After the operator's restart: GPU quiet; 8K control within 4 % of `PROBE.md` (contiguous-copy reference lines ≈ 2×
+  slow, unexplained, not used); two mq passes (10-min idle) → generated `benchmark/results/m72/D1D2.md`.
+- **Result (S20-P2):** exact (100 / 100 per pass). D2 (no layout copy) as estimated: MTP OFF 1.04×. D1 short: k = 3 verify 5.73 ms
+  vs native16 joint 4.97 at 260K → MTP ON 0.94× / 0.92× of native16 at 131K / 260K (estimate 1.25× / 1.51×). Mechanism: per-query
+  per-token work binds (≈ 1.5 ms per extra query, same as native16's joint call); lab notebook 2026-11-09 session 20.
+- Morning smoke outputs (busy GPU, not cited): `$STACK_WORKDIR/m72/d1d2-smoke/`; run dir `$STACK_WORKDIR/m72/d1d2-s20b/` (harvested
+  into `benchmark/results/m72/d1d2/`).
 
-## Next, in order (C310 plan)
+## Next, in order
 
-1. **M72 1.2 (C311 GO):** D1 + D2 first — one stride-aware multi-query TQ4 decode kernel in the fork's `dev/` (k-token verify
-   block in one pass; reads the full-cap buffer, no layout copy; per query bit-identical to `_fused_mse_decode_2pass_1_kernel`'s
-   singleton result), microbenchmark against `benchmark/results/m72/PROBE.md` (extend `m72_tq4_probe.py`) → the operator; Push 3
-   (fork) when cited. Then P2′ (fused TQ4 flash prefill on the Neural Accelerators: MLX `steel_attention_nax.h` + a TQ4 unpack tile
-   loader; first a tensor-op `matmul2d` microkernel ≥ 3× its NAX-off time — spike F's lead: no `const` element types; the scratch
-   GEMM's `K = 0` descriptor hung). P1 is reference only; D3 deferred. Then 1.3 (four-eyes strict) → Push 4 / 5; 1.4 → Push 6.
-2. **Push 2** — approved by the operator (C311); done at the end of session 19 if `origin/main` = the session-19 tip.
+1. **S20-P2 with the operator** (lead rec: (b) a matrix-unit TQ4 verify kernel held to `joint_v1`'s tolerance standard, as the
+   first stage of P2′ — verify shape first, then prefill on the Neural Accelerators; exact D2 stays the k = 1 path). Whatever is
+   chosen gets its PLAN row in the ruling's commit.
+2. **Push 3** (fork `65583e27`, cited by `D1D2.md`) and the stack push (`main` past `ebae76c8`) — asked in session 20.
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
+   Small candidate: an idle-GPU gate in `m72_tq4_probe.py` beside the power gate (S20-P1) — needs its own proposal.
 
 Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
 pre-authorized.
@@ -59,6 +57,13 @@ pre-authorized.
 - Branches: `archive/p475-u4-<arm>-{1554bfe1,15d90757,9adbae45,35c15d7d}`, `archive/c258x-off`.
 - Scrubbed P475 worker / router logs for `evidence`: `$STACK_WORKDIR/archive/p475-base-35c15d7d/p475/evidence-stage/` (and the
   earlier bases' archives) — pushed with the results (C306 (2)).
+
+## Rules learned (session 20)
+
+- Before projecting a "load once, serve k queries" gain, check the single-query kernel is bandwidth-bound; if not, per-query work
+  stays and only matrix units amortize it.
+- Exactness constraints have a price: state what the bit-identity contract pins (partition, accumulation order) before estimating.
+- Check GPU idle utilization and the tiny-op floor before each measured pass; a stuck-busy GPU can need a reboot.
 
 ## Rules learned (session 19)
 
