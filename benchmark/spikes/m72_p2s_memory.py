@@ -160,7 +160,23 @@ def make_impl(name, scratch_size="cap"):
         sys.path.insert(0, str(dev))
         import m72_scratch_prefill as m
 
+        from types import SimpleNamespace
+
+        from mlx_vlm import turboquant as tq_mod
+
         def dequant(cache, T, dep=None):
+            if (
+                dep is not None
+            ):  # the state arrays the kernel reads, tied to `dep` (a proxy; the real state is untouched)
+                ks, vs = cache.keys, cache.values
+                kn, ki, vn, vi = mx.depends([ks.norms, ks.indices, vs.norms, vs.indices], dep)
+                cache = SimpleNamespace(
+                    keys=tq_mod.TurboQuantMSEState(kn, ki),
+                    values=tq_mod.TurboQuantMSEState(vn, vi),
+                    key_codec=cache.key_codec,
+                    value_codec=cache.value_codec,
+                    offset=cache.offset,
+                )
             return m.dequant_rotated(cache, T)  # cap-sized, fp16 (spec v1.1)
 
     else:
