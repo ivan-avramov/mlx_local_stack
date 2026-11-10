@@ -14,6 +14,11 @@ M72 step 1.2 (D1 + D2): ``--mode mq`` measures the fork's dev prototype ``dev/m7
 multi-query TQ4 decode) against matched in-process baselines (native16 SDPA / joint, TQ4 production decode / per-query
 verify) for k = 1..5, after an exactness sweep (per query, bit-identical to the production singleton path) that includes
 a negative control. Prefill is not measured in this mode.
+
+M72 step 1.2 matrix-unit verify (C312 / C313): ``--mode mma`` measures the fork's dev prototype
+``dev/m72_mma_verify.py`` (simdgroup-MMA verify block, TQ4 and native16 tile loaders, full-cap buffers in place) against
+native16 SDPA / joint, TQ4 production and the best ``dev/m72_mq_decode.py`` grouping for k = 1..5, after an accuracy
+sweep against an fp32 reference (A1: joint_v1's tolerance) with planted-token cases and negative controls N1-N3.
 """
 
 import argparse
@@ -44,7 +49,8 @@ CAP = 262144
 CHUNK = 512  # prefill_step_size of the pick
 SCALE = 1.0 / math.sqrt(D)
 DT = mx.bfloat16
-CHECKPOINTS = (8192, 32768, 131072, 196608, 260096, 262144)  # 196608 / 260096 = P475 rungs (below the cap: sliced layout)
+# 196608 / 260096 = P475 rungs (below the cap: sliced layout)
+CHECKPOINTS = (8192, 32768, 131072, 196608, 260096, 262144)
 VERIFY_LENGTHS = (2, 3, 4, 5)
 DECOMPOSED_MAX_T = 131072  # its fp32 score tensor is 24*512*T*4 bytes; skipped above (memory)
 
@@ -196,7 +202,8 @@ def measure_checkpoint(T, tq, K, V, policy):
     log(f"T={T} decode: n16 {dec['native16']['median_ms']:.3f} ms ({dec['native16']['eff_GBps']:.0f} GB/s), "
         f"tq4 {dec['tq4']['median_ms']:.3f} ms ({dec['tq4']['eff_GBps']:.0f} GB/s), "
         f"tq4 contiguous {dec['tq4_contiguous']['median_ms']:.3f} ms, "
-        f"tq4-bytes read ceiling {dec['read_tq4_bytes']['median_ms']:.3f} ms ({dec['read_tq4_bytes']['GBps']:.0f} GB/s)")
+        f"tq4-bytes read ceiling {dec['read_tq4_bytes']['median_ms']:.3f} ms "
+        f"({dec['read_tq4_bytes']['GBps']:.0f} GB/s)")
 
     # ---- MTP verify blocks (L = k) ----
     ver = {}
@@ -393,11 +400,234 @@ def measure_checkpoint_mq(T, tq, K, V, policy, mqm):
     return res
 
 
+# ---------------- M72 1.2: matrix-unit verify kernel prototype (--mode mma; C312 / C313) ----------------
+MMA_PLANTED_T = (8193, 32770)  # planted-token cases (cache holds T + 1 tokens so the N2 leak stays in range)
+MMA_CONTROL = (8193, 3)  # (T, k) of the negative controls, on the planted case
+PLANT_NORM = 64.0
+A1_FLOOR = 2.0 ** -12
+ARM_ORDERS = {"forward": ("native16", "tq4_production", "mq_best", "mma_tq4", "mma_n16")}
+ARM_ORDERS["reverse"] = tuple(reversed(ARM_ORDERS["forward"]))
+A1_ATOL = A1_RTOL = 3e-2  # joint_v1's test tolerance
+VERIFY_K_MMA = "3"  # logged per checkpoint
+
+
+def fork_mma_module():
+    fork_dev_module()  # puts the fork's dev/ on sys.path
+    import m72_mma_verify
+
+    return m72_mma_verify
+
+
+def rel_err(out, ref):
+    o = out.astype(mx.float32)
+    return mx.max(mx.abs(o - ref)).item() / mx.max(mx.abs(ref)).item()
+
+
+def ref_attention(q, K, V, lengths):
+    """fp32 exact softmax attention on the CPU stream: query j over t < lengths[j]; K / V fp32 (1, NKV, >= T, D)."""
+    k, T = q.shape[2], lengths[-1]
+    with mx.stream(mx.cpu):
+        qf = (q.astype(mx.float32) * SCALE).reshape(1, NKV, R * k, D)  # row = i * k + j
+        s = qf @ mx.swapaxes(K[:, :, :T, :].astype(mx.float32), -1, -2)
+        lens = mx.array(list(lengths))[mx.arange(R * k) % k][:, None]
+        s = mx.where(mx.arange(T)[None, :] < lens, s, -mx.inf)
+        o = mx.softmax(s, axis=-1, precise=True) @ V[:, :, :T, :].astype(mx.float32)
+        o = o.reshape(1, NQ, k, D)
+        mx.eval(o)
+    return o
+
+
+def n16_production(q, K, V, lengths):
+    """Native16 production path per query: SDPA over K / V sliced to lengths[j]."""
+    return mx.concatenate([scaled_dot_product_attention(q[:, :, j:j + 1, :], K[:, :, :L, :], V[:, :, :L, :],
+                                                        cache=None, scale=SCALE, mask=None)
+                           for j, L in enumerate(lengths)], axis=2)
+
+
+def tq_production(tq, q, lengths):
+    """TQ4 production path: the singleton (k = 1) / per-query verify on the state sliced for real to lengths[-1], so
+    query j reads exactly [0, lengths[j]) also when the cache holds more (the planted caches hold T + 1 tokens)."""
+    ksr, vsr = tq.state
+    T = lengths[-1]
+    ksr, vsr = tq_mod._slice_state(ksr, T), tq_mod._slice_state(vsr, T)
+    return singleton_reference(tq, tq_mod._QuantizedStateProxy(ksr, T, NKV), tq_mod._QuantizedStateProxy(vsr, T, NKV),
+                               q)
+
+
+def a1(out, ref, prod_rel):
+    """A1: rel error <= 2 x max(production rel error, 2^-12), allclose at joint_v1's tolerance, and finite."""
+    o = out.astype(mx.float32)
+    finite = bool(mx.all(mx.isfinite(o)).item())
+    rel = rel_err(o, ref)
+    close = bool(mx.allclose(o, ref, atol=A1_ATOL, rtol=A1_RTOL).item())
+    ok = finite and close and rel <= 2 * max(prod_rel, A1_FLOOR)
+    return {"rel_err": rel, "prod_rel_err": prod_rel, "allclose": close, "finite": finite, "pass": ok}
+
+
+def mma_both_arms(mv, tq, K16, V16, q, lens, ref_tq, ref16, controls=None):
+    """ACC for both arms on one (state, q, lengths); with ``controls`` appends N1 / N2 / N3 rows for both arms."""
+    prod_tq = rel_err(tq_production(tq, q, lens), ref_tq)
+    prod16 = rel_err(n16_production(q, K16, V16, lens), ref16)
+    acc = {"mma_tq4": a1(mv.mma_verify_tq4(tq, q, SCALE, lens), ref_tq, prod_tq),
+           "mma_n16": a1(mv.mma_verify_native16(K16, V16, q, SCALE, lens), ref16, prod16)}
+    if controls is not None:
+        variants = (("N1", lens, 1), ("N2", [L + 1 for L in lens], 0), ("N3", [L - 1 for L in lens], 0))
+        for name, kl, shift in variants:
+            got_tq = mv.mma_verify_tq4(tq, q, SCALE, kl, _kv_head_shift=shift)
+            got16 = mv.mma_verify_native16(K16, V16, q, SCALE, kl, _kv_head_shift=shift)
+            for arm, got, ref, prod in (("mma_tq4", got_tq, ref_tq, prod_tq), ("mma_n16", got16, ref16, prod16)):
+                r = a1(got, ref, prod)
+                controls.append({"name": name, "arm": arm, "rel_err": r["rel_err"], "pass": r["pass"]})
+    return acc
+
+
+def planted_kv(q, lens, n_tokens):
+    """Random K / V; per query j a key aligned with its group's queries at lengths[j] - 1, and a stronger key at
+    lengths[0] (visible only to j >= 1; aligned with queries 0 and 1) so a one-token leak or drop changes outputs."""
+    k = q.shape[2]
+    K = mx.random.normal((1, NKV, n_tokens, D))
+    V = mx.random.normal((1, NKV, n_tokens, D))
+    u = q.astype(mx.float32).reshape(1, NKV, R, k, D).sum(axis=2)  # (1, NKV, k, D) group sums
+
+    def unit(x):
+        return x / mx.linalg.norm(x, axis=-1, keepdims=True)
+
+    for j in range(k):
+        K[:, :, lens[j] - 1, :] = PLANT_NORM * unit(u[:, :, j, :])
+    lead = u[:, :, 0, :] + (u[:, :, 1, :] if k > 1 else 0)
+    K[:, :, lens[0], :] = 2 * PLANT_NORM * unit(lead)
+    return K.astype(DT), V.astype(DT)
+
+
+def mma_accuracy_sweep(mv):
+    """Cap-40,960 caches: random K / V over MQ_SWEEP_T x k = 1..5, planted cases and negative controls, both arms."""
+    rows, controls = [], []
+
+    def add(T, k, case, acc):
+        for arm, r in acc.items():
+            rows.append({"T": T, "k": k, "arm": arm, "case": case, **r})
+
+    tq = TurboQuantKVCache(bits=4, max_kv_size=MQ_SWEEP_CAP, prealloc_tokens=MQ_SWEEP_CAP)
+    K16 = mx.zeros((1, NKV, MQ_SWEEP_CAP, D), dtype=DT)
+    V16 = mx.zeros((1, NKV, MQ_SWEEP_CAP, D), dtype=DT)
+    off = 0
+    for T in MQ_SWEEP_T:
+        kc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        vc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        tq.update_and_fetch(kc, vc)
+        K16[:, :, off:T, :] = kc
+        V16[:, :, off:T, :] = vc
+        mx.eval(tq.keys, tq.values, K16, V16)
+        off = T
+        ksr, vsr = tq.state
+        Kd, Vd = tq.key_codec.dequantize(ksr), tq.value_codec.dequantize(vsr)
+        mx.eval(Kd, Vd)
+        for k in MQ_LENGTHS:
+            q = mx.random.normal((1, NQ, k, D)).astype(DT)
+            lens = [T - k + 1 + j for j in range(k)]
+            add(T, k, "random", mma_both_arms(mv, tq, K16, V16, q, lens, ref_attention(q, Kd, Vd, lens),
+                                              ref_attention(q, K16, V16, lens)))
+        del Kd, Vd
+    del tq, K16, V16
+    mx.clear_cache()
+    for T in MMA_PLANTED_T:
+        for k in MQ_LENGTHS:
+            q = mx.random.normal((1, NQ, k, D)).astype(DT)
+            lens = [T - k + 1 + j for j in range(k)]
+            Kp, Vp = planted_kv(q, lens, T + 1)
+            tq = TurboQuantKVCache(bits=4, max_kv_size=MQ_SWEEP_CAP, prealloc_tokens=MQ_SWEEP_CAP)
+            tq.update_and_fetch(Kp, Vp)
+            K16 = mx.zeros((1, NKV, MQ_SWEEP_CAP, D), dtype=DT)
+            V16 = mx.zeros((1, NKV, MQ_SWEEP_CAP, D), dtype=DT)
+            K16[:, :, :T + 1, :] = Kp
+            V16[:, :, :T + 1, :] = Vp
+            mx.eval(tq.keys, tq.values, K16, V16)
+            ksr, vsr = tq.state
+            Kd, Vd = tq.key_codec.dequantize(ksr), tq.value_codec.dequantize(vsr)
+            mx.eval(Kd, Vd)
+            ctl = controls if (T, k) == MMA_CONTROL else None
+            add(T, k, "planted", mma_both_arms(mv, tq, K16, V16, q, lens, ref_attention(q, Kd, Vd, lens),
+                                               ref_attention(q, K16, V16, lens), controls=ctl))
+            del tq, K16, V16, Kd, Vd
+            mx.clear_cache()
+    n_pass = sum(r["pass"] for r in rows)
+    worst = {arm: max(r["rel_err"] / (2 * max(r["prod_rel_err"], A1_FLOOR)) for r in rows if r["arm"] == arm)
+             for arm in ("mma_tq4", "mma_n16")}
+    log(f"mma accuracy sweep: {n_pass}/{len(rows)} pass A1 (worst rel_err / bound {worst}); non-finite "
+        f"{sum(not r['finite'] for r in rows)}; controls (must fail): "
+        + ", ".join(f"{c['name']} {c['arm']} rel {c['rel_err']:.3g} pass {c['pass']}" for c in controls))
+    return {"rows": rows, "controls": controls, "n": len(rows), "n_pass": n_pass}
+
+
+def measure_checkpoint_mma(T, tq, K, V, policy, mqm, mv, arm_order="forward"):
+    res = {"T": T}
+    ks_raw, vs_raw = tq.state
+    ks = tq_mod._QuantizedStateProxy(ks_raw, T, NKV)
+    vs = tq_mod._QuantizedStateProxy(vs_raw, T, NKV)
+    Kt, Vt = K[:, :, :T, :], V[:, :, :T, :]
+    tq_bytes = tq_state_bytes(ks_raw) + tq_state_bytes(vs_raw)
+    n16_bytes = 2 * NKV * T * D * 2
+    res["bytes"] = {"tq4_kv": tq_bytes, "native16_kv": n16_bytes}
+    nb, tpb = mv.plan_blocks(T)
+    res["plan"] = {"blocks": nb, "tokens_per_block": tpb}
+    Kd, Vd = tq.key_codec.dequantize(ks_raw), tq.value_codec.dequantize(vs_raw)
+    mx.eval(Kd, Vd)
+    out = {}
+    for k in MQ_LENGTHS:
+        q = mx.random.normal((1, NQ, k, D)).astype(DT)
+        lens = [T - k + 1 + j for j in range(k)]
+        row = {"lengths": lens}
+
+        def t_native16():
+            if k == 1:
+                return timeit(lambda: scaled_dot_product_attention(q, Kt, Vt, cache=None, scale=SCALE, mask=None,
+                                                                   policy=policy))
+            return timeit(lambda: joint_attention(q, Kt, Vt, cache=None, scale=SCALE, mask="causal"))
+
+        def t_tq4_production():
+            if k == 1:
+                return timeit(lambda: scaled_dot_product_attention(q, ks, vs, cache=tq, scale=SCALE, mask=None))
+            return timeit(lambda: per_query_attention(q, ks, vs, cache=tq, scale=SCALE, mask="causal"))
+
+        def t_mq_best():
+            mq = {G: timeit(lambda G=G: mqm.mq_decode_attention(tq, q, SCALE, lens, heads_per_group=G))
+                  for G in (2, 1)}
+            G = min(mq, key=lambda g: mq[g]["median_ms"])
+            return {**mq[G], "G": G}
+
+        def t_mma_tq4():
+            r = timeit(lambda: mv.mma_verify_tq4(tq, q, SCALE, lens))
+            return {**r, "eff_GBps": tq_bytes / (r["median_ms"] * 1e-3) / 1e9}
+
+        def t_mma_n16():
+            r = timeit(lambda: mv.mma_verify_native16(K, V, q, SCALE, lens))  # the full-cap buffers
+            return {**r, "eff_GBps": n16_bytes / (r["median_ms"] * 1e-3) / 1e9}
+
+        timed = {"native16": t_native16, "tq4_production": t_tq4_production, "mq_best": t_mq_best,
+                 "mma_tq4": t_mma_tq4, "mma_n16": t_mma_n16}
+        for arm in ARM_ORDERS[arm_order]:
+            row[arm] = timed[arm]()
+        row["accuracy"] = mma_both_arms(mv, tq, K, V, q, lens, ref_attention(q, Kd, Vd, lens),
+                                        ref_attention(q, K, V, lens))
+        out[str(k)] = row
+    del Kd, Vd
+    res["mma"] = out
+    r3 = out[VERIFY_K_MMA]
+    log(f"T={T} mma k=3 (ms): n16 {r3['native16']['median_ms']:.3f}, tq4 prod {r3['tq4_production']['median_ms']:.3f}, "
+        f"mq best {r3['mq_best']['median_ms']:.3f} (G={r3['mq_best']['G']}), mma tq4 {r3['mma_tq4']['median_ms']:.3f}, "
+        f"mma n16 {r3['mma_n16']['median_ms']:.3f}; plan {res['plan']}; A1 "
+        f"{all(a['pass'] for r in out.values() for a in r['accuracy'].values())}")
+    mx.clear_cache()
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-t", type=int, default=CAP)
-    ap.add_argument("--mode", choices=("full", "mq"), default="full")
+    ap.add_argument("--mode", choices=("full", "mq", "mma"), default="full")
+    ap.add_argument("--arm-order", choices=tuple(ARM_ORDERS), default="forward",
+                    help="--mode mma: order of the five timed arms per checkpoint and k")
     args = ap.parse_args()
 
     mx.set_cache_limit(4 << 30)
@@ -424,11 +654,23 @@ def main():
 
     mx.random.seed(72)
     policy = FusedV1Policy()
-    mqm = None
+    mqm = mv = None
     if args.mode == "mq":
         mqm = fork_dev_module()
         meta["fork"] = fork_sha()
         meta["mq_exactness"] = mq_exactness_sweep(mqm)
+    elif args.mode == "mma":
+        mqm, mv = fork_dev_module(), fork_mma_module()
+        mapping_ok = bool(mv.fragment_mapping_ok())
+        if not mapping_ok:
+            log("REFUSED: fragment mapping (the kernel's 8x8 fragment self-check failed on this GPU)")
+            sys.exit(6)
+        meta["fork"] = fork_sha()
+        meta["arm_order"] = list(ARM_ORDERS[args.arm_order])
+        meta["mma_kernel"] = {"tile_tokens": mv.TILE_TOKENS, "target_blocks": mv.TARGET_BLOCKS,
+                              "min_block_tokens": mv.MIN_BLOCK_TOKENS, "fragment_types": mv.FRAGMENT_TYPES,
+                              "fragment_mapping_ok": mapping_ok}
+        meta["mma_accuracy"] = mma_accuracy_sweep(mv)
     tq = TurboQuantKVCache(bits=4, max_kv_size=CAP, prealloc_tokens=CAP)
     K = mx.zeros((1, NKV, CAP, D), dtype=DT)
     V = mx.zeros((1, NKV, CAP, D), dtype=DT)
@@ -459,7 +701,9 @@ def main():
             if not power_ok(p):
                 log(f"ABORT: power state {p}")
                 sys.exit(4)
-            if mqm is not None:
+            if mv is not None:
+                r = measure_checkpoint_mma(off, tq, K, V, policy, mqm, mv, args.arm_order)
+            elif mqm is not None:
                 r = measure_checkpoint_mq(off, tq, K, V, policy, mqm)
             else:
                 r = measure_checkpoint(off, tq, K, V, policy)
