@@ -1,6 +1,6 @@
 # Spec: M72 1.2 matrix-unit verify kernel prototype (C312 / C313; four-eyes light)
 
-Status: v1, 2026-11-09 (session 20). Designer: the session. Records: `docs/open-questions.md` C312, C313, S20-P2, S20-P10.
+Status: v1.1, 2026-11-09 (session 20; v1.1 adds the JSON schema and report formulas before dispatch). Designer: the session. Records: `docs/open-questions.md` C312, C313, S20-P2, S20-P10.
 
 ## Goal (verbatim in every brief)
 
@@ -86,6 +86,37 @@ def plan_blocks(max_length: int, block_tokens=None) -> tuple[int, int]   # (Bloc
   for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` with `m72_mq_report`'s method and `PICK_BASELINE`: MTP ON k = 3 for TQ4 +
   mma vs shipped native16, native16 + mma vs shipped native16, TQ4 + mma vs native16 + mma; MTP OFF (k = 1: best of mq / mma for
   TQ4, best of SDPA / mma for native16).
+
+### JSON schema (`--mode mma`)
+
+```
+meta: {..existing.., "mode": "mma", "fork": {...}, "mma_accuracy": {
+  "rows": [{"T": int, "k": int, "arm": "mma_tq4"|"mma_n16", "case": "random"|"planted",
+            "rel_err": float, "prod_rel_err": float, "allclose": bool, "finite": bool, "pass": bool}],
+  "controls": [{"name": "N1"|"N2"|"N3", "arm": "mma_tq4"|"mma_n16", "rel_err": float, "pass": bool}],
+  "n": int, "n_pass": int}}
+checkpoints[]: {"T": int, "bytes": {"tq4_kv": int, "native16_kv": int}, "plan": {"blocks": int, "tokens_per_block": int},
+  "power": {...}, "peak_GB": float, "mma": {"1".."5": {
+    "lengths": [int], "native16": TIMING, "tq4_production": TIMING, "mq_best": TIMING + {"G": int},
+    "mma_tq4": TIMING, "mma_n16": TIMING,
+    "accuracy": {"mma_tq4": ACC, "mma_n16": ACC}}}}
+TIMING = {"median_ms": float, "min_ms": float, "n": int}   (the existing timeit())
+ACC = {"rel_err": float, "prod_rel_err": float, "allclose": bool, "finite": bool, "pass": bool}
+```
+
+`pass` = A1 (and `finite`). A control row's `pass` is A1 evaluated on the control; A3 requires it False.
+
+### Report formulas
+
+Passes = `mma-1.json`, `mma-2.json` in the run dir, whichever exist; times = mean over passes of `median_ms`. Projections use
+`m72_probe_report.{LAYERS, PICK_BASELINE, VERIFY_K, interp}`, interpolating over sub-cap checkpoints only (T < 262,144), at the
+`PICK_BASELINE` contexts; e = `PICK_BASELINE["emitted_per_round"]`:
+- MTP ON (k = VERIFY_K): fixed = e / dd · 1e3 − LAYERS · native16(T, k); tok/s(arm) = e / (fixed + LAYERS · arm(T, k)) · 1e3, dd =
+  `decode_on_tps[T]`. Rows: TQ4 today (`tq4_production`), TQ4 + mma (`mma_tq4`), native16 + mma (`mma_n16`); ratios vs dd and
+  TQ4 + mma vs native16 + mma.
+- MTP OFF (k = 1): fixed = 1e3 / dd − LAYERS · native16(T, 1); tok/s(arm) = 1e3 / (fixed + LAYERS · arm), dd = `decode_off_tps[T]`.
+  Arms: TQ4 best = min(`mq_best`, `mma_tq4`), native16 best = min(`native16`, `mma_n16`).
+- Accuracy section: per pass, sweep n_pass / n, checkpoint passes, each control with its `pass` (must be False).
 
 ## Acceptance criteria (pre-registered, S20-P10)
 
