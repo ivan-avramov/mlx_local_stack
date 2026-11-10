@@ -20,7 +20,7 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 2. Pushes: `origin/main` = `ebae76c8` unless the session-20 push happened (then = the session-20 tip). Fork `../mlx-vlm`: local
    `main` = `65583e27` (the D1 + D2 prototype, `dev/m72_mq_decode.py`), origin = `e3e38397` unless Push 3 happened; `../mlx-serve` =
    `1ddf6f84`; stack gitlink `src/mlx-vlm` = `e3e38397` (dev-only change, no bump).
-3. No worktrees (stack: main checkout only; fork: `main` only).
+3. Worktrees: only those listed under Worktrees below.
 4. Power 140 W / 28 V, **and GPU idle utilization ≈ 0 % with a tiny-op floor ≈ 0.17 ms** before any GPU work (S20-P1: a stuck-busy
    GPU read 100 % / ≈ 1 ms and cleared only on reboot). Script: `benchmark/results/m72/d1d2/floor.py`; launcher pattern
    `benchmark/results/m72/d1d2/run_mq.sh`.
@@ -50,6 +50,12 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
 pre-authorized.
+
+## Worktrees (temporary; four-eyes light run for the C312 / C313 matrix-unit verify kernel, spec `docs/specs/m72-mma-verify.md`)
+
+- `$STACK_WORKDIR/fe-m72mma/{impl,tests}/mlx_local_stack` (stack, detached at `ab5eb0d8`) and `…/{impl,tests}/mlx-vlm` (fork,
+  detached at `a3fdb13e`); briefs and helper outputs in `$STACK_WORKDIR/fe-m72mma/{briefs,out}`. Resolution: harvest the accepted
+  candidate + tests into main / fork main, then `git worktree remove` all four (verify nothing unharvested first).
 
 ## Archives (local, no push)
 
