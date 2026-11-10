@@ -4843,3 +4843,17 @@ shuffle, threadgroup table, staged packed bytes, a select tree of literals, a by
 and a 260K verify block needs ≈ 533 M of them (K and V, 256 dims, 4 KV heads), ≈ 1.5–2 ms. Transferable: a non-uniform
 low-bit codebook costs a gather per element that the tensor units cannot absorb (they take uniform (u)int4 operands); it caps
 decode-shaped attention near the gather rate, but amortizes away in prefill, where hundreds of query rows share each unpacked tile.
+
+## 2026-11-10 (session 20, later) — a reused dequantize scratch costs one layer only if MLX is made to evaluate per layer and sizes never change (M5 Max, `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` shapes)
+
+Stage 1 of P2′ (`dev/m72_scratch_prefill.py`): one launch dequantizes a layer's TurboQuant 4 K / V into fp16 in the rotated space,
+then MLX's fused SDPA — 1.03× native16's attention time per chunk at 260K (dequantize 3 ms of 96), bit-identical to the generic-op
+form. Three memory mechanisms, each measured with the OS footprint ledger (`proc_pid_rusage`, interval max) and MLX's allocator
+high-water in a fresh process per scenario, validated by known positives (1.00 and 16.00 scratches): (1) one lazy multi-layer graph
+holds ≈ 6.4 scratches — MLX allocates a kernel's output when it encodes it, several layers ahead of the GPU, and frees on
+completion, so `mx.depends` cannot help; evaluating once per full-attention layer holds it to one (+6 % on a 16-layer chain);
+(2) outputs sized to the growing T leave a stale buffer of a new size every chunk in MLX's buffer cache — 18 scratches by the OS
+ledger while MLX's own peak counter reads 2.2 — so the scratch must be cap-sized; (3) the OS ledger keeps freed Metal pages and
+reuses them, so only peaks are comparable. On real activations bf16 materialization fails even a 3e-2 tolerance (its 8-bit
+mantissa on sharp real attention), fp16 stays within it. Transferable: measure a transient's memory in the real graph shape with a
+process-level ledger; allocator counters miss cached buffers and lazy evaluation reorders lifetimes.

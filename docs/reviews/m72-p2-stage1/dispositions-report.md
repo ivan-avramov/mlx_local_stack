@@ -26,3 +26,16 @@ one lazy 16-layer graph holds 6.42 scratches; per-layer evaluation 1.08.
 | 16 | RHT assumption | GLM F10 | adopted (assumption) | |
 | 17 | provenance refusal fields | GLM F11 | adopted | arm orders + kernel meta |
 | 18 | dequant share is a diagnostic | GLM F12 | adopted | |
+
+## Verify (strict; fresh sessions) and fix round
+
+Sol (`opinion-verify-gpt-5.6-sol-high.md`): design findings 1–18 resolved except: (7) N1 uses random per-head-scaled data, not
+fixed constants — declined (N1 fails at rel 5.2–5.5, seed fixed; no material consequence); (17) report accepted a single pass —
+adopted (fix 2); new (19, blocker) full-cap acceptance not yet run — process, resolved by running the two-pass measurement and A4
+before Accept; (20, major) A1 over several heads compared independent maxima — adopted (fix 1); (21) integration of tests / skip
+entry / amended parser test — resolved at the merge commit; (22) the designer's memory spike ignored `dep` for p2s — fixed by the
+designer (`78ae2819`). GLM (`opinion-verify-glm-5.2-high.md`): no blocker or major; M1 causal-alignment diagnostic on the full path —
+adopted (fix 3); M2 = Sol 20. Test-writer minors: hard-coded 262,144 — adopted (fix 4); bare `KeyError` on an unsupported dtype —
+adopted (fix 5). One fresh fix-round implementer; failing-case tests for 1, 2, 3, 5 fail on candidate 1 and pass on candidate 2.
+Accepted by the operator 2026-11-10 ("accepted - sounds like a good plan"); merged fork `608e33ac`, stack `ed0348c2`.
+Post-accept finding (real activations, `benchmark/results/m72/realact/`): S20-P18.
