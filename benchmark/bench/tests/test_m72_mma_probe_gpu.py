@@ -187,12 +187,16 @@ def run_main(probe, argv):
         sys.argv = old
 
 
-def test_parser_choices(probe, capsys):
+# Behaviour, not help text (amended for the p2s mode): every mode (full / mq / mma stay; p2s added) and both arm orders are
+# accepted by the parser (a bad power state then refuses with exit 3 before any work, so exit 3 proves the arguments parsed),
+# and an unknown mode or order exits 2 (also in test_parser_rejects_unknown_choices below).
+@pytest.mark.parametrize("mode", ("full", "mq", "mma", "p2s"))
+@pytest.mark.parametrize("order", ("forward", "reverse"))
+def test_parser_choices(probe, monkeypatch, mode, order):
+    monkeypatch.setattr(probe, "power_state", lambda: {"wattage": "60W", "voltage": "20000mV", "battery": "80%"})
     with pytest.raises(SystemExit) as e:
-        run_main(probe, ["--help"])
-    assert e.value.code == 0
-    out = capsys.readouterr().out
-    assert "{forward,reverse}" in out and "{full,mq,mma}" in out
+        run_main(probe, ["--out", "/nonexistent/x.json", "--mode", mode, "--arm-order", order])
+    assert e.value.code == 3
 
 
 @pytest.mark.parametrize("argv", [["--arm-order", "sideways"], ["--mode", "nope"]])

@@ -19,6 +19,12 @@ M72 step 1.2 matrix-unit verify (C312 / C313): ``--mode mma`` measures the fork'
 ``dev/m72_mma_verify.py`` (simdgroup-MMA verify block, TQ4 and native16 tile loaders, full-cap buffers in place) against
 native16 SDPA / joint, TQ4 production and the best ``dev/m72_mq_decode.py`` grouping for k = 1..5, after an accuracy
 sweep against an fp32 reference (A1: joint_v1's tolerance) with planted-token cases and negative controls N1-N3.
+
+M72 P2' stage 1 (C314): ``--mode p2s`` measures the fork's dev prototype ``dev/m72_scratch_prefill.py`` (one Metal
+kernel dequantizes a layer's TQ4 K / V into a cap-sized fp16 scratch in the rotated space, then MLX's fused SDPA) per
+512-token prefill chunk against native16 fused_v1, today's TQ4 prefill and P1 (generic-op rotated dequantize, bf16), after
+an exactness sweep (dequant fidelity vs the generic-op reference, A1 vs the fp32 reference, causal alignment, N1); at
+262,144 also 16 chained layers as one lazy graph vs evaluated per layer. Spec: docs/specs/m72-p2-stage1-scratch.md.
 """
 
 import argparse
@@ -621,13 +627,260 @@ def measure_checkpoint_mma(T, tq, K, V, policy, mqm, mv, arm_order="forward"):
     return res
 
 
+# ---------------- M72 P2' stage 1: fused TQ4 dequantize into a scratch + MLX fused SDPA (--mode p2s; C314) ----------
+P2S_SWEEP_T = (1, 511, 512, 4096, 8193, 32768, 40000)
+P2S_SWEEP_L = (512, 37, 1)
+P2S_CONTROL = (8193, 37)  # (T, L) of N1, on planted data
+P2S_PLANT_SCALE = (1.0, 4.0, 16.0, 64.0)  # per KV head: V = scale x random normal (distinct per head)
+P2S_HEADS = (0, 6, 12, 18)  # one query head per KV head (R = 6)
+P2S_CHAIN_T = 262144
+P2S_CHAIN_LAYERS = 16
+P2S_ARM_ORDERS = {"forward": ("native16_fused_v1", "tq4_production", "p1_rotated_bf16", "p2s", "p2s_dequant_only")}
+P2S_ARM_ORDERS["reverse"] = tuple(reversed(P2S_ARM_ORDERS["forward"]))
+
+
+def fork_p2s_module():
+    fork_dev_module()  # puts the fork's dev/ on sys.path
+    import m72_scratch_prefill
+
+    return m72_scratch_prefill
+
+
+def fill_cache(cap, n_tokens, value_scale=None, step=4096):
+    """TQ4 cache preallocated to ``cap``, filled with ``n_tokens`` random bf16 K / V in chunks of ``step``.
+    ``value_scale`` (one factor per KV head) multiplies V per head (the planted N1 data)."""
+    tq = TurboQuantKVCache(bits=4, max_kv_size=cap, prealloc_tokens=cap)
+    sc = None if value_scale is None else mx.array(value_scale, dtype=mx.float32)[None, :, None, None]
+    for off in range(0, n_tokens, step):
+        n = min(step, n_tokens - off)
+        kc = mx.random.normal((1, NKV, n, D)).astype(DT)
+        vc = mx.random.normal((1, NKV, n, D))
+        vc = (vc if sc is None else vc * sc).astype(DT)
+        tq.update_and_fetch(kc, vc)
+        mx.eval(tq.keys, tq.values)
+    return tq
+
+
+def state_proxies(tq, T):
+    ksr, vsr = tq_mod._slice_state(tq.keys, T), tq_mod._slice_state(tq.values, T)
+    return tq_mod._QuantizedStateProxy(ksr, T, NKV), tq_mod._QuantizedStateProxy(vsr, T, NKV)
+
+
+def p2s_tq4_production(tq, q, T):
+    """Today's TQ4 prefill on the state at T (the cache holds exactly T)."""
+    ks, vs = state_proxies(tq, T)
+    return scaled_dot_product_attention(q, ks, vs, cache=tq, scale=SCALE, mask="causal")
+
+
+def p2s_ref_head(tq, q, T, h):
+    """fp32 reference for query head ``h``: codec.dequantize of the state sliced to T (unrotated), exact causal softmax
+    (query i at T - L + i sees tokens <= T - L + i), on the CPU stream. Returns (1, 1, L, D) fp32."""
+    L, kvh = q.shape[2], h // R
+    with mx.stream(mx.cpu):
+        ks = tq_mod._slice_state(tq.keys, T)
+        vs = tq_mod._slice_state(tq.values, T)
+        ks = tq_mod.TurboQuantMSEState(ks.norms[:, kvh:kvh + 1], ks.indices[:, kvh:kvh + 1])
+        vs = tq_mod.TurboQuantMSEState(vs.norms[:, kvh:kvh + 1], vs.indices[:, kvh:kvh + 1])
+        Kf = tq.key_codec.dequantize(ks).astype(mx.float32)
+        Vf = tq.value_codec.dequantize(vs).astype(mx.float32)
+        qf = q[:, h:h + 1].astype(mx.float32) * SCALE
+        s = qf @ mx.swapaxes(Kf, -1, -2)
+        visible = mx.arange(T)[None, :] <= (mx.arange(L)[:, None] + (T - L))
+        s = mx.where(visible, s, -mx.inf)
+        o = mx.softmax(s, axis=-1, precise=True) @ Vf
+        mx.eval(o)
+    del Kf, Vf, s
+    return o
+
+
+def p2s_a1_heads(tq, q, T, out, prod, heads=P2S_HEADS):
+    """{str(head): ACC} for ``out`` vs the fp32 reference, one head at a time (reference freed after each)."""
+    acc = {}
+    for h in heads:
+        ref = p2s_ref_head(tq, q, T, h)
+        acc[str(h)] = a1(out[:, h:h + 1], ref, rel_err(prod[:, h:h + 1], ref))
+        del ref
+        mx.clear_cache()
+    return acc
+
+
+def p2s_a1_all(tq, q, T, out, prod, heads=P2S_HEADS):
+    """One ACC over the listed heads. A1 holds per head: ``pass`` only if every head passes its own bound
+    (rel_h <= 2 max(prod_rel_h, 2^-12), allclose, finite). ``rel_err`` / ``prod_rel_err`` = maxima across heads (taken
+    independently; display only, never the verdict); ``failed_heads`` = heads that broke their own bound."""
+    per = p2s_a1_heads(tq, q, T, out, prod, heads)
+    failed = [int(h) for h, a in per.items() if not a["pass"]]
+    return {"rel_err": max(a["rel_err"] for a in per.values()),
+            "prod_rel_err": max(a["prod_rel_err"] for a in per.values()),
+            "allclose": all(a["allclose"] for a in per.values()), "finite": all(a["finite"] for a in per.values()),
+            "failed_heads": failed, "pass": not failed}
+
+
+def p2s_causal_alignment(pm, tq, T, L):
+    """MLX's mask="causal" with L queries over T keys vs explicit bottom-right / top-left boolean masks (fp16 scratch).
+    The gate is the full path: ``scratch_prefill_tq4`` itself (the cache holds exactly T) vs the same rotated SDPA +
+    inverse rotation under each explicit mask; the reference helpers' SDPA is recorded alongside. Aligned = close to
+    bottom-right and far from top-left, for both."""
+    assert int(tq.offset) == T, f"causal alignment needs the cache at offset T = {T}, not {tq.offset}"
+    q = mx.random.normal((1, NQ, L, D)).astype(DT)
+    k = pm.reference_dequant_rotated(tq.keys, T, tq.key_codec, mx.float16)
+    v = pm.reference_dequant_rotated(tq.values, T, tq.value_codec, mx.float16)
+    qr = tq.key_codec.prepare_queries(q).astype(mx.float16)
+    i, j = mx.arange(L)[:, None], mx.arange(T)[None, :]
+    br = mx.fast.scaled_dot_product_attention(qr, k, v, scale=SCALE, mask=(j <= i + (T - L)))
+    tl = mx.fast.scaled_dot_product_attention(qr, k, v, scale=SCALE, mask=(j <= i))
+
+    def unrot(o):
+        return tq.value_codec._rotate_inverse(o.astype(mx.float32))
+
+    full = pm.scratch_prefill_tq4(tq, q, SCALE)
+    f_br, f_tl = rel_err(full, unrot(br)), rel_err(full, unrot(tl))
+    ref = mx.fast.scaled_dot_product_attention(qr, k, v, scale=SCALE, mask="causal", force_fused=True)
+    r_br, r_tl = rel_err(ref, br.astype(mx.float32)), rel_err(ref, tl.astype(mx.float32))
+    ref_ok = r_br <= A1_ATOL and r_tl > A1_ATOL
+    full_ok = f_br <= A1_ATOL and f_tl > A1_ATOL
+    return {"T": T, "L": L, "path": "scratch_prefill_tq4", "rel_vs_bottom_right": f_br, "rel_vs_top_left": f_tl,
+            "reference_helpers": {"rel_vs_bottom_right": r_br, "rel_vs_top_left": r_tl, "pass": ref_ok},
+            "pass": full_ok and ref_ok}
+
+
+def p2s_exactness_sweep(pm, max_t):
+    """Cap-40,960 cache filled to each sweep T: dequant fidelity (fp16, bf16), full-path identity (diagnostic) and A1
+    on the L = 512 rows (plus the other L, recorded); causal alignment; N1 on planted data."""
+    rows, acc_rows, controls = [], [], []
+    sweep = [T for T in P2S_SWEEP_T if T <= max_t]
+    skipped = [T for T in P2S_SWEEP_T if T > max_t]
+    tq = TurboQuantKVCache(bits=4, max_kv_size=MQ_SWEEP_CAP, prealloc_tokens=MQ_SWEEP_CAP)
+    off = 0
+    causal = {"skipped": f"T = {P2S_CONTROL[0]} > --max-t"}
+    for T in sweep:
+        kc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        vc = mx.random.normal((1, NKV, T - off, D)).astype(DT)
+        tq.update_and_fetch(kc, vc)
+        mx.eval(tq.keys, tq.values)
+        off = T
+        for dt, name in ((mx.float16, "float16"), (mx.bfloat16, "bfloat16")):
+            k_rot, v_rot = pm.dequant_rotated(tq, T, dtype=dt)
+            for what, got, st, codec in (("K", k_rot, tq.keys, tq.key_codec), ("V", v_rot, tq.values,
+                                                                                tq.value_codec)):
+                ref = pm.reference_dequant_rotated(st, T, codec, dt)
+                rows.append({"T": T, "L": None, "what": what, "dtype": name,
+                             "bit_identical": bits_equal(got[:, :, :T, :], ref)})
+            del k_rot, v_rot, ref
+        for L in P2S_SWEEP_L:
+            if L > T:
+                continue
+            q = mx.random.normal((1, NQ, L, D)).astype(DT)
+            out = pm.scratch_prefill_tq4(tq, q, SCALE)
+            rows.append({"T": T, "L": L, "what": "prefill", "dtype": "float16",
+                         "bit_identical": bits_equal(out, pm.reference_prefill(tq, q, SCALE, T, mx.float16))})
+            acc = p2s_a1_all(tq, q, T, out, p2s_tq4_production(tq, q, T))
+            acc_rows.append({"T": T, "L": L, "gates_a1": L == CHUNK, **acc})
+        if T == P2S_CONTROL[0]:  # the cache holds exactly T: the full path's own causal alignment
+            causal = p2s_causal_alignment(pm, tq, T, P2S_CONTROL[1])
+        mx.clear_cache()
+    T, L = P2S_CONTROL
+    del tq
+    mx.clear_cache()
+    if T <= max_t:
+        tqp = fill_cache(MQ_SWEEP_CAP, T, value_scale=P2S_PLANT_SCALE)
+        q = mx.random.normal((1, NQ, L, D)).astype(DT)
+        prod = p2s_tq4_production(tqp, q, T)
+        heads = tuple(range(NQ))
+        pos = p2s_a1_all(tqp, q, T, pm.scratch_prefill_tq4(tqp, q, SCALE), prod, heads)
+        acc_rows.append({"T": T, "L": L, "gates_a1": False, "case": "planted_unshifted", **pos})
+        neg = p2s_a1_all(tqp, q, T, pm.scratch_prefill_tq4(tqp, q, SCALE, _kv_head_shift=1), prod, heads)
+        controls.append({"name": "N1", "T": T, "L": L, "rel_err": neg["rel_err"], "pass_a1": neg["pass"]})
+        del tqp
+        mx.clear_cache()
+    n_ok = sum(r["bit_identical"] for r in rows)
+    fid = [r for r in rows if r["what"] in ("K", "V")]
+    gate = [r for r in acc_rows if r["gates_a1"]]
+    log(f"p2s exactness: dequant fidelity {sum(r['bit_identical'] for r in fid)}/{len(fid)}, full-path identity "
+        f"(diagnostic) {sum(r['bit_identical'] for r in rows if r['what'] == 'prefill')}/"
+        f"{sum(r['what'] == 'prefill' for r in rows)}; A1 L=512 rows {sum(r['pass'] for r in gate)}/{len(gate)} "
+        f"(all rows {sum(r['pass'] for r in acc_rows)}/{len(acc_rows)}); causal {causal}; controls (must fail): "
+        + ", ".join(f"{c['name']} rel {c['rel_err']:.3g} pass_a1 {c['pass_a1']}" for c in controls)
+        + (f"; skipped T {skipped}" if skipped else ""))
+    return {"rows": rows, "accuracy_rows": acc_rows, "controls": controls, "causal_alignment": causal,
+            "skipped_T": skipped, "n": len(rows), "n_ok": n_ok}
+
+
+def p2s_chain16(pm, tq, T, q0):
+    """16 chained ``scratch_prefill_tq4`` layers over 16 distinct caches at T (layer i + 1's queries = layer i's
+    output): one lazy graph vs evaluated per layer."""
+    caches = [tq] + [fill_cache(CAP, T) for _ in range(P2S_CHAIN_LAYERS - 1)]
+
+    def lazy():
+        h = q0
+        for c in caches:
+            h = pm.scratch_prefill_tq4(c, h, SCALE)
+        return h
+
+    def per_layer():
+        h = q0
+        for c in caches:
+            h = pm.scratch_prefill_tq4(c, h, SCALE)
+            mx.eval(h)
+        return h
+
+    res = {"lazy": timeit(lazy, min_iters=3, warmup=1), "per_layer_eval": timeit(per_layer, min_iters=3, warmup=1)}
+    del caches
+    mx.clear_cache()
+    return res
+
+
+def measure_checkpoint_p2s(T, tq, K, V, policy, pm, arm_order="forward"):
+    res = {"T": T}
+    ks, vs = state_proxies(tq, T)
+    Kt, Vt = K[:, :, :T, :], V[:, :, :T, :]
+    tq_bytes = tq_state_bytes(tq_mod._slice_state(tq.keys, T)) + tq_state_bytes(tq_mod._slice_state(tq.values, T))
+    res["bytes"] = {"tq4_kv": tq_bytes, "native16_kv": 2 * NKV * T * D * 2,
+                    "p2s_scratch": 2 * NKV * tq.keys.norms.shape[2] * D * 2}
+    qp = mx.random.normal((1, NQ, CHUNK, D)).astype(DT)
+    mx.eval(qp)
+    timed = {
+        "native16_fused_v1": lambda: scaled_dot_product_attention(qp, Kt, Vt, cache=None, scale=SCALE,
+                                                                  mask="causal", policy=policy),
+        "tq4_production": lambda: scaled_dot_product_attention(qp, ks, vs, cache=tq, scale=SCALE, mask="causal"),
+        "p1_rotated_bf16": lambda: pm.reference_prefill(tq, qp, SCALE, T, mx.bfloat16),
+        "p2s": lambda: pm.scratch_prefill_tq4(tq, qp, SCALE),
+        "p2s_dequant_only": lambda: pm.dequant_rotated(tq, T),
+    }
+    arms = {}
+    for arm in P2S_ARM_ORDERS[arm_order]:
+        arms[arm] = timeit(timed[arm], min_iters=3, warmup=1 if arm == "tq4_production" else 2)
+        mx.clear_cache()
+    res["p2s"] = arms
+    if T == P2S_CHAIN_T:
+        res["chain16"] = p2s_chain16(pm, tq, T, qp)
+    out = pm.scratch_prefill_tq4(tq, qp, SCALE)
+    mx.eval(out)
+    res["p2s_vs_reference_bit_identical"] = bits_equal(out, pm.reference_prefill(tq, qp, SCALE, T, mx.float16))
+    mx.clear_cache()
+    prod = p2s_tq4_production(tq, qp, T)
+    mx.eval(prod)
+    res["p2s_accuracy"] = p2s_a1_heads(tq, qp, T, out, prod)
+    del out, prod
+    mx.clear_cache()
+    a = res["p2s"]
+    log(f"T={T} p2s chunk (ms): fused_v1 {a['native16_fused_v1']['median_ms']:.1f}, tq4 prod "
+        f"{a['tq4_production']['median_ms']:.1f}, p1 bf16 {a['p1_rotated_bf16']['median_ms']:.1f}, p2s "
+        f"{a['p2s']['median_ms']:.1f} (dequant {a['p2s_dequant_only']['median_ms']:.1f})"
+        + (f"; chain16 lazy {res['chain16']['lazy']['median_ms']:.0f} / per-layer "
+           f"{res['chain16']['per_layer_eval']['median_ms']:.0f}" if "chain16" in res else "")
+        + f"; bit-identical {res['p2s_vs_reference_bit_identical']}; A1 "
+        f"{all(x['pass'] for x in res['p2s_accuracy'].values())}")
+    return res
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--max-t", type=int, default=CAP)
-    ap.add_argument("--mode", choices=("full", "mq", "mma"), default="full")
+    ap.add_argument("--mode", choices=("full", "mq", "mma", "p2s"), default="full")
     ap.add_argument("--arm-order", choices=tuple(ARM_ORDERS), default="forward",
-                    help="--mode mma: order of the five timed arms per checkpoint and k")
+                    help="--mode mma / p2s: order of the five timed arms per checkpoint (and k)")
     args = ap.parse_args()
 
     mx.set_cache_limit(4 << 30)
@@ -671,6 +924,14 @@ def main():
                               "min_block_tokens": mv.MIN_BLOCK_TOKENS, "fragment_types": mv.FRAGMENT_TYPES,
                               "fragment_mapping_ok": mapping_ok}
         meta["mma_accuracy"] = mma_accuracy_sweep(mv)
+    pm = None
+    if args.mode == "p2s":
+        pm = fork_p2s_module()
+        meta["fork"] = fork_sha()
+        meta["arm_order"] = list(P2S_ARM_ORDERS[args.arm_order])
+        meta["p2s_kernel"] = {"thread_mapping": pm.THREAD_MAPPING, "codebook_placement": pm.CODEBOOK_PLACEMENT,
+                              "dtype": "float16", "threadgroup": pm.THREADGROUP}
+        meta["p2s_exactness"] = p2s_exactness_sweep(pm, args.max_t)
     tq = TurboQuantKVCache(bits=4, max_kv_size=CAP, prealloc_tokens=CAP)
     K = mx.zeros((1, NKV, CAP, D), dtype=DT)
     V = mx.zeros((1, NKV, CAP, D), dtype=DT)
@@ -701,7 +962,9 @@ def main():
             if not power_ok(p):
                 log(f"ABORT: power state {p}")
                 sys.exit(4)
-            if mv is not None:
+            if pm is not None:
+                r = measure_checkpoint_p2s(off, tq, K, V, policy, pm, args.arm_order)
+            elif mv is not None:
                 r = measure_checkpoint_mma(off, tq, K, V, policy, mqm, mv, args.arm_order)
             elif mqm is not None:
                 r = measure_checkpoint_mq(off, tq, K, V, policy, mqm)
