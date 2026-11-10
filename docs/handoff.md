@@ -5,7 +5,7 @@ S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per a
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 20 ruled C312, C313 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P8`; a new session
+Decisions: session 20 ruled C312, C313 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P13`; a new session
 restarts at P1 and cites `S21-P<n>`. Next decision id **C314**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
@@ -20,7 +20,7 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 2. Pushes: `origin/main` = `ebae76c8` unless the session-20 push happened (then = the session-20 tip). Fork `../mlx-vlm`: local
    `main` = `65583e27` (the D1 + D2 prototype, `dev/m72_mq_decode.py`), origin = `e3e38397` unless Push 3 happened; `../mlx-serve` =
    `1ddf6f84`; stack gitlink `src/mlx-vlm` = `e3e38397` (dev-only change, no bump).
-3. Worktrees: only those listed under Worktrees below.
+3. No worktrees (stack: main checkout only; fork: `main` only).
 4. Power 140 W / 28 V, **and GPU idle utilization ≈ 0 % with a tiny-op floor ≈ 0.17 ms** before any GPU work (S20-P1: a stuck-busy
    GPU read 100 % / ≈ 1 ms and cleared only on reboot). Script: `benchmark/results/m72/d1d2/floor.py`; launcher pattern
    `benchmark/results/m72/d1d2/run_mq.sh`.
@@ -38,24 +38,21 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 ## Next, in order
 
-1. **M72 1.2 per C312:** a matrix-unit TQ4 verify kernel (R·k = 18 query rows per KV head over unpacked TQ4 tiles, simdgroup
-   matrix ops), held to `joint_v1`'s tolerance (allclose ≈ 3 bf16 ulps vs the per-query reference), in the fork's `dev/`; extend
-   `m72_tq4_probe.py --mode mq` with it, compare to `D1D2.md` → the operator. Then scale it to prefill on the Neural Accelerators
-   (P2′; first the ≥ 3× tensor-op `matmul2d` microkernel). Exact D2 stays the k = 1 path; opt-in per pick like `joint_v1`.
-   **C313:** the microbenchmark gets a native16 arm (if it speeds native16 verify, it ships for native16 too via 1.3 +
-   certification; the KV choice is then measured against that better baseline); M72 targets ≥ 128K, no tighter time box.
-2. **Push 3** (fork `65583e27`) and the stack push — approved (C312); done in session 20 after their full gates unless FIRST 2 says otherwise.
+1. **S20-P13 with the operator** (matrix-unit verify measured: TQ4 MTP ON 1.10× / 1.19× of shipped native16 projected,
+   native16 + kernel ≈ flat; kernel tile-load bound at 86 of 361 GB/s). Lead rec: a bounded tuning pass (loading threads decoupled
+   from the 8-row tiles, more token blocks), then P2′; no certification until prefill reaches parity.
+2. **Pushes:** fork `main` (`3baaeffe`, the matrix-unit kernel) and stack `main` past `a487b53d` (C313 records, idle-GPU gate, spec, the four-eyes run, results) — ask the operator; each needs its full gate (stack ≈ 70 min, never during a measured leg).
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
 
 Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
 pre-authorized.
 
-## Worktrees (temporary; four-eyes light run for the C312 / C313 matrix-unit verify kernel, spec `docs/specs/m72-mma-verify.md`)
+## Worktrees
 
-- `$STACK_WORKDIR/fe-m72mma/{impl,tests}/mlx_local_stack` (stack, detached at `ab5eb0d8`) and `…/{impl,tests}/mlx-vlm` (fork,
-  detached at `a3fdb13e`); briefs and helper outputs in `$STACK_WORKDIR/fe-m72mma/{briefs,out}`. Resolution: harvest the accepted
-  candidate + tests into main / fork main, then `git worktree remove` all four (verify nothing unharvested first).
+None (the six four-eyes worktrees and both `fe/m72-mma-c2` branches were harvested and removed 2026-11-10). Scratch kept:
+`$STACK_WORKDIR/fe-m72mma/` (briefs, helper outputs, frozen test sets, smoke runs), `$STACK_WORKDIR/m72/mma-s20/` (raw run, harvested
+into `benchmark/results/m72/mma/`).
 
 ## Archives (local, no push)
 

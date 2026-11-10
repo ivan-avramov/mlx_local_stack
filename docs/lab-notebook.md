@@ -4816,3 +4816,17 @@ near native16's joint call (k = 3: 5.73 vs 4.97 ms). Transferable: before projec
 the single-query kernel is bandwidth-bound (here it ran at 131 of 361 GB/s, which already said it was not); amortizing many queries
 needs matrix units (a tiny flash-attention tile), not more queries per simdgroup. Also: a stuck-busy GPU (100 % idle utilization,
 ≈ 1 ms tiny-op floor) cleared on reboot; check idle utilization and the floor before every measured pass.
+
+## 2026-11-10 (session 20) — M72 matrix-unit verify: one tile load serves every query, and the per-threadgroup load becomes the bound (M5 Max, shapes of `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`)
+
+`dev/m72_mma_verify.py` (fork `3baaeffe`): a k-token verify block as one tiny flash-attention — per (KV head, token block) a
+threadgroup loads a 16-token K / V tile into threadgroup memory once (TurboQuant 4 unpacked to codebook values in the rotated space,
+or bf16 copied) and computes S = Q·Kᵀ and O += P·V for all R·k query rows with simdgroup 8×8 multiply-accumulate. Generated
+`benchmark/results/m72/MMA.md`. Accuracy holds at the operator's strict 2× of production's own error. The per-query cost that bound
+every earlier kernel is gone: at 260K a k = 5 block costs 3.37 ms vs 3.15 at k = 3 (native16's joint call 7.51 vs 4.64; the exact
+multi-query kernel 8.42 vs 5.18). What binds now is each threadgroup's tile load: the kernel gets faster with more threads per
+threadgroup (k = 1 with one simdgroup 4.84 ms, k = 3 with three 3.15) and reads only 86 of the 361 GB/s a plain read of the TQ4
+bytes reaches. The same kernel on native16 bf16 tiles barely beats MLX's joint call (0.90× at k = 3, 255 of ≈ 469 GB/s), so the
+win is TQ4-specific so far: 4× fewer bytes plus matrix units. Transferable: once queries are amortized by matrix units, size the
+loading threads to the tile, not to the number of query rows; and a projection's "≈ one decode pass" needs the kernel to be
+bandwidth-bound to come true.
