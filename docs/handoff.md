@@ -5,8 +5,8 @@ S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per a
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 20 ruled C312–C315 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P18`; a new session
-restarts at P1 and cites `S21-P<n>`. Next decision id **C316**.
+Decisions: session 20 ruled C312–C316 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P18`; a new session
+restarts at P1 and cites `S21-P<n>`. Next decision id **C317**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
