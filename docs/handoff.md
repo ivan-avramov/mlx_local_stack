@@ -5,7 +5,7 @@ S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per a
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 20 ruled C312, C313 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P13`; a new session
+Decisions: session 20 ruled C312, C313 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P15`; a new session
 restarts at P1 and cites `S21-P<n>`. Next decision id **C314**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
@@ -38,10 +38,12 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 ## Next, in order
 
-1. **S20-P13 with the operator** (matrix-unit verify measured: TQ4 MTP ON 1.10× / 1.19× of shipped native16 projected,
-   native16 + kernel ≈ flat; kernel tile-load bound at 86 of 361 GB/s). Lead rec: a bounded tuning pass (loading threads decoupled
-   from the 8-row tiles, more token blocks), then P2′; no certification until prefill reaches parity.
-2. **Pushes:** fork `main` (`3baaeffe`, the matrix-unit kernel) and stack `main` past `a487b53d` (C313 records, idle-GPU gate, spec, the four-eyes run, results) — ask the operator; each needs its full gate (stack ≈ 70 min, never during a measured leg).
+1. **M72 P2′ (S20-P14 lead call):** spec a TQ4 flash prefill kernel on the Neural Accelerators (MLX `attention_nax` structure,
+   per-simdgroup 16-row Q fragments, register-direct K / V fragments with the spike F3 TQ4 loader — packed bytes staged per
+   simdgroup + threadgroup codebook; native16 loader as the matched control; MLX's NAX headers inlined into the JIT as in spike F2)
+   → the operator's Go → four-eyes light → microbenchmark vs `fused_v1` per 512-token chunk at 8K–260K. Verify-kernel changes
+   (512-token block cap; a NAX verify variant) wait for 1.3.
+2. **Pushes:** stack `origin/main` = `dec8031b` (pushed 2026-11-10); local commits since (tuning sweep, ablation, spikes F2 / F3, records) need the operator's ask + a full gate. Fork: local `main` = `a0d5c858` (gate PASS), origin = `a3fdb13e`; the push is refused by the naming hook on `3baaeffe`'s docstring ("the 4-bit", a false positive; results cite `3baaeffe`) — S20-P15 asks the operator to allow one `--no-verify` push. <!-- allow-shorthand: quotes the hook's false positive -->
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
 
@@ -69,6 +71,9 @@ into `benchmark/results/m72/mma/`).
   stays and only matrix units amortize it.
 - Exactness constraints have a price: state what the bit-identity contract pins (partition, accumulation order) before estimating.
 - Check GPU idle utilization and the tiny-op floor before each measured pass; a stuck-busy GPU can need a reboot.
+- The fork has no commit-time naming hook: run `bench.modelnames` over a fork diff before committing ("the 4-bit …" in a <!-- allow-shorthand: quotes the hook's false positive -->
+  docstring blocked a push of an already-cited commit).
+- MLX's steel headers are invisible to the `mx.fast.metal_kernel` JIT: inline them (spike F2) to use the NAX fragment.
 
 ## Rules learned (session 19)
 

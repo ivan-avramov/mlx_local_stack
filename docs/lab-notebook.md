@@ -4830,3 +4830,16 @@ bytes reaches. The same kernel on native16 bf16 tiles barely beats MLX's joint c
 win is TQ4-specific so far: 4× fewer bytes plus matrix units. Transferable: once queries are amortized by matrix units, size the
 loading threads to the tile, not to the number of query rows; and a projection's "≈ one decode pass" needs the kernel to be
 bandwidth-bound to come true.
+
+## 2026-11-10 (session 20, later) — Neural Accelerators inside a custom kernel, and TurboQuant's codebook-lookup floor (M5 Max)
+
+Spike F2: `matmul2d` on the M5 Max Neural Accelerators runs inside `mx.fast.metal_kernel` once MLX's own steel NAX fragment
+(per-simdgroup cooperative tensors, 16 × 32 × 16 descriptor) is inlined into the JIT header — the JIT cannot see MLX's kernel
+include tree, and spike F's device-tensor operands are the unsupported form. Compute-bound it reaches 58.6 TFLOPS against 15.8 for
+simdgroup 8 × 8 matrix ops (3.7×); a streaming Q·Kᵀ is memory-bound and ties. Spike F3: TurboQuant keys can be unpacked straight
+into those fragments (a lane's fragment elements are four consecutive head dims of a token, one 16-bit half of a packed word), exact
+to half precision. But the unpack, not the matrix units, sets the pace: whichever way the 16-entry codebook is consulted (simdgroup
+shuffle, threadgroup table, staged packed bytes, a select tree of literals, a byte → half2 table) it runs near ≈ 300 G lookups/s,
+and a 260K verify block needs ≈ 533 M of them (K and V, 256 dims, 4 KV heads), ≈ 1.5–2 ms. Transferable: a non-uniform
+low-bit codebook costs a gather per element that the tensor units cannot absorb (they take uniform (u)int4 operands); it caps
+decode-shaped attention near the gather rate, but amortizes away in prefill, where hundreds of query rows share each unpacked tile.
