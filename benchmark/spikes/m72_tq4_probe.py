@@ -36,6 +36,8 @@ from mlx_vlm.models.base import scaled_dot_product_attention
 from mlx_vlm.mtp_verify_scan import joint_attention, per_query_attention
 from mlx_vlm.turboquant import TurboQuantKVCache
 
+import m72_gates  # noqa: E402  (sibling module; the script dir is on sys.path)
+
 NQ, NKV, D = 24, 4, 256
 R = NQ // NKV
 CAP = 262144
@@ -404,12 +406,19 @@ def main():
     if not power_ok(p0):
         log(f"REFUSED: power state {p0}")
         sys.exit(3)
+    one = mx.ones((16,))
+    mx.eval(one)
+    g0 = {"device_utilization_pct": m72_gates.gpu_utilization(),
+          "tiny_op_floor_ms": m72_gates.tiny_op_floor_ms(lambda: (mx.eval(one + 1), mx.synchronize()))}
+    if not m72_gates.gpu_idle_ok(g0):
+        log(f"REFUSED: GPU not idle {g0} (limits {m72_gates.MAX_UTIL_PCT} % / {m72_gates.MAX_FLOOR_MS} ms; S20-P1)")
+        sys.exit(5)
     meta = {
         "probe": "m72_tq4_probe", "mlx": mx.__version__, "device": mx.device_info(),
         "MLX_METAL_GPU_ARCH": os.environ.get("MLX_METAL_GPU_ARCH"), "python": platform.python_version(),
         "shapes": {"n_q": NQ, "n_kv": NKV, "head_dim": D, "dtype": "bfloat16", "chunk": CHUNK, "cap": CAP},
         "tq": {"bits": 4, "mode": "mse", "seed": tq_mod.DEFAULT_TURBOQUANT_SEED}, "power_start": p0,
-        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mode": args.mode,
+        "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "mode": args.mode, "gpu_idle_start": g0,
     }
     log(f"start {meta['device']['architecture']} MLX_METAL_GPU_ARCH={meta['MLX_METAL_GPU_ARCH']} power {p0}")
 
