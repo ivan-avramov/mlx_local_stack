@@ -1,6 +1,6 @@
 # Spec: M72 1.2 matrix-unit verify kernel prototype (C312 / C313; four-eyes light)
 
-Status: v1.1, 2026-11-09 (session 20; v1.1 adds the JSON schema and report formulas before dispatch). Designer: the session. Records: `docs/open-questions.md` C312, C313, S20-P2, S20-P10.
+Status: v1.2, 2026-11-09 (session 20; v1.1 adds the JSON schema and report formulas before dispatch; v1.2 = the fix round's adopted findings: A1 floor 2⁻¹² (restores the operator's 2×), the production reference slices to exactly `lengths[-1]`, launcher / report provenance, counterbalanced arm order, mapping gate, A3 needs all six controls). Designer: the session. Records: `docs/open-questions.md` C312, C313, S20-P2, S20-P10.
 
 ## Goal (verbatim in every brief)
 
@@ -80,7 +80,13 @@ def plan_blocks(max_length: int, block_tokens=None) -> tuple[int, int]   # (Bloc
 - JSON: `meta.mode = "mma"`, `meta.fork`, `meta.mma_accuracy` (sweep rows, controls), `checkpoints[].mma[k]`. Existing modes
   unchanged.
 - `m72_run_mma.sh <out_dir>`: two passes `mma-1`, `mma-2`, 600 s idle between, exit code = first failing pass (11 / 12), never
-  masked.
+  masked; refuses (exit 10, nothing run) when `<out_dir>` already holds `mma-1.json` or `mma-2.json`; executable (mode 755).
+  Pass 1 runs the timed arms in the order native16, tq4_production, mq_best, mma_tq4, mma_n16 (`--arm-order forward`), pass 2
+  in the reverse order (`--arm-order reverse`); `meta.arm_order` records it.
+- The probe aborts (exit 6, before any measured work) when the kernel's fragment-mapping self-check fails; its result is in
+  `meta.mma_kernel.fragment_mapping_ok`.
+- `m72_mma_report.py` refuses (nonzero exit, message) to combine passes whose `meta.fork.head`, `meta.mlx`,
+  `meta.device.architecture` or checkpoint T lists differ; it prints each pass's `meta.arm_order`.
 - `m72_mma_report.py <run_dir>` → stdout Markdown (`benchmark/results/m72/MMA.md`, GENERATED header): accuracy table; per-layer
   times (T, k, the five arms, mma_tq4 / tq4_production, mma_tq4 / native16, mma_n16 / native16); pass-to-pass drift; projections
   for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` with `m72_mq_report`'s method and `PICK_BASELINE`: MTP ON k = 3 for TQ4 +
@@ -120,13 +126,16 @@ Passes = `mma-1.json`, `mma-2.json` in the run dir, whichever exist; times = mea
 
 ## Acceptance criteria (pre-registered, S20-P10)
 
-- A1 Accuracy, each arm, every sweep case and every checkpoint: rel error ≤ 2 × max(the production path's rel error, 2⁻⁸) and
+- A1 Accuracy, each arm, every sweep case and every checkpoint: rel error ≤ 2 × max(the production path's rel error, 2⁻¹²) and
   `mx.allclose(out_fp32, ref, atol=3e-2, rtol=3e-2)` (the `joint_v1` test tolerance). Production path: TQ4 singleton /
-  `per_query_attention`; native16 `scaled_dot_product_attention` per query.
+  `per_query_attention`; native16 `scaled_dot_product_attention` per query. The production comparison reads exactly the tokens
+  [0, lengths[j]) for query j, also when the cache holds more (the planted caches hold T + 1): the TQ4 state is sliced to
+  `lengths[-1]` (a real slice, not proxy metadata) before the production call.
 - A2 Planted-token masking: a case where one key per query dominates attention (aligned with that query, large norm) at position
   lengths[j] − 1 and a dominant key at position lengths[0] (visible only to j ≥ 1): A1 holds on both arms.
 - A3 Negative controls fail A1 on both arms: N1 `_kv_head_shift=1`; N2 lengths + 1 (leak) and N3 lengths − 1 (drop), each on the
-  planted case.
+  planted case. The report states A3 holds only when exactly the six (N1–N3 × two arms) controls are present and each `pass` is
+  False.
 - A4 No NaN / Inf for any sweep case, including k = 1, lengths at tile and block boundaries (`MQ_SWEEP_T` straddles), and T not a
   multiple of Tt.
 - A5 No layout copy: the kernel's K/V inputs are the full-cap buffers themselves (checked by identity / shape = cap in a test).
