@@ -5,8 +5,8 @@ S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per a
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 20 ruled C312 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P2`; a new session
-restarts at P1 and cites `S21-P<n>`. Next decision id **C313**.
+Decisions: session 20 ruled C312, C313 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P8`; a new session
+restarts at P1 and cites `S21-P<n>`. Next decision id **C314**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -42,10 +42,11 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
    matrix ops), held to `joint_v1`'s tolerance (allclose ≈ 3 bf16 ulps vs the per-query reference), in the fork's `dev/`; extend
    `m72_tq4_probe.py --mode mq` with it, compare to `D1D2.md` → the operator. Then scale it to prefill on the Neural Accelerators
    (P2′; first the ≥ 3× tensor-op `matmul2d` microkernel). Exact D2 stays the k = 1 path; opt-in per pick like `joint_v1`.
+   **C313:** the microbenchmark gets a native16 arm (if it speeds native16 verify, it ships for native16 too via 1.3 +
+   certification; the KV choice is then measured against that better baseline); M72 targets ≥ 128K, no tighter time box.
 2. **Push 3** (fork `65583e27`) and the stack push — approved (C312); done in session 20 after their full gates unless FIRST 2 says otherwise.
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
-   Small candidate: an idle-GPU gate in `m72_tq4_probe.py` beside the power gate (S20-P1) — needs its own proposal.
 
 Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
 pre-authorized.
