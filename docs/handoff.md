@@ -1,12 +1,12 @@
-# Handoff — 2026-11-09 (session 20: M72 1.2 D1 + D2 MEASURED; S20-P2 (next step after an exact verify kernel fell short) with the operator; Push 3 / stack push asked)
+# Handoff — 2026-11-09 (session 20: M72 1.2 D1 + D2 MEASURED; C312: matrix-unit TQ4 verify next; Push 3 + stack push approved)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M66–M74, then `docs/open-questions.md` top entries (newest first: S20-P2,
 S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to
 certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
 boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
 
-Decisions: session 20 ruled none (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P2`; a new session
-restarts at P1 and cites `S21-P<n>`. Next decision id **C312**.
+Decisions: session 20 ruled C312 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P2`; a new session
+restarts at P1 and cites `S21-P<n>`. Next decision id **C313**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -38,10 +38,11 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 
 ## Next, in order
 
-1. **S20-P2 with the operator** (lead rec: (b) a matrix-unit TQ4 verify kernel held to `joint_v1`'s tolerance standard, as the
-   first stage of P2′ — verify shape first, then prefill on the Neural Accelerators; exact D2 stays the k = 1 path). Whatever is
-   chosen gets its PLAN row in the ruling's commit.
-2. **Push 3** (fork `65583e27`, cited by `D1D2.md`) and the stack push (`main` past `ebae76c8`) — asked in session 20.
+1. **M72 1.2 per C312:** a matrix-unit TQ4 verify kernel (R·k = 18 query rows per KV head over unpacked TQ4 tiles, simdgroup
+   matrix ops), held to `joint_v1`'s tolerance (allclose ≈ 3 bf16 ulps vs the per-query reference), in the fork's `dev/`; extend
+   `m72_tq4_probe.py --mode mq` with it, compare to `D1D2.md` → the operator. Then scale it to prefill on the Neural Accelerators
+   (P2′; first the ≥ 3× tensor-op `matmul2d` microkernel). Exact D2 stays the k = 1 path; opt-in per pick like `joint_v1`.
+2. **Push 3** (fork `65583e27`) and the stack push — approved (C312); done in session 20 after their full gates unless FIRST 2 says otherwise.
 3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
 4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
    Small candidate: an idle-GPU gate in `m72_tq4_probe.py` beside the power gate (S20-P1) — needs its own proposal.
