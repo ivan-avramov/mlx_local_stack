@@ -33,7 +33,7 @@ from pathlib import Path
 
 NQ, NKV, D, CHUNK = 24, 4, 256, 512
 SCALE = 1.0 / 16.0
-SCENARIOS = ("noop", "kp_one", "kp_whole", "fwd_lazy", "fwd_eval", "fwd_dep")
+SCENARIOS = ("noop", "kp_one", "kp_whole", "fwd_lazy", "fwd_eval", "fwd_dep", "fwd_resident", "grow")
 
 _F = [
     "ri_user_time",
@@ -106,8 +106,8 @@ def standin_kernel():
         uint kw = kidx[(h * key_norms_shape_cap + t) * 32 + d8];
         uint vw = vidx[(h * key_norms_shape_cap + t) * 32 + d8];
         for (int n = 0; n < 8; n++) {
-            kout[((ulong)h * T + t) * 256 + d8 * 8 + n] = static_cast<bfloat>(kn * float((kw >> (4 * n)) & 15u));
-            vout[((ulong)h * T + t) * 256 + d8 * 8 + n] = static_cast<bfloat>(vn * float((vw >> (4 * n)) & 15u));
+            kout[((ulong)h * S + t) * 256 + d8 * 8 + n] = static_cast<half>(kn * float((kw >> (4 * n)) & 15u));
+            vout[((ulong)h * S + t) * 256 + d8 * 8 + n] = static_cast<half>(vn * float((vw >> (4 * n)) & 15u));
         }
     """
     return mx.fast.metal_kernel(
@@ -118,7 +118,9 @@ def standin_kernel():
     )
 
 
-def make_impl(name):
+def make_impl(name, scratch_size="cap"):
+    """(dequant, prefill). dequant returns (K, V) whose token axis is T (scratch_size "t") or the state's capacity ("cap",
+    only [0, T) written — stage 1's design); prefill slices to T."""
     import mlx.core as mx
 
     if name == "standin":
@@ -129,13 +131,14 @@ def make_impl(name):
             ins = [ks.norms, ks.indices, vs.norms, vs.indices]
             if dep is not None:
                 ins = mx.depends(ins, dep)
+            S = T if scratch_size == "t" else ks.norms.shape[2]
             k, v = kern(
                 inputs=ins,
-                template=[("T", T), ("NKV", NKV), ("key_norms_shape_cap", ks.norms.shape[2])],
+                template=[("T", T), ("S", S), ("NKV", NKV), ("key_norms_shape_cap", ks.norms.shape[2])],
                 grid=(NKV * T * 32, 1, 1),
                 threadgroup=(256, 1, 1),
-                output_shapes=[(1, NKV, T, D), (1, NKV, T, D)],
-                output_dtypes=[mx.bfloat16, mx.bfloat16],
+                output_shapes=[(1, NKV, S, D), (1, NKV, S, D)],
+                output_dtypes=[mx.float16, mx.float16],
             )
             return k, v
 
@@ -149,7 +152,7 @@ def make_impl(name):
                 if dep is not None:
                     idx_src, nrm = mx.depends([idx_src, nrm], dep)
                 idx = tq_mod._unpack_lowbit(idx_src, int(codec.bits), D).astype(mx.int32)
-                out.append((mx.take(codec.codebook, idx, axis=0) * nrm[..., None]).astype(mx.bfloat16))
+                out.append((mx.take(codec.codebook, idx, axis=0) * nrm[..., None]).astype(mx.float16))
             return out
 
     elif name == "p2s":
@@ -158,17 +161,16 @@ def make_impl(name):
         import m72_scratch_prefill as m
 
         def dequant(cache, T, dep=None):
-            if dep is not None:  # tie the state arrays to the dependency, then let the kernel read them
-                for st in (cache.keys, cache.values):
-                    st.norms, st.indices = mx.depends([st.norms, st.indices], dep)
-            return m.dequant_rotated(cache, T)
+            return m.dequant_rotated(cache, T)  # cap-sized, fp16 (spec v1.1)
 
     else:
         raise ValueError(name)
 
-    def prefill(cache, q, T, dep=None):
-        k, v = dequant(cache, T, dep)
-        qr = cache.key_codec.prepare_queries(q).astype(mx.bfloat16)
+    def prefill(cache, q, T, dep=None, kv=None):
+        k, v = kv if kv is not None else dequant(cache, T, dep)
+        if k.shape[2] != T:
+            k, v = k[:, :, :T], v[:, :, :T]
+        qr = cache.key_codec.prepare_queries(q).astype(k.dtype)
         o = mx.fast.scaled_dot_product_attention(qr, k, v, scale=SCALE, mask="causal", force_fused=True)
         return cache.value_codec._rotate_inverse(o.astype(mx.float32)).astype(mx.bfloat16)
 
@@ -193,7 +195,24 @@ def run_scenario(args):
         caches.append(c)
     qs = [mx.random.normal((1, NQ, CHUNK, D)).astype(mx.bfloat16) for _ in range(L)]
     mx.eval(qs)
-    dequant, prefill = make_impl(args.impl)
+    dequant, prefill = make_impl(args.impl, args.scratch)
+    resident = None
+    if args.scenario == "fwd_resident":  # SDPA-only baseline: every layer's scratch made resident before the reset
+        resident = []
+        for c in caches:
+            k, v = dequant(c, T)
+            resident.append((mx.contiguous(k[:, :, :T]), mx.contiguous(v[:, :, :T])))
+            mx.eval(resident[-1])
+    grow_caches = None
+    if args.scenario == "grow":  # chunked prefill from the first chunk to T; caches preallocated by their first append
+        grow_caches = []
+        for _ in range(L):
+            c = TurboQuantKVCache(bits=4, max_kv_size=T, prealloc_tokens=T)
+            kv = mx.random.normal((1, NKV, CHUNK, D)).astype(mx.bfloat16)
+            c.update_and_fetch(kv, kv)
+            mx.eval(c.keys, c.values)
+            grow_caches.append(c)
+        del caches[:]
     mx.synchronize()
     mx.clear_cache()
     time.sleep(1.0)
@@ -208,6 +227,24 @@ def run_scenario(args):
         allkv = [dequant(c, T) for c in caches]
         mx.eval(allkv)
         del allkv
+    elif sc == "fwd_resident":
+        h = mx.zeros((1, NQ, CHUNK, D), dtype=mx.bfloat16)
+        for i, c in enumerate(caches):
+            q = qs[i] * (1 + 0 * mx.mean(h.astype(mx.float32))).astype(mx.bfloat16)
+            h = prefill(c, q, T, kv=resident[i])
+            mx.eval(h)
+    elif sc == "grow":
+        h = mx.zeros((1, NQ, CHUNK, D), dtype=mx.bfloat16)
+        n_chunks = T // CHUNK
+        for j in range(1, n_chunks):  # chunk 0 was appended before the reset
+            Tj = (j + 1) * CHUNK
+            for i, c in enumerate(grow_caches):
+                kv = mx.random.normal((1, NKV, CHUNK, D)).astype(mx.bfloat16)
+                c.update_and_fetch(kv, kv)
+                if j % args.grow_stride == 0 or j == n_chunks - 1:
+                    q = qs[i] * (1 + 0 * mx.mean(h.astype(mx.float32))).astype(mx.bfloat16)
+                    h = prefill(c, q, Tj)
+                mx.eval(h, c.keys, c.values)
     elif sc in ("fwd_lazy", "fwd_eval", "fwd_dep"):
         h = mx.zeros((1, NQ, CHUNK, D), dtype=mx.bfloat16)
         for i, c in enumerate(caches):
@@ -225,9 +262,11 @@ def run_scenario(args):
         "T": T,
         "layers": L,
         "scratch_GB": scratch / 1e9,
+        "scratch_size": args.scratch,
+        "grow_stride": args.grow_stride if sc == "grow" else None,
         "caches_GB": sum(
             c.keys.norms.nbytes + c.keys.indices.nbytes + c.values.norms.nbytes + c.values.indices.nbytes
-            for c in caches
+            for c in (grow_caches or caches)
         )
         / 1e9,
         "os_footprint_at_reset_GB": f0["current"] / 1e9,
@@ -255,6 +294,10 @@ def run_all(args):
             str(args.t),
             "--layers",
             str(args.layers),
+            "--scratch",
+            args.scratch,
+            "--grow-stride",
+            str(args.grow_stride),
         ]
         p = subprocess.run(cmd, capture_output=True, text=True, timeout=3600)
         if p.returncode != 0:
@@ -263,13 +306,15 @@ def run_all(args):
         r = json.loads(p.stdout.strip().splitlines()[-1])
         rows.append(r)
         print(
-            f"{sc:9s} {args.impl:8s} os peak +{r['os_peak_delta_GB']:7.3f} GB ({r['os_peak_delta_scratches']:5.2f} scratches)"
+            f"{sc:12s} {args.impl:8s} {args.scratch:3s} os peak +{r['os_peak_delta_GB']:7.3f} GB ({r['os_peak_delta_scratches']:5.2f} scratches)"
             f"   mlx peak +{r['mlx_peak_delta_GB']:7.3f} GB ({r['mlx_peak_delta_scratches']:5.2f})",
             flush=True,
         )
     meta = {
         "spike": "m72_p2s_memory",
         "impl": args.impl,
+        "scratch_size": args.scratch,
+        "grow_stride": args.grow_stride,
         "T": args.t,
         "layers": args.layers,
         "started": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
@@ -286,6 +331,10 @@ def main():
     ap.add_argument("--impl", choices=("standin", "p1", "p2s"), default="standin")
     ap.add_argument("--t", type=int, default=262144)
     ap.add_argument("--layers", type=int, default=16)
+    ap.add_argument("--scratch", choices=("t", "cap"), default="cap")
+    ap.add_argument(
+        "--grow-stride", type=int, default=1, help="grow: run the prefill every Nth chunk (appends every chunk)"
+    )
     ap.add_argument("--out")
     a = ap.parse_args()
     if a.all:
