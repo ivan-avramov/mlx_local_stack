@@ -16,7 +16,7 @@ Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4
 `Qwen3.8-27B-mlx-uniform-4bit` TQ4 + MTP ON, C258). M72: can TQ4 beat native16 for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
 Status: **the production TQ4 mode exists end to end (1.3, opt-in, no pick change).** Prefill ≈ parity (1.004× the measured dev
 path, ≈ 0.98× native16); decode MTP ON projected 1.10–1.19× (`m72_v1`, not exact) / ≈ 0.95× (`m72_exact`, lossless); memory
-saving ≈ −5.0 / −10.9 GB at 131K / 262K with layer 63 native16 (S21-P2). 1.4 certifies speed, memory and quality.
+saving ≈ −5.4 / −10.9 GB at 131K / 262K with layer 63 native16 (S21-P2). 1.4 certifies speed, memory and quality.
 
 ## FIRST — verify (each "no" is a blocker)
 
