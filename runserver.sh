@@ -63,6 +63,14 @@ else
   set -a; source "$ENV_FILE"; set +a
 fi
 
+# M75 (S20-P19): seconds the teardown waits for the router port to free (default 30). Tests set it short.
+RUNSERVER_PORT_WAIT_S="${RUNSERVER_PORT_WAIT_S:-30}"
+case "$RUNSERVER_PORT_WAIT_S" in
+  *[!0-9]*|0*)
+    log_fail "Refusing to start: RUNSERVER_PORT_WAIT_S must be a positive whole number of seconds (got '$RUNSERVER_PORT_WAIT_S').\n"
+    exit 1 ;;
+esac
+
 # --- Container trust store -------------------------------------------------
 # Give the containers the same level of trust this host has. Behind a
 # TLS-inspecting proxy the host trusts a corporate CA (normally via
@@ -151,12 +159,12 @@ cleanup() {
   kill_tree "$TASK_MODEL_PID"
   wait 2>/dev/null || true
   docker compose down || true
-  for _ in $(seq 1 30); do
+  for _ in $(seq 1 "$RUNSERVER_PORT_WAIT_S"); do
     [ "$(lsof -nP -iTCP:${MAIN_MODEL_PORT} -sTCP:LISTEN 2>/dev/null | grep -c LISTEN)" = "0" ] && \
       { echo "Cleaned up (:${MAIN_MODEL_PORT} free). Goodbye!"; return 0; }
     sleep 1
   done
-  echo "cleanup: :${MAIN_MODEL_PORT} STILL BOUND by: $(lsof -nP -iTCP:${MAIN_MODEL_PORT} -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1, $2}' | tr '\n' ' ')" >&2
+  echo "cleanup: :${MAIN_MODEL_PORT} STILL BOUND after ${RUNSERVER_PORT_WAIT_S} s by: $(lsof -nP -iTCP:${MAIN_MODEL_PORT} -sTCP:LISTEN 2>/dev/null | awk 'NR>1{print $1, $2}' | tr '\n' ' ')" >&2
   exit 1
 }
 trap cleanup EXIT

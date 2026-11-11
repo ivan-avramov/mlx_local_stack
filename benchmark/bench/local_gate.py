@@ -9,7 +9,8 @@ push, so every push of the stack, `../mlx-vlm` or `../mlx-serve` needs a PASS re
 is busy (any live `bench.p426_wave1` sequencer, a `chain_ops.BUSY` process, a :8000 listener), re-checks before every step,
 holds `$STACK_WORKDIR/gate/RUNNING` while `run` / `release` work and refuses while `p426/SEQUENCER.lock` or `p426/LEG.lock` is held
 (B2 spec 9, `bench.p426_locks`),
-and writes `$STACK_WORKDIR/gate/<repo>-<sha>-<policy12>[-n].json` (exclusive create; a FAIL is kept). `check` fetches
+and writes `$STACK_WORKDIR/gate/<repo>-<sha>-<policy12>[-n].json` (exclusive create; a FAIL is kept,
+with the failing step's full output `<receipt stem>.<step>.log` and the pytest JUnit `<receipt stem>.junit.xml` beside it — M75). `check` fetches
 (`--prune`) the remote, requires a PASS receipt under the CURRENT policy digest for every pushed sha, scans every introduced
 commit (added lines: PII + naming; message: naming), and for the stack requires PASS receipts for both gitlinks and their
 reachability from the fork's `origin/main`. Threat model: accidental pushes only (§1).
@@ -228,7 +229,7 @@ def _submodules(scratch, live):
 
 def _real_runner(argv, cwd, env):
     r = subprocess.run(argv, cwd=cwd, env={**os.environ, **env}, capture_output=True, text=True, stdin=subprocess.DEVNULL)
-    return r.returncode, (r.stdout + r.stderr)[-4000:]
+    return r.returncode, r.stdout + r.stderr   # full: a FAIL keeps it beside the receipt (M75)
 
 
 def _real_dirty(scratch, after_step):
@@ -359,6 +360,8 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                    started=time.strftime("%Y-%m-%d %H:%M:%S"),
                    not_covered="python 3.10 (fork CI)" if repo == "mlx-vlm" else
                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
+    last = None          # (step name, full output) of the last step that ran — kept on FAIL (M75)
+    junit_bytes = None
     try:
         for step in steps_for(repo, scratch, parity, audits):
             if busy():
@@ -377,6 +380,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                 rc, out = runner(step.argv, step.cwd, step.env)
             else:
                 rc, out = runner(step.argv, step.cwd, step.env)
+            last = (step.name, out)
             receipt["steps"].append(dict(name=step.name, argv=step.argv, rc=rc, seconds=round(time.monotonic() - t0, 1),
                                          summary=out[-600:]))
             if rc != 0:
@@ -421,11 +425,28 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
     except (GateError, subprocess.CalledProcessError, OSError) as exc:
         receipt["problems"].append(f"{type(exc).__name__}: {exc}"[:600])
     finally:
+        try:
+            junit_bytes = (scratch / ".gate-junit.xml").read_bytes()
+        except OSError:
+            junit_bytes = None
         shutil.rmtree(scratch, ignore_errors=True)
     receipt["verdict"] = "PASS" if not receipt["problems"] and len(receipt["steps"]) == len(steps_for(repo, scratch, parity, audits)) \
         else "FAIL"
     receipt["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
     path, fd = _receipt_path(gate_dir, repo, sha, digest)
+    receipt["failure_artifacts"] = []
+    if receipt["verdict"] == "FAIL":
+        keep = [(f".{last[0]}.log", last[1].encode())] if last and last[1] else []
+        keep += [(".junit.xml", junit_bytes)] if junit_bytes is not None else []
+        for suffix, data in keep:
+            side = path.with_name(path.stem + suffix)
+            try:
+                sfd = os.open(side, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o444)
+                os.write(sfd, data)
+                os.close(sfd)
+                receipt["failure_artifacts"].append(side.name)
+            except OSError as exc:
+                receipt["problems"].append(f"failure artifact {side.name} not kept: {exc}"[:300])
     os.write(fd, (json.dumps(receipt, indent=1) + "\n").encode())
     os.close(fd)
     return path

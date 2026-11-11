@@ -110,13 +110,13 @@ def fake_stack(tmp_path):
         f.chmod(0o755)
     env = {**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}", "FAKE_BIN": str(fake_bin),
            "FAKE_STATE": str(state)}
-    for k in ("STACK_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "COMPOSE_FILE"):
+    for k in ("STACK_CA_BUNDLE", "SSL_CERT_FILE", "REQUESTS_CA_BUNDLE", "COMPOSE_FILE", "RUNSERVER_PORT_WAIT_S"):
         env.pop(k, None)
     procs = []
 
-    def launch():
+    def launch(extra_env=None):
         log = open(tmp_path / "runserver.out", "w")
-        p = subprocess.Popen(["bash", "./runserver.sh"], cwd=repo, env=env, stdout=log,
+        p = subprocess.Popen(["bash", "./runserver.sh"], cwd=repo, env={**env, **(extra_env or {})}, stdout=log,
                              stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
         procs.append(p)
         return p, tmp_path / "runserver.out"
@@ -180,12 +180,27 @@ def test_term_during_startup_wait_does_not_orphan_the_servers(fake_stack):
 @pytest.mark.skipif(sys.platform == "win32", reason="bash + signals")
 def test_cleanup_exits_nonzero_when_the_port_stays_bound(fake_stack):
     """The stop must VERIFY, not assume: if something still listens on the router port after the
-    sweep, runserver.sh says so and exits 1 (same contract as scripts/stack_stop.sh)."""
+    sweep, runserver.sh says so and exits 1 (same contract as scripts/stack_stop.sh).
+
+    M75 (S20-P19): the bound-poll length is RUNSERVER_PORT_WAIT_S (default 30 s); the test sets 3 s so its 60 s
+    timeout keeps ~20x headroom instead of <= 2x (a loaded gate box once failed it)."""
     repo, state, launch = fake_stack
     (state / "still_bound").write_text("")
-    proc, out = launch()
+    proc, out = launch({"RUNSERVER_PORT_WAIT_S": "3"})
     _wait_for(lambda: out.exists() and "All services started" in out.read_text(), 60, "full bring-up")
     os.kill(proc.pid, signal.SIGTERM)
     _wait_for(lambda: proc.poll() is not None, 60, "runserver.sh to exit")
     assert proc.returncode == 1, out.read_text()[-1500:]
-    assert "STILL BOUND" in out.read_text()
+    assert "STILL BOUND after 3 s" in out.read_text(), out.read_text()[-1500:]
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="bash + signals")
+@pytest.mark.parametrize("value", ["abc", "0", "-5", "3.5", "007x"])
+def test_an_invalid_port_wait_refuses_before_any_server_launches(fake_stack, value):
+    """M75: a malformed RUNSERVER_PORT_WAIT_S is refused at start (exit 1), never discovered inside the teardown."""
+    repo, state, launch = fake_stack
+    proc, out = launch({"RUNSERVER_PORT_WAIT_S": value})
+    _wait_for(lambda: proc.poll() is not None, 60, "runserver.sh to refuse")
+    assert proc.returncode == 1, out.read_text()[-1500:]
+    assert "RUNSERVER_PORT_WAIT_S" in out.read_text(), out.read_text()[-1500:]
+    assert _pid(state, "router") is None and _pid(state, "task") is None

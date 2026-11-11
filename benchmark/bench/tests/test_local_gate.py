@@ -151,6 +151,40 @@ def test_a_failing_step_writes_a_FAIL_receipt_kept_beside_a_later_PASS(env):
     assert not list((env["gate"] / "scratch").glob("*"))
 
 
+class FailingPytest(Runner):
+    """pytest writes its JUnit, prints far more than any receipt summary keeps, and fails."""
+    def __call__(self, argv, cwd, env):
+        rc, out = super().__call__(argv, cwd, env)
+        if "--junitxml" in " ".join(argv):
+            return 1, "HEAD-OF-OUTPUT\n" + "x" * 20000 + "\nFAILED tests/test_t.py::test_flaky - AssertionError\n"
+        return rc, out
+
+
+def test_a_FAIL_keeps_the_failing_steps_full_output_and_the_junit_beside_the_receipt(env):
+    """M75 (S20-P19): a gate flake is diagnosable — the failing step's FULL output and the JUnit file survive the scratch."""
+    receipt = Path(_run(env, FailingPytest(skipped=[("tests.test_t", "test_s")])))
+    doc = json.loads(receipt.read_text())
+    assert doc["verdict"] == "FAIL" and doc["steps"][-1]["name"] == "pytest"
+    log = receipt.with_name(receipt.stem + ".pytest.log")
+    junit = receipt.with_name(receipt.stem + ".junit.xml")
+    assert sorted(doc["failure_artifacts"]) == sorted([log.name, junit.name])
+    text = log.read_text()
+    assert text.startswith("HEAD-OF-OUTPUT") and "FAILED tests/test_t.py::test_flaky" in text and len(text) > 20000
+    assert 'name="test_s"' in junit.read_text()
+    assert not list((env["gate"] / "scratch").glob("*"))
+
+
+def test_a_PASS_keeps_no_failure_artifacts(env):
+    receipt = Path(_run(env, Runner()))
+    assert json.loads(receipt.read_text())["failure_artifacts"] == []
+    assert sorted(p.name for p in env["gate"].iterdir() if p.is_file()) == [receipt.name]
+
+
+def test_the_real_runner_returns_the_full_output():
+    rc, out = G._real_runner([sys.executable, "-c", "print('y' * 10000)"], ".", {})
+    assert rc == 0 and len(out.strip()) == 10000
+
+
 def test_a_skip_list_unequal_to_the_baseline_fails(env):
     doc = json.loads(Path(_run(env, Runner(skipped=[("tests.test_x", "test_y")]))).read_text())
     assert doc["verdict"] == "FAIL" and doc["skipped_tests"] == ["tests.test_x::test_y"]
