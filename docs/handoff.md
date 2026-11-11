@@ -5,8 +5,8 @@ S21-P2, C317, S20-P19, C316 …). Model names: FULL registry names only. Review 
 quality (spend tokens for better outcomes); drive to certified picks; ask only at Go / Accept / pushes / scope changes; lead calls
 filed as they land; offer a fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit.
 
-Decisions: no new C-rulings in session 21 (S21-P3 was decided by C317's pre-registered rule). Discussion ids: session 21 used
-`S21-P1 … S21-P3`; a new session restarts at P1 and cites `S22-P<n>`. Next decision id **C318**.
+Decisions: session 21 ruled C318 (Go on 1.3 v1.1; S21-P3 was decided by C317's pre-registered rule). Discussion ids: session 21 used
+`S21-P1 … S21-P9`; a new session restarts at P1 and cites `S22-P<n>`. Next decision id **C319**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -45,9 +45,9 @@ wired into the server yet: 1.3 spec v1.1 awaits the operator's Go.
 ## Next, in order
 
 1. FIRST checks above.
-2. **The operator's Go on 1.3 v1.1** and rulings on its open questions (one registry value `m72_v1`; layer 63 native16) and the
-   scope requests S1 (no drafter pin), S2 (L ≤ 5 prefill through the verify kernel), S3 (no speculation on continuous
-   batching) — record as C318 with the PLAN row (M72 1.3) in the ruling's commit.
+2. **1.3 GO (C318)** on spec v1.1 + S2 (short prefill through the verify kernel). Before the four-eyes dispatch: the
+   operator's answer on **S21-P9** (add `m72_exact` — D2 exact multi-query verify, lossless MTP — and a shadow flip-rate count in
+   A6); fold it into the spec if yes.
 3. Then four-eyes strict (cast on this box: implementer = fresh Claude Opus `claude -p` in a worktree, test-writer = Claude Sonnet,
    panel = GPT-5.6 Sol High + GLM 5.2 High read-only; shared-vendor gap stated) → fork gates → Push asks → stack bump + gate →
    A5 / A6 on the real model → the operator's Accept. Then 1.4 (P475-style matrix + quality vs native16 + MTP ON / OFF; real-data
