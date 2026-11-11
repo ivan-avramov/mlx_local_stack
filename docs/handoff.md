@@ -74,6 +74,7 @@ into `benchmark/results/m72/mma/`).
 - Check GPU idle utilization and the tiny-op floor before each measured pass; a stuck-busy GPU can need a reboot.
 - The fork has no commit-time naming hook: run `bench.modelnames` over a fork diff before committing ("the 4-bit …" in a <!-- allow-shorthand: quotes the hook's false positive -->
   docstring blocked a push of an already-cited commit).
+- Never run GPU or CPU-heavy work during a clean-clone gate: timing-margin tests (runserver cleanup) can fail (S20-P19).
 - MLX's steel headers are invisible to the `mx.fast.metal_kernel` JIT: inline them (spike F2) to use the NAX fragment.
 
 ## Rules learned (session 19)
