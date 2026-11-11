@@ -6,7 +6,7 @@ quality (spend tokens for better outcomes); drive to certified picks; ask only a
 filed as they land; offer a fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit.
 
 Decisions: session 21 ruled C318 (Go on 1.3 v1.1), C319 (`m72_exact`); S21-P3 was decided by C317's pre-registered rule. Discussion ids: session 21 used
-`S21-P1 … S21-P9`; a new session restarts at P1 and cites `S22-P<n>`. Next decision id **C320**.
+`S21-P1 … S21-P9`; a new session restarts at P1 and cites `S22-P<n>`. Next decision id **C321**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
