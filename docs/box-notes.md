@@ -26,6 +26,10 @@ procedures are archived in `docs/two-box-archive.md`.
 - **mlx 0.32.4 is required by the fork at `c688e722` and later (2026-10-27, P426 T3, C236):** the fork's exact verifier kernels need
   mlx 0.32.4 and fail on 0.32.3; `uv.lock` and `benchmark/requirements-bench.lock` pin 0.32.4 (mlx-metal equal). The rule stays: re-run
   the fork's verifier exactness tests on any mlx bump before serving MTP.
+- **MLX 0.32.4 has no forced fused SDPA for 6–8 queries at GQA 6 (2026-11-11, M72 1.3):** the vector kernel needs query
+  length × GQA ≤ 32 and the full kernel query length > 8, so `force_fused=True` raises `ValueError` for L 6..8 at
+  24 / 4 heads. `tq4_fast.prefill_attention` forces only where a kernel exists and leaves those chunks to MLX's choice;
+  `fused_v1` never forces L ≤ 8 for the same reason.
 
 ## Shell and agent-tooling traps (apply on every M5 box)
 

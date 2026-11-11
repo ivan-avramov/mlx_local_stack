@@ -96,3 +96,26 @@ whose boundary cannot be established take the legacy before-user path (no gain, 
 turn, hidden after the response is sent. **Restore copies** the captured DeltaNet lists (`ArraysCache.state`
 returns the live list; the model writes into it element-wise) — the pre-existing rewind restore aliased the ring
 entry and is fixed in the same change.
+
+## TQ4 attention mode (M72 1.3, 2026-11-11) — fingerprint v9
+
+**Rule:** registry key `tq4_attention` (absent | `m72_v1` | `m72_exact`) → mlx-serve `--tq4-attention` → worker env
+`MLX_VLM_TQ4_ATTENTION`. Either value requires `kv_bits: 4`, `kv_quant_scheme: turboquant`, `attention_policy: fused_v1`
+and `mtp_verify_scan: joint_v1`; those two policies accept `kv_bits: 4` only together with a mode (mlx-serve
+validation; the fork's `mtp_verify_scan.require_environment` likewise). The worker refuses to start on any failed
+check (`TQ_DECODE_2PASS_LEGACY` set, the `prod` key codec, R1 fp16 range, kernel self-test, missing stamps, a model
+without a 24 / 4 / 256 full-attention module). No registry pick uses it before 1.4 certifies.
+
+**Mechanism.** Load order: resolve mode → `tq4_attention.require_environment` → `fused_v1` → `joint_v1` →
+`check_fp16_range` → stamp → self-test. On TQ4 layers: prefill chunks use p2s (capacity-sized fp16 scratch + MLX fused
+SDPA, one evaluation per layer per chunk); chunks of 2–5 tokens at T_eff > 2048 use the matrix-unit verify kernel;
+decode at T_eff > 2048 uses D2 (bit-identical to the singleton, no state copy), ≤ 2048 the single-pass kernel; verify
+blocks of 2–5 use the matrix-unit kernel (`m72_v1`, joint tolerance, NOT exact) or D2 multi-query (`m72_exact`,
+lengths[0] > 2048; shorter blocks and k > 5 take the per-query loop). The last layer stays native16
+(`maybe_quantize_kv_cache` skips it) and keeps `fused_v1` / `joint_v1`. Only the inline cached-session (chat-id'd) path
+runs MTP; batch-cache classes fall back (`fallback:batch_cache`).
+
+**Provenance.** Route counters are per process in the worker's `/health` (`tq4_attention.route_counts`; absent when
+off) and in the manifest twice, outside the fingerprint: `tq4_route_counts_at_creation` and, with the C106 exit
+re-verification, `router_exit.tq4_route_counts_at_exit`. `runtime.tq4_attention` joins the fingerprint
+at **v9**: rows at different modes never pool; pre-v9 rows read `off`.

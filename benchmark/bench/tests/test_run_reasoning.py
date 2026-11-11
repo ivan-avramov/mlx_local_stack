@@ -35,7 +35,8 @@ def stub_manifest_lite(monkeypatch):
                          "git": {}, "fingerprint_version": P.FINGERPRINT_VERSION,
                          "runtime": {"draft_kind": "off", "attention_policy": "auto",
                                      "lazy_prompt_embeddings": False,
-                                     "mtp_verify_scan": "per_query"}})   # v8 carries all 3
+                                     "mtp_verify_scan": "per_query",
+                                     "tq4_attention": "off"}})   # v9 carries all 4
 
 
 class FakeSampler:

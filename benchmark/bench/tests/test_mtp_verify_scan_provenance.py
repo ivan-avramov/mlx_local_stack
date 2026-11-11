@@ -52,14 +52,15 @@ def _man(v, scan=None, source=None, policy="auto", **extra_rt):
 
 
 # --------------------------------------------------------------------------- the version table
-def test_ac10_fingerprint_version_is_8():
-    assert P.FINGERPRINT_VERSION == 8
+def test_ac10_fingerprint_version_is_9():
+    assert P.FINGERPRINT_VERSION == 9   # M72 1.3: tq4_attention joined the runtime slice at v9
 
 
 def test_ac10_controls_carry_per_control_introduction_versions():
     assert P._SERVING_CONTROLS == {"attention_policy": (7, "auto"),
                                    "lazy_prompt_embeddings": (7, False),
-                                   "mtp_verify_scan": (8, "per_query")}
+                                   "mtp_verify_scan": (8, "per_query"),
+                                   "tq4_attention": (9, "off")}
 
 
 @pytest.mark.parametrize("v", [1, 2, 4, 5, 6, 7])

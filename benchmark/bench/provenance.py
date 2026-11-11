@@ -334,7 +334,15 @@ _FINGERPRINT_KV_EXTRA = ("hf_path", "kv_quant_scheme", "quantized_kv_start", "pr
 # `per_query` / "default-pre-v8" for it, so the v7 (M57) rows on disk stay compatible with a v8
 # `per_query` row and incompatible with a v8 `joint_v1` row. A v8 manifest with a missing or
 # unrecognised value reads "unknown" and refuses everywhere.
-FINGERPRINT_VERSION = 8
+# v9 (M72 1.3, 2026-11-11): the TQ4 attention mode (`--tq4-attention`, registry `tq4_attention`) joins
+# the runtime slice with the values `off`, `m72_v1`, `m72_exact`. It selects WHICH attention kernels
+# serve TurboQuant 4 layers (and `m72_v1` verify is not exact), so rows at different values never pool
+# and never compare. A pre-v9 manifest reads `off` / "default-pre-v9". The worker's per-process route
+# counters (`/health` -> `tq4_attention.route_counts`) are recorded twice, outside the fingerprint (they
+# describe the run, they do not configure it): `manifest["tq4_route_counts_at_creation"]` (gather) and
+# `tq4_route_counts_at_exit` in the C106 exit block (`assert_served_config_unchanged`; drivers store it as
+# `manifest["router_exit"]`). Both only under a mode.
+FINGERPRINT_VERSION = 9
 
 
 def config_fingerprint(manifest, version: int | None = None):
@@ -568,10 +576,11 @@ def session_retention_state(worker_lookup=_worker_cmdline) -> dict:
 # name -> (introduction fingerprint version, default value). A manifest older than the control's
 # introduction version predates the key and every such row ran the default.
 _SERVING_CONTROLS = {"attention_policy": (7, "auto"), "lazy_prompt_embeddings": (7, False),
-                     "mtp_verify_scan": (8, "per_query")}
+                     "mtp_verify_scan": (8, "per_query"), "tq4_attention": (9, "off")}
 
 # Closed value sets (M58): a recorded value outside the set is unrecognised and reads "unknown".
-_CONTROL_VALUES = {"mtp_verify_scan": ("per_query", "joint_v1", "joint_v1+ab")}
+_CONTROL_VALUES = {"mtp_verify_scan": ("per_query", "joint_v1", "joint_v1+ab"),
+                   "tq4_attention": ("off", "m72_v1", "m72_exact")}
 
 
 def control_of(manifest: dict, key: str):
@@ -907,6 +916,13 @@ def assert_serving_state(model: str, registry_path: str | None = None, expect: d
     out = dict(registry_attention_policy(model, registry_path))
     out.update(registry_lazy_prompt_embeddings(model, registry_path))
     out.update(registry_mtp_verify_scan(model, registry_path))
+    out.update(registry_tq4_attention(model, registry_path))
+    if expect is not None and "tq4_attention" in expect \
+            and expect["tq4_attention"] != out["tq4_attention"]:
+        raise ServingStateError(
+            f"M72: tq4_attention changed for {model!r} between entry "
+            f"({expect['tq4_attention']!r}) and the loaded worker ({out['tq4_attention']!r}); "
+            f"refusing — the manifest would stamp the wrong attention mode.")
     if out["mtp_verify_scan"] == "unknown":
         raise ServingStateError(
             f"M58: mtp_verify_scan is UNRESOLVED for {model!r} "
@@ -983,6 +999,77 @@ def registry_mtp_verify_scan(model: str, registry_path: str | None = None,
                            from_worker, lambda v: v or "per_query", declared_with_ab)
     check_mtp_verify_scan_value(out["mtp_verify_scan"], out["mtp_verify_scan_source"])
     return out
+
+
+def registry_tq4_attention(model: str, registry_path: str | None = None,
+                           worker_lookup=_DEFAULT_LOOKUP) -> dict:
+    """M72 served TQ4 attention mode: {"tq4_attention", "tq4_attention_source"}.
+
+    The live worker whose `--model` equals the entry's hf_path is the SERVING truth: its
+    `--tq4-attention <v>` flag (absent = "off"), source "worker"; otherwise the registry entry's
+    `tq4_attention` (absent / empty = "off"), source "registry". Same attribution, refusal and
+    "unknown" rules as registry_attention_policy; a value outside {off, m72_v1, m72_exact} refuses."""
+    def from_worker(argv):
+        return _flag_value(argv, "--tq4-attention") or "off"
+    out = _resolve_control(model, registry_path, worker_lookup, "tq4_attention",
+                           from_worker, lambda v: v or "off")
+    value = out["tq4_attention"]
+    if value != "unknown" and value not in _CONTROL_VALUES["tq4_attention"]:
+        raise ServingStateError(
+            f"M72: tq4_attention {value!r} ({out['tq4_attention_source']}) is not one of "
+            f"{_CONTROL_VALUES['tq4_attention']}; refusing.")
+    return out
+
+
+def _health_json(port: int, timeout: float = 5.0) -> dict:
+    import urllib.request
+    with urllib.request.urlopen(f"http://127.0.0.1:{int(port)}/health", timeout=timeout) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+
+def tq4_route_counts(model: str, registry_path: str | None = None, health=_health_json) -> dict:
+    """The live worker's TQ4 route counters for the manifest (best-effort, never fingerprinted):
+    {"mode", "route_counts", "source"}. Mode off (resolved control) -> {"mode": "off", ...: None}. The
+    counters come from the worker's `/health` (`tq4_attention`), on the registry's `mlx_port`; an
+    unreachable worker or a body without the block records the reason instead of counters."""
+    control = registry_tq4_attention(model, registry_path)
+    mode = control["tq4_attention"]
+    if mode in ("off", "unknown"):
+        return {"mode": mode, "route_counts": None, "source": control["tq4_attention_source"]}
+    registry_path = str(paths.registry_path()) if registry_path is None else registry_path
+    try:
+        with open(registry_path) as f:
+            doc = yaml.safe_load(f)
+        port = (doc or {}).get("mlx_port")
+        if port is None:
+            return {"mode": mode, "route_counts": None, "source": "no-mlx-port"}
+        body = health(int(port))
+    except Exception as e:  # noqa: BLE001 — provenance is best-effort; the reason is recorded
+        return {"mode": mode, "route_counts": None,
+                "source": f"unavailable: {type(e).__name__}"}
+    block = (body or {}).get("tq4_attention") if isinstance(body, dict) else None
+    if not isinstance(block, dict) or not isinstance(block.get("route_counts"), dict):
+        return {"mode": mode, "route_counts": None, "source": "health-without-tq4-block"}
+    if block.get("mode") != mode:
+        raise ServingStateError(
+            f"M72: the worker's /health reports tq4_attention {block.get('mode')!r} but the served "
+            f"control resolved {mode!r}; refusing to record false route counters.")
+    return {"mode": mode, "route_counts": {str(k): int(v) for k, v in block["route_counts"].items()},
+            "source": "worker-health"}
+
+
+# M72: router port -> (model, registry_path) of a manifest gathered under a TQ4 mode in this process; the C106
+# exit check records the exit snapshot of the route counters for it.
+_TQ4_MANIFESTS: dict = {}
+
+
+def _tq4_route_counts_best_effort(model: str, registry_path: str | None) -> dict:
+    """`tq4_route_counts` for the exit block: never raises (the exit check's verdict stands); a failure is the source."""
+    try:
+        return tq4_route_counts(model, registry_path)
+    except Exception as e:  # noqa: BLE001 — forensic record only
+        return {"mode": None, "route_counts": None,
+                "source": _scrub(f"refused: {type(e).__name__}: {str(e)[:300]}")}
 
 
 def worker_serving_facts(model: str, registry_path: str | None = None,
@@ -1458,6 +1545,9 @@ def assert_served_config_unchanged(entry: dict, base_url: str | None = None, *, 
                                 "to the manifest's registry: do not grade or pool them; restart the router "
                                 "on the intended config and rerun.")
     exit_blk["verified_at"] = "exit"
+    tq4 = _TQ4_MANIFESTS.get(exit_blk.get("port"))
+    if tq4 is not None:   # M72: a manifest of this process was created under a TQ4 mode on this router
+        exit_blk["tq4_route_counts_at_exit"] = _tq4_route_counts_best_effort(*tq4)
     return exit_blk
 
 
@@ -1661,7 +1751,8 @@ def _runtime_block(runtime: dict = None, model: str = None,
     block.update(session_retention_state())
     for key, fn in (("attention_policy", registry_attention_policy),
                     ("lazy_prompt_embeddings", registry_lazy_prompt_embeddings),
-                    ("mtp_verify_scan", registry_mtp_verify_scan)):
+                    ("mtp_verify_scan", registry_mtp_verify_scan),
+                    ("tq4_attention", registry_tq4_attention)):
         block.update(fn(model, registry_path) if model
                      else {key: "unknown", key + "_source": "no-model-given"})
     if runtime:
@@ -1869,6 +1960,17 @@ def gather(model: str, registry_path: str | None = None,
                                       if registry_path is None else registry_path)
     from . import client as _client
     man["router"] = dict(router) if router is not None else router_block(_client.BASE)
+    if (man.get("runtime") or {}).get("tq4_attention") not in (None, "off", "unknown"):
+        # M72: outside the fingerprint; the exit snapshot rides the C106 exit block (tq4_route_counts_at_exit)
+        man["tq4_route_counts_at_creation"] = tq4_route_counts(model, registry_path)
+        port = (man.get("router") or {}).get("port")
+        if port is None:
+            try:
+                port = _port_from_base(_client.BASE)
+            except Exception:  # noqa: BLE001 — no port: no exit snapshot is attributable
+                port = None
+        if port is not None:
+            _TQ4_MANIFESTS[int(port)] = (model, registry_path)
     if tune is not None:
         man["tune"] = tune
     return man

@@ -616,6 +616,8 @@ def test_m50_router_block_rides_the_manifest_but_not_the_fingerprint(monkeypatch
         "lazy_prompt_embeddings": False, "lazy_prompt_embeddings_source": "registry"})
     monkeypatch.setattr(P, "registry_mtp_verify_scan", lambda m, path=None: {
         "mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"})
+    monkeypatch.setattr(P, "registry_tq4_attention", lambda m, path=None: {
+        "tq4_attention": "off", "tq4_attention_source": "registry"})
     monkeypatch.setattr(P, "router_owner", lambda port: _owner(tmp_path, "main_models.yaml", pid=1))
     P.assert_served_config("http://localhost:8000")            # entry
     a = P.gather("m", profile="deployed")

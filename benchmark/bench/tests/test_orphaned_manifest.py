@@ -214,6 +214,8 @@ def test_current_manifest_lite_INCLUDES_the_git_block(monkeypatch):
         "lazy_prompt_embeddings": False, "lazy_prompt_embeddings_source": "registry"})
     monkeypatch.setattr(P, "registry_mtp_verify_scan", lambda m, path=None: {
         "mtp_verify_scan": "per_query", "mtp_verify_scan_source": "registry"})
+    monkeypatch.setattr(P, "registry_tq4_attention", lambda m, path=None: {
+        "tq4_attention": "off", "tq4_attention_source": "registry"})
     lite = P.current_manifest_lite("M", "deployed")
     assert (lite.get("git") or {}).get("submodules", {}).get("src/mlx-vlm") == "0c1c8b17", (
         "current_manifest_lite has no git block — every row would compare as stale forever")

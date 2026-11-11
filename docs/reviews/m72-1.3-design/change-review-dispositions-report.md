@@ -60,3 +60,5 @@ Residuals (recorded once): the stale `_TQ4_MANIFESTS` entry per router port and 
 gathered the manifest (test-writer, minor); the verifier's local rebinding (row 12); `dev/m72_scratch_prefill.py` keeps the I1 stale-row
 hazard (dev only); continuous-batching requests (session cache off / anonymous sessions off / message-less requests) take today's TQ4
 path (S21-P10, for 1.4).
+- Merge-time docstring edit (non-semantic) in the frozen `benchmark/bench/tests/test_m72_13_harness.py`: "load the 27B model" →
+  the full registry name (naming hook).
