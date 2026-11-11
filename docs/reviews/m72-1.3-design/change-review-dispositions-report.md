@@ -38,3 +38,25 @@ Kept frozen (valid; candidate fix): legacy flag spelled off (3), kernels refuse 
 | 13 | I1: MLX fused SDPA reads stale scratch rows up to its key-block boundary; NaN in a recycled buffer poisons the output | implementer | — | adopted in candidate 1 | zero-filled tail to a 128-row boundary; verified by the test-writer under NaN / ±Inf poisoning (the prototype fails); `dev/m72_scratch_prefill.py` keeps the hazard — residual, dev only |
 
 Test-miss notes: none beyond rows 8 and 11.
+
+## Fix rounds, real-model criteria, residuals (2026-11-11)
+
+- Fix round 1 (fresh implementer `claude -p` Claude Opus, session `21231aa0-bf17-4ed7-b7ba-d3bdc7667320`): findings 1–7 applied;
+  test-writer delivery 4: each of 1–5 has a test failing on candidate 1 and passing on candidate 2; full fork suite 10,729 passed,
+  mlx-serve 347 passed + 1 known layout failure. Left open: two stack reasoning-resume tests failing under fingerprint 9.
+- Fix round 2 (operator C320; fresh implementer session `610dbeb5-aad0-4d11-943a-0ecca1124491`): the test-writer's experiment refuted
+  the designer's stated cause (the `pin_mtp_scan` fixture) and located it (`stub_manifest_lite` in `test_run_reasoning.py`); the
+  misdirected first dispatch was stopped after 15 s before any edit (exit 143); the corrected round added `tq4_attention: off` to the
+  stub; test-writer delivery 5: the two tests fail on candidate 2 and pass on candidate 3; verdict merge.
+- Real-model criteria (designer, `benchmark/results/m72/m72-13/`): A4 (a) / (b) / (c), A5, A6 (both arms), A7 pass; divergence
+  diagnostic recorded. Designer instrument error found and fixed on the way: the first A4 run passed no temperature (unseeded
+  sampling, not greedy); superseded, kept locally, not cited.
+- Frozen tests at merge: formatted by the repositories' own tools (black / isort / ruff), AST-identical modulo isort order and
+  docstring whitespace; one comment reworded for a naming-hook false positive ("the 16-bit patterns" → "fp16 / bf16 bit patterns").
+- A6 deviation: `Request completed … backend=` is not in the worker log at its level; the served-path proof is the route counters
+  (the batching path would count `fallback:batch_cache`).
+
+Residuals (recorded once): the stale `_TQ4_MANIFESTS` entry per router port and the exit snapshot existing only in the process that
+gathered the manifest (test-writer, minor); the verifier's local rebinding (row 12); `dev/m72_scratch_prefill.py` keeps the I1 stale-row
+hazard (dev only); continuous-batching requests (session cache off / anonymous sessions off / message-less requests) take today's TQ4
+path (S21-P10, for 1.4).
