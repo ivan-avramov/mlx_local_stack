@@ -1,61 +1,61 @@
-# Handoff — 2026-11-09 (session 20: M72 1.2 D1 + D2 MEASURED; C312: matrix-unit TQ4 verify next; Push 3 + stack push approved)
+# Handoff — 2026-11-10 (session 20: M72 1.2 done — matrix-unit verify kernel, P2′ stage 1 prefill at 0.98× native16 end to end; C317: one pipelined-eval round, then 1.3; reboot pending at session end)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M66–M74, then `docs/open-questions.md` top entries (newest first: S20-P2,
-S20-P1, C311 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality; drive to
-certified picks; ask only at Go / Accept / pushes / scope changes; lead calls filed as they land; offer a fresh session at clean
-boundaries. Every Go'd build gets its PLAN row in the ruling's commit (C303 / P642 gap 2).
+THE one handoff. Read this, then `docs/PLAN.md` rows M66–M75, then `docs/open-questions.md` top entries (newest first: C317,
+S20-P19, C316, C315, S20-P18, C314 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias
+for quality (spend tokens for better outcomes); drive to certified picks; ask only at Go / Accept / pushes / scope changes; lead
+calls filed as they land; offer a fresh session at clean boundaries. Every Go'd build gets its PLAN row in the ruling's commit.
 
-Decisions: session 20 ruled C312–C316 (S20-P1 closed by measurement). Discussion ids: session 20 used `S20-P1 … S20-P18`; a new session
-restarts at P1 and cites `S21-P<n>`. Next decision id **C317**.
+Decisions: session 20 ruled C312–C317. Discussion ids: session 20 used `S20-P1 … S20-P21`; a new session restarts at P1 and cites
+`S21-P<n>`. Next decision id **C318**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
 Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON, P426 / C291;
 `Qwen3.8-27B-mlx-uniform-4bit` TQ4 + MTP ON, C258). M72: can TQ4 beat native16 for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`?
+Status: prefill reached parity (0.97–0.98× measured end to end, −5.8 / −11.7 GB at 131K / 262K); decode with MTP ON projects
+1.10–1.19× via the matrix-unit verify kernel. Nothing is wired into the server yet (1.3).
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Nothing running: no router on :8000, no probe / `qualify` / `worker.py` / `run_capacity` (check from a script file; never with
-   the patterns in your own argv).
-2. Pushes: `origin/main` = `ebae76c8` unless the session-20 push happened (then = the session-20 tip). Fork `../mlx-vlm`: local
-   `main` = `65583e27` (the D1 + D2 prototype, `dev/m72_mq_decode.py`), origin = `e3e38397` unless Push 3 happened; `../mlx-serve` =
-   `1ddf6f84`; stack gitlink `src/mlx-vlm` = `e3e38397` (dev-only change, no bump).
-3. No worktrees (stack: main checkout only; fork: `main` only).
-4. Power 140 W / 28 V, **and GPU idle utilization ≈ 0 % with a tiny-op floor ≈ 0.17 ms** before any GPU work (S20-P1: a stuck-busy
-   GPU read 100 % / ≈ 1 ms and cleared only on reboot). Script: `benchmark/results/m72/d1d2/floor.py`; launcher pattern
-   `benchmark/results/m72/d1d2/run_mq.sh`.
+1. The machine was rebooted for an OS update at the end of session 20: re-check power 140 W / 28 V, GPU idle utilization ≈ 0 % and
+   the tiny-op floor ≈ 0.17 ms (`benchmark/results/m72/d1d2/floor.py`) before any GPU work; MLX / Metal behaviour after an OS update
+   is unverified — rerun the stage-1 smoke (`m72_tq4_probe.py --mode p2s --max-t 32768`) and compare with `P2S.md` before measuring.
+2. Nothing running: no router on :8000, no gate / probe / pytest (check from a script file, never with the patterns in your argv).
+3. Pushes: fork `origin/main` = local `main` = `608e33ac` (stage-1 kernel). Stack `origin/main` = `c3d0072d`; local `main` is ahead
+   (stage-1 spec / code / results, memory and real-activation spikes, end-to-end harness + results, records) and **has no PASS
+   gate**: the clean-clone gate on `ed0348c2` failed one flaky test (S20-P19), the re-gate on `b4757409` was stopped for the reboot.
+   Push after M75 lands and a gate passes on a quiet box (push approved in principle: "push as you think is reasonable").
+4. Worktrees: none (stack: main checkout only; fork: `main` only). Gate scratch clones `$STACK_WORKDIR/gate/scratch/stack-b4757409*`
+   and `stack-e86a39e3*` (2.4 GB each) are leftovers of killed gates: regenerable, delete.
 
 ## Done in session 20
 
-- Morning (before a reboot): prototype `dev/m72_mq_decode.py` + `m72_tq4_probe.py --mode mq` + `m72_mq_report.py`; timing blocked
-  (S20-P1). After the operator's restart: GPU quiet; 8K control within 4 % of `PROBE.md` (contiguous-copy reference lines ≈ 2×
-  slow, unexplained, not used); two mq passes (10-min idle) → generated `benchmark/results/m72/D1D2.md`.
-- **Result (S20-P2):** exact (100 / 100 per pass). D2 (no layout copy) as estimated: MTP OFF 1.04×. D1 short: k = 3 verify 5.73 ms
-  vs native16 joint 4.97 at 260K → MTP ON 0.94× / 0.92× of native16 at 131K / 260K (estimate 1.25× / 1.51×). Mechanism: per-query
-  per-token work binds (≈ 1.5 ms per extra query, same as native16's joint call); lab notebook 2026-11-09 session 20.
-- Morning smoke outputs (busy GPU, not cited): `$STACK_WORKDIR/m72/d1d2-smoke/`; run dir `$STACK_WORKDIR/m72/d1d2-s20b/` (harvested
-  into `benchmark/results/m72/d1d2/`).
+- **D1 + D2 measured** (`D1D2.md`): exact multi-query verify fell short (per-query work, not the read, binds) → C312.
+- **Matrix-unit verify kernel** (`dev/m72_mma_verify.py`, four-eyes light, accepted; `MMA.md`): TQ4 MTP ON decode projected
+  1.10× / 1.19× of native16 at 131K / 260K; native16 arm ≈ flat (not shipped, C313). Tuning (`SWEEP.md`, `DIAG.md`): 512-token
+  block cap −9–14 %; math-bound at k ≥ 3; spikes F2 (Neural Accelerator `matmul2d` in the JIT, 3.7×) and F3 (TQ4 unpack into NAX
+  fragments exact but codebook-lookup-bound) → S20-P14: prefill first.
+- **P2′ stage 1** (C314, four-eyes strict, accepted C315): `dev/m72_scratch_prefill.py` — fused TQ4 → fp16 dequantize into a
+  cap-sized scratch + MLX fused SDPA. `P2S.md` (two passes), memory spike `benchmark/results/m72/memory/` (OS footprint ledger +
+  MLX allocator, fresh process per scenario, known positives: one lazy 16-layer graph holds 6.4 scratches → per-layer evaluation is
+  mandatory; T-sized scratch piles stale cache buffers → cap-sized), real activations `benchmark/results/m72/realact/` (fp16 370 /
+  384 heads within the strict 2×, worst 3.84×, all within allclose 3e-2; bf16 fails → C316 keeps fp16), end to end
+  `benchmark/results/m72/e2e/` (0.973× / 0.982× native16, −5.8 / −11.7 GB, per-layer evaluation included).
+- Fork push via the operator's one `--no-verify` (naming false positive "the 4-bit indices" in a cited commit). <!-- allow-shorthand: quotes the hook's false positive -->
 
-## Next, in order
+## Next, in order (C317)
 
-1. **M72 P2′ stage 1 ACCEPTED (C315):** next = an end-to-end in-process prefill harness on the real model (native16 lazy vs TQ4 +
-   `scratch_prefill_tq4` with per-layer evaluation; 128K and 256K prompts; wall time + OS-ledger peak per variant, fresh process
-   each), then measured optimization rounds (pipelined `async_eval` ≤ 2 scratches; eval every 2 full-attention layers; dequant(i+1)
-   overlapped with SDPA(i); fused query rotation; accuracy levers for S20-P18 — fp32 scratch, norm outside the rounding). Report
-   speed vs memory per round; nothing above one scratch ships without the operator. Stages 2–3 (own NAX core; in-kernel unpack)
-   after the rounds, by measurement.
-2. **Pushes** (operator: "push as you think is reasonable"): fork origin = `a0d5c858` (operator ran the one `--no-verify` push); stack origin = `c3d0072d`. Local since: fork `608e33ac` (stage 1), stack through the stage-1 records — push each after its full gate (never during a measured leg).
-3. **Phase 2 = M73** (S18-P20), parallel CPU track: sequential early stopping (four-eyes strict) → Push 7; aim before 1.4.
-4. **Phase 3 hygiene** (CPU gaps, never during measured legs): M67, M68, M69, M70 (needs Go), M74 → one stack gate, Push 8.
-
-Push policy (C310): push at every boundary where results or code are committed, within a day; each push is its own ask unless
-pre-authorized.
-
-## Worktrees
-
-None (the six four-eyes worktrees and both `fe/m72-mma-c2` branches were harvested and removed 2026-11-10). Scratch kept:
-`$STACK_WORKDIR/fe-m72mma/` (briefs, helper outputs, frozen test sets, smoke runs), `$STACK_WORKDIR/m72/mma-s20/` (raw run, harvested
-into `benchmark/results/m72/mma/`).
+1. FIRST checks above (post-reboot smoke).
+2. **M75** (approved): `RUNSERVER_PORT_WAIT_S` override + the test at 3 s (failing test first), gate keeps full output on FAIL;
+   then a clean-clone gate on the stack tip on a **quiet box** (nothing else running) → push stack.
+3. **One pipelined-eval round** (C317 (1)): `m72_e2e_prefill.py --tokens 131072 --legs tq4_p2s:layer tq4_p2s:pipe2 tq4_p2s:pipe2
+   tq4_p2s:layer --idle 600` → keep `pipe2` for 1.3 only if ≥ 1 % faster at ≤ 2 scratches (OS-ledger peak per leg); results under
+   `benchmark/results/m72/e2e/`, records, the operator.
+4. **M72 1.3** — production build of the whole TQ4 path: p2s prefill (per-layer evaluation inside the model forward; cap-sized fp16
+   scratch), the matrix-unit kernel for MTP verify (block cap 512; residuals from `docs/reviews/m72-mma-verify/`: −1e30 sentinel,
+   fp16 query range), D2 for plain decode; opt-in per pick; spec → cold design review → four-eyes strict → fork gate → Push → stack
+   gitlink bump + gate → Push. Then 1.4 (P475-style matrix + quality vs native16 + MTP ON / OFF; real-data A1 of S20-P18).
+5. Phase 2 M73 and Phase 3 hygiene (M67–M70, M74) in CPU gaps, never during measured legs or gates.
 
 ## Archives (local, no push)
 
@@ -75,6 +75,9 @@ into `benchmark/results/m72/mma/`).
 - The fork has no commit-time naming hook: run `bench.modelnames` over a fork diff before committing ("the 4-bit …" in a <!-- allow-shorthand: quotes the hook's false positive -->
   docstring blocked a push of an already-cited commit).
 - Never run GPU or CPU-heavy work during a clean-clone gate: timing-margin tests (runserver cleanup) can fail (S20-P19).
+- Measure a transient's memory per process (OS footprint ledger + MLX allocator), in the real graph shape, with known positives;
+  never memfree, never single-call windows (lazy graphs and the buffer cache change lifetimes).
+- Spec a kernel's cost model with every repetition factor (unpack per threadgroup, not per KV head) before promising a ratio.
 - MLX's steel headers are invisible to the `mx.fast.metal_kernel` JIT: inline them (spike F2) to use the NAX fragment.
 
 ## Rules learned (session 19)
