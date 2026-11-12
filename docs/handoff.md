@@ -6,9 +6,9 @@ Operator stance: bias for quality (spend tokens for better outcomes); drive to c
 scope changes; lead calls filed as they land; offer a fresh session at clean boundaries. Every Go'd build gets its PLAN row in the
 ruling's commit.
 
-Decisions: session 21 ruled C318 (Go on 1.3 v1.1), C319 (`m72_exact`), C320 (second fix round), C321 (Accept); S21-P3 was decided
-by C317's pre-registered rule. Discussion ids: session 21 used `S21-P1 … S21-P13`; a new session restarts at P1 and cites
-`S22-P<n>`. Next decision id **C322**.
+Decisions: session 21 ruled C318 (Go on 1.3 v1.1), C319 (`m72_exact`), C320 (second fix round), C321 (Accept), C322 (1.4 Go); S21-P3 was decided
+by C317's pre-registered rule. Discussion ids: session 21 used `S21-P1 … S21-P16`; a new session restarts at P1 and cites
+`S22-P<n>`. Next decision id **C323**.
 
 ## THE GOAL — MET (C309); Phase 2 = M72
 
@@ -46,7 +46,7 @@ saving ≈ −5.4 / −10.9 GB at 131K / 262K with layer 63 native16 (S21-P2). 1
 ## Next, in order
 
 1. FIRST checks above; confirm the stack push landed (else gate the tip and push per the operator's standing approval for this run).
-2. **M72 1.4** — spec first (operator Go): the certification matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — native16
+2. **M72 1.4 = PLAN M76, GO (C322)** — write its spec first (this fresh session), then the operator; stages and decision rule in C322. Was: the certification matrix for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` — native16
    shipped vs TQ4 `m72_v1` vs TQ4 `m72_exact`, MTP ON / OFF, P475-style (k = 2 loaded instances, paired seeds), speed (prefill /
    decode at 8K–256K), memory (OS ledger, real graph), quality per axis with `m72_v1` MTP ON vs OFF as a lossy lever (C173 / C204);
    the real-data A1 of S20-P18; S21-P10's batching-path residual (list any client path that reaches continuous batching).
