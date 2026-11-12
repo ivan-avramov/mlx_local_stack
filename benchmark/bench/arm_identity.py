@@ -16,7 +16,7 @@ from pathlib import Path
 # Flags that take a value and shape the tokens a worker returns (or the cache state they are computed from).
 OUTPUT_VALUE_FLAGS = (
     "--model", "--draft-kind", "--draft-model", "--draft-block-size", "--suffix-min-match", "--draft-cooldown",
-    "--mtp-verify-scan", "--attention-policy", "--max-kv-size", "--kv-prealloc-tokens", "--kv-bits",
+    "--mtp-verify-scan", "--attention-policy", "--tq4-attention", "--max-kv-size", "--kv-prealloc-tokens", "--kv-bits",
     "--kv-quant-scheme", "--quantized-kv-start", "--prefill-step-size", "--generation-defaults", "--moe-expand",
     "--cache-session-retain-prompt-end",
     # every other flag mlx-serve's `_build_command` can emit (review L1)
