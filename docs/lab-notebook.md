@@ -4857,3 +4857,28 @@ ledger while MLX's own peak counter reads 2.2 — so the scratch must be cap-siz
 reuses them, so only peaks are comparable. On real activations bf16 materialization fails even a 3e-2 tolerance (its 8-bit
 mantissa on sharp real attention), fp16 stays within it. Transferable: measure a transient's memory in the real graph shape with a
 process-level ledger; allocator counters miss cached buffers and lazy evaluation reorders lifetimes.
+
+## 2026-11-11 (session 21) — M72 1.3: the production TQ4 attention mode on the M5 Max (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`) — what the real model showed that the prototypes did not
+
+- **MLX's fused SDPA reads masked key / value rows past the sliced key length**, up to its 32-row key-block boundary (MLX 0.32.4,
+  `applegpu_g17s`). With a recycled scratch buffer holding NaN / ±Inf in those rows, 0 × NaN poisons the whole output (seen at
+  T = 4,100 only after other tests ran; clean at 4,096 / 4,128). The production kernel zero-fills the scratch tail to a 128-row
+  boundary; the dev prototype `dev/m72_scratch_prefill.py` keeps the hazard (its stale-scratch test used finite garbage). Transferable:
+  never assume an attention kernel ignores masked rows' values; poison recycled buffers in tests (implementer issue I1).
+- **No forced fused SDPA for 6–8 queries at GQA 6**: `force_fused=True` raises there; p2s lets MLX dispatch for L 6–8 (I2).
+- **Pipelined evaluation buys ≈ 0.6 %** of the ≈ 6 % per-layer-evaluation cost at 131,072 (`pipe2` 257.9 / 258.2 s vs layer 259.0 /
+  260.1 s, S21-P3): host-side overlap is not where that cost lives.
+- **Production memory = dev path + exactly the native last layer.** At prompt 131,072 / capacity 262,144 the production mode's
+  OS-ledger peak delta (7.815 GB) exceeds the dev p2s path's (7.015) by 0.80 GB = layer 63's native16-minus-TQ4 bytes
+  (`maybe_quantize_kv_cache` never converts the last cache entry; the session-20 harness had quantized it, S21-P2). Bounds must be
+  compared at the same preallocated capacity (the first A5 draft compared 131K with 262K capacity, ≈ 3.5 GB apart).
+- **D2 is exact on real data**: on the captured inputs of a real decode step (15 TQ4 layers, T = 8,192) its output is bit-identical
+  to the production singleton; `m72_exact` MTP ON emits exactly MTP OFF's greedy tokens and today's seeded MTP ON tokens (256 tokens,
+  8K / 32K).
+- **Instrument lessons**: `generate_step(temperature=None)` samples at the checkpoint's generation-config temperature — the first A4
+  run's "greedy" rows were unseeded sampling and disagreed with themselves (a repeat control exposed it); speculative sampling
+  preserves the distribution, not the samples, so seeded MTP ON never equals MTP OFF token for token (with any verify kernel).
+- **Served path**: every request that resolves to a session (explicit id or an anonymous hash-chain / new anonymous session) runs
+  inline with MTP and the mode; continuous batching (MTP off, batch cache classes) only with the session cache off, anonymous
+  sessions off, or message-less requests (S21-P10).
+- Records: `benchmark/results/m72/{e2e/e2e-131072-pipe2.json, m72-13/}`; ledgers `docs/reviews/m72-1.3-design/`; C317–C322.

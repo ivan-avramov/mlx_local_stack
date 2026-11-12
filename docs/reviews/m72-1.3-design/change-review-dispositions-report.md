@@ -62,3 +62,18 @@ hazard (dev only); continuous-batching requests (session cache off / anonymous s
 path (S21-P10, for 1.4).
 - Merge-time docstring edit (non-semantic) in the frozen `benchmark/bench/tests/test_m72_13_harness.py`: "load the 27B model" →
   the full registry name (naming hook).
+
+## Report
+
+```
+[four-eyes 0.7.0] outcome: completed; mode: strict (new components, interface contracts across three repositories)
+designer, implementer, fixes: designer Claude Opus 5.5 (session 21); implementer claude -p claude-opus-5-5 628dc743-9c21-4fd4-821d-57faf30ee7c1; fix 1 21231aa0-bf17-4ed7-b7ba-d3bdc7667320, fix 2 610dbeb5-aad0-4d11-943a-0ecca1124491 (a misdirected first fix-2 dispatch stopped at 15 s, no edits)
+test-writer: claude -p claude-sonnet-5-5 0ca8cd04-c24d-491f-bcf9-5a7fc548b3be; continued (5 deliveries); tests frozen 2026-11-11 09:16:18 (amended set re-frozen 10:54:12), candidate revealed 10:31:53
+panel: cold on specification: Sol cursor-agent gpt-5.6-sol-high (session unreported, briefed), GLM glm-5.2-high (same), Sonnet claude-sonnet-5-5 be578835-0271-446c-9f18-d3104bffa0ef — returned; verify: Sol, GLM (fresh sessions) — returned
+shared: designer + implementer Claude Opus 5.5, test-writer Claude Sonnet (same vendor); not covered: errors Claude models make consistently are cross-checked only by Sol / GLM at design review and verify
+go: 2026-11-11 "Go with your recs on the open decisions" (C318) / "yes: proceed" (C319); accept: 2026-11-11 "accepted: proceed" (C321); commit: fork 5f83c84f, mlx-serve 0f2259f, stack 19a41b83 + 37336227 + companions 28235601 / d5965b00; push: "push approved once the gates pass" / "push" — fork 608e33ac..5f83c84f, mlx-serve 1ddf6f8..0f2259f, stack f31c4854..8c65dac0
+```
+
+Post-Accept gate fixes (non-semantic or drift-guard companions, recorded): fork `5f83c84f` `# Fork` marker (audit:3); stack
+`28235601` (P632 `LIVE_GITLINKS` pin, `--tq4-attention` arm-identity class) and `d5965b00` (skip baseline: two GPU probe modules now
+run and pass against the bumped fork).

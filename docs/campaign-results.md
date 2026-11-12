@@ -2,6 +2,10 @@
 
 **Policy correction C79, 2026-09-13:** memory is a rough48GB MLX-peak target, not a strict46GB or48GB cutoff. Historical numeric PASS/FAIL flags below retain their original thresholds and are not current rejection rules. M42 native16 KV completed normally at47.1386GB and remains eligible for quality comparison; earlier cutoff-driven rejection/OFAT closure and predicted automatic rejection are superseded. Headroom quoted against46GB is a historical policy margin, not free physical memory.
 
+## 2026-11-11 — M72 1.3: a production TurboQuant 4 attention mode for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` exists (opt-in; NOT a pick change) — certification is M76 (C322)
+
+Registry key `tq4_attention` (`m72_v1` fast verify, joint tolerance; `m72_exact` lossless MTP) on `kv_bits: 4` turboquant (fork `5f83c84f`, mlx-serve `0f2259f`, stack `8c65dac0`; four-eyes strict, C321). Measured on this box, candidate 3, served stack (`benchmark/results/m72/m72-13/`): prefill at 131,072 ≈ the dev p2s path (1.004×; ≈ 0.98× native16 end to end, session 20), memory ≈ −5.4 / −10.9 GB vs native16 at 131K / 262K (layer 63 stays native16), decode MTP ON projected 1.10–1.19× (`m72_v1`) / ≈ 0.95× (`m72_exact`) native16 — not yet measured served. Exactness: `m72_exact` MTP ON = MTP OFF (greedy), D2 = the singleton bit for bit on real data. **Recommendation:** the shipped pick stays native16 + MTP ON until M76 certifies TQ4 `m72_exact` (quality vs native16 per axis, C172 / C173), whose gain is memory headroom (decisive on the 64 GB box), not speed.
+
 ## 2026-11-04 — P426 FINAL: `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` MTP ON CERTIFIED on S′ — no quality loss shown on any axis, 1.6–1.75× decode, +0.31 GB at 256K (C291)
 
 Generated sheet `benchmark/results/p426/SIGNALS.md` (FINAL, `p613-step4`; B8 `111808d5…`, inputs set `b1d04f0a…`, evidence `b6ec7819`); arms = stack commits on S′ (fork `1c7c8fa1`, mlx-serve `1ddf6f84`, mlx 0.32.4), OFF `4adb596a` / ON `46ca41b9`, paired seeds; m5max-128. Spec `docs/specs/p426-fable-mtp-recert.md`; C204: per-axis signals, the operator decides.
