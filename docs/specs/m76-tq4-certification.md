@@ -1,10 +1,10 @@
-# M76 (M72 1.4) — certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TurboQuant 4 KV + `tq4_attention` + MTP ON — SPEC v1, 2026-11-11
+# M76 (M72 1.4) — certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TurboQuant 4 KV + `tq4_attention` + MTP ON — SPEC v1.1, 2026-11-11 (v1.1 = cold design review round 1 of 3 applied, `docs/reviews/m76-design/round1-ledger-report.md`)
 
 Authority: C322 (Go, stages 1–4, memory is the accepted gain), C319 (`m72_exact` beside `m72_v1`; `m72_v1` certified as a lossy
 lever), C318, C321 (1.3 accepted), C204 / C206 (predictor and panel rules), C172 / C173 (wash and loss-bound rule), C218 (arms are
 stack commits), C233 (measure in the shipped MTP-ON state), C258 (the P369 exactness basis for a TQ4 MTP-ON pick), C291 (the shipped
 N16 pick), C168 / C109 (k = 2 loaded instances), S20-P18 / C316 (real-data A1 carried here), S21-P2, S21-P10, AGENTS.md.
-Cold design review (strict): round 1 of 3 pending. Harness adapters: four-eyes light (C322).
+Cold design review (strict): round 1 of 3 done (Sol, GLM, Sonnet); v1.1 changes marked [r1]. Harness adapters: four-eyes light (C322).
 
 ## 1. Goal
 
@@ -67,7 +67,7 @@ Then a recommendation; the pick changes only on the operator's approval (§10).
 
 - Code map (2026-11-11, source read at the base; file:line in §5): the P475, qualify, P426 and P369 harnesses hard-code the
   `Qwen3.8-27B-mlx-uniform-4bit` pick, the MTP three-line delta, the S′ build pins or the 16 accepted registry states; none
-  accepts a `tq4_attention` arm today. `bench.arm_identity` already hashes `--tq4-attention` (`28235601`).
+  accepts a `tq4_attention` arm today. `bench.arm_identity` already classifies `--tq4-attention` (added in companion commit `28235601`).
 - **TQ4 MTP OFF with the mode is not servable today (S22-P10):** mlx-serve `config.py:175-178` (`tq4_attention` requires
   `mtp_verify_scan: joint_v1`) + `:256-260` (`joint_v1` requires `draft_kind: mtp`); fork `mlx_vlm/tq4_attention.py:88-90`,
   `mlx_vlm/mtp_verify_scan.py:516-517`. Dropping the mode for OFF falls back to the pre-1.3 TQ4 path (≈ 0.35× prefill), which is
@@ -85,7 +85,7 @@ Then a recommendation; the pick changes only on the operator's approval (§10).
 |---|---|
 | S22-P1 | Wave 1 gains A5, a long-context ladder (retrieval + chain-4 reasoning) — the KV lever's most exposed region |
 | S22-P2 | M70 folded into stage 1: the instability rule's absolute floor 0.02 (S18-P13), red tests on the two observed cells |
-| S22-P3 | stage 4 runs only `m72_v1` legs, paired against stage 3's `m72_exact` legs (same arm commit, items, seeds, build, fingerprint; any mismatch → `m72_exact` rerun); `m72_exact` ON ≡ TQ4 OFF in tokens, so stage 4 is `m72_v1` MTP ON vs OFF, the C319 lossy-lever certification |
+| S22-P3 | stage 4 runs only `m72_v1` legs, paired against stage 3's `m72_exact` legs (same arm commit, items, seeds, build, fingerprint; any mismatch → `m72_exact` rerun); `m72_exact` ON ≡ TQ4 OFF in tokens at the tested cells, so stage 4 (V MTP ON vs X MTP ON) reads `m72_v1`'s lossy verify against the exact one, the C319 lossy-lever certification; [r1] an X tier-2 leg is added when stage 4 needs paired coverage stage 3 did not collect (the funnel's "extra coverage on older subjects") |
 | S22-P4 / P5 / P6 | the comparison stays paired and outcome-graded (`acc_strict@budget`); literal output identity is never required |
 | S22-P7 | per mechanical axis: point estimate drop ≤ 5 pp (absolute) AND observed loss bound ≤ 10 pp (C173) |
 | S22-P8 | tg1 gains session s3 (seed 3003); the M76 loss-bound statistic for an agentic axis is the two-stage cluster bootstrap over items with the sessions as draws (`bench.stats` clustering; per-session results still reported, never replaced); Math500 grows to 300 items (nested: the first 100 are P426's) |
@@ -103,7 +103,9 @@ certified configuration (MTP ON, both arms); GPU time is the binding resource. �
 `mtp_verify_scan` absent and no drafter (still requires `kv_bits: 4`, `turboquant`, `attention_policy: fused_v1`); the fork's
 `tq4_attention.require_environment` accepts scan absent (no verify happens; plain decode L = 1 → `d2` / `single_pass`, prefill
 `p2s` / `mma_prefill`, layer 63 `fused_v1` / SDPA decode); `mtp_verify_scan.require_environment` unchanged (it still refuses
-`joint_v1` without `draft_kind: mtp`). Red tests: the refusal today (both repos), then served OFF argv carries `--tq4-attention`
+`joint_v1` without `draft_kind: mtp`); [r1] `tq4_attention.require_policy_stamps` (`:345-357`, every full-attention module must
+carry `joint_v1`) accepts an absent verify stamp only when no drafter is loaded, still requiring `fused_v1` on every module; a
+served XO load-to-READY test. Red tests: the refusal today (both repos), then served OFF argv carries `--tq4-attention`
 without `--mtp-verify-scan` / `--draft-*`; route counters move `p2s`, `d2`, `native:prefill`, `native:decode`, `fallback:*` = 0;
 greedy TQ4 OFF with the mode = greedy TQ4 MTP ON `m72_exact` on the A4 (c) prompts (the identity C319 claims, now across
 configurations). Fork gate, mlx-serve gate, push ask per repository, gitlink bump with the stack companions (P632
@@ -118,17 +120,25 @@ keys + the `# PROVISIONAL M76 arm <ARM>` comment) and comment `mtp_verify_scan` 
 `tq4_attention: {mode, route_counts}` (`mlx_vlm/server/app.py:1241-1244`) read after load and after the driver (absent on N16;
 `mode` equal to the arm's; counters moved on the expected routes, `fallback:*` = 0 — any other value INVALID) and from the
 self-test stderr line (`server/generation.py:238-243`) as a secondary record. The instability rule (R16) gains S22-P2's floor.
-`run_capacity --p475-strict` needs no change. Preflight: B2's `qualify --kv-arm`.
+`run_capacity --p475-strict` needs no change. Preflight: B2's `qualify --kv-arm`. [r1] Campaign scoping: scratch / state
+(`$STACK_WORKDIR/p475`, `state.json`), dossiers, harvest paths and the matrix output become per-campaign (`p475` for `u4`, `m76`
+for `f45`: `$STACK_WORKDIR/m76/p475/…`, `benchmark/results/m76/matrix/…`); golden tests pin the `u4` paths, receipts and
+`MATRIX.Qwen3.8-27B-mlx-uniform-4bit.md` byte-identical.
 
 **B2 — fork dev tools (fork commit, push ask, gitlink bump; no production change).** `dev/p369_phase2/qualify.py:30-50` `SERVING`
 gains `tq4_attention` (`--tq4-attention`, non-empty); `registry_states.py:266` `KV_ARM_KEYS` + the mode, `:271-277` `KV_ARM_ROWS`
 gains `TQ4X` / `TQ4V` (kv_bits 4, turboquant, mode) for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` only; `classify_kv_arm`
 restores the mode key; the OFF derivation (`qualify.py:60`, `:108`) strips the three MTP keys and keeps the mode (servable after B0);
-`fingerprint_of` (`:1709-1720`) and the report record the mode. P369: `orchestrate.py:43-44` `PICKS` gains a TQ4 tuple for `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`
-(`kv=tq4`, `joint_v1`, mode) selecting its own item bundle; `prepare` (`:2177-2182`, `:596-603`) accepts an M76 arm commit as the
-stack root; `worker.py:1143-1149` also asserts the `tq4_attention` hook objects unchanged across the triple; the production pin
+`fingerprint_of` (`:1709-1720`) and the report record the mode. P369 [r1]: a campaign-tuple identity beside the model key (`PICKS` stays keyed by model for the existing native16 tuple, unchanged;
+a new `TUPLES["m76-x"]` = `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, `kv=tq4`, `joint_v1`, `m72_exact`, own item bundle);
+`prepare` (`:2177-2182`, `:596-603`) under that tuple validates the committed X (ON) and XO (OFF) arm commits through
+`classify_kv_arm` instead of `classify` / the MTP-OFF-root rule / `overlay_on` (no overlay: ON and OFF are both commits); `worker.py:1143-1149` also asserts the `tq4_attention` hook objects unchanged across the triple; the production pin
 (`orchestrate.PRODUCTION`, `:33`) re-resolved to the B0 fork commit. `kvmanifest.expected_manifest` already keeps the last
-full-attention layer native (`:153-165`). Fork suite ×2, audits.
+full-attention layer native (`:153-165`). [r1] M1: `qualify --kv-arm --predictor on` with a non-empty KV delta (refused today,
+P475a v4.1) runs a full (certifying) measurement only when bound to the stage-2 PASS record of the same arm commit and its exact
+committed argv; otherwise it stays refused. [r1] Existing consumers: `classify`, `classify_kv_arm`, `fingerprint_of` and the
+report are byte-identical for every existing pick / arm (golden tests pin today's `Qwen3.8-27B-mlx-uniform-4bit` and native16
+fingerprints and report bytes); the mode field is emitted only when present. Fork suite ×2, audits.
 
 **B3 — P426 lever mode + build label `s3` (stack).** A `lever` parameter, `mtp` (today, byte-identical, tests unchanged) or `kv`:
 the allowed registry delta `{kv_bits, tq4_attention}` + the arm comment, the allowed argv delta `{--kv-bits, --tq4-attention}`,
@@ -137,7 +147,7 @@ both arms predictor `mtp` — `p426_leg.py:29`, `:58-64`, `:110-150`, `:285-305`
 (no seeding hunk under `kv`); `registry_states.overlay_on` bypassed (arms are commits). `EXPECTED_BUILDS` (`p426_plan.py:21-24`)
 gains `s3` = the B0 / B2 fork commit, mlx-serve commit, production ref, mlx 0.32.4; `p426_verify.py:587` arm-path regex,
 `p426_panel.py:339` `A7_BUILD`, `p426_freeze.py:358`, `:569-576` follow the label. Namespaces `m76-<arm>-…`, results
-`benchmark/results/m76/`. Signals (B6 / `p426_signals*`): §8's rule, looks and noise floor; labels "TQ4 − N16" / "V − X".
+`benchmark/results/m76/`. Signals (`p426_signals*`; [r1] not this spec's B6): §8's rule, looks and noise floor; labels "TQ4 − N16" / "V − X".
 `bench.arm_identity`: no change (verified).
 
 **B4 — tg2 legs in P426 lever mode.** The P426 chain (`run_tg1_chain.py --p426`, B2 of P426) runs the tg2 universe
@@ -147,13 +157,27 @@ any measured leg.
 
 **B5 — Wave 1 extensions.** `benchmark/results/m76/ids.json`: Math500 300 (the first 100 = `p426/ids.json` A1, then 200 by
 `random.Random(7601)` over the remaining 400, nested blocks by the P426 seed-426 split), A2 / A3 / A4 as P426; A5 (§7). Runner
-argv as P426 §5.
+argv as P426 §5. [r1] A5: the C89 instruments (`docs/specs/native16-depth-qualification.md`: multi-needle retrieval, five codes at
+10–90 % depth; chain-4 variable tracking), seeded prompts frozen in `ids.json` (seed 7605) with their token counts checked
+offline; a P426 wave-1 axis `longctx` (`p426_wave1.AXES`, `p426_plan.plan_leg`), its pair-verifier adapter, signals section and
+panel adapter (both-correct pairs), red tests as the existing axes'. A4 keeps its P426 panel role. B4 adds the A8 panel packet
+(task, final tree diff, transcript summary) as tg1's.
 
 **B6 — S21-P10 audit (CPU, no build).** Every shipped client path (OpenWebUI, opencode, aider, VS Code, Zed, Claude Code / Codex
 headers) classified `cached_session` vs continuous batching from code + one request each on the lean router at smoke time; any
 path that reaches batching is listed for the operator before publish (it serves the pre-1.3 TQ4 batch path, ≈ 0.35× prefill).
 
-## 6. Arms (stack commits on base = the stack commit carrying B0–B5; local branches `m76-<arm>`; worktrees under
+**B7 — statistics for §8 [r1].** `bench.stats`: `paired_delta` / `cluster_bootstrap` gain a `level` (one-sided α) for the
+percentile interval and the exact zero-discordance bound (`1 − α^(1/n)`), defaults byte-identical to today (95 % / `0.05`);
+resampling for multi-session agentic axes keeps each item's per-session paired differences together (resample items, then the
+item's session differences d_s = X_s − N16_s, never the two arms' draws independently — today's code, `stats.py:283-295`, draws
+each arm independently); per-axis O'Brien–Fleming (Lan–DeMets) spending from the pre-registered information fraction of each
+axis (Math500 t₁ = 1/3, tg1 t₁ = 2/3), computed in code; a CPU simulation of the whole §8 rule per axis (true loss 0, 5, 10,
+12 pp; discordance 0.03–0.20 for tg1 / Math500, 0.182 for tg2) reporting the realized one-sided error of PASS and the look-1
+PASS probability, red tests on degenerate and non-degenerate cells at both looks. Its report goes to the operator with the
+stage-3 Go (it may show a look not worth taking).
+
+## 6. Arms (stack commits on base = the stack commit carrying B0–B7; local branches `m76-<arm>`; worktrees under
 `$STACK_WORKDIR/worktrees/m76-<arm>`, prepared as P426 arm worktrees; each removed once its legs are harvested)
 
 | arm | entry keys changed from the base | predictor | stages |
@@ -187,55 +211,69 @@ MLX thresholds (1,024 / 8,192 / 32,768 / 65,536), plus scale cells at 131,072 an
 160 tokens. E2: the 20 C84 items (reconstructed for the TQ4 tuple) at T = 0, 512 tokens, plus the straddle and scale prompts
 (160 tokens). Engagement: `d2_verify` > 0 and `fallback:*` = 0 on every ON trajectory. Verdict precedence as P369 (C1 fail →
 ABORT; ON ≠ OFF1 → FAIL with the measured bound → operator; else PASS). The smoke calibrates the 260,096-cell hashing cost; if the
-revised stage estimate exceeds 8 h, that cell goes to the operator before the full run.
+revised stage estimate exceeds 8 h, that cell goes to the operator before the full run. [r1] Claim wording: "MTP ON equals plain
+decoding on the same loaded instance at the tested cells — transformed target distributions (E1c, 160 tokens) and greedy tokens
+(E2, 512 / 160 tokens)"; nothing beyond the tested positions. [r1] **On FAIL or ABORT, stage 3 does not start**: the operator
+chooses between halting and a deconfounded stage 3 (XO vs an N16-OFF arm).
 
 **Stage 3 — quality X vs N16 (both MTP ON; P426 lever `kv`, build `s3`).** Axes:
 
 | id | axis | tier 1 (always) | tier 2 (only if look 1 leaves it undecided) | role |
 |---|---|---|---|---|
-| A1 | Math500 | 100 items (P426 ids), two blocks | +200 (to 300) | mechanical |
+| A1 | Math500 | 100 items (P426 ids), two blocks — or all 300 if §8's look rule drops look 1 | +200 (to 300) | mechanical |
 | A2 | cjudge | 40 | — | panel only |
 | A3 | vision gate | 20 | — | self-pass (lenient) + panel |
-| A4 | reasoning depth 128K | 6 draws (P426 seeds) | — | descriptive |
-| A5 | long context: retrieval (5 codes / prompt) + chain-4 | 5 prompts per rung at 131,072 and 159,744 (full budget); 196,608 and 260,096 (resolved budget, equal between arms; reported apart) | +5 prompts per rung | mechanical (per rung, exact-match) |
-| M1 | memory at 256K (`qualify`, in-process) | OFF / ON order as P426 | — | memory |
-| A7 | tg1 (43) | pilot, s1 (1001), s2 (2002), reload | s3 (3003) | mechanical, agentic |
-| A8 | tg2 | SCREEN 40 (k = 1; C168: diagnostic) | DECIDER 80 (k = 2 + reload) on a material screen finding | agentic, hard tasks |
+| A4 | reasoning depth 128K | 6 draws (P426 seeds) | — | descriptive + panel (P426) |
+| A5 [r1] | long context: retrieval (5 codes / prompt, all-five exact) + chain-4 (exact) | 40 prompts, one axis: 20 retrieval + 20 chain-4 over rungs 131,072 / 159,744 (full budget) and 196,608 (resolved budget 65,536, equal between arms); rung and task as strata; single look at 95 % (zero discordance → exact bound 7.2 pp) | — | mechanical (one verdict); per rung × task descriptive, with AGENTS.md's effective-context ≥ 0.85 per rung for each arm |
+| M1 | memory at 256K (`qualify`, in-process) [r1] | both arms MTP ON, legs N16 / X / X / N16 (B2's binding) | — | memory |
+| A7 | tg1 (43) | pilot, s1 (1001), s2 (2002), reload — plus s3 if §8's look rule drops look 1 | s3 (3003) | mechanical, agentic |
+| A8 | tg2 | SCREEN 40 (k = 1; C168: diagnostic, not a look) | DECIDER 80 (k = 2 + reload) on a material screen finding; one formal look at 95 % | agentic, hard tasks |
 
 Order and validity as P426 §3 (two blocks, OFF↔ON replaced by N16↔X: block 1 N16 → X, block 2 X → N16; seeded item split 426;
 fresh load per leg; ≥ 10 min idle). Panel (C161 / C206): Claude Opus via Claude Code + a Cursor model of another family (default
 GPT-5.6 Sol; images: Gemini 3.1 Pro), blind pairwise, both orders, length-adjusted, over execution-passing pairs (A1 both-correct,
-A2 all, A3, A5 both-correct, A7 / A8 both-pass items per session). Tests and Holm families as P426 §8 with X − N16; A8 screen
+A2 all, A3, A4 strict draws, A5 both-correct, A7 / A8 both-pass items per session). Tests and Holm families as P426 §8 with X − N16; A8 screen
 outside the families (diagnostic).
 
-**Stage 4 — conditional: V vs X** on stage 3's tiers and axes (A1, A2, A3, A5, A7, A8 screen; M1, A4 descriptive): V legs only,
-paired with stage 3's X legs (S22-P3; the pair verifier checks everything but the mode key / flag). V MTP ON vs OFF exactness is
-not claimed (S21-P9); the comparison is the lossy-lever read.
+**Stage 4 — conditional: V vs X** on stage 3's tiers and axes (A1, A2, A3, A5, A7, A8 screen; M1, A4 descriptive): V legs,
+paired with stage 3's X legs (S22-P3; the pair verifier checks everything but the mode key / flag); [r1] an X leg is added where
+stage 4's tier 2 needs coverage stage 3 did not collect; a reuse sentinel — the 5 tg1 pilot items re-run on X with the pilot's
+seeds at stage 4's start — must reproduce stage 3's X outputs (identical context → identical output, P640), else X is rerun with
+V in order-balanced blocks. V MTP ON vs OFF exactness is not claimed (S21-P9). [r1] V is read against both X (the lever) and N16
+(the incumbent; free, same items): recommend V only when V − X and V − N16 both PASS. Speed for V comes from stage 1; stage 4's
+per-axis decode is descriptive (not order-balanced against X).
 
-## 8. Decision rule and the funnel (pre-registered)
+## 8. Decision rule and the funnel (pre-registered) [r1 rewrite]
 
-- **Statistic per mechanical axis:** paired `acc_strict@budget` difference (X − N16; stage 4 V − X), DNF included, two-stage cluster
-  bootstrap (items, then draws; 10,000 resamples, seed 426); agentic axes with the sessions as draws (S22-P8); per-session results
-  reported beside it, unchanged.
-- **Looks:** look 1 after tier 1; look 2 (final) after tier 2, for the axes that entered it. Intervals O'Brien–Fleming for two
-  looks: 99.4 % at look 1, 95.2 % at look 2 (z 2.797 / 1.977) — so a second chance to pass does not inflate the 5 % error; an axis
-  decided at look 1 is final.
-- **Verdict per axis at a look:** PASS — point estimate ≥ −5 pp AND loss bound (−interval lower bound; zero-discordance cells: the
-  exact discordance bound) ≤ 10 pp; LOSS SHOWN — the interval excludes 0 with N16 better → flag to the operator, no tier 2 for
-  it; UNDECIDED — otherwise → tier 2 at look 1, "loss not ruled out above X pp"
-  → operator at look 2. A wash is labelled "directional (not a shown difference)" (C172).
-- **A8 tg2:** the screen is diagnostic (C168): a material finding = macro-average point estimate < −5 pp or any language < −15 pp;
-  it triggers the decider (tier 2), read by the rule above; the decider's large-harm HOLD (m65 spec) stands. A clean screen is
-  reported as "no material finding (not safety evidence)". Expected resolution at the decider: bound ≈ 10–12 pp (p_d .182) —
-  reported as measured.
-- **Panel:** per family Holm; Holm-adjusted p < .05 favouring N16 → flag. A2 / A3 have no mechanical verdict; A4 descriptive.
-- **Noise floor (S22-P9):** for A7 (and A8 if the decider runs) the N16 s1-vs-s2 discordance on the same items is printed beside
-  X-vs-N16's; diagnostic only.
-- **Recommendation to the operator:** ship X when every mechanical axis is PASS, no panel flag, stage 2 PASS and stage 1 shows the
-  memory gain; otherwise the per-axis signals with the lead's recommendation (C204: the operator's call). Stage 4: recommend V over
-  X only when every stage-4 axis is PASS and the stage-1 trigger held.
-- **Funnel cost rule:** tier 2 runs per axis, both arms (the incumbent N16 gets the same added coverage, paired); nothing beyond
-  tier 2 without the operator; every quality leg MTP ON (stage 2 is what licenses skipping MTP-OFF quality legs: `m72_exact` ON ≡ OFF).
+- **Statistic per mechanical axis:** paired `acc_strict@budget` difference (X − N16; stage 4 V − X and V − N16), DNF included,
+  bootstrap over items (10,000 resamples, seed 426; strata for A5); agentic axes with several sessions resample items and keep each
+  item's per-session paired differences together (B7; S22-P8); per-session deltas reported beside it, and a sign disagreement
+  between sessions whose intervals exclude each other's point is flagged to the operator.
+- **Loss bound:** −(one-sided lower bound at the look's α); a zero-discordance cell uses the exact bound `1 − α^(1/n)` at the same α
+  (B7). Total one-sided α = 0.025 per axis (the 95 % two-sided interval C173 uses).
+- **Looks:** an axis with a tier 2 has two looks; α is spent per axis by O'Brien–Fleming (Lan–DeMets) at its pre-registered
+  information fraction (Math500 t₁ = 1/3 → look-1 interval ≈ 99.9 %; tg1 t₁ = 2/3 → ≈ 98.4 %), computed by B7. **A look is kept only
+  if B7's simulation gives it a PASS probability ≥ 0.5 at true loss 0 and the planning discordance** (tg1 0.06–0.10, Math500 0.06);
+  otherwise that axis runs its full size in tier 1 (Math500 300; tg1 s1 + s2 + s3) with one look at 95 %. The simulation report
+  and the resulting per-axis plan go to the operator with the stage-3 Go. A5 and A8 have one look each.
+- **Verdict per axis at a look (mutually exclusive, in this order):** PASS — point estimate ≥ −5 pp AND loss bound ≤ 10 pp (if the
+  interval also excludes 0 with N16 better, PASS carries the annotation "loss shown, within tolerance (X pp)"); LOSS — point estimate
+  < −5 pp with the interval excluding 0 → flag to the operator, no tier 2; UNDECIDED — anything else → tier 2 at a kept look 1,
+  "loss not ruled out above X pp" → operator at the final look. A wash is labelled "directional (not a shown difference)" (C172).
+- **A8 tg2:** the screen is a trigger, not a look (C168: diagnostic): a material finding = macro-average point estimate < −5 pp or any
+  language < −15 pp → the decider, read by the rule above at 95 %; the decider's large-harm HOLD (m65 spec) stands. A clean screen
+  is reported as "no material finding (not safety evidence)". Expected decider resolution: bound ≈ 10–12 pp (p_d .182) — reported as
+  measured.
+- **Panel:** per family Holm (subjective family: A1, A2, A3, A4, A5, A7 sessions, A8 if the decider runs; members with < 5 judged
+  items reported, not tested); Holm-adjusted p < .05 favouring N16 → flag. A2 / A3 / A4 have no mechanical verdict.
+- **Noise floor (S22-P9):** for A7 (and A8's decider) the N16 s1-vs-s2 (and s3) discordance on the same items is printed beside
+  X-vs-N16's; diagnostic only. (Math500 / A5 blocks hold disjoint items, P426 §3, so they have no within-arm repeat.)
+- **Recommendation to the operator:** ship X when every mechanical axis (A1, A5, A7, and A8's decider if run) is PASS, no panel
+  flag, stage 2 PASS and stage 1 shows the memory gain; otherwise the per-axis signals with the lead's recommendation (C204: the
+  operator's call). Stage 4 as §7.
+- **Funnel cost rule:** tier 2 runs per axis, both arms (the incumbent gets the same added coverage, paired); nothing beyond tier 2
+  without the operator; every quality leg MTP ON (stage 2 PASS supports skipping MTP-OFF quality legs for X at the tested cells,
+  the C258 precedent; on stage-2 FAIL see §7).
 
 ## 9. GPU budget and ETA (lower bounds from P426 S′ MTP-ON walls and P475 legs; X assumed ≈ 1.05× N16 walls; [+30 %])
 
@@ -244,13 +282,15 @@ not claimed (S21-P9); the comparison is the lossy-lever read.
 | 0 preflights, smokes, real-data A1 | ≈ 2 h | ≈ 3 h |
 | 1 matrix (8 legs + idles; deciding block) | ≈ 7–8 h | ≈ 11 h |
 | 2 exactness (P369 ≈ 3.5 h + scale cells) | ≈ 6–7 h | ≈ 8 h (else operator) |
-| 3 tier 1 (Wave 1 + A5 ≈ 6.3 h, tg1 ≈ 5.7 h, tg2 screen ≈ 3 h per arm; × 2; smokes, idles) | ≈ 35 h | — |
-| 3 tier 2 (Math500 +200 ≈ 2.5 h, tg1 s3 ≈ 2.7 h, tg2 decider ≈ 12 h per arm; × 2) | 0 h | ≈ 34 h |
+| 3 tier 1 (Wave 1 ≈ 3.3 h + A5 ≈ 4 h [unmeasured], tg1 ≈ 5.7 h, tg2 screen ≈ 3 h [unmeasured] per arm; × 2; smokes, idles) | ≈ 37 h | — |
+| 3 dropped looks (§8; likely for Math500 and tg1: Math500 +200 ≈ 2.5 h, tg1 s3 ≈ 2.7 h per arm; × 2) | ≈ 10 h | ≈ 10 h |
+| 3 tier 2 (tg2 decider ≈ 12 h per arm [unmeasured]; Math500 / tg1 only where a look is kept and undecided) | 0 h | ≈ 24 h |
 | 4 (V only: tier 1 ≈ 17 h, tier 2 ≤ 17 h) | ≈ 17 h or 0 (trigger) | ≈ 34 h |
-| total | ≈ 67–70 h [≈ 90 h] | ≈ 125 h [≈ 160 h] |
+| total | ≈ 79–82 h [≈ 105 h] | ≈ 127 h [≈ 165 h] |
 
 CPU before the first measured leg: B0 ≈ 0.5 day (+ gates), B1–B5 ≈ 2 days (four-eyes light), gates. Calendar: ≈ 3–4 days of box time
-on the expected path after the builds. Estimates are recalibrated from each smoke and reported at each look.
+on the expected path after the builds. Estimates are recalibrated from each smoke and reported at each look. [r1] A5 and tg2 walls are unmeasured: a timed smoke (one A5
+prompt per rung, one tg2 item per language, both arms) recalibrates them before stage 3's Go.
 
 ## 10. Publish (only after the operator's pick approval)
 
@@ -261,7 +301,7 @@ the B6 batching list; stack gate; push ask.
 
 ## 11. Acceptance (of the spec's execution)
 
-1. B0–B5 accepted with their red-first tests; gates PASS; pushes approved.
+1. B0–B7 accepted with their red-first tests (B7's simulation report delivered); gates PASS; pushes approved.
 2. Stage 1 `MATRIX.md` complete (two speed-valid legs per arm), the mode proven on every TQ4 leg.
 3. Stage 2 verdict recorded (PASS / FAIL with bound / ABORT).
 4. Stage 3 (and 4 if triggered) signals generated per §8, every axis with a verdict, coverage labelled.
