@@ -95,6 +95,12 @@ mlx-serve (env set directly), the worker's `require_environment` with `draft_kin
 Any MTP-ON behaviour change; continuous batching; other drafter kinds with the mode; stack code (the bump companions are the
 designer's).
 
+## Errata (change review, 2026-11-11)
+
+- The two `server/generation.py` helpers take `draft_kind` with a sentinel default meaning MTP ON (as `require_environment` /
+  `require_policy_stamps`), and `_initialize_model` omits it on the apply call when the configured kind is `mtp` (identical
+  behaviour; existing fakes unchanged). The `--tq4-attention` help text states the OFF configuration.
+
 ## Open questions
 
 None.
