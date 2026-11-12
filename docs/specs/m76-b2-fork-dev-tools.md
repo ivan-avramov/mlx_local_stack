@@ -89,6 +89,23 @@ needed); tests `mlx_vlm/tests/test_m76_b2_*.py`. No production file (`mlx_vlm/` 
 
 Production code; the native16 tuple's behaviour; other entries; changing the 16-state rule or the fixture.
 
+## Errata v1.1 (2026-11-12, implementer delivery; designer)
+
+- `KV_ARM_KEYS` stays `("kv_bits", "kv_quant_scheme")` (an existing test, `test_p475a_kv_arm.py`, pins it); the three keys an arm may
+  change are a new `KV_ARM_DELTA_KEYS = ("kv_bits", "kv_quant_scheme", "tq4_attention")`, which `classify_kv_arm` restores and
+  reports in `kv_delta`.
+- ON-trajectory engagement (P369 tuple): `m72_exact` sends verify blocks with `lengths[0] ≤ 2,048` to the exact per-query loop
+  (`per_query:short`, `tq4_attention.py:316-319`). Rule by the trajectory's key-length span: entirely above 2,048 → `d2_verify` moved;
+  entirely at or below → `per_query:short` moved; crossing → both moved; within one draft block of 2,048 → either moved; every
+  `fallback:*` unchanged across the trajectory.
+- `--certified-by <path>`: the path of a P369 tuple full-run `summary.json` with its `manifest.json` beside it. (a) `tuple` equal in
+  the summary, its binding and the manifest, present in `TUPLES`, naming this pick and mode; E1c and E2 PASS; the C199 gate holds.
+  (b) `stack_head` and `fork_head` (binding and manifest) equal this run's. (c) `manifest.json` `picks[<pick>].argv_on` equals the
+  served argv. A certifying run passes `--production-ref` = the tuple's production (`f9bf743f`).
+- OFF argv of a tuple run = ON argv minus the three MTP flags (`--tq4-attention` kept); XO under `--predictor on` (engagement-only or
+  certifying) stays refused (no drafter).
+- Tuple runs keep E7a / E7b as today (incident records; the C199 gate needs E7a OBSERVED).
+
 ## Open questions
 
 None.
