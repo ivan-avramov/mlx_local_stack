@@ -1,4 +1,4 @@
-"""P475 (R2, R22): the worker's `KV cache resolved:` log line, parsed and checked against a KV arm.
+"""P475 (R2, R22): the worker's `KV cache resolved:` log line, parsed and checked against a KV arm of a campaign (`u4`, `f45`).
 
 The fork (`mlx_vlm/server/app.py`) logs once per load: `KV cache resolved: kv_bits=%r kv_key_bits=%r kv_value_bits=%r
 kv_key_scheme=%r kv_value_scheme=%r kv_quant_scheme=%r kv_group_size=%r quantized_kv_start=%r TQ_KV_QUANT_MODE=%r`.
@@ -25,6 +25,13 @@ ARM_FORMATS = {
     "TQ4": (4, "turboquant"),
     "TQ4-OFF": (4, "turboquant"),
 }
+# M76 B1: campaign -> arm -> (kv_bits, kv_quant_scheme); `u4` is ARM_FORMATS itself
+CAMPAIGN_ARM_FORMATS = {
+    "u4": ARM_FORMATS,
+    "f45": {"N16": (0, None), "X": (4, "turboquant"), "V": (4, "turboquant"), "XO": (4, "turboquant")},
+}
+# M76 B1: the worker's load-time self-test line of a TQ4 attention mode (`tq4_attention=<mode> self-test: …`)
+_SELFTEST = re.compile(r"(?<![\w-])tq4_attention=['\"]?([\w-]+)['\"]?\s+self-test:")
 
 
 class KVLineError(ValueError):
@@ -70,11 +77,18 @@ def parse_kv_line(text_or_lines) -> dict:
     return {k: parsed[k] for k in FIELDS}
 
 
-def expected_kv(arm) -> dict:
-    """The resolved KV fields `arm` must show. Native (N16): `kv_bits` None or 0, nothing else compared."""
-    if arm not in ARM_FORMATS:
+def _formats(campaign):
+    if campaign not in CAMPAIGN_ARM_FORMATS:
+        raise ValueError(f"unknown campaign {campaign!r}")
+    return CAMPAIGN_ARM_FORMATS[campaign]
+
+
+def expected_kv(arm, campaign="u4") -> dict:
+    """The resolved KV fields `arm` (of `campaign`) must show. Native (N16): `kv_bits` None or 0, nothing else compared."""
+    formats = _formats(campaign)
+    if arm not in formats:
         raise ValueError(f"unknown arm {arm!r}")
-    bits, scheme = ARM_FORMATS[arm]
+    bits, scheme = formats[arm]
     if not bits:
         return dict(native=True, kv_bits=0)
     want = dict(native=False, kv_bits=bits, kv_quant_scheme=scheme, kv_group_size=GROUP_SIZE, quantized_kv_start=0,
@@ -84,11 +98,18 @@ def expected_kv(arm) -> dict:
     return want
 
 
-def kv_line_problems(parsed, arm) -> list:
+def parse_tq4_selftests(text) -> list:
+    """The modes of every `tq4_attention=<mode> self-test:` line in `text` (log order; empty when none)."""
+    if isinstance(text, (bytes, bytearray)):
+        text = text.decode("utf-8", errors="replace")
+    return [m.group(1) for ln in (text or "").splitlines() for m in [_SELFTEST.search(ln)] if m]
+
+
+def kv_line_problems(parsed, arm, campaign="u4") -> list:
     """Every disagreement between a parsed line and `arm`'s expected KV state (empty = engaged as the arm)."""
     if not isinstance(parsed, dict):
         return ["no parsed KV line"]
-    want = expected_kv(arm)
+    want = expected_kv(arm, campaign)
     problems = []
     bits = parsed.get("kv_bits")
     if want["native"]:

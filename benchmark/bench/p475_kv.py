@@ -1,4 +1,6 @@
-"""P475 stage 1 — the KV-cache format matrix for `Qwen3.8-27B-mlx-uniform-4bit` (contract `docs/specs/p475-stage1-contract.md`).
+"""P475 stage 1 — the KV-cache format matrix (contract `docs/specs/p475-stage1-contract.md`), per campaign (`--campaign`):
+`u4` (default) = `Qwen3.8-27B-mlx-uniform-4bit`, six arms; `f45` (M76 B1, `docs/specs/m76-b1-p475-f45.md`) =
+`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`, arms N16 / X / V / XO with the `tq4_attention` mode proof.
 
 Subcommands: `prepare` (arm branches + worktrees), `preflight --arm A` (the fork's qualify `--kv-arm`), `run` (plan -> legs ->
 replacements -> deciding block; resumable), `matrix` (the generated table from harvested dossiers only). Every side effect on
@@ -24,14 +26,8 @@ from typing import Protocol
 from bench import kv_line
 from bench.capacity_ladder import P475_DRAFT_KEYS, rung_problems
 
-PICK = "Qwen3.8-27B-mlx-uniform-4bit"
-PICK_SHORT = "u4"
-ARMS = ("N16", "AF8", "TQ8", "AF4", "TQ4", "TQ4-OFF")
-BASE_ARM = "TQ4"
-REFERENCE_ARM = "N16"
 GRID = (8192, 131072, 196608, 260096)
 SMOKE_GRID = (8192,)
-SMOKE_ARMS = ("N16", "TQ4")        # v1.2 (GLM F1): the worker CLI sets KV_BITS only on a quantized arm
 IDLE_S = 600.0
 TICK_S = 300.0
 PORT = 8000
@@ -42,19 +38,115 @@ P475_DIR = "p475"
 # v1.2 (Sol P1): the files the arm worktree executes, relative to `benchmark/`; byte-identical to the orchestrator checkout's
 INSTRUMENT_FILES = ("bench/run_capacity.py", "bench/capacity_ladder.py", "bench/kv_line.py", "bench/data/p475_decode_carrier.txt",
                     "m1/bench_watch.py")
-LEG_RE = re.compile(r"^u4-(n16|af8|tq8|af4|tq4|tq4-off)-(b[1-9][0-9]*|smoke)\.a([1-9][0-9]*)$")
-# Per-leg wall estimates (spec v4 stage 1 "Estimate", minutes per block); per rung by the rung's share of prefill tokens.
-LEG_ESTIMATE_MIN = {"N16": 25, "AF8": 35, "TQ8": 80, "AF4": 40, "TQ4": 76, "TQ4-OFF": 76}
-# arm -> registry entry edits: kv_bits / kv_quant_scheme (None = remove the line); TQ4-OFF comments out the MTP lines.
-# N16 changes only kv_bits: the scheme line stays as in the base (the fork's `--kv-arm` gate, spec v4; v1.2, Sol P2).
-ARM_EDITS = {
-    "N16": {"kv_bits": "0"},
-    "AF8": {"kv_bits": "8", "kv_quant_scheme": "uniform"},
-    "TQ8": {"kv_bits": "8", "kv_quant_scheme": "turboquant"},
-    "AF4": {"kv_bits": "4", "kv_quant_scheme": "uniform"},
-    "TQ4": {},
-    "TQ4-OFF": {"draft_kind": "#", "draft_model": "#"},
+
+
+# ============================================================================================ campaigns (M76 B1)
+# An arm edit of the base entry: ("set", key, value) rewrites an existing `key:` line, ("remove", key) drops it, ("comment", key)
+# prefixes it with `# ` (value kept), ("add", after_key, key, value) inserts `key: value` on the line after `after_key`. Editing a
+# key the entry lacks, or adding one it already has, refuses.
+@dataclasses.dataclass(frozen=True)
+class Campaign:
+    name: str                       # the `--campaign` value; recorded in every non-`u4` receipt / state / preflight record
+    pick: str
+    short: str                      # the leg-name prefix
+    arms: tuple
+    base_arm: str                   # the arm whose commit is the base itself (no registry edit)
+    reference_arm: str              # the ratio denominator
+    off_arms: tuple                 # predictor OFF
+    smoke_arms: tuple
+    block1_order: tuple             # block 2 (even) = the reverse (ABBA)
+    branch_prefix: str              # `<prefix>-<arm-lower>`
+    comment: str                    # `# <comment> <ARM>` on the arm commit's entry
+    label: str                      # the arm commit's message tag
+    scratch: str                    # under $STACK_WORKDIR
+    results: str                    # under the repo
+    matrix_label: str
+    instability_floor: float | None
+    idle_sources: tuple             # LAST_LEG_END namespaces under $STACK_WORKDIR
+    arm_edits: dict
+    leg_estimate_min: dict
+    tq4_modes: dict | None = None   # arm -> the `tq4_attention` mode the leg must prove (None: no mode proof)
+    strip_draft_env: bool = False   # Errata v1.1: strip DRAFT_ENV_NAMES from router / driver; none on an OFF arm's worker
+
+    @property
+    def leg_re(self):
+        alts = "|".join(a.lower() for a in self.arms)
+        return re.compile(rf"^{re.escape(self.short)}-({alts})-(b[1-9][0-9]*|smoke)\.a([1-9][0-9]*)$")
+
+
+IDLE_SOURCES = ("p475", "p426", "m76/p475")
+_U4_PICK = "Qwen3.8-27B-mlx-uniform-4bit"
+_F45_PICK = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
+_X_EDITS = (("set", "kv_bits", "4"), ("add", "kv_bits", "tq4_attention", "m72_exact"))
+CAMPAIGNS = {
+    "u4": Campaign(
+        name="u4", pick=_U4_PICK, short="u4", arms=("N16", "AF8", "TQ8", "AF4", "TQ4", "TQ4-OFF"), base_arm="TQ4",
+        reference_arm="N16", off_arms=("TQ4-OFF",),
+        smoke_arms=("N16", "TQ4"),        # v1.2 (GLM F1): the worker CLI sets KV_BITS only on a quantized arm
+        block1_order=("N16", "AF8", "TQ8", "AF4", "TQ4", "TQ4-OFF"), branch_prefix="p475-u4", comment="PROVISIONAL P475 arm",
+        label="P475", scratch="p475", results="benchmark/results/p475", matrix_label="one pick (partial matrix, P475 v4)",
+        instability_floor=None, idle_sources=IDLE_SOURCES,
+        # kv_bits / kv_quant_scheme; TQ4-OFF comments out the MTP lines. N16 changes only kv_bits: the scheme line stays as in
+        # the base (the fork's `--kv-arm` gate, spec v4; v1.2, Sol P2).
+        arm_edits={"N16": (("set", "kv_bits", "0"),),
+                   "AF8": (("set", "kv_bits", "8"), ("set", "kv_quant_scheme", "uniform")),
+                   "TQ8": (("set", "kv_bits", "8"), ("set", "kv_quant_scheme", "turboquant")),
+                   "AF4": (("set", "kv_bits", "4"), ("set", "kv_quant_scheme", "uniform")),
+                   "TQ4": (),
+                   "TQ4-OFF": (("comment", "draft_kind"), ("comment", "draft_model"))},
+        # Per-leg wall estimates (spec v4 stage 1 "Estimate", minutes per block); per rung by the rung's share of prefill tokens.
+        leg_estimate_min={"N16": 25, "AF8": 35, "TQ8": 80, "AF4": 40, "TQ4": 76, "TQ4-OFF": 76}),
+    "f45": Campaign(
+        name="f45", pick=_F45_PICK, short="f45", arms=("N16", "X", "V", "XO"), base_arm="N16", reference_arm="N16",
+        off_arms=("XO",), smoke_arms=("N16", "X"), block1_order=("N16", "X", "V", "XO"), branch_prefix="m76-f45",
+        comment="PROVISIONAL M76 arm", label="M76", scratch="m76/p475", results="benchmark/results/m76/matrix",
+        matrix_label="M76 stage 1 (P475 instrument)", instability_floor=0.02, idle_sources=IDLE_SOURCES,
+        arm_edits={"N16": (),
+                   "X": _X_EDITS,
+                   "V": (("set", "kv_bits", "4"), ("add", "kv_bits", "tq4_attention", "m72_v1")),
+                   "XO": _X_EDITS + (("comment", "draft_kind"), ("comment", "draft_model"), ("comment", "mtp_verify_scan"))},
+        # Errata v1.1: placeholders until the stage-1 smoke (`--expected-rung-seconds`); N16 as the u4 N16 leg, the TQ4 arms
+        # at the u4 TQ4 figure (safer driver timeouts).
+        leg_estimate_min={"N16": 25, "X": 76, "V": 76, "XO": 76},
+        tq4_modes={"N16": "off", "X": "m72_exact", "V": "m72_v1", "XO": "m72_exact"}, strip_draft_env=True),
 }
+U4 = CAMPAIGNS["u4"]
+DEFAULT_CAMPAIGN = "u4"
+
+# the `u4` names, as module constants (today's interface)
+PICK = U4.pick
+PICK_SHORT = U4.short
+ARMS = U4.arms
+BASE_ARM = U4.base_arm
+REFERENCE_ARM = U4.reference_arm
+SMOKE_ARMS = U4.smoke_arms
+LEG_RE = U4.leg_re
+LEG_ESTIMATE_MIN = U4.leg_estimate_min
+ARM_EDITS = U4.arm_edits
+
+
+def campaign_of(value):
+    """A Campaign from a Campaign or its name (None = the default, `u4`)."""
+    if isinstance(value, Campaign):
+        return value
+    name = DEFAULT_CAMPAIGN if value is None else value
+    if name not in CAMPAIGNS:
+        raise P475Error(f"unknown campaign {name!r} (one of {sorted(CAMPAIGNS)})")
+    return CAMPAIGNS[name]
+
+
+def recorded_campaign(doc):
+    """The campaign a receipt / state / preflight record belongs to; a record without the field is a `u4` record."""
+    return doc.get("campaign", "u4") if isinstance(doc, dict) else None
+
+
+def _stamp(doc, campaign):
+    """A non-`u4` record carries its campaign (a `u4` record stays byte-identical to today's: no field)."""
+    if campaign.name != "u4":
+        doc["campaign"] = campaign.name
+    return doc
+
+
 METRICS = (("peak", "cumulative peak GB", "peak_memory_gb_cumulative"),
            ("prefill", "backend prefill tok/s", "prompt_per_second"),
            ("decode", "decode tok/s", "predicted_per_second"),
@@ -91,55 +183,70 @@ class Ops(Protocol):
 
 
 # ============================================================================================ names and paths
-def arm_lower(arm):
-    if arm not in ARMS:
-        raise ValueError(f"unknown arm {arm!r} (one of {list(ARMS)})")
+def arm_lower(arm, campaign=U4):
+    arms = campaign_of(campaign).arms
+    if arm not in arms:
+        raise ValueError(f"unknown arm {arm!r} (one of {list(arms)})")
     return arm.lower()
 
 
-def arm_of_lower(label):
-    for a in ARMS:
+def arm_of_lower(label, campaign=U4):
+    for a in campaign_of(campaign).arms:
         if a.lower() == label:
             return a
     raise ValueError(f"unknown arm {label!r}")
 
 
-def branch_name(arm):
-    return f"p475-{PICK_SHORT}-{arm_lower(arm)}"
+def branch_name(arm, campaign=U4):
+    c = campaign_of(campaign)
+    return f"{c.branch_prefix}-{arm_lower(arm, c)}"
 
 
 KINDS = ("off", "engagement")      # C301: the OFF preflight (kv manifest) and the ON engagement check (P658 (a))
 
 
-def kinds_for(arm):
+def kinds_for(arm, campaign=U4):
     """C301: every arm needs its OFF preflight; an MTP-ON arm also its ON engagement check."""
-    return ("off", "engagement") if predictor_of(arm) == "on" else ("off",)
+    return ("off", "engagement") if predictor_of(arm, campaign) == "on" else ("off",)
 
 
-def predictor_of(arm):
-    """"on" for every arm but TQ4-OFF (the committed MTP state), "off" for TQ4-OFF."""
-    arm_lower(arm)
-    return "off" if arm == "TQ4-OFF" else "on"
+def predictor_of(arm, campaign=U4):
+    """"on" for every arm but the campaign's OFF arms (the committed MTP state); "off" for those (u4 TQ4-OFF, f45 XO)."""
+    c = campaign_of(campaign)
+    arm_lower(arm, c)
+    return "off" if arm in c.off_arms else "on"
 
 
-def leg_name(arm, block, attempt):
-    """`u4-<arm-lower>-b<k>.a<n>`; block "smoke" -> `u4-<arm-lower>-smoke.a<n>`."""
+def leg_name(arm, block, attempt, campaign=U4):
+    """`<short>-<arm-lower>-b<k>.a<n>`; block "smoke" -> `<short>-<arm-lower>-smoke.a<n>` (short `u4` / `f45`)."""
+    c = campaign_of(campaign)
     if block == "smoke":
-        return f"{PICK_SHORT}-{arm_lower(arm)}-smoke.a{int(attempt)}"
-    return f"{PICK_SHORT}-{arm_lower(arm)}-b{int(block)}.a{int(attempt)}"
+        return f"{c.short}-{arm_lower(arm, c)}-smoke.a{int(attempt)}"
+    return f"{c.short}-{arm_lower(arm, c)}-b{int(block)}.a{int(attempt)}"
 
 
-def parse_leg(name):
-    m = LEG_RE.match(name or "")
+def parse_leg(name, campaign=U4):
+    c = campaign_of(campaign)
+    m = c.leg_re.match(name or "")
     if not m:
-        raise ValueError(f"not a P475 leg name: {name!r}")
+        raise ValueError(f"not a P475 leg name: {name!r}" if c.name == "u4" else f"not a {c.name} P475 leg name: {name!r}")
     block = "smoke" if m.group(2) == "smoke" else int(m.group(2)[1:])
-    return dict(arm=arm_of_lower(m.group(1)), block=block, attempt=int(m.group(3)))
+    return dict(arm=arm_of_lower(m.group(1), c), block=block, attempt=int(m.group(3)))
 
 
-def block_order(block):
-    """Block 1 (and any deciding block, odd) N16 -> … -> TQ4-OFF; block 2 (even) the reverse (ABBA)."""
-    return tuple(ARMS) if int(block) % 2 == 1 else tuple(reversed(ARMS))
+def foreign_campaign(name, campaign=U4):
+    """The other campaign whose leg-name pattern `name` matches (None when it matches none or `campaign`'s own)."""
+    c = campaign_of(campaign)
+    if c.leg_re.match(name or ""):
+        return None
+    return next((o.name for o in CAMPAIGNS.values() if o.name != c.name and o.leg_re.match(name or "")), None)
+
+
+def block_order(block, campaign=U4):
+    """Block 1 (and any deciding block, odd) in the campaign's order (u4 N16 -> … -> TQ4-OFF, f45 N16 -> X -> V -> XO);
+    block 2 (even) the reverse (ABBA)."""
+    order = campaign_of(campaign).block1_order
+    return tuple(order) if int(block) % 2 == 1 else tuple(reversed(order))
 
 
 @dataclasses.dataclass
@@ -147,7 +254,7 @@ class Config:
     repo: Path
     workdir: Path
     base: str
-    model: str = PICK
+    model: str = None                  # default: the campaign's pick
     expected: dict = None
     watch_interval: float = TICK_S
     max_preflight: int = 2
@@ -155,19 +262,28 @@ class Config:
     scrub: object = None
     operator_emails: tuple = ()
     run_identity: dict = None          # the run's recorded {arm_commits, gitlinks} (state.json), set by `run`
+    campaign: Campaign = None          # default: `u4`
 
     def __post_init__(self):
         self.repo, self.workdir = Path(self.repo), Path(self.workdir)
+        self.campaign = campaign_of(self.campaign)
+        if self.model is None:
+            self.model = self.campaign.pick
         if self.expected is None:
-            self.expected = default_expected()
+            self.expected = default_expected(self.campaign)
+
+    @property
+    def arms(self):
+        return self.campaign.arms
 
     # -- paths
     @property
     def p475(self):
-        return self.workdir / P475_DIR
+        """The campaign's scratch dir: `$STACK_WORKDIR/p475` (u4), `$STACK_WORKDIR/m76/p475` (f45)."""
+        return self.workdir / self.campaign.scratch
 
     def worktree(self, arm):
-        return self.workdir / "worktrees" / branch_name(arm)
+        return self.workdir / "worktrees" / branch_name(arm, self.campaign)
 
     def registry(self, arm):
         return self.worktree(arm) / REGISTRY
@@ -189,7 +305,7 @@ class Config:
 
     @property
     def results(self):
-        return self.repo / "benchmark" / "results" / "p475"
+        return self.repo.joinpath(*self.campaign.results.split("/"))
 
     def dossier(self, leg):
         return self.results / leg
@@ -222,10 +338,11 @@ class Config:
         return [full[GRID.index(c)] for c in self.grid(block)]
 
 
-def default_expected():
+def default_expected(campaign=U4):
     """Expected seconds per rung of GRID, per arm: the spec's per-leg estimate split by each rung's share of prefill tokens."""
+    c = campaign_of(campaign)
     total = sum(GRID)
-    return {arm: [round(LEG_ESTIMATE_MIN[arm] * 60 * c / total, 1) for c in GRID] for arm in ARMS}
+    return {arm: [round(c.leg_estimate_min[arm] * 60 * x / total, 1) for x in GRID] for arm in c.arms}
 
 
 def driver_timeout(expected):
@@ -247,6 +364,26 @@ def kv_env_names(env):
 def strip_kv(env):
     drop = set(kv_env_names(env))
     return {k: v for k, v in env.items() if k not in drop}
+
+
+DRAFT_ENV_NAMES = ("MLX_VLM_DRAFT_KIND", "MLX_VLM_DRAFT_MODEL")
+
+
+def strip_leg_env(env, campaign=U4):
+    """A leg's router / driver environment: every KV / TQ name stripped (R2); on a `strip_draft_env` campaign (f45) also
+    DRAFT_ENV_NAMES (Errata v1.1). `u4`: `strip_kv` exactly."""
+    out = strip_kv(env)
+    if campaign_of(campaign).strip_draft_env:
+        out = {k: v for k, v in out.items() if k not in DRAFT_ENV_NAMES}
+    return out
+
+
+def draft_env_problems(worker_env, arm, campaign=U4):
+    """Errata v1.1: an MTP-OFF arm's worker (f45 XO) carries no DRAFT_ENV_NAMES (an inherited value would load a drafter)."""
+    c = campaign_of(campaign)
+    if not c.strip_draft_env or predictor_of(arm, c) != "off":
+        return []
+    return [f"worker environment of MTP-OFF arm {arm} carries {n}" for n in DRAFT_ENV_NAMES if n in worker_env]
 
 
 def _atomic_json(path, doc):
@@ -304,8 +441,9 @@ def _last_leg_end(ops, path):
 
 
 def last_leg_end(ops, cfg):
-    """The later of `$STACK_WORKDIR/p475/LAST_LEG_END` and `$STACK_WORKDIR/p426/LAST_LEG_END` (None before any leg)."""
-    ends = [_last_leg_end(ops, cfg.workdir / P475_DIR / "LAST_LEG_END"), _last_leg_end(ops, cfg.workdir / "p426" / "LAST_LEG_END")]
+    """The latest `$STACK_WORKDIR/<ns>/LAST_LEG_END` over the campaign's idle sources (p475, p426, m76/p475; None before any
+    leg)."""
+    ends = [_last_leg_end(ops, cfg.workdir.joinpath(*ns.split("/")) / "LAST_LEG_END") for ns in cfg.campaign.idle_sources]
     ends = [e for e in ends if e is not None]
     return max(ends) if ends else None
 
@@ -350,55 +488,95 @@ def _entry_span(lines, model):
     raise ValueError(f"{model}: no `- name:` entry in the registry")
 
 
-def arm_registry_text(base_text, arm, model=PICK):
-    """The arm's `main_models.yaml`: the base text with only the arm's entry keys changed and a `# PROVISIONAL P475 arm <ARM>`
-    comment; TQ4 is the base text itself."""
-    edits = ARM_EDITS[arm]
+def _edits(arm, campaign):
+    c = campaign_of(campaign)
+    if arm not in c.arm_edits:
+        raise ValueError(f"unknown arm {arm!r} (one of {list(c.arms)})")
+    return c.arm_edits[arm]
+
+
+def _edited_keys(edits):
+    """The base keys an arm rewrites, removes or comments (never the keys it adds)."""
+    return [e[1] for e in edits if e[0] in ("set", "remove", "comment")]
+
+
+def _added_keys(edits):
+    return [e[2] for e in edits if e[0] == "add"]
+
+
+def arm_registry_text(base_text, arm, model=None, campaign=U4):
+    """The arm's `main_models.yaml`: the base text with only the arm's entry keys changed / added / commented and a
+    `# <comment> <ARM>` comment (`PROVISIONAL P475 arm` for u4, `PROVISIONAL M76 arm` for f45); the base arm is the base text
+    itself. Editing a key the entry lacks, or adding a key it already has, refuses (ValueError)."""
+    c = campaign_of(campaign)
+    model = c.pick if model is None else model
+    edits = _edits(arm, c)
     if not edits:
         return base_text
     lines = base_text.splitlines(keepends=True)
     start, end, ki = _entry_span(lines, model)
+    edited = {e[1]: e for e in edits if e[0] in ("set", "remove", "comment")}
+    adds = {}
+    for e in edits:
+        if e[0] == "add":
+            adds.setdefault(e[1], []).append(e)
+    names = sorted(set(edited) | set(adds) | set(_added_keys(edits)), key=len, reverse=True)
+    key_re = re.compile(rf"^{re.escape(ki)}({'|'.join(map(re.escape, names))}):(.*?)(\r?\n)?$")
+    present = {m.group(1) for ln in lines[start + 1:end] for m in [key_re.match(ln)] if m}
+    existing = [k for k in _added_keys(edits) if k in present]
+    if existing:
+        raise ValueError(f"{model}: the base entry already has {existing} (an arm adds only a key the entry lacks)")
     out, seen = [], set()
     for i, ln in enumerate(lines):
-        m = re.match(rf"^{re.escape(ki)}(kv_bits|kv_quant_scheme|draft_kind|draft_model):(.*?)(\r?\n)?$", ln) if start < i < end else None
-        if not m or m.group(1) not in edits:
+        m = key_re.match(ln) if start < i < end else None
+        key = m.group(1) if m else None
+        if key not in edited and key not in adds:
             out.append(ln)
             if i == start:
-                out.append(f"{ki}# PROVISIONAL P475 arm {arm}\n")
+                out.append(f"{ki}# {c.comment} {arm}\n")
             continue
-        key, nl = m.group(1), m.group(3) or ""
+        nl = m.group(3) or ""
         seen.add(key)
-        value = edits[key]
-        if value is None:
-            continue                                            # the key is removed
-        if value == "#":
-            out.append(f"{ki}# {key}:{m.group(2)}{nl}")          # commented out, content kept
+        if key in edited:
+            op = edited[key]
+            if op[0] == "set":
+                out.append(f"{ki}{key}: {op[2]}{nl}")
+            elif op[0] == "comment":
+                out.append(f"{ki}# {key}:{m.group(2)}{nl}")      # commented out, content kept
+            # "remove": the key is dropped
         else:
-            out.append(f"{ki}{key}: {value}{nl}")
-    missing = [k for k, v in edits.items() if v not in (None, "#") and k not in seen]
-    if missing or ("draft_kind" in edits and "draft_kind" not in seen):
-        raise ValueError(f"{model}: the base entry lacks {missing or ['draft_kind']}")
+            out.append(ln)
+        for add in adds.get(key, ()):
+            if not out[-1].endswith("\n"):                     # the anchor was the file's unterminated last line
+                out[-1] += "\n"
+            out.append(f"{ki}{add[2]}: {add[3]}{nl}")
+    missing = [k for k in list(edited) + [k for k in adds if k not in edited] if k not in seen]
+    if missing:
+        raise ValueError(f"{model}: the base entry lacks {missing}")
     return "".join(out)
 
 
-def _allowed_added(arm, ki):
-    edits = ARM_EDITS[arm]
-    pats = [re.compile(rf"^{re.escape(ki)}# PROVISIONAL P475 arm {re.escape(arm)}$")]
-    for key, value in edits.items():
-        if value == "#":
-            pats.append(re.compile(rf"^{re.escape(ki)}# {key}:.*$"))
-        elif value is not None:
-            pats.append(re.compile(rf"^{re.escape(ki)}{key}:\s*{re.escape(value)}\s*(#.*)?$"))
+def _allowed_added(arm, ki, campaign=U4):
+    c = campaign_of(campaign)
+    pats = [re.compile(rf"^{re.escape(ki)}# {re.escape(c.comment)} {re.escape(arm)}$")]
+    for e in _edits(arm, c):
+        if e[0] == "comment":
+            pats.append(re.compile(rf"^{re.escape(ki)}# {re.escape(e[1])}:.*$"))
+        elif e[0] in ("set", "add"):
+            key, value = (e[1], e[2]) if e[0] == "set" else (e[2], e[3])
+            pats.append(re.compile(rf"^{re.escape(ki)}{re.escape(key)}:\s*{re.escape(value)}\s*(#.*)?$"))
     return pats
 
 
-def registry_diff_problems(base_text, arm_text, arm, model=PICK):
+def registry_diff_problems(base_text, arm_text, arm, model=None, campaign=U4):
     """R1: the arm commit's registry differs from the base only by the arm's keys and its PROVISIONAL comment."""
     import yaml
-    if arm == BASE_ARM:
-        return [] if arm_text == base_text else ["TQ4: the registry differs from the base"]
+    c = campaign_of(campaign)
+    model = c.pick if model is None else model
+    if arm == c.base_arm:
+        return [] if arm_text == base_text else [f"{c.base_arm}: the registry differs from the base"]
     problems = []
-    want = arm_registry_text(base_text, arm, model)
+    want = arm_registry_text(base_text, arm, model, campaign=c)
     try:
         if yaml.safe_load(arm_text) != yaml.safe_load(want):
             problems.append(f"{arm}: the registry's parsed content is not the base with only the arm's keys changed")
@@ -406,9 +584,10 @@ def registry_diff_problems(base_text, arm_text, arm, model=PICK):
         return [f"{arm}: the registry does not parse ({type(exc).__name__})"]
     base_lines, arm_lines = base_text.splitlines(), arm_text.splitlines()
     start, end, ki = _entry_span(base_lines, model)
+    keys = _edited_keys(_edits(arm, c))
     removable = {ln for ln in base_lines[start + 1:end]
-                 if re.match(rf"^{re.escape(ki)}({'|'.join(ARM_EDITS[arm])}):", ln)}
-    added_ok = _allowed_added(arm, ki)
+                 if keys and re.match(rf"^{re.escape(ki)}({'|'.join(map(re.escape, keys))}):", ln)}
+    added_ok = _allowed_added(arm, ki, c)
     comments = 0
     for op, i1, i2, j1, j2 in difflib.SequenceMatcher(None, base_lines, arm_lines, autojunk=False).get_opcodes():
         if op == "equal":
@@ -419,10 +598,10 @@ def registry_diff_problems(base_text, arm_text, arm, model=PICK):
         for ln in arm_lines[j1:j2]:
             if not any(p.match(ln) for p in added_ok):
                 problems.append(f"{arm}: added line outside the arm's keys: {ln.strip()[:80]!r}")
-            elif "PROVISIONAL P475 arm" in ln:
+            elif c.comment in ln:
                 comments += 1
     if comments != 1:
-        problems.append(f"{arm}: {comments} `# PROVISIONAL P475 arm {arm}` comment(s), need exactly 1")
+        problems.append(f"{arm}: {comments} `# {c.comment} {arm}` comment(s), need exactly 1")
     return problems
 
 
@@ -441,18 +620,19 @@ def arm_identity(arm, ops, cfg):
     """R1: (identity, problems) of the arm worktree — clean, HEAD == the arm branch's commit, its parent == the base (TQ4: HEAD ==
     the base), the commit's diff ⊆ the arm's keys + comment, gitlinks == the base's."""
     wt = cfg.worktree(arm)
+    br = branch_name(arm, cfg.campaign)
     problems = []
     st = ops.worktree_state(wt)
     head = (st or {}).get("head")
-    ident = dict(worktree=str(wt), branch=branch_name(arm), head=head, clean=(st or {}).get("clean"),
+    ident = dict(worktree=str(wt), branch=br, head=head, clean=(st or {}).get("clean"),
                  gitlinks=(st or {}).get("gitlinks"), base=cfg.base)
     if not ident["clean"]:
         problems.append(f"{arm}: worktree not clean")
-    commit = ops.git(wt, "rev-parse", f"refs/heads/{branch_name(arm)}").strip()
+    commit = ops.git(wt, "rev-parse", f"refs/heads/{br}").strip()
     ident["arm_commit"] = commit
     if head != commit:
         problems.append(f"{arm}: HEAD {head} != the arm commit {commit}")
-    if arm == BASE_ARM:
+    if arm == cfg.campaign.base_arm:
         if head != cfg.base:
             problems.append(f"{arm}: HEAD {head} != the base {cfg.base}")
     else:
@@ -466,7 +646,7 @@ def arm_identity(arm, ops, cfg):
             problems.append(f"{arm}: the arm commit changes {files}, not only {REGISTRY}")
         if REGISTRY in files:
             problems += registry_diff_problems(ops.git(wt, "show", f"{cfg.base}:{REGISTRY}"),
-                                               ops.git(wt, "show", f"{head}:{REGISTRY}"), arm, cfg.model)
+                                               ops.git(wt, "show", f"{head}:{REGISTRY}"), arm, cfg.model, campaign=cfg.campaign)
     base_links = _gitlinks(ops.git(wt, "ls-tree", cfg.base, "src/mlx-vlm", "src/mlx-serve"))
     ident["base_gitlinks"] = base_links
     if not base_links or ident["gitlinks"] != base_links:
@@ -515,12 +695,13 @@ def recorded_identity_problems(arm, ident, recorded):
 
 
 # ============================================================================================ prepare
-def prepare(ops, cfg, arms=ARMS):
+def prepare(ops, cfg, arms=None):
     """Create / verify every arm branch and worktree (idempotent); a dirty or diverged arm refuses. Returns the problems."""
     problems = []
+    arms = cfg.arms if arms is None else arms
     (cfg.workdir / "p369" / "phase2").mkdir(parents=True, exist_ok=True)   # C296 (P656 3): the fork qualify's lock dir
     for arm in arms:
-        wt, br = cfg.worktree(arm), branch_name(arm)
+        wt, br = cfg.worktree(arm), branch_name(arm, cfg.campaign)
         try:
             try:
                 ops.git(cfg.repo, "rev-parse", "--verify", "--quiet", f"refs/heads/{br}")
@@ -534,12 +715,12 @@ def prepare(ops, cfg, arms=ARMS):
                 else:
                     ops.git(cfg.repo, "worktree", "add", "-b", br, str(wt), cfg.base)
                 ops.git(wt, "submodule", "update", "--init", "--force")
-                if arm != BASE_ARM and ops.git(wt, "rev-parse", "HEAD").strip() == cfg.base:
+                if arm != cfg.campaign.base_arm and ops.git(wt, "rev-parse", "HEAD").strip() == cfg.base:
                     base_text = ops.git(wt, "show", f"{cfg.base}:{REGISTRY}")
-                    (wt / REGISTRY).write_text(arm_registry_text(base_text, arm, cfg.model))
+                    (wt / REGISTRY).write_text(arm_registry_text(base_text, arm, cfg.model, campaign=cfg.campaign))
                     ops.git(wt, "add", REGISTRY)
-                    ops.git(wt, "commit", "-m", f"chore(stack): P475 arm {arm} for {cfg.model} (PROVISIONAL, local arm branch)",
-                            "--", REGISTRY)
+                    ops.git(wt, "commit", "-m", f"chore(stack): {cfg.campaign.label} arm {arm} for {cfg.model} (PROVISIONAL, local "
+                            "arm branch)", "--", REGISTRY)
                 dotenv = cfg.repo / ".env"
                 if dotenv.exists() and not (wt / ".env").exists():
                     (wt / ".env").symlink_to(dotenv)
@@ -682,21 +863,26 @@ def preflight(arm, ops, cfg, max_retries=None, kind="off"):
     C301: `kind="engagement"` is the ON engagement check of an MTP-ON arm (`--predictor on --engagement-only`, its own records);
     S18-P3: a record taken on another base is not final — NOT_STARTED, returned unwritten, the old record kept as evidence."""
     max_retries = cfg.max_preflight if max_retries is None else max_retries
-    if kind not in kinds_for(arm):
+    if kind not in kinds_for(arm, cfg.campaign):
         raise P475Error(f"{arm} has no {kind} check (MTP-OFF arms take only the OFF preflight)")
     rec = read_preflight(cfg, arm, kind)
-    if rec is not None and rec.get("base") != cfg.base:
-        return dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="NOT_STARTED", attempts=[], max_retries=max_retries,
-                    not_started=[dict(reason=f"{cfg.preflight_record(arm, kind)} was taken on base {rec.get('base')!r}, not "
-                                             f"{cfg.base} (archive $STACK_WORKDIR/{P475_DIR}/ whole before a re-prepare)",
-                                      at=ops.now())],
-                    stale_record=str(cfg.preflight_record(arm, kind)))
+    stale = None
+    if rec is not None and recorded_campaign(rec) != cfg.campaign.name:          # M76 B1: another campaign's record
+        stale = f"belongs to campaign {recorded_campaign(rec)!r}, not {cfg.campaign.name!r}"
+    elif rec is not None and rec.get("base") != cfg.base:
+        stale = f"was taken on base {rec.get('base')!r}, not {cfg.base}"
+    if stale is not None:
+        return _stamp(dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="NOT_STARTED", attempts=[],
+                           max_retries=max_retries,
+                           not_started=[dict(reason=f"{cfg.preflight_record(arm, kind)} {stale} (archive $STACK_WORKDIR/"
+                                                    f"{cfg.campaign.scratch}/ whole before a re-prepare)", at=ops.now())],
+                           stale_record=str(cfg.preflight_record(arm, kind))), cfg.campaign)
     if rec and rec.get("status") in ("PASS", "REFUSED"):
         return rec
     attempts = list((rec or {}).get("attempts") or [])
     not_started = list((rec or {}).get("not_started") or [])
-    rec = dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="PENDING", attempts=attempts, max_retries=max_retries,
-               not_started=not_started)
+    rec = _stamp(dict(arm=arm, model=cfg.model, base=cfg.base, kind=kind, status="PENDING", attempts=attempts,
+                      max_retries=max_retries, not_started=not_started), cfg.campaign)
     while len(attempts) < 1 + max_retries:
         n = len(attempts) + 1
         out = cfg.preflight_dir(kind) / f"{arm}.a{n}"
@@ -940,21 +1126,97 @@ def telemetry_identities(rows):
     return out
 
 
+# ============================================================================================ mode proof (M76 B1)
+# arm -> (counters that must be > 0 at exit, counters that must be 0 at exit); every `fallback:*` must be 0 at exit.
+ROUTE_RULES = {
+    "X": (("p2s", "d2_verify", "native:prefill", "native:verify"), ("mma",)),
+    "V": (("p2s", "mma", "native:prefill", "native:verify"), ("d2_verify",)),
+    "XO": (("p2s", "d2", "native:prefill", "native:decode"), ("mma", "d2_verify", "native:verify")),
+}
+
+
+def selftest_problems(modes, expected):
+    """The worker's `tq4_attention=<mode> self-test:` lines (secondary record): none on a mode-off arm, none of another mode."""
+    if expected == "off":
+        return [f"tq4_attention self-test line(s) {modes} on a mode-off arm"] if modes else []
+    other = [m for m in modes if m != expected]
+    return [f"tq4_attention self-test reports mode(s) {other}, expected {expected!r}"] if other else []
+
+
+def _count(v):
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def route_proof(manifest, expected, arm):
+    """(record, problems): the `tq4_attention` mode and route counters of the driver's manifest (`tq4_route_counts_at_creation`,
+    `router_exit.tq4_route_counts_at_exit`) against `arm`'s rule. Mode off: no counters. A TQ4 mode: both snapshots present
+    and of that mode (both recorded); ROUTE_RULES[arm] and every `fallback:*` == 0 on the EXIT block's absolute counters
+    (Errata v1.1: the manifest's creation block is gathered after the ladder; each leg is a fresh worker)."""
+    if not isinstance(manifest, dict):
+        why = manifest if isinstance(manifest, str) else "absent"
+        return dict(manifest=why), [f"no readable capacity manifest ({why})"]
+    runtime_mode = (manifest.get("runtime") or {}).get("tq4_attention") if isinstance(manifest.get("runtime"), dict) else None
+    creation = manifest.get("tq4_route_counts_at_creation")
+    exit_blk = manifest.get("router_exit") if isinstance(manifest.get("router_exit"), dict) else {}
+    at_exit = exit_blk.get("tq4_route_counts_at_exit")
+    rec = dict(manifest_mode=runtime_mode, creation=creation, exit=at_exit, exit_counts=None)
+    problems = []
+    if expected == "off":
+        if runtime_mode not in (None, "off"):
+            problems.append(f"manifest runtime tq4_attention {runtime_mode!r} on a mode-off arm")
+        for what, blk in (("creation", creation), ("exit", at_exit)):
+            if blk is None:
+                continue
+            if not isinstance(blk, dict) or blk.get("mode") not in (None, "off") or blk.get("route_counts") is not None:
+                problems.append(f"route counters at {what} on a mode-off arm ({blk!r:.200})")
+        return rec, problems
+    if runtime_mode is not None and runtime_mode != expected:
+        problems.append(f"manifest runtime tq4_attention {runtime_mode!r} != {expected!r}")
+    for what, blk in (("creation", creation), ("exit", at_exit)):     # both blocks: present, of the arm's mode
+        if not isinstance(blk, dict):
+            problems.append(f"route counters absent at {what}")
+        elif blk.get("mode") != expected:
+            problems.append(f"route counters at {what}: mode {blk.get('mode')!r} != {expected!r} (source {blk.get('source')!r})")
+    if not isinstance(at_exit, dict):
+        return rec, problems
+    rc = at_exit.get("route_counts")                                   # Errata v1.1: the rules on the exit block's absolutes
+    if not isinstance(rc, dict):
+        problems.append(f"route counters absent at exit (source {at_exit.get('source')!r})")
+        return rec, problems
+    bad = sorted(k for k, v in rc.items() if not _count(v))
+    if bad:
+        problems.append(f"route counters at exit: non-integer {bad}")
+        return rec, problems
+    rec["exit_counts"] = dict(rc)
+    positive, zero = ROUTE_RULES[arm]
+    for k in positive:
+        if k not in rc:
+            problems.append(f"route counter {k!r} absent at exit (need > 0)")
+        elif rc[k] <= 0:
+            problems.append(f"route counter {k!r} at exit {rc[k]} (need > 0)")
+    for k in list(zero) + sorted(k for k in rc if k.startswith("fallback:")):
+        if rc.get(k, 0) != 0:
+            problems.append(f"route counter {k!r} at exit {rc[k]} (need 0)")
+    return rec, problems
+
+
 def run_leg(leg, arm, ops, cfg):
     """One leg, fail closed (contract "Leg lifecycle"); a receipt is written on every path. Returns the receipt dict (plus
     `_receipt_path` and `_harvest`)."""
-    info = parse_leg(leg)
-    block, predictor = info["block"], predictor_of(arm)
+    camp = cfg.campaign
+    info = parse_leg(leg, camp)
+    block, predictor = info["block"], predictor_of(arm, camp)
     if info["arm"] != arm:
         raise ValueError(f"leg {leg} is not an arm {arm} leg")
     wt, registry = cfg.worktree(arm), cfg.registry(arm)
     outs = cfg.capacity_outputs(arm, leg)
-    receipt = dict(leg=leg, arm=arm, block=block, attempt=info["attempt"], model=cfg.model, predictor=predictor, base=cfg.base,
-                   grid=list(cfg.grid(block)), expected_rung_seconds=cfg.expected_for(arm, block), problems=[],
-                   speed_problems=[], speed_valid=False, power={},
-                   paths=dict(worktree=str(wt), registry=str(registry), rows=str(outs["rows"]), manifest=str(outs["manifest"]),
-                              watch=str(cfg.leg_dir(leg) / "watch.jsonl"), worker_log=str(wt / "logs" / "mlx_vlm.log"),
-                              router_log=str(wt / "logs" / "main_model.log")))
+    receipt = _stamp(dict(leg=leg, arm=arm, block=block, attempt=info["attempt"], model=cfg.model, predictor=predictor,
+                          base=cfg.base, grid=list(cfg.grid(block)), expected_rung_seconds=cfg.expected_for(arm, block),
+                          problems=[], speed_problems=[], speed_valid=False, power={},
+                          paths=dict(worktree=str(wt), registry=str(registry), rows=str(outs["rows"]),
+                                     manifest=str(outs["manifest"]), watch=str(cfg.leg_dir(leg) / "watch.jsonl"),
+                                     worker_log=str(wt / "logs" / "mlx_vlm.log"),
+                                     router_log=str(wt / "logs" / "main_model.log"))), camp)
     with contextlib.ExitStack() as lease_scope:
         # ---------------------------------------------------------------- 1. pre-check (nothing started)
         pre = []
@@ -985,7 +1247,7 @@ def run_leg(leg, arm, ops, cfg):
             present = [str(d) for d in _destinations(leg, arm, cfg) if Path(d).exists()]
             if present:
                 pre.append(f"destinations exist: {present}")
-            for kind in kinds_for(arm):                     # C301: the OFF preflight, and on ON arms the engagement check
+            for kind in kinds_for(arm, camp):               # C301: the OFF preflight, and on ON arms the engagement check
                 pf = read_preflight(cfg, arm, kind)
                 key, what = ("preflight", "preflight") if kind == "off" else ("engagement", "engagement check")
                 receipt[key] = dict(record=str(cfg.preflight_record(arm, kind)), status=(pf or {}).get("status"),
@@ -994,6 +1256,8 @@ def run_leg(leg, arm, ops, cfg):
                     pre.append(f"{what} of {arm} is {(pf or {}).get('status')!r}, not PASS")
                 elif pf.get("base") != cfg.base:               # S18-P3
                     pre.append(f"{what} of {arm} was taken on base {pf.get('base')!r}, not {cfg.base}")
+                elif recorded_campaign(pf) != camp.name:       # M76 B1: another campaign's record
+                    pre.append(f"{what} of {arm} belongs to campaign {recorded_campaign(pf)!r}, not {camp.name!r}")
             shas, found = instrument_problems(arm, cfg)
             receipt["instrument"] = shas
             pre += found
@@ -1031,15 +1295,20 @@ def run_leg(leg, arm, ops, cfg):
             receipt["worker_env"] = worker_env_record(worker_env)
             if leaked:
                 post.append(f"worker environment carries stripped name(s) {leaked}")
+            post += draft_env_problems(worker_env, arm, camp)
             after = _read_optional(ops, log_path) or ""
             since = after[len(before):] if after.startswith(before) else after
             try:
                 parsed = kv_line.parse_kv_line(since)
                 receipt["kv_line"] = parsed
-                post += [f"KV line: {p}" for p in kv_line.kv_line_problems(parsed, arm)]
+                post += [f"KV line: {p}" for p in kv_line.kv_line_problems(parsed, arm, camp.name)]
             except kv_line.KVLineError as exc:
                 receipt["kv_line"] = None
                 post.append(f"KV line: {exc}")
+            if camp.tq4_modes is not None:                             # M76 B1: the mode proof's load-time half (R5)
+                selftests = kv_line.parse_tq4_selftests(since)
+                receipt["mode_proof"] = dict(expected_mode=camp.tq4_modes[arm], selftest_modes=selftests)
+                post += [f"mode proof: {p}" for p in selftest_problems(selftests, camp.tq4_modes[arm])]
             entry = _registry_entry(ops.read_text(registry), cfg.model)
             post += predictor_argv_problems(argv, entry, predictor)
             if post:                                                   # R5: refuse before the driver
@@ -1048,7 +1317,8 @@ def run_leg(leg, arm, ops, cfg):
             # ---------------- 4. driver + 5. watcher
             d_argv = driver_argv(arm, leg, cfg, block)
             base_env = handle.env_base() if hasattr(handle, "env_base") else dict(os.environ)
-            env = dict(strip_kv(dict(base_env)), MLX_SERVE_CONFIG=str(registry), MLX_BENCH_SESSION_PREFIX=cfg.out_tag(leg))
+            env = dict(strip_leg_env(dict(base_env), camp), MLX_SERVE_CONFIG=str(registry),
+                       MLX_BENCH_SESSION_PREFIX=cfg.out_tag(leg))
             receipt["driver_argv"] = d_argv
             timeout = driver_timeout(cfg.expected_for(arm, block))
             receipt["driver_timeout_s"] = timeout
@@ -1110,6 +1380,15 @@ def run_leg(leg, arm, ops, cfg):
                 problems += _rows_problems(rows, cfg.grid(block), predictor, cfg.out_tag(leg))
                 receipt["drafter_keys"] = drafter_key_shape(rows)
                 receipt["telemetry"] = telemetry_identities(rows)
+                if camp.tq4_modes is not None:                         # M76 B1: the mode proof from the driver's manifest
+                    try:
+                        text = _read_optional(ops, outs["manifest"])
+                        manifest = json.loads(text) if text else None
+                    except Exception as exc:  # noqa: BLE001
+                        manifest = f"unreadable: {type(exc).__name__}: {exc}"
+                    proof, found = route_proof(manifest, camp.tq4_modes[arm], arm)
+                    receipt.setdefault("mode_proof", dict(expected_mode=camp.tq4_modes[arm])).update(proof)
+                    problems += [f"mode proof: {p}" for p in found]
             problems += _teardown(ops, handle, ident_w, receipt)
             try:
                 ident_exit, found = arm_identity(arm, ops, cfg)
@@ -1285,6 +1564,8 @@ def harvest(leg, ops, cfg):
     receipt = read_receipt(cfg.leg_dir(leg))
     if receipt is None or receipt.get("verdict") not in ("VALID", "INVALID"):
         raise P475Error(f"{leg}: no VALID / INVALID canonical receipt to harvest")
+    if recorded_campaign(receipt) != cfg.campaign.name:            # M76 B1: never harvest another campaign's receipt
+        raise P475Error(f"{leg}: the receipt belongs to campaign {recorded_campaign(receipt)!r}, not {cfg.campaign.name!r}")
     scrub = _scrub_for(ops, cfg)
     paths = receipt.get("paths") or {}
     sources = [("receipt.json", cfg.receipt_path(leg)), ("watch.jsonl", paths.get("watch"))]
@@ -1314,7 +1595,7 @@ def harvest(leg, ops, cfg):
     problems, manifest = [], dict(leg=leg, files={})
     staged = []
     for name, data in sorted(files.items()):
-        rel = f"benchmark/results/p475/{leg}/{name}"
+        rel = f"{cfg.campaign.results}/{leg}/{name}"
         _, scrubbed, published, found = _publish(data, rel, scrub, gate, "main")
         problems += found
         staged.append((name, data, scrubbed, published))
@@ -1379,7 +1660,7 @@ def replay_harvests(ops, cfg):
     if not legs_root.is_dir():
         return done, problems
     for d in sorted(legs_root.iterdir()):
-        if not LEG_RE.match(d.name):
+        if not cfg.campaign.leg_re.match(d.name):
             continue
         rec = read_receipt(d)
         if rec and rec.get("verdict") in ("VALID", "INVALID") and not cfg.dossier(d.name).exists():
@@ -1392,18 +1673,25 @@ def replay_harvests(ops, cfg):
 
 
 # ============================================================================================ dossiers, metrics, matrix
-def load_dossier(path):
-    """(record, problems) of one finalized dossier: its receipt, exactly one ladder file, the SCRUB_MANIFEST shas (R19)."""
+def load_dossier(path, campaign=U4):
+    """(record, problems) of one finalized dossier: its receipt, exactly one ladder file, the SCRUB_MANIFEST shas (R19). A
+    dossier of another campaign (its name, or its receipt's recorded campaign) refuses."""
     path = Path(path)
+    camp = campaign_of(campaign)
     problems = []
+    other = foreign_campaign(path.name, camp)
+    if other is not None:
+        return None, [f"{path.name}: a {other} dossier, not a {camp.name} one (refused)"]
     try:
-        info = parse_leg(path.name)
+        info = parse_leg(path.name, camp)
     except ValueError as exc:
         return None, [str(exc)]
     try:
         receipt = json.loads((path / "receipt.json").read_text())
     except (OSError, ValueError):
         return None, [f"{path.name}: receipt.json unreadable"]
+    if recorded_campaign(receipt) != camp.name:
+        problems.append(f"{path.name}: the receipt belongs to campaign {recorded_campaign(receipt)!r}, not {camp.name!r}")
     listed = None
     try:
         man = json.loads((path / "SCRUB_MANIFEST.json").read_text())
@@ -1429,7 +1717,7 @@ def load_dossier(path):
             rows = _parse_jsonl(ladders[0].read_text())
         except (OSError, ValueError):
             problems.append(f"{path.name}: ladder rows unreadable")
-    predictor = predictor_of(info["arm"])
+    predictor = predictor_of(info["arm"], camp)
     grid = SMOKE_GRID if info["block"] == "smoke" else GRID
     rung_ok = not _rows_problems(rows, grid, predictor, f"p475-{path.name}") if rows else False
     ident = receipt.get("identity_entry") if isinstance(receipt.get("identity_entry"), dict) else {}
@@ -1447,6 +1735,8 @@ def dossier_binding_problems(receipt, name, info, cfg):
     p = []
     if receipt.get("leg") != name:
         p.append(f"{name}: receipt leg {receipt.get('leg')!r} != the dossier's")
+    if recorded_campaign(receipt) != cfg.campaign.name:
+        p.append(f"{name}: receipt campaign {recorded_campaign(receipt)!r} != the run's {cfg.campaign.name!r}")
     for k in ("arm", "block", "attempt"):
         if receipt.get(k) != info[k]:
             p.append(f"{name}: receipt {k} {receipt.get(k)!r} != the leg name's {info[k]!r}")
@@ -1462,9 +1752,9 @@ def dossier_binding_problems(receipt, name, info, cfg):
     commit = ident.get("arm_commit")
     if not commit or ident.get("head") != commit:
         p.append(f"{name}: arm identity HEAD {ident.get('head')!r} != its arm commit {commit!r}")
-    if info["arm"] == BASE_ARM:
+    if info["arm"] == cfg.campaign.base_arm:
         if commit != cfg.base:
-            p.append(f"{name}: TQ4 arm commit {commit!r} != the base")
+            p.append(f"{name}: {cfg.campaign.base_arm} arm commit {commit!r} != the base")
     elif ident.get("parent") != cfg.base:
         p.append(f"{name}: arm commit parent {ident.get('parent')!r} != the base")
     if not ident.get("gitlinks") or ident.get("gitlinks") != ident.get("base_gitlinks"):
@@ -1508,12 +1798,16 @@ def load_dossiers(cfg, blocks=None):
     model / base / arm identity / leg identity, one arm commit per arm and one gitlink set across the run (and equal to the run's
     recorded identity when state.json has one); a second usable dossier for one arm / block slot refuses both."""
     records, problems = [], []
+    camp = cfg.campaign
     if cfg.results.is_dir():
         for d in sorted(cfg.results.iterdir()):
-            if d.is_dir() and LEG_RE.match(d.name):
-                rec, found = load_dossier(d)
+            if d.is_dir() and foreign_campaign(d.name, camp) is not None:     # M76 B1: another campaign's dossier refuses
+                problems += load_dossier(d, camp)[1]
+                continue
+            if d.is_dir() and camp.leg_re.match(d.name):
+                rec, found = load_dossier(d, camp)
                 if rec:
-                    found = found + dossier_binding_problems(rec["receipt"], rec["leg"], parse_leg(rec["leg"]), cfg)
+                    found = found + dossier_binding_problems(rec["receipt"], rec["leg"], parse_leg(rec["leg"], camp), cfg)
                     if found:
                         rec["usable"] = False
                     records.append(rec)
@@ -1578,26 +1872,36 @@ def _ratio(a, b):
     return (a / b) if isinstance(a, (int, float)) and isinstance(b, (int, float)) and b else None
 
 
-def instability(values, blocks=(1, 2)):
+_CAMPAIGN_FLOOR = object()
+
+
+def instability(values, blocks=(1, 2), campaign=U4, floor=_CAMPAIGN_FLOOR):
     """R16 trigger per arm × rung × metric from the two blocks' ratios vs N16: a direction reversal or |r1 − r2| >
-    |mean − 1| / 2. Returns {(arm, ctx, metric): {r1, r2, mean, reversal, spread, flag}}."""
+    |mean − 1| / 2. With an absolute floor (S18-P13 / S22-P2; f45: 0.02, u4: none) `spread` needs |mean − 1| > floor besides,
+    or |r1 − r2| > floor alone, and `reversal` needs |r1 − 1| > floor and |r2 − 1| > floor. `floor` defaults to the
+    campaign's. Returns {(arm, ctx, metric): {r1, r2, mean, reversal, spread, flag}}."""
+    c = campaign_of(campaign)
+    floor = c.instability_floor if floor is _CAMPAIGN_FLOOR else floor
     b1, b2 = blocks
     flags = {}
-    for arm in ARMS:
-        if arm == REFERENCE_ARM:
+    for arm in c.arms:
+        if arm == c.reference_arm:
             continue
         for ctx in GRID:
             for m in METRICS:
                 r = []
                 for b in (b1, b2):
                     a = ((values.get((arm, b)) or {}).get(ctx) or {}).get(m[0])
-                    n = ((values.get((REFERENCE_ARM, b)) or {}).get(ctx) or {}).get(m[0])
+                    n = ((values.get((c.reference_arm, b)) or {}).get(ctx) or {}).get(m[0])
                     r.append(_ratio(a, n))
                 if None in r:
                     continue
                 mean = (r[0] + r[1]) / 2
                 reversal = (r[0] > 1 and r[1] < 1) or (r[0] < 1 and r[1] > 1)
                 spread = abs(r[0] - r[1]) > abs(mean - 1) / 2
+                if floor is not None:
+                    reversal = reversal and abs(r[0] - 1) > floor and abs(r[1] - 1) > floor
+                    spread = (abs(mean - 1) > floor and spread) or abs(r[0] - r[1]) > floor
                 flags[(arm, ctx, m[0])] = dict(r1=r[0], r2=r[1], mean=mean, reversal=reversal, spread=spread,
                                                flag=reversal or spread)
     return flags
@@ -1614,7 +1918,7 @@ def _all_receipts(cfg):
     root = cfg.p475 / "legs"
     if root.is_dir():
         for d in sorted(root.iterdir()):
-            if LEG_RE.match(d.name):
+            if cfg.campaign.leg_re.match(d.name):
                 rec = read_receipt(d)
                 if rec:
                     out.append(rec)
@@ -1629,25 +1933,85 @@ def _recorded_blocks(cfg):
         return None
 
 
-def unresolved_flags(values, flags, deciding):
+def unresolved_flags(values, flags, deciding, campaign=U4):
     """v1.2 (TW F6): the flagged (arm, ctx, metric) cells no deciding block resolved (no deciding value for the arm and the
     reference at that rung)."""
+    ref = campaign_of(campaign).reference_arm
     out = []
     for (arm, ctx, key), fl in sorted(flags.items()):
         if not fl["flag"]:
             continue
         seen = any(((values.get((arm, b)) or {}).get(ctx) or {}).get(key) is not None
-                   and ((values.get((REFERENCE_ARM, b)) or {}).get(ctx) or {}).get(key) is not None for b in deciding)
+                   and ((values.get((ref, b)) or {}).get(ctx) or {}).get(key) is not None for b in deciding)
         if not seen:
             out.append((arm, ctx, key))
     return out
 
 
-def _metric_cells_missing(values, arm, b):
+def _metric_cells_missing(values, arm, b, campaign=U4):
     """Defensive (v1.2, Sol P4): every rung of the slot carries every tradeoff metric (acceptance on ON arms only)."""
     row = values.get((arm, b)) or {}
-    keys = [m[0] for m in METRICS if m[0] != "acceptance" or predictor_of(arm) == "on"]
+    keys = [m[0] for m in METRICS if m[0] != "acceptance" or predictor_of(arm, campaign) == "on"]
     return any(row.get(ctx, {}).get(k) is None for ctx in GRID for k in keys)
+
+
+TRIGGER_RUNGS = (131072, 260096)
+TRIGGER_MIN = 1.05
+VX_METRICS = ("decode", "prefill", "peak")
+
+
+def vx_ratios(values, blocks=(1, 2)):
+    """M76 B1: {(metric, ctx, block): V / X} for decode / prefill / peak (None when a value is missing)."""
+    out = {}
+    for key in VX_METRICS:
+        for ctx in GRID:
+            for b in blocks:
+                v = ((values.get(("V", b)) or {}).get(ctx) or {}).get(key)
+                x = ((values.get(("X", b)) or {}).get(ctx) or {}).get(key)
+                out[(key, ctx, b)] = _ratio(v, x)
+    return out
+
+
+def stage4_trigger(values, unresolved, blocks=(1, 2)):
+    """M76 §7: (met, failing cells) — met iff V / X decode ≥ 1.05 at 131,072 and at 260,096 in both blocks and no unresolved
+    instability flag on those cells (V's or X's decode at those rungs)."""
+    ratios = vx_ratios(values, blocks)
+    failing = []
+    for ctx in TRIGGER_RUNGS:
+        for b in blocks:
+            r = ratios[("decode", ctx, b)]
+            if r is None:
+                failing.append(f"V / X decode {ctx} b{b}: missing")
+            elif not r >= TRIGGER_MIN:
+                failing.append(f"V / X decode {ctx} b{b} = {r:.3f} < {TRIGGER_MIN:.2f}")
+        for arm in ("V", "X"):
+            if (arm, ctx, "decode") in unresolved:
+                failing.append(f"unresolved instability: {arm} {ctx} decode")
+    return not failing, failing
+
+
+def _f45_sections(records, values, unresolved):
+    """M76 B1: the V / X ratio table (decode, prefill, peak per rung and block), the route counters at exit per leg, and the
+    stage-4 trigger line."""
+    ratios = vx_ratios(values)
+    lines = ["## V / X (same block)", "", "| metric | rung | b1 V / X | b2 V / X |", "|---|---|---|---|"]
+    for key in VX_METRICS:
+        for ctx in GRID:
+            lines.append(f"| {key} | {ctx} | {_fmt(ratios[(key, ctx, 1)], 3)} | {_fmt(ratios[(key, ctx, 2)], 3)} |")
+    lines += ["", "## tq4_attention route counters (absolute at exit, per leg)", "",
+              "| leg | expected mode | manifest mode | counters at exit | mode proof |", "|---|---|---|---|---|"]
+    for rec in sorted(records, key=lambda r: r["leg"]):
+        proof = (rec.get("receipt") or {}).get("mode_proof") or {}
+        counts = proof.get("exit_counts")
+        dtxt = "—" if not counts else ", ".join(f"{k} {v}" for k, v in sorted(counts.items()))
+        bad = [p for p in rec.get("problems") or [] if str(p).startswith("mode proof:")]
+        lines.append(f"| {rec['leg']} | {proof.get('expected_mode', '—')} | {proof.get('manifest_mode') or '—'} | {dtxt} | "
+                     f"{'FAIL: ' + '; '.join(bad)[:300] if bad else ('ok' if proof else '—')} |")
+    met, failing = stage4_trigger(values, unresolved)
+    lines += ["", "stage-4 trigger: **met** (V / X decode ≥ 1.05 at 131072 and 260096 in both blocks, no unresolved "
+              "instability on those cells)" if met else
+              f"stage-4 trigger: **not met** — {'; '.join(failing)}", ""]
+    return lines
 
 
 def matrix(cfg, blocks=None):
@@ -1655,6 +2019,8 @@ def matrix(cfg, blocks=None):
     valid rungs, else MATRIX.<pick>.PARTIAL.md — exactly one of the two exists afterwards (v1.2, Sol P8). Returns (exit code,
     path): nonzero when partial or when an instability flag is unresolved (v1.2, Sol vP4). `blocks` defaults to the run's
     recorded block plan (v1.2, Sol P7), else 2; only the recorded plan's blocks and deciding block are accepted (Sol vP3)."""
+    camp = cfg.campaign
+    ref = camp.reference_arm
     records, problems = load_dossiers(cfg, blocks)
     values = block_values(records)
     if blocks is None:
@@ -1663,14 +2029,15 @@ def matrix(cfg, blocks=None):
     order_blocks = list(range(1, blocks + 1))
     _, recorded_deciding = recorded_block_plan(cfg, blocks)       # v1.2 (Sol vP3): the recorded deciding block only
     deciding = sorted({b for (_, b) in values if b in recorded_deciding and b not in order_blocks})
-    missing = [f"{arm} b{b}" for arm in ARMS for b in order_blocks
-               if set(((values.get((arm, b)) or {}).keys())) != set(GRID) or _metric_cells_missing(values, arm, b)]
-    refused = [a for a in ARMS if any((read_preflight(cfg, a, k) or {}).get("status") == "REFUSED" for k in kinds_for(a))]
+    missing = [f"{arm} b{b}" for arm in camp.arms for b in order_blocks
+               if set(((values.get((arm, b)) or {}).keys())) != set(GRID) or _metric_cells_missing(values, arm, b, camp)]
+    refused = [a for a in camp.arms
+               if any((read_preflight(cfg, a, k) or {}).get("status") == "REFUSED" for k in kinds_for(a, camp))]
     complete = not missing and not problems and not refused
-    flags = instability(values, (1, 2))
-    unresolved = set(unresolved_flags(values, flags, deciding))
-    lines = [f"# P475 KV-cache format matrix — {cfg.model} — one pick (partial matrix, P475 v4)", "",
-             "GENERATED by `python -m bench.p475_kv matrix` from the harvested dossiers under `benchmark/results/p475/`; never "
+    flags = instability(values, (1, 2), campaign=camp)
+    unresolved = set(unresolved_flags(values, flags, deciding, camp))
+    lines = [f"# P475 KV-cache format matrix — {cfg.model} — {camp.matrix_label}", "",
+             f"GENERATED by `python -m bench.p475_kv matrix` from the harvested dossiers under `{camp.results}/`; never "
              "hand-edited.", "",
              "Descriptive (two order-balanced speed-valid legs per arm, no interval claimed). Ratios are vs N16 within the "
              "same block; a deciding block is its own column and never enters the two-block mean or ratios.", ""]
@@ -1686,24 +2053,26 @@ def matrix(cfg, blocks=None):
         head = "| arm | rung | b1 | b2 | mean | " + "".join(f"b{d} (deciding) | " for d in deciding) + \
                "b1 / N16 | b2 / N16 | instability |"
         lines += [head, "|" + "---|" * (head.count("|") - 1)]
-        for arm in ARMS:
-            if key == "acceptance" and predictor_of(arm) == "off":
+        for arm in camp.arms:
+            if key == "acceptance" and predictor_of(arm, camp) == "off":
                 continue
             for ctx in GRID:
                 v = [((values.get((arm, b)) or {}).get(ctx) or {}).get(key) for b in (1, 2)]
                 mean = (v[0] + v[1]) / 2 if None not in v else None
                 dec = [((values.get((arm, b)) or {}).get(ctx) or {}).get(key) for b in deciding]
                 fl = flags.get((arm, ctx, key))
-                r = [_ratio(v[i], ((values.get((REFERENCE_ARM, b)) or {}).get(ctx) or {}).get(key)) for i, b in enumerate((1, 2))]
-                ftxt = "—" if arm == REFERENCE_ARM or fl is None else (
+                r = [_ratio(v[i], ((values.get((ref, b)) or {}).get(ctx) or {}).get(key)) for i, b in enumerate((1, 2))]
+                ftxt = "—" if arm == ref or fl is None else (
                     ("REVERSAL " if fl["reversal"] else "") + ("SPREAD " if fl["spread"] else "")
                     + ("UNRESOLVED" if (arm, ctx, key) in unresolved else "") or "stable")
                 nd = 4 if key == "acceptance" else 2
                 lines.append(f"| {arm} | {ctx} | {_fmt(v[0], nd)} | {_fmt(v[1], nd)} | {_fmt(mean, nd)} | "
                              + "".join(f"{_fmt(x, nd)} | " for x in dec)
-                             + f"{'—' if arm == REFERENCE_ARM else _fmt(r[0], 3)} | {'—' if arm == REFERENCE_ARM else _fmt(r[1], 3)} | "
+                             + f"{'—' if arm == ref else _fmt(r[0], 3)} | {'—' if arm == ref else _fmt(r[1], 3)} | "
                              f"{ftxt.strip()} |")
         lines.append("")
+    if camp.tq4_modes is not None:                                # M76 B1: V / X, the route counters, the stage-4 trigger
+        lines += _f45_sections(records, values, unresolved)
     receipts = _all_receipts(cfg)
     replaced = [r["leg"] for r in receipts if r.get("verdict") == "VALID" and not r.get("speed_valid")]
     invalid = [r["leg"] for r in receipts if r.get("verdict") == "INVALID"]
@@ -1733,7 +2102,7 @@ def leg_status(cfg, arm, block):
     if root.is_dir():
         for d in root.iterdir():
             try:
-                info = parse_leg(d.name)
+                info = parse_leg(d.name, cfg.campaign)
             except ValueError:
                 continue
             if info["arm"] != arm or info["block"] != block:
@@ -1760,11 +2129,14 @@ def load_state(cfg):
         return None
     except (OSError, ValueError) as exc:
         raise P475Error(f"state.json unreadable ({type(exc).__name__})") from None
+    if isinstance(doc, dict) and recorded_campaign(doc) != cfg.campaign.name:     # M76 B1
+        raise P475Error(f"{cfg.state_path} belongs to campaign {recorded_campaign(doc)!r}, not {cfg.campaign.name!r}")
     return doc
 
 
 def save_state(cfg, state):
-    _atomic_json(cfg.state_path, {k: v for k, v in state.items() if not k.startswith("_")})    # `_…`: this invocation only
+    doc = {k: v for k, v in state.items() if not k.startswith("_")}                          # `_…`: this invocation only
+    _atomic_json(cfg.state_path, _stamp(doc, cfg.campaign))
 
 
 CAP_NAMES = ("max_replacements", "max_not_started", "max_deciding")     # `--blocks` is the recorded plan, not a cap (v1.2)
@@ -1797,7 +2169,7 @@ def _attempt(arm, block, ops, cfg, state, log):
     """Run legs of (arm, block) until one starts (NOT_STARTED retried after its own 600 s, bounded, R14). Returns the receipt."""
     while True:
         _, n = leg_status(cfg, arm, block)
-        leg = leg_name(arm, block, n)
+        leg = leg_name(arm, block, n, cfg.campaign)
         if block != "smoke" and "plan" not in state:              # v1.2 (Sol P7): persisted at the first measured leg
             state["plan"] = dict(state.pop("_pending_plan"))
             save_state(cfg, state)
@@ -1831,10 +2203,11 @@ def _attempt(arm, block, ops, cfg, state, log):
 def _ensure_preflight(arm, ops, cfg, state, log):
     """The arm's OFF preflight, then (MTP-ON arms, C301) its ON engagement check; NOT_STARTED (incl. a record of another base,
     S18-P3) stops the run, a REFUSED one refuses the arm."""
-    for kind in kinds_for(arm):
+    for kind in kinds_for(arm, cfg.campaign):
         what = "preflight" if kind == "off" else "engagement check"
         rec = read_preflight(cfg, arm, kind)
-        if not rec or rec.get("status") not in ("PASS", "REFUSED") or rec.get("base") != cfg.base:
+        if not rec or rec.get("status") not in ("PASS", "REFUSED") or rec.get("base") != cfg.base \
+                or recorded_campaign(rec) != cfg.campaign.name:
             log(f"{what} {arm}")
             rec = preflight(arm, ops, cfg, kind=kind)
         if rec.get("status") == "NOT_STARTED":
@@ -1850,7 +2223,7 @@ def _ensure_preflight(arm, ops, cfg, state, log):
 
 def _run_block(block, ops, cfg, state, log, order=None):
     unfilled = []
-    order = order or block_order(block)
+    order = order or block_order(block, cfg.campaign)
     for arm in order:
         if arm in state["refused_arms"] or not _ensure_preflight(arm, ops, cfg, state, log):
             continue
@@ -1896,14 +2269,18 @@ def config_from_args(args, ops=None, default_head=False):
     workdir = getattr(args, "workdir", None) or os.environ.get("STACK_WORKDIR")
     if not workdir:
         raise P475Error("STACK_WORKDIR is not set (and no --workdir)")
+    camp = campaign_of(getattr(args, "campaign", None))
     repo = Path(getattr(args, "repo", None) or Path(__file__).resolve().parents[2])
-    p475 = Path(workdir) / P475_DIR
+    p475 = Path(workdir).joinpath(*camp.scratch.split("/"))
     base = getattr(args, "base", None)
     if base:
         base = resolve_base(base, ops, repo)
     recorded = None
     try:
-        recorded = json.loads((p475 / "state.json").read_text()).get("base")
+        state = json.loads((p475 / "state.json").read_text())
+        if isinstance(state, dict) and recorded_campaign(state) != camp.name:        # M76 B1
+            raise P475Error(f"{p475 / 'state.json'} belongs to campaign {recorded_campaign(state)!r}, not {camp.name!r}")
+        recorded = state.get("base")
     except (OSError, ValueError, AttributeError):
         pass
     if base and recorded and base != recorded:
@@ -1913,18 +2290,18 @@ def config_from_args(args, ops=None, default_head=False):
         if ops is None or not default_head:
             raise P475Error("no base commit: pass --base or run prepare")
         base = ops.git(repo, "rev-parse", "HEAD").strip()
-    expected = default_expected()
+    expected = default_expected(camp)
     for spec in getattr(args, "expected_rung_seconds", None) or []:
         arm, _, vals = spec.partition("=")
         xs = [float(x) for x in vals.split(",")]
-        if arm not in ARMS or len(xs) != len(GRID) or any(not (x > 0) for x in xs):
+        if arm not in camp.arms or len(xs) != len(GRID) or any(not (x > 0) for x in xs):
             raise P475Error(f"--expected-rung-seconds {spec!r}: ARM=<{len(GRID)} positive seconds>")
         expected[arm] = xs
     return Config(repo=repo, workdir=Path(workdir), base=base, expected=expected,
                   watch_interval=float(getattr(args, "watch_interval", None) or TICK_S),
                   max_preflight=int(getattr(args, "max_preflight", None) if getattr(args, "max_preflight", None) is not None else 2),
                   production_ref=getattr(args, "production_ref", None),
-                  operator_emails=tuple(getattr(args, "operator_email", None) or ()))
+                  operator_emails=tuple(getattr(args, "operator_email", None) or ()), campaign=camp)
 
 
 def _logger(cfg):
@@ -2003,7 +2380,7 @@ def _measured_legs_exist(cfg):
         return False
     for d in root.iterdir():
         try:
-            if parse_leg(d.name)["block"] != "smoke":
+            if parse_leg(d.name, cfg.campaign)["block"] != "smoke":
                 return True
         except ValueError:
             continue
@@ -2016,7 +2393,7 @@ def _deciding_step(ops, cfg, state, caps, log, unfilled):
     records, problems = load_dossiers(cfg)
     if problems:
         raise _Stop(f"dossier problems before the instability rule: {problems[:4]}")
-    flags = instability(block_values(records))
+    flags = instability(block_values(records), campaign=cfg.campaign)
     flagged = [k for k, v in flags.items() if v["flag"]]
     state["instability"] = [list(map(str, k)) for k in flagged]
     plan = state.get("plan") or state.get("_pending_plan")
@@ -2027,7 +2404,7 @@ def _deciding_step(ops, cfg, state, caps, log, unfilled):
             dec["started"] = True
         save_state(cfg, state)
         log(f"instability {flagged[:6]}… -> deciding block b{dec['block']}")
-        left = _run_block(dec["block"], ops, cfg, state, log, order=block_order(1))
+        left = _run_block(dec["block"], ops, cfg, state, log, order=block_order(1, cfg.campaign))
         unfilled += left
         if not left:
             dec["complete"] = True
@@ -2035,17 +2412,17 @@ def _deciding_step(ops, cfg, state, caps, log, unfilled):
         records, _ = load_dossiers(cfg)
     values = block_values(records)
     deciding = [dec["block"]] if dec["started"] else []
-    unresolved = unresolved_flags(values, instability(values), deciding)
+    unresolved = unresolved_flags(values, instability(values, campaign=cfg.campaign), deciding, cfg.campaign)
     if unresolved:
         log(f"UNRESOLVED instability (no deciding block measured it): {unresolved[:6]}")
     return unresolved
 
 
 def _run_smoke(ops, cfg, state, log):
-    """`run --smoke` (v1.2): `u4-n16-smoke` then `u4-tq4-smoke` on the 8192 rung; a standing INVALID smoke leg stops the run, also
-    on resume (v1.2, TW F1). No matrix."""
+    """`run --smoke` (v1.2): the campaign's smoke arms on the 8192 rung (u4: `u4-n16-smoke` then `u4-tq4-smoke`; f45: N16 then
+    X); a standing INVALID smoke leg stops the run, also on resume (v1.2, TW F1). No matrix."""
     try:
-        for arm in SMOKE_ARMS:
+        for arm in cfg.campaign.smoke_arms:
             if not _ensure_preflight(arm, ops, cfg, state, log):
                 raise _Stop(f"{arm}: the smoke arm's preflight is not PASS")
             status, _ = leg_status(cfg, arm, "smoke")
@@ -2066,18 +2443,23 @@ def _run_smoke(ops, cfg, state, log):
 class RealOps:
     """The box: pmset, lsof / ps, the chain lease, git, the mlx-serve router (ChainOps), processes, the watcher."""
 
-    def __init__(self, workdir, repo=None):
+    def __init__(self, workdir, repo=None, campaign=None):
         self.wd = Path(workdir)
         self.repo = Path(repo) if repo else Path(__file__).resolve().parents[2]
         self._procs = {}
-        self._log_dir = self.wd / P475_DIR / "spawn-logs"
+        self._campaign = campaign_of(campaign)
+        self._scratch = self.wd.joinpath(*self._campaign.scratch.split("/"))
+        self._log_dir = self._scratch / "spawn-logs"
 
     def _chain(self, wt, registry=None, predictor="off", env_source=None):
         from bench import chain_ops
-        return _P475Chain(wt, self.wd, str(registry or Path(wt) / REGISTRY),
-                          chain_ops.RunLog(self.wd / P475_DIR / "router.log"), predictor=predictor,
-                          registry=registry, env_source=env_source if env_source is not None else strip_kv(dict(os.environ)),
-                          out_root=self.wd / P475_DIR / "router")
+        chain = _P475Chain(wt, self.wd, str(registry or Path(wt) / REGISTRY),
+                           chain_ops.RunLog(self._scratch / "router.log"), predictor=predictor, registry=registry,
+                           env_source=env_source if env_source is not None else strip_leg_env(dict(os.environ),
+                                                                                              self._campaign),
+                           out_root=self._scratch / "router")
+        chain.campaign = self._campaign
+        return chain
 
     def power(self):
         from bench.chain_ops import default_sh, parse_power
@@ -2286,13 +2668,15 @@ def _p475_chain_class():
     from bench import chain_ops
 
     class P475Chain(chain_ops.ChainOps):
-        """ChainOps for one arm worktree with every KV / TQ name stripped from the router environment (R2), the worker argv
+        """ChainOps for one arm worktree with every KV / TQ name (f45: and DRAFT_ENV_NAMES) stripped from the router
+        environment (R2; Errata v1.1), the worker argv
         read as the process's own argv (the console script's shebang interpreter dropped) and the unload outcome kept."""
 
         _unload_ok = True
+        campaign = U4
 
         def env_base(self):
-            return strip_kv(super().env_base())
+            return strip_leg_env(super().env_base(), self.campaign)
 
         def load(self, model):
             from bench.p426_receipt import shebang_interpreter
@@ -2328,10 +2712,13 @@ def parse_args(argv=None):
     ap.add_argument("--production-ref")
     ap.add_argument("--operator-email", action="append", default=[],
                     help="an address the harvest gate refuses (repeatable; default: the main checkout's git user.email)")
+    campaign_help = f"the campaign (one of {sorted(CAMPAIGNS)}; default {DEFAULT_CAMPAIGN}: {U4.pick})"
+    ap.add_argument("--campaign", choices=sorted(CAMPAIGNS), default=DEFAULT_CAMPAIGN, help=campaign_help)
     sub = ap.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("prepare")
+    subs = [sub.add_parser("prepare")]
     pf = sub.add_parser("preflight")
-    pf.add_argument("--arm", required=True, choices=ARMS)
+    all_arms = list(dict.fromkeys(a for c in CAMPAIGNS.values() for a in c.arms))
+    pf.add_argument("--arm", required=True, choices=all_arms, help="an arm of the campaign")
     pf.add_argument("--max-preflight", type=int, default=2)
     pf.add_argument("--engagement", action="store_true",
                     help="the ON engagement check of an MTP-ON arm (qualify --predictor on --engagement-only; C301)")
@@ -2342,8 +2729,13 @@ def parse_args(argv=None):
     r.add_argument("--max-deciding", type=int, default=1)
     r.add_argument("--max-preflight", type=int, default=2)
     r.add_argument("--smoke", action="store_true")
-    sub.add_parser("matrix")
+    subs += [pf, r, sub.add_parser("matrix")]
+    for s in subs:                                       # M76 B1: also accepted after the subcommand
+        s.add_argument("--campaign", choices=sorted(CAMPAIGNS), default=argparse.SUPPRESS, help=campaign_help)
     args = ap.parse_args(argv)
+    if args.cmd == "preflight" and args.arm not in CAMPAIGNS[args.campaign].arms:
+        ap.error(f"argument --arm: {args.arm!r} is not an arm of campaign {args.campaign} "
+                 f"(choose from {', '.join(CAMPAIGNS[args.campaign].arms)})")
     for name in ("blocks", "max_replacements", "max_not_started", "max_deciding", "max_preflight"):
         v = getattr(args, name, None)
         if v is not None and v < (1 if name == "blocks" else 0):
@@ -2357,7 +2749,7 @@ def main(argv=None, ops=None) -> int:
     if not workdir:
         print("REFUSED: STACK_WORKDIR is not set", file=sys.stderr)
         return 2
-    ops = ops or RealOps(workdir, args.repo)
+    ops = ops or RealOps(workdir, args.repo, args.campaign)
     if args.cmd == "run":
         return run(args, ops)
     try:
@@ -2366,8 +2758,13 @@ def main(argv=None, ops=None) -> int:
         print(f"REFUSED: {exc}", file=sys.stderr)
         return 2
     if args.cmd == "prepare":
-        state = load_state(cfg) or dict(version=1, model=cfg.model, used=dict(replacements=0, not_started=0, deciding=0),
-                                        refused_arms=[], legs=[])
+        try:
+            state = load_state(cfg)
+        except P475Error as exc:
+            print(f"REFUSED: {exc}", file=sys.stderr)
+            return 2
+        state = state or dict(version=1, model=cfg.model, used=dict(replacements=0, not_started=0, deciding=0),
+                              refused_arms=[], legs=[])
         state["base"] = cfg.base
         save_state(cfg, state)
         problems = prepare(ops, cfg)
