@@ -1,38 +1,68 @@
-# Handoff — 2026-11-11 (session 21 → 22: M72 1.3 accepted + published — production TQ4 attention mode `tq4_attention` m72_v1 / m72_exact (C321); M72 1.4 = PLAN M76 GO (C322): spec it first)
+# Handoff — 2026-11-11 (session 22: M76 spec v1.2 written and cold-reviewed (rounds 1–2 of 3); awaiting the operator's Go)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M66–M76, then `docs/open-questions.md` top entries (newest first: S21-P17,
-C322, C321, C320, S21-P10, S21-P9, C319, C318, S21-P3, S21-P2 …). Model names: FULL registry names only. Review rounds: 3 per
-artifact. Operator stance: bias for quality (spend tokens for better outcomes); drive to certified picks; ask only at Go / Accept /
-pushes / scope changes; lead calls filed as they land; offer a fresh session at clean boundaries. Every Go'd build gets its PLAN row
-in the ruling's commit.
+THE one handoff. Read this, then `docs/PLAN.md` rows M66–M77, then `docs/open-questions.md` top entries (newest first: C324, C323,
+S21-P17, C322, C321 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for quality, GPU
+time is the binding resource (funnel, C323); drive to certified picks; ask only at Go / Accept / pushes / scope changes.
 
-Decisions: session 21 ruled C318 (Go on 1.3 v1.1), C319 (`m72_exact`), C320 (second fix round), C321 (Accept), C322 (1.4 Go);
-S21-P3 was decided by C317's pre-registered rule. Discussion ids: session 21 used `S21-P1 … S21-P17`; a new session restarts at P1
-and cites `S22-P<n>`. Next decision id **C323**.
+Decisions: session 22 ruled C323 (S22-P1 … P11 + the funnel directive) and C324 (S22-P12 … P15 + the verify round). Discussion
+ids: session 22 used `S22-P1 … S22-P15`; a new session restarts at P1. Next decision id **C325**.
 
-## THE GOAL — MET (C309); Phase 2 = M72
+## THE GOAL — MET (C309); Phase 2 = M72 → M76
 
-Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON, P426 / C291;
-`Qwen3.8-27B-mlx-uniform-4bit` TQ4 + MTP ON, C258). M72 status: **the production TQ4 mode exists end to end (1.3, opt-in, no pick
-change)** — `kv_bits: 4` + `tq4_attention: m72_v1 | m72_exact` (requires `attention_policy: fused_v1` + `mtp_verify_scan: joint_v1`;
-layer 63 stays native16). Measured served: prefill ≈ the dev p2s path (1.004×; ≈ 0.98× native16), memory ≈ −5.4 / −10.9 GB at 131K /
-262K; projected decode MTP ON 1.10–1.19× (`m72_v1`, not exact) / ≈ 0.95× (`m72_exact`, lossless). **M76 (= 1.4, C322)** certifies
-TQ4 `m72_exact` + MTP ON as the candidate default; the operator accepts memory as the gain.
+Both picks certified in their shipped config (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` native16 + MTP ON, C291;
+`Qwen3.8-27B-mlx-uniform-4bit` TQ4 + MTP ON, C258). M72 1.3 shipped the opt-in TQ4 mode `tq4_attention: m72_v1 | m72_exact` (C321).
+**M76 (= 1.4)** certifies TQ4 `m72_exact` + MTP ON for the first pick; the accepted gain is memory.
 
 ## FIRST — verify (each "no" is a blocker)
 
-1. Power 140 W / 28 V, GPU idle ≈ 0 %, tiny-op floor ≈ 0.17 ms (`benchmark/results/m72/d1d2/floor.py`) before any GPU work. After a
-   reboot: start OrbStack before any gate (a stopped Docker daemon turns 21 tg2-grader tests into skips → gate FAIL).
-2. Nothing running: no router on :8000, no gate / probe / pytest / review dispatch (check from a script file, never with the
-   patterns in your argv).
-3. Pushes: fork `origin/main` = local = `5f83c84f`; mlx-serve `origin/main` = local = `0f2259f`; stack `origin/main` = `8c65dac0`
-   (gated, receipt `stack-8c65dac0…-5b1e7efdd9f3.json`). Local stack `main` is ahead by docs-only commits (C322 / PLAN M76, the
-   session-21 notebook / results / S21-P17 records, this handoff): docs-only level, no gate; push needs the operator's word.
-4. Worktrees: none (all three repositories: main checkouts only). Scratch, regenerable (every cited record is committed) — ask the
-   operator before deleting: `$STACK_WORKDIR/fe-m72-13/` (four-eyes clones, briefs, raw outputs; several GB),
-   `$STACK_WORKDIR/reviews/m72-1.3-design-r1/`, `$STACK_WORKDIR/m72/{s21-smoke, e2e-s21, a5-s21, real-s21}/`, `$STACK_WORKDIR/gate/s21/`.
+1. Power 140 W / 28 V, GPU idle ≈ 0 % (`ioreg -r -d 1 -c IOAccelerator | grep "Device Utilization %"`), tiny-op floor ≈ 0.17 ms
+   (`benchmark/results/m72/d1d2/floor.py`; 0.172 ms on 2026-11-11). OrbStack running before any gate (`~/.orbstack/bin/docker info`).
+2. Nothing running (check from a script file, never with the patterns in your argv).
+3. Pushes: fork `origin/main` = `5f83c84f`; mlx-serve `origin/main` = `0f2259f`; stack `origin/main` = `8c65dac0`. Local stack `main`
+   is ahead by docs-only commits (session-21 close, C322 / C323 / C324, M76 spec v1 → v1.2, review ledgers, this handoff); push only
+   on the operator's word.
+4. Worktrees: none. Scratch (regenerable, ask before deleting): session 21's list below plus `$STACK_WORKDIR/reviews/m76-design-r1/`
+   (read-only repository copy + briefs + raw outputs; the raw outputs are committed under `docs/reviews/m76-design/`).
 
-## Done in session 21
+## Done in session 22
+
+- FIRST checks clean (140 W / 28 V, GPU 0 %, floor 0.172 ms, OrbStack + docker 29.8.2, heads as expected).
+- **M76 spec** `docs/specs/m76-tq4-certification.md`: v1 (`7620adae`) → cold strict review round 1 (Sol, GLM, Sonnet; 20 findings,
+  16 adopted / 3 adapted / 1 declined) → v1.1 (`e9386d67`) → verify round 2 (12 findings, all adopted / adapted) → v1.2
+  (`11d997f1`, not re-reviewed). Ledgers `docs/reviews/m76-design/round{1,2}-ledger-report.md`.
+- Code map (subagent, source read): TQ4 MTP OFF with the mode is not servable today (mlx-serve `config.py:175-178` / `:256-260`, fork
+  `tq4_attention.py:88-90`, `:345-357`) → PLAN M77 (= M76 B0, approved C323); every harness (P475, qualify, P426, P369) hard-codes
+  its pick / MTP delta / S′ pins — the adapters are B1–B5.
+- Loss-bound feasibility simulated (`bench.stats.paired_delta`): tg1 at 43 items misses the 10 pp bound ≈ 25 % of the time when TQ4
+  is harmless; 3 sessions ≈ 5–20 %; Math500 300 ≈ 0 %.
+- Memory: `harness-funnel` (feedback) saved.
+
+## Next, in order
+
+1. FIRST checks above.
+2. **The operator's Go on M76 spec v1.2** (or a round 3 of 3 review — the operator's call; v1.2's [r2] changes are not re-reviewed).
+3. On Go: builds in the spec's §9 order — B0 (= M77, production, fork + mlx-serve, four-eyes light, gates, push asks, bump) + B1
+   (P475 `f45`, campaign-scoped) + B2 (fork dev qualify / P369 tuple, push ask) first; then stages 0 → 1 → 2 on the GPU while B3
+   (P426 lever `kv`, build `s3`), B4 (tg2 legs), B5 (Wave 1 extensions, `longctx`) and B7 (statistics + the rule simulation) are
+   built. B7's simulation report + the timed A5 / tg2 smokes go to the operator with the stage-3 Go.
+4. Carried (none blocks M76): S21-P17 (stale mlx-serve golden test; proposal); the 1.3 residuals (stale `_TQ4_MANIFESTS` entry per
+   router port, exit route-counter snapshot only in the manifest-gathering process, the verifier's local rebinding,
+   `dev/m72_scratch_prefill.py` I1 hazard); B6 (client paths reaching continuous batching) runs at smoke time.
+5. Phase 2 M73 and Phase 3 hygiene (M67–M69, M74) in CPU gaps, never during measured legs or gates. M70 is folded into M76.
+
+## Rules learned (session 22)
+
+- A pre-registered decision rule needs its error checked, not only its power: simulate false-PASS at the harm boundary before
+  keeping a sequential look; per-axis information fractions differ, so one fixed O'Brien–Fleming pair is wrong.
+- Byte-identical MTP ON / OFF arms made P426's loss bounds easy; a lossy lever (KV format) diverges from the first differing logit,
+  so size every axis for the reseed-level discordance (simulate at the planned n).
+- An exact bound and a percentile interval in the same code can sit at different α (`stats.paired_delta`: 2.5 % tails vs 0.05):
+  name both levels in any rule that uses both.
+- A widened load-time refusal must receive the state it conditions on (B0: the stamp check never saw the drafter state).
+- Sentinels for reusing agentic legs must use P640's identical-context criterion; whole-output identity fails on tool-output
+  timestamps (P611).
+
+## Done in session 21 (for reference)
 
 - Post-reboot checks clean; p2s smoke within 2 % of `P2S.md`.
 - **M75** (`9cf651a0`, pushed): `RUNSERVER_PORT_WAIT_S`; the gate keeps a FAIL's full output + JUnit (`failure_artifacts`).
@@ -43,24 +73,6 @@ TQ4 `m72_exact` + MTP ON as the candidate default; the operator accepts memory a
   `docs/reviews/m72-1.3-design/`; mechanisms `docs/lab-notebook.md` 2026-11-11; recommendation `docs/campaign-results.md` 2026-11-11.
 - Records: S21-P2 (harness layer 63), S21-P9 → C319 (corrected: seeded MTP never matched OFF sample for sample), S21-P10 (served path
   = every session-resolved request), S21-P17 (stale mlx-serve golden test).
-
-## Next, in order
-
-1. FIRST checks above.
-2. **M76 (M72 1.4, C322): write its spec** → cold design review (strict) → the operator's Go. Read first: C322, `docs/specs/p475-kv-matrix.md`
-   + `p475-stage1-contract.md` + `p475a-qualify-kv-arm.md` (the matrix and its arm qualification), `docs/specs/p426-fable-mtp-recert.md`
-   (+ `p426-b2-tg1-wave2.md`, `p426-t3-serving-build.md`; the quality waves), the P369 exactness instrument behind C258 (find its spec /
-   PLAN row), `benchmark/results/m72/m72-13/README.md`, `docs/metrics.md`, `docs/box-notes.md`, `benchmark/README.md`,
-   `docs/regrade-vs-rerun-guideline.md`. The spec must cover: the `bench.p475_kv` / P426 adapters for the `tq4_attention` key and its
-   arm identity (four-eyes light); arms as stack commits in worktrees (N16 = the shipped entry; TQ4 arms change only `kv_bits` +
-   `tq4_attention`); stage (1) matrix, (2) `m72_exact` ON vs OFF exactness at scale, (3) quality vs N16 with the C172 / C173 rule,
-   (4) conditional `m72_v1`; the real-data A1 of S20-P18; GPU budget and ETAs; the publish step (registry `CERTIFIED`, README tables,
-   gate, push ask) only after the operator's pick approval.
-3. Open items carried (none blocks M76): S21-P17 (stale mlx-serve golden test; proposal); residuals of 1.3 — stale `_TQ4_MANIFESTS`
-   entry per router port, exit route-counter snapshot only in the manifest-gathering process, the verifier's local rebinding,
-   `dev/m72_scratch_prefill.py` keeps the I1 stale-row hazard (dev only), S21-P10 batching-path fallback (list client paths in M76);
-   the worker log does not carry `Request completed` at its level (A6 proof used route counters).
-4. Phase 2 M73 and Phase 3 hygiene (M67–M70, M74) in CPU gaps, never during measured legs or gates.
 
 ## Archives (local, no push)
 
