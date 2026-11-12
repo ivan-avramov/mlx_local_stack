@@ -708,14 +708,21 @@ def prepare(ops, cfg, arms=None):
                 have_branch = True
             except Exception:  # noqa: BLE001 — rc != 0: no such branch
                 have_branch = False
-            if not Path(wt).exists():
+            fresh = not Path(wt).exists()
+            if fresh:
                 wt.parent.mkdir(parents=True, exist_ok=True)
                 if have_branch:
                     ops.git(cfg.repo, "worktree", "add", str(wt), br)
                 else:
                     ops.git(cfg.repo, "worktree", "add", "-b", br, str(wt), cfg.base)
+            # M78 (S22-P16 (1)): an interruption after `worktree add` leaves a non-base arm at the base commit; complete it
+            # (submodules + the arm commit) when it is clean, refuse it when dirty (never repaired)
+            pending = (arm != cfg.campaign.base_arm and ops.git(wt, "rev-parse", "HEAD").strip() == cfg.base)
+            if not fresh and pending and not ops.worktree_state(wt).get("clean"):
+                raise P475Error("an interrupted arm worktree at the base is dirty (never repaired; the operator decides)")
+            if fresh or pending:
                 ops.git(wt, "submodule", "update", "--init", "--force")
-                if arm != cfg.campaign.base_arm and ops.git(wt, "rev-parse", "HEAD").strip() == cfg.base:
+                if pending:
                     base_text = ops.git(wt, "show", f"{cfg.base}:{REGISTRY}")
                     (wt / REGISTRY).write_text(arm_registry_text(base_text, arm, cfg.model, campaign=cfg.campaign))
                     ops.git(wt, "add", REGISTRY)
@@ -1643,13 +1650,16 @@ def harvest(leg, ops, cfg):
     review = gate.review_emails()                              # foreign addresses in evidence: a local review list, never published
     if review:
         _atomic_json(cfg.p475 / "review" / f"{leg}.emails.json", review)
-    os.rename(stage, final)                                    # R18: the single commit point
-    end = ops.now()
     p = cfg.p475 / "LAST_LEG_END"                              # R8: the idle starts after the harvest
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_name(f".LAST_LEG_END.{os.getpid()}.tmp")
-    tmp.write_text(f"{end}\n")
-    os.replace(tmp, p)
+
+    def mark():
+        tmp = p.with_name(f".LAST_LEG_END.{os.getpid()}.tmp")
+        tmp.write_text(f"{ops.now()}\n")
+        os.replace(tmp, p)
+    mark()      # M78 (S22-P16 (2)): before the commit point, so a published dossier never sits beside a stale marker
+    os.rename(stage, final)                                    # R18: the single commit point
+    mark()      # R8: the idle starts after the harvest completes
     return "harvested"
 
 
