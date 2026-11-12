@@ -61,9 +61,10 @@ BASE_GITLINKS = {"src/mlx-vlm": "1c7c8fa166582ac1a1c23ae9063527b2b5215b11",
 # (fork main: P542 + P475a, dev/ and tests only; production mlx_vlm/ byte-identical). C301 bump: d94e38a9 → e3e38397 (P658 (a):
 # qualify --engagement-only + bench.p475_kv in LAUNCHER_MODULES; dev/ and tests only). C321 bump (M72 1.3): src/mlx-vlm e3e38397 →
 # 5f83c84f (dev/ prototypes + the opt-in TQ4 attention mode; byte-identical with the mode absent), src/mlx-serve 1ddf6f84 → 0f2259f
-# (the tq4_attention registry key).
-LIVE_GITLINKS = {"src/mlx-vlm": "5f83c84f4c8f8e8657dcf2679e2f133f4eb17221",
-                 "src/mlx-serve": "0f2259fd0909b101d9196a19faa6e26a755a7338"}
+# (the tq4_attention registry key). C326 bump (M77): src/mlx-vlm 5f83c84f → f9bf743f (tq4_attention with MTP OFF; MTP-ON and
+# mode-absent paths unchanged), src/mlx-serve 0f2259f → 3b02e4c (the MTP-OFF tq4_attention configuration accepted).
+LIVE_GITLINKS = {"src/mlx-vlm": "f9bf743f284f45ce8d8a3c9902f0701de92c0931",
+                 "src/mlx-serve": "3b02e4cbd669b2f4ecb2cb8dabac4ef906e70afc"}
 
 
 def sha256_file(path):
