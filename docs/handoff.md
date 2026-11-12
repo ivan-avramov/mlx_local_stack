@@ -26,7 +26,7 @@ saving ≈ −5.4 / −10.9 GB at 131K / 262K with layer 63 native16 (S21-P2). 1
    patterns in your argv).
 3. Pushes: fork `origin/main` = `5f83c84f`, mlx-serve `origin/main` = `0f2259f` (PASS receipts `mlx-vlm-5f83c84f…-41a7f81405cd.json`,
    `mlx-serve-0f2259f…-09cf0b600a14.json`). Stack: local `main` carries the M72 1.3 stack part `19a41b83`, the bump `37336227` and this
-   handoff; it is pushed after its clean-clone gate passes (operator: "push approved once the gates pass") — check `origin/main`.
+   handoff, the bump companions `28235601` and the skip-baseline update `d5965b00`; it is pushed after its clean-clone gate passes (operator: "push approved once the gates pass") — check `origin/main`.
 4. Worktrees: none (all three repositories: main checkouts only). Scratch, regenerable (every cited record is committed):
    `$STACK_WORKDIR/fe-m72-13/` (four-eyes clones, briefs, raw outputs; ~ several GB — delete when convenient),
    `$STACK_WORKDIR/reviews/m72-1.3-design-r1/`, `$STACK_WORKDIR/m72/{s21-smoke, e2e-s21, a5-s21, real-s21}/`, `$STACK_WORKDIR/gate/s21/`.
@@ -77,6 +77,10 @@ saving ≈ −5.4 / −10.9 GB at 131K / 262K with layer 63 native16 (S21-P2). 1
 - A waiter must match a marker unique to the run it waits for (an earlier `END rc=1` line ended one early).
 - Never commit with hooks disabled; temp commits run the hooks too.
 - The worker log does not carry `Request completed` at its level; prove the served path with the route counters.
+- A gitlink bump has stack companions the four-eyes copies cannot see (their `src/` submodules are empty): the P632
+  `LIVE_GITLINKS` pin, `bench.arm_identity` flag classes for any new worker flag (P311), and skip-baseline entries for modules that
+  start running against the bumped fork (`benchmark/gate/stack.skips.txt`). Run those tests with the submodules populated before
+  the stack gate.
 
 ## Rules learned (session 20)
 
