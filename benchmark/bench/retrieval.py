@@ -101,7 +101,8 @@ def _mean(values: list) -> float | None:
 def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
                          grid=RETRIEVAL_GRID, threshold: float = 0.85, samples: int = 5,
                          depths=DEPTHS, sampler_factory=MemorySampler,
-                         request_timeout: float = 3600) -> list[dict]:
+                         request_timeout: float = 3600, task_seed_base: int | None = None,
+                         request_seed_base: int | None = None) -> list[dict]:
     """FULL CURVE (not climb-to-cliff): run multi-needle retrieval at every context
     length in `grid`. Retrieval can be non-monotonic (a model may dip mid-context and
     recover), so — unlike run_reasoning_ladder — a rung below threshold does NOT stop
@@ -122,14 +123,26 @@ def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
     the hit rate at depth d across trials, and `rows` is one dict per trial: {"trial",
     "seed", "hits", "prompt_tokens", "completion_tokens", "finish_reason", "prefill_s",
     "prefill_tps", "decode_tps", "wall_s", "draft", "error"}.
+
+    M76 B5 seeding (mirrors run_reasoning_ladder's P426 B13; both default None = the above, unchanged): ``task_seed_base``
+    makes the needle seed ``task_seed_base + trial``; ``request_seed_base`` adds an explicit per-draw request seed
+    ``rowschema.sample_seed("retrieval:<seed>", 0, base)``. Under either, each row also records ``sampler_seed``,
+    ``session_id`` and the response ``content`` (the pair verifier's and the panel's inputs).
     """
+    from .rowschema import sample_seed
+
+    seeded = task_seed_base is not None or request_seed_base is not None
     records: list[dict] = []
     n_dep = len(depths)
     for ctx_len in grid:
         trial_hits: list[list[bool]] = []
         rows: list[dict] = []
         for trial in range(samples):
-            seed = ctx_len * 1000 + trial
+            seed = (ctx_len * 1000 if task_seed_base is None else task_seed_base) + trial
+            request, sampler_seed = params, None
+            if request_seed_base is not None:
+                sampler_seed = sample_seed(f"retrieval:{seed}", 0, request_seed_base)
+                request = dict(params, seed=sampler_seed)
             context, needles = build_context(ctx_len, chars_per_token,
                                              depths=depths, seed=seed)
             messages = [{"role": "user",
@@ -138,7 +151,7 @@ def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
                 # Transport/HTTP failures ESCALATE (O41): a timed-out or refused request is
                 # never graded as a wrong answer -- it aborts the ladder so the operator
                 # investigates (mirrors bench/reasoning.py's run_reasoning_ladder).
-                result = driver.complete(model, messages, params, timeout=request_timeout)
+                result = driver.complete(model, messages, request, timeout=request_timeout)
                 h = hits(result.get("content", ""), needles)
                 trial_hits.append(h)
                 rows.append({
@@ -153,6 +166,9 @@ def run_retrieval_ladder(driver, model, chars_per_token, model_pid, params,
                     "draft": _draft_from_raw(result.get("raw_timings") or {}),
                     "error": None,
                 })
+                if seeded:
+                    rows[-1].update(sampler_seed=sampler_seed, session_id=result.get("session_id"),
+                                    content=result.get("content"))
             row = rows[-1]
             print(f"[retrieval] ctx={ctx_len} trial={trial}/{samples} "
                   f"hits={sum(row['hits'])}/{n_dep} prefill_s={row['prefill_s']} "

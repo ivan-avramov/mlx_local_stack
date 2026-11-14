@@ -87,9 +87,40 @@ def deadline_formula(langs, walls) -> float:
     return DEADLINE_FACTOR * sum(n * float(walls[lang]) for lang, n in langs.items()) + DEADLINE_SLACK_S
 
 
-def r1_difference_problems(entries) -> list:
+KV_ARMS = ("n16", "x", "v")                                           # M76 B3 (lever kv): the KV arm labels (p426_plan.KV_ARMS)
+KV_REHEARSAL_DIR = "m76/p426/rehearsal"
+
+
+def engagement_role(arm):
+    """The engagement role of an arm: `on` (drafter counters required) for ON and every M76 KV arm (both MTP ON), else `off`."""
+    a = str(arm).lower()
+    return "on" if a == "on" or a in KV_ARMS else a
+
+
+def kv_pilot_leg(arm):
+    return f"tg1-m76-{arm}-pilot"
+
+
+def lever_of(record):
+    return "kv" if isinstance(record, dict) and record.get("lever") == "kv" else "mtp"
+
+
+def arms_of(record):
+    """The record's two arms in role order (first, second): `off`, `on` — or, under kv, the pair `(reference, treatment)`."""
+    if lever_of(record) == "kv":
+        arms = record.get("arms")
+        if not (isinstance(arms, list) and len(arms) == 2 and all(a in KV_ARMS for a in arms)):
+            raise Refusal(f"the KV record's arms {arms!r} are not a (reference, treatment) pair")
+        return tuple(arms)
+    return ("off", "on")
+
+
+def r1_difference_problems(entries, lever="mtp") -> list:
     """Spec 6.5 / 16.7: every entry of `r1_env_difference` is on the closed allowed list: the three MTP flag pairs of the worker argv,
-    the drafter snapshot, or a key of the closed volatile list. Anything else is named."""
+    the drafter snapshot, or a key of the closed volatile list. Anything else is named. M76 (lever kv): the KV list (the worker
+    argv, volatile keys; never the drafter)."""
+    if lever == "kv":
+        return [f"r1_env_difference: {p}" for p in pr.kv_difference_problems(entries)]
     problems = []
     for e in entries:
         process, field = e.get("process"), str(e.get("field"))
@@ -160,9 +191,10 @@ def leg_items_problems(root, arm) -> list:
             problems.append(f"{e['slot']}: {what} is not reconciled (verdict {rec.get('verdict')!r})")
         else:                                           # a DNF item's completed requests are judged as well (it has no per-item floor)
             requests = rec.get("requests") or []
-            problems += [f"{e['slot']}: {p}" for p in prc.engagement_problems(requests, arm, item=not dnf)]
+            role = engagement_role(arm) if str(arm).lower() in KV_ARMS else arm
+            problems += [f"{e['slot']}: {p}" for p in prc.engagement_problems(requests, role, item=not dnf)]
             judged += sum(1 for r in requests if not r.get("error") and int(r.get("generated_tokens") or 0) >= 2)
-    if str(arm).lower() == "on" and not judged and not problems:
+    if engagement_role(arm) == "on" and not judged and not problems:
         problems.append("unengaged: no request of the leg is long enough (>= 2 generated tokens) to be judged")
     return problems
 
@@ -205,8 +237,9 @@ def valid_leg_problems(root, arm) -> list:
     problems = []
     if leg.get("state") != "VALID":
         problems.append(f"leg state is {leg.get('state')!r}, not VALID ({leg.get('reason') or 'no reason recorded'})")
-    if pr.arm_of(receipt) != arm:
-        problems.append(f"the receipt's worker argv says {pr.arm_of(receipt)}, not {arm}")
+    got = pr.kv_arm_of(receipt) if arm in KV_ARMS and pr.arm_of(receipt) == "on" else pr.arm_of(receipt)
+    if got != arm:
+        problems.append(f"the receipt's worker argv says {got}, not {arm}")
     return problems + leg_items_problems(root, arm)
 
 
@@ -214,12 +247,18 @@ REHEARSAL_LEGS = (("R1 off", "tg1-p426-rehearsal-off", None), ("R1 on", "tg1-p42
                   ("R2", "tg1-p426-rehearsal-mismatch", "reconcile-mismatch"), ("R3", "tg1-p426-rehearsal-kill", "stall-kill"))
 
 
-def binding_problems(roots, manifest_path, manifest_sha, wd) -> list:
+def kv_rehearsal_legs(ref, test):
+    """M76 B3: the rehearsal legs of a KV pair (R1 reference / treatment, R2 the mismatch, R3 the kill)."""
+    return ((f"R1 {ref}", f"tg1-m76-rehearsal-{ref}", None), (f"R1 {test}", f"tg1-m76-rehearsal-{test}", None),
+            ("R2", "tg1-m76-rehearsal-mismatch", "reconcile-mismatch"), ("R3", "tg1-m76-rehearsal-kill", "stall-kill"))
+
+
+def binding_problems(roots, manifest_path, manifest_sha, wd, legs=REHEARSAL_LEGS) -> list:
     """Each of R1-off / R1-on / R2 / R3 is a leg run under THIS rehearsal manifest (its `chain.json` names it as the frozen record,
     by path and sha256), with the expected leg name and, for R2 / R3, the expected `--inject` (R1: none). The manifest's own
     commits are not compared with the v8 arms (spec 1: rehearsals run on the B2 / throwaway commits)."""
     problems = []
-    for (label, leg_name, inject), root in zip(REHEARSAL_LEGS, roots):
+    for (label, leg_name, inject), root in zip(legs, roots):
         try:
             leg, chain = read_leg(root), read_chain(root)
         except Refusal:
@@ -269,21 +308,25 @@ def r2_slot_problems(invalid) -> list:
     return [] if lang == "go" else [f"R2: the invalidated slot is a {lang!r} slot, it must be a Go slot (the first Go item)"]
 
 
-def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sha, wd):
+def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sha, wd, arms=("off", "on")):
     """(problems, r1 differences): R1 VALID both arms and its pair gate passed; R2 INVALID for the injected reason; R3 VALID with
-    a real kill classified; every leg bound to this manifest (`binding_problems`). R2 / R3 are excluded from the pair gate (spec 1)."""
-    problems = binding_problems((r1_off, r1_on, r2, r3), manifest_path, manifest_sha, wd)
-    problems += [f"R1 {arm}: {p}" for arm, root in (("off", r1_off), ("on", r1_on)) for p in valid_leg_problems(root, arm)]
-    problems += [f"R1 {arm}: {p}" for arm, root in (("off", r1_off), ("on", r1_on)) for p in r1_shape_problems(root)]
+    a real kill classified; every leg bound to this manifest (`binding_problems`). R2 / R3 are excluded from the pair gate (spec 1).
+    M76 (lever kv): `arms` = the KV pair (reference, treatment), its rehearsal leg names and the KV pair gate."""
+    lever = "kv" if tuple(arms) != ("off", "on") else "mtp"
+    legs = kv_rehearsal_legs(*arms) if lever == "kv" else REHEARSAL_LEGS
+    problems = binding_problems((r1_off, r1_on, r2, r3), manifest_path, manifest_sha, wd, legs=legs)
+    problems += [f"R1 {arm}: {p}" for arm, root in zip(arms, (r1_off, r1_on)) for p in valid_leg_problems(root, arm)]
+    problems += [f"R1 {arm}: {p}" for arm, root in zip(arms, (r1_off, r1_on)) for p in r1_shape_problems(root)]
     diffs = []
     if not problems:
-        pair = pr.pair_problems(read_receipt(r1_off), read_receipt(r1_on))
+        pair = pr.gate_problems(read_receipt(r1_off), read_receipt(r1_on), lever=lever)
         problems += [f"R1 pair gate: {p}" for p in pair]
         try:
-            diffs = list((getattr(ops, "r1_differences", None) or receipt_differences)(r1_off, r1_on))
+            diffs = list((getattr(ops, "r1_differences", None) or receipt_differences)(r1_off, r1_on)) if lever == "mtp" else \
+                pr.kv_observed_differences(read_receipt(r1_off), read_receipt(r1_on))
         except Refusal as exc:
             problems.append(f"R1: {exc}")
-        problems += [f"R1 {p}" for p in r1_difference_problems(diffs)]
+        problems += [f"R1 {p}" for p in r1_difference_problems(diffs, lever=lever)]
     try:
         leg = read_leg(r2)
         invalid = read_chain(r2).get("p426_invalid") or []
@@ -312,17 +355,18 @@ def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sh
 
 
 # ----------------------------------------------------------------------------------------------- worktrees
-def arm_problems(ops, off, on) -> list:
-    """The two arm worktrees: clean, two commits, identical gitlinks, the ON commit = OFF + exactly the restore diff."""
+def arm_problems(ops, off, on, arms=("off", "on")) -> list:
+    """The two arm worktrees: clean, two commits, identical gitlinks, the ON commit = OFF + exactly the restore diff. M76 (lever
+    kv): `arms` names the KV pair (the KV delta is a `checks` precondition)."""
     st, problems = {}, []
-    for arm, path in (("off", off), ("on", on)):
+    for arm, path in zip(arms, (off, on)):
         st[arm] = ops.worktree_state(path)
         if st[arm].get("clean") is not True:
             problems.append(f"the {arm} worktree is not clean")
-    if st["off"].get("head") == st["on"].get("head"):
-        problems.append("the OFF and ON worktrees are at the same commit (the arms are two commits)")
+    if st[arms[0]].get("head") == st[arms[1]].get("head"):
+        problems.append(f"the {arms[0].upper()} and {arms[1].upper()} worktrees are at the same commit (the arms are two commits)")
     for key, path in GITLINKS:
-        a, b = st["off"].get("gitlinks", {}).get(path), st["on"].get("gitlinks", {}).get(path)
+        a, b = st[arms[0]].get("gitlinks", {}).get(path), st[arms[1]].get("gitlinks", {}).get(path)
         if not a or a != b:
             problems.append(f"gitlink {path} differs between the arms ({str(a)[:12]} vs {str(b)[:12]})")
     return problems
@@ -333,7 +377,7 @@ def live_problems(base, ops, wd) -> list:
     """The sequencer's and every leg's re-verification of v8 against the live state: each arm's HEAD equals the record's commit,
     the tree is clean, the gitlinks are the record's and the probe identity is unchanged."""
     problems = []
-    for arm in ("off", "on"):
+    for arm in arms_of(base):                                   # M76 (lever kv): the record's KV pair
         path = expand(base[f"{arm}_worktree"], wd)
         st = ops.worktree_state(path)
         if st.get("head") != base.get(f"{arm}_commit"):
@@ -433,12 +477,18 @@ def suite_receipt_problems(*, receipt, receipt_sha256, off_head, wd, digest_for=
 
 
 def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_ref=None, gitlinks=None, off_head=None,
-                   suite_receipt=None, suite_receipt_sha256=None, wd=None) -> list:
+                   suite_receipt=None, suite_receipt_sha256=None, wd=None, arms=("off", "on")) -> list:
     """The real preconditions (spec 16.8: every one goes through `checks`): the restore diff between the two arms, both
     worktrees' entry points, and for v8 the venvs against the lock, K3 (`--help`), the production tree at the gitlink and (P609)
-    a PASS stack suite receipt for the OFF commit."""
-    problems = [f"restore diff: {p}" for p in p426_plan.restore_diff_problems(off_worktree, on_worktree, p426_plan.p426_ids.ENTRY)]
-    for arm, wt in (("off", off_worktree), ("on", on_worktree)):
+    a PASS stack suite receipt for the OFF commit. M76 (lever kv): `arms` = the KV pair; the KV delta between the arm commits in
+    place of the restore diff; the suite receipt is the reference arm's."""
+    if tuple(arms) != ("off", "on"):
+        problems = [f"kv delta: {p}" for p in p426_plan.kv_pair_commit_problems(off_worktree, on_worktree, arms,
+                                                                               p426_plan.p426_ids.ENTRY)]
+    else:
+        problems = [f"restore diff: {p}" for p in p426_plan.restore_diff_problems(off_worktree, on_worktree,
+                                                                                 p426_plan.p426_ids.ENTRY)]
+    for arm, wt in zip(arms, (off_worktree, on_worktree)):
         found = entry_point_problems(wt)
         problems += [f"{arm}: {p}" for p in found]
         if kind != "v8" or found:
@@ -540,13 +590,21 @@ def request_elapsed_max(root):
     return max(values) if values else None
 
 
+def _kv_fields(a):
+    """M76 (lever kv): (arms, record fields) — the pair in role order and the `lever` / `arms` fields of the record."""
+    arms = tuple(getattr(a, "arms", None) or ("off", "on"))
+    return arms, (dict(lever="kv", arms=list(arms)) if arms != ("off", "on") else {})
+
+
 def cmd_rehearsal(a, ops, checks, wd):
     need(ops, "worktree_state", "identity")
+    arms, kv = _kv_fields(a)
     off, on = Path(a.off_worktree), Path(a.on_worktree)
-    problems = arm_problems(ops, off, on)
+    problems = arm_problems(ops, off, on, arms)
     out_root = Path(a.out_root).resolve()
-    if (wd / REHEARSAL_DIR).resolve() not in out_root.parents:
-        problems.append(f"--out-root must lie under $STACK_WORKDIR/{REHEARSAL_DIR}/")
+    reh = KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
+    if (wd / reh).resolve() not in out_root.parents:
+        problems.append(f"--out-root must lie under $STACK_WORKDIR/{reh}/")
     if not datefreeze.valid(a.frozen_prompt_date):
         problems.append("--frozen-prompt-date must be 'Www Mmm DD YYYY' (zero-padded day)")
     ident, ident_on = ops.identity(off), ops.identity(on)
@@ -555,8 +613,13 @@ def cmd_rehearsal(a, ops, checks, wd):
             problems.append(f"{key} differs between the arms (or is missing)")
     if problems:
         raise Refusal("; ".join(problems))
-    run_checks(checks, "rehearsal", off_worktree=off, on_worktree=on)
-    st = {arm: ops.worktree_state(p) for arm, p in (("off", off), ("on", on))}
+    run_checks(checks, "rehearsal", off_worktree=off, on_worktree=on, **({"arms": arms} if kv else {}))
+    st = {arm: ops.worktree_state(p) for arm, p in zip(arms, (off, on))}
+    if kv:  # M76: the record names the arms by their KV label
+        return write_record(a.out, dict(kind=KIND_REHEARSAL, **kv, **{f"{arm}_commit": st[arm]["head"] for arm in arms},
+                                        **{f"{arm}_worktree": portable(p, wd, f"--arm-worktree {arm}") for arm, p in zip(arms, (off, on))},
+                                        out_root=portable(out_root, wd, "--out-root"), rehearsal=True,
+                                        frozen_prompt_date=a.frozen_prompt_date, **{k: ident[k] for k in IDENTITY_KEYS}))
     return write_record(a.out, dict(kind=KIND_REHEARSAL, off_commit=st["off"]["head"], on_commit=st["on"]["head"],
                                     off_worktree=portable(off, wd, "--off-worktree"), on_worktree=portable(on, wd, "--on-worktree"),
                                     out_root=portable(out_root, wd, "--out-root"), rehearsal=True,
@@ -586,25 +649,31 @@ def build_problems(inputs, gitlinks) -> list:
 def cmd_v8(a, ops, checks, wd):
     from . import chain_core
     need(ops, "worktree_state", "identity", "historical_walls", "build_inputs")
+    arms, kv = _kv_fields(a)
+    r0, r_second = arms                                          # role order (never `r1`: the R1 legs' name below)
     off, on = Path(a.off_worktree), Path(a.on_worktree)
     try:
         manifest = p426_record.load(a.rehearsal_manifest, mode="chain", rehearsal=True)["doc"]
     except p426_record.RecordError as exc:
         raise Refusal(f"--rehearsal-manifest {exc}") from None
-    problems = arm_problems(ops, off, on)
-    st = {arm: ops.worktree_state(p) for arm, p in (("off", off), ("on", on))}
-    gitlinks = {key: st["off"].get("gitlinks", {}).get(path) or "" for key, path in GITLINKS}
+    if lever_of(manifest) != ("kv" if kv else "mtp") or (kv and tuple(manifest.get("arms") or ()) != arms):
+        raise Refusal("--rehearsal-manifest was written for another lever or KV pair")
+    problems = arm_problems(ops, off, on, arms)
+    st = {arm: ops.worktree_state(p) for arm, p in zip(arms, (off, on))}
+    gitlinks = {key: st[r0].get("gitlinks", {}).get(path) or "" for key, path in GITLINKS}
     inputs = ops.build_inputs()
     problems += build_problems(inputs, gitlinks)
-    idents = {arm: ops.identity(p) for arm, p in (("off", off), ("on", on))}
+    if kv and inputs.get("build") not in p426_plan.KV_BUILDS:
+        problems.append(f"build {inputs.get('build')!r} is not a KV build {p426_plan.KV_BUILDS}")
+    idents = {arm: ops.identity(p) for arm, p in zip(arms, (off, on))}
     for key in IDENTITY_KEYS:
-        if not re.fullmatch(r"[0-9a-f]{64}", str(idents["off"].get(key))) or idents["off"].get(key) != idents["on"].get(key):
+        if not re.fullmatch(r"[0-9a-f]{64}", str(idents[r0].get(key))) or idents[r0].get(key) != idents[r_second].get(key):
             problems.append(f"{key} differs between the arms (or is missing)")
-    pins = {arm: sha256_file(p / PINS_RELATIVE) if (p / PINS_RELATIVE).is_file() else None for arm, p in (("off", off), ("on", on))}
-    if not pins["off"] or pins["off"] != pins["on"]:
+    pins = {arm: sha256_file(p / PINS_RELATIVE) if (p / PINS_RELATIVE).is_file() else None for arm, p in zip(arms, (off, on))}
+    if not pins[r0] or pins[r0] != pins[r_second]:
         problems.append("pins.json differs between the arms (or is missing)")
     rehearsal, diffs = rehearsal_problems(Path(a.r1_off), Path(a.r1_on), Path(a.r2), Path(a.r3), ops,
-                                          manifest_path=a.rehearsal_manifest, manifest_sha=manifest["sha256"], wd=wd)
+                                          manifest_path=a.rehearsal_manifest, manifest_sha=manifest["sha256"], wd=wd, arms=arms)
     problems += rehearsal
     walls = need_walls(ops.historical_walls(), "w_python_s", "w_go_s", "max_request_elapsed_s")
     r1 = [e for e in (request_elapsed_max(a.r1_off), request_elapsed_max(a.r1_on)) if e is not None]
@@ -614,18 +683,23 @@ def cmd_v8(a, ops, checks, wd):
         raise Refusal("; ".join(problems))
     settle = max(float(chain_core.P426_SETTLE_BOUND_S), 2 * max(max(r1), walls["max_request_elapsed_s"]))      # spec 16.8: derived
     run_checks(checks, "v8", off_worktree=off, on_worktree=on, build=inputs["build"], production_ref=inputs["production_ref"],
-               gitlinks=dict(gitlinks), off_head=st["off"]["head"], suite_receipt=inputs.get("stack_suite_receipt"),
-               suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], wd=wd)
+               gitlinks=dict(gitlinks), off_head=st[r0]["head"], suite_receipt=inputs.get("stack_suite_receipt"),
+               suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], wd=wd, **({"arms": arms} if kv else {}))
+    if kv:  # M76: the arms by their KV label (commits, worktrees), lever kv
+        named = {**{f"{arm}_commit": st[arm]["head"] for arm in arms},
+                 **{f"{arm}_worktree": portable(p, wd, f"--arm-worktree {arm}") for arm, p in zip(arms, (off, on))}}
+    else:
+        named = dict(off_commit=st["off"]["head"], on_commit=st["on"]["head"],
+                     off_worktree=portable(off, wd, "--off-worktree"), on_worktree=portable(on, wd, "--on-worktree"))
     return write_record(a.out, dict(
-        kind=KIND_V8, build=inputs["build"], off_commit=st["off"]["head"], on_commit=st["on"]["head"],
-        off_worktree=portable(off, wd, "--off-worktree"), on_worktree=portable(on, wd, "--on-worktree"),
-        gitlinks=gitlinks, production_ref=inputs["production_ref"], pins_sha256=pins["off"],
+        kind=KIND_V8, build=inputs["build"], **kv, **named,
+        gitlinks=gitlinks, production_ref=inputs["production_ref"], pins_sha256=pins[r0],
         grader_image_id=inputs["grader_image_id"], frozen_prompt_date=inputs["frozen_prompt_date"],
         pilot_deadline_s=deadline_formula({"python": PILOT_N}, {"python": walls["w_python_s"], "go": walls["w_go_s"]}),
         settle_bound_s=settle, generic_pred_s=chain_core.GENERIC_PRED_S, volatile_env_keys=list(VOLATILE_ENV_KEYS),
         r1_env_difference=diffs, rehearsal_manifest_sha256=manifest["sha256"],
         client_step_cap=dict(seconds=prc.CLIENT_STEP_CAP_S, source=prc.CLIENT_STEP_CAP_SOURCE, bound_by="opencode_exe_sha256"),   # P593
-        stack_suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], **{k: idents["off"][k] for k in IDENTITY_KEYS}))
+        stack_suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], **{k: idents[r0][k] for k in IDENTITY_KEYS}))
 
 
 def planned_slots(root, chain=None) -> int:
@@ -646,18 +720,21 @@ def planned_slots(root, chain=None) -> int:
         raise ValueError("the frozen schedule.json has no blocks / legs / invocations") from None
 
 
-def pilot_gate_problems(off_root, on_root) -> list:
+def pilot_gate_problems(off_root, on_root, arms=("off", "on")) -> list:
     """The complete pilot gate (spec 1): both legs VALID with their own leg names, 5 / 5 items reconciled, zero DNF, ON engagement
-    proven on every eligible request, both speed-valid, the pair gate passed. The failed conditions (empty = the gate passes)."""
+    proven on every eligible request, both speed-valid, the pair gate passed. The failed conditions (empty = the gate passes).
+    M76 (lever kv): `arms` = the KV pair; both arms engaged, the KV pair gate."""
+    lever = "kv" if tuple(arms) != ("off", "on") else "mtp"
     problems = []
-    for arm, root in (("off", off_root), ("on", on_root)):
+    for arm, root in zip(arms, (off_root, on_root)):
         try:
             leg, chain = read_leg(root), read_chain(root)
         except Refusal as exc:
             problems.append(f"pilot {arm}: {exc}")
             continue
-        if leg.get("leg") != f"tg1-p426-{arm}-pilot":
-            problems.append(f"pilot {arm}: the leg is {leg.get('leg')!r}, not tg1-p426-{arm}-pilot")
+        want_leg = kv_pilot_leg(arm) if lever == "kv" else f"tg1-p426-{arm}-pilot"
+        if leg.get("leg") != want_leg:
+            problems.append(f"pilot {arm}: the leg is {leg.get('leg')!r}, not {want_leg}")
         dnf = len(chain.get("p426_dnf") or [])
         if leg.get("state") == "VALID_WITH_DNF" or dnf:
             problems.append(f"pilot {arm}: {dnf} DNF (the gate needs zero)")
@@ -673,28 +750,31 @@ def pilot_gate_problems(off_root, on_root) -> list:
             problems.append(f"pilot {arm}: {len(rows)} / {planned} items realized (the pilot is {PILOT_N})")
         problems += [f"pilot {arm}: {p}" for p in leg_items_problems(root, arm)]
         try:
-            if pr.arm_of(read_receipt(root)) != arm:
+            receipt = read_receipt(root)
+            said = pr.kv_arm_of(receipt) if lever == "kv" and pr.arm_of(receipt) == "on" else pr.arm_of(receipt)
+            if said != arm:
                 problems.append(f"pilot {arm}: the receipt's worker argv does not say {arm}")
         except Refusal as exc:
             problems.append(f"pilot {arm}: {exc}")
         if leg.get("speed_valid") is not True:
             problems.append(f"pilot {arm}: speed-invalid ({leg.get('speed_reason')})")
     try:
-        mismatch = pr.pair_problems(read_receipt(off_root), read_receipt(on_root))
+        mismatch = pr.gate_problems(read_receipt(off_root), read_receipt(on_root), lever=lever)
     except Refusal as exc:
         mismatch = [str(exc)]
     return problems + [f"pair gate: {p}" for p in mismatch]
 
 
-def pilot_dossier_path(off_root, on_root) -> Path:
-    """`<out-base>/pairs/pilot__off-a<n>__on-a<m>.json` of the two pilot attempt roots (`<leg>.a<n>`)."""
+def pilot_dossier_path(off_root, on_root, arms=("off", "on")) -> Path:
+    """`<out-base>/pairs/pilot__off-a<n>__on-a<m>.json` of the two pilot attempt roots (`<leg>.a<n>`); M76 (lever kv):
+    `pilot__<ref>-a<n>__<test>-a<m>.json`."""
     n, m = (Path(r).name.rsplit(".a", 1)[-1] for r in (off_root, on_root))
-    return Path(off_root).parent / "pairs" / f"pilot__off-a{n}__on-a{m}.json"
+    return Path(off_root).parent / "pairs" / f"pilot__{arms[0]}-a{n}__{arms[1]}-a{m}.json"
 
 
-def pilot_dossier_problems(off_root, on_root) -> list:
+def pilot_dossier_problems(off_root, on_root, arms=("off", "on")) -> list:
     """The pilot pair's dossier is a sealed PASS that names these two attempts and these two receipts (by sha256)."""
-    path = pilot_dossier_path(off_root, on_root)
+    path = pilot_dossier_path(off_root, on_root, arms)
     try:
         doc = json.loads(path.read_text())
     except (OSError, ValueError):
@@ -704,9 +784,9 @@ def pilot_dossier_problems(off_root, on_root) -> list:
     problems = []
     if doc.get("pair") != "pilot" or doc.get("verdict") != "PASS":
         problems.append(f"the pilot pair dossier {path.name} is not a PASS (verdict {doc.get('verdict')!r})")
-    arms = doc.get("arms") if isinstance(doc.get("arms"), dict) else {}
-    for arm, root in (("off", off_root), ("on", on_root)):
-        got = arms.get(arm) if isinstance(arms.get(arm), dict) else {}
+    recorded = doc.get("arms") if isinstance(doc.get("arms"), dict) else {}
+    for arm, root in zip(arms, (off_root, on_root)):
+        got = recorded.get(arm) if isinstance(recorded.get(arm), dict) else {}
         if got.get("attempt") != Path(root).name:
             problems.append(f"the pilot pair dossier names attempt {got.get('attempt')!r} for {arm}, not {Path(root).name}")
         try:
@@ -730,10 +810,11 @@ def write_amendment(v8_path, pilot_off, pilot_on, out, ops):
     if base.get("kind") != KIND_V8:
         raise Refusal(f"--v8 {Path(v8_path).name}: kind {base.get('kind')!r} is not {KIND_V8}")
     need(ops, "historical_walls")
-    problems = pilot_gate_problems(pilot_off, pilot_on) + pilot_dossier_problems(pilot_off, pilot_on)
+    arms = arms_of(base)                                         # M76 (lever kv): the v8 base's KV pair
+    problems = pilot_gate_problems(pilot_off, pilot_on, arms) + pilot_dossier_problems(pilot_off, pilot_on, arms)
     walls, elapsed = [], []
     if not problems:
-        for arm, root in (("off", pilot_off), ("on", pilot_on)):
+        for arm, root in zip(arms, (pilot_off, pilot_on)):
             walls += pilot_walls(root)
             largest = request_elapsed_max(root)
             if largest is None:
@@ -745,10 +826,13 @@ def write_amendment(v8_path, pilot_off, pilot_on, out, ops):
     hist = need_walls(ops.historical_walls(), "w_python_s", "w_go_s")
     w = {"python": max([*walls, hist["w_python_s"]]), "go": hist["w_go_s"]}
     session = deadline_formula(ITEM_COUNT, w)
+    deadlines = {"s1": session, "s2": session, "reload": deadline_formula({"python": PILOT_N}, w)}
+    if lever_of(base) == "kv":           # M76 (erratum v1.2): tg1 session s3 has the paired sessions' deadline
+        deadlines["s3"] = session
     return write_record(out, dict(kind=KIND_AMENDMENT, v8_base_sha256=base["sha256"], w_python_s=w["python"], w_go_s=w["go"],
-                                  leg_deadline_s={"s1": session, "s2": session, "reload": deadline_formula({"python": PILOT_N}, w)},
+                                  leg_deadline_s=deadlines,
                                   settle_bound_s=max(float(base["settle_bound_s"]), 2 * max(elapsed)),
-                                  pilot_dossier_sha256=sha256_file(pilot_dossier_path(pilot_off, pilot_on))))
+                                  pilot_dossier_sha256=sha256_file(pilot_dossier_path(pilot_off, pilot_on, arms))))
 
 
 def _read_leg_or(problems, root, what):
@@ -773,9 +857,12 @@ def parse_args(argv):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("rehearsal", "v8"):
         p = sub.add_parser(name)
-        p.add_argument("--off-worktree", required=True)
-        p.add_argument("--on-worktree", required=True)
+        p.add_argument("--off-worktree", default=None, help="lever mtp (required)")
+        p.add_argument("--on-worktree", default=None, help="lever mtp (required)")
         p.add_argument("--out", required=True)
+        p.add_argument("--lever", default="mtp", choices=("mtp", "kv"), help="M76 B3: kv = a KV pair (both MTP ON)")
+        p.add_argument("--pair", default=None, help="lever kv: <reference>,<treatment>")
+        p.add_argument("--arm-worktree", action="append", default=[], help="lever kv: <arm>=<worktree> (each arm of the pair)")
     sub.choices["rehearsal"].add_argument("--out-root", required=True)
     sub.choices["rehearsal"].add_argument("--frozen-prompt-date", required=True, metavar="'Www Mmm DD YYYY'",
                                           help="the date opencode shows the model during the rehearsal (recorded in the manifest)")
@@ -788,7 +875,40 @@ def parse_args(argv):
     v8.add_argument("--build-inputs", default=None, metavar="JSON", help="the box ops' input: build, production_ref, grader_image_id, ...")
     for p in (v8, am):
         p.add_argument("--historical-walls", default=None, metavar="JSON", help='the box ops\' input: {"python": s, "go": s}')
-    return ap.parse_args(argv)
+    a = ap.parse_args(argv)
+    if a.cmd in ("rehearsal", "v8"):
+        resolve_arms(a)
+    return a
+
+
+def resolve_arms(a):
+    """`a.arms` (role order) and `a.off_worktree` / `a.on_worktree` (the roles' worktrees): lever mtp = `--off-worktree` /
+    `--on-worktree` (both required); lever kv = `--pair <ref>,<test>` + `--arm-worktree <arm>=<path>` for each arm (M76 B3)."""
+    if a.lever == "mtp":
+        if a.pair or a.arm_worktree:
+            raise Refusal("--pair / --arm-worktree are lever kv flags")
+        if not a.off_worktree or not a.on_worktree:
+            raise Refusal("the following arguments are required: --off-worktree, --on-worktree")
+        a.arms = ("off", "on")
+        return a
+    if a.off_worktree or a.on_worktree:
+        raise Refusal("--off-worktree / --on-worktree are lever mtp flags (lever kv: --arm-worktree <arm>=<path>)")
+    try:
+        pair = p426_plan.check_kv_pair(*(a.pair or "").split(",", 1)) if a.pair and "," in a.pair else None
+    except ValueError as exc:
+        raise Refusal(str(exc)) from None
+    if pair is None:
+        raise Refusal("--lever kv needs --pair <reference>,<treatment>")
+    trees = {}
+    for v in a.arm_worktree:
+        arm, sep, path = v.partition("=")
+        if not sep or arm not in pair or arm in trees or not path:
+            raise Refusal(f"--arm-worktree {v!r} is not <arm>=<path> for an arm of the pair (once each)")
+        trees[arm] = path
+    if set(trees) != set(pair):
+        raise Refusal(f"--arm-worktree names {sorted(trees)}, the pair is {list(pair)}")
+    a.arms, a.off_worktree, a.on_worktree = pair, trees[pair[0]], trees[pair[1]]
+    return a
 
 
 def main(argv=None, *, ops=None, checks=None):

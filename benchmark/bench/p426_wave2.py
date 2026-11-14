@@ -47,6 +47,7 @@ POWER = dict(watts=140, volts=28, battery_above=20)  # spec 8 / AGENTS: checked 
 VALID_STATES = ("VALID", "VALID_WITH_DNF")
 MAX_DNF = 2                                          # spec 5.1: more than 2 DNF in a leg is systemic
 SESSIONS = ("s1", "s2", "reload", "pilot", "makeup")
+KV_SESSIONS = SESSIONS + ("s3",)                     # M76 (lever kv): tg1 session s3 (seed 3003), erratum v1.2
 SESSION_ORDER = ("s1", "s2")
 LANG_ORDER = {"s1": ("python", "go"), "s2": ("go", "python")}      # spec 7: s2 reverses the language order
 SESSION_SEED = {"s1": 1001, "s2": 2002}
@@ -95,6 +96,62 @@ REHEARSAL_LEGS = (
 )
 BY_NAME = {leg["name"]: leg for leg in (*RUN_LEGS, *MAKEUP_LEGS, *REHEARSAL_LEGS)}
 PREDICTOR = {"off": "off", "on": "mtp"}
+KV_WAVE2_DIR, KV_REHEARSAL_DIR = "m76/p426/wave2", "m76/p426/rehearsal"     # M76 B3: the KV lever's scratch
+
+
+def predictor_of(lever, arm):
+    """The chain's `--predictor` of an arm: P426 OFF / ON, or `mtp` for every M76 KV arm (both MTP ON)."""
+    return "mtp" if lever == "kv" else PREDICTOR[arm]
+
+
+def kv_a7_sessions(report=None):
+    """The paired tg1 sessions of A7's final look (`p426_plan.kv_a7_sessions`, from B7's committed plan; erratum v1.2); refused
+    when B7's plan is absent or names another count."""
+    from . import p426_plan
+
+    try:
+        return p426_plan.kv_a7_sessions(report)
+    except ValueError as exc:
+        raise fz.Refusal(f"A7's plan (bench.m76_rule.axis_plan): {exc}") from None
+
+
+def kv_legs(ref, test, sessions=None):
+    """M76 B3: the leg table of a KV pair (reference, treatment) — P426's with OFF / ON replaced by the two arms, every name
+    `tg1-m76-…`. The paired sessions are A7's plan (`kv_a7_sessions`; erratum v1.2: s1, s2, s3) alternating the first arm
+    (s1 ref → test, s2 test → ref, s3 ref → test), then the reload control (test → ref) and the make-up pair."""
+    from . import p426_plan
+
+    p426_plan.check_kv_pair(ref, test)
+    sessions = tuple(sessions) if sessions is not None else kv_a7_sessions()
+    if sessions not in (("s1", "s2"), ("s1", "s2", "s3")):
+        raise ValueError(f"A7 sessions {sessions} are not s1, s2[, s3]")
+
+    def n(arm, s):
+        return f"tg1-m76-{arm}-{s}"
+    run = [_leg(1, n(ref, "pilot"), ref, ["pilot"], "pilot", "pilot", "first", "v8"),
+           _leg(2, n(test, "pilot"), test, ["pilot"], "pilot", "pilot", "second", "v8")]
+    for i, s in enumerate(sessions):
+        first, second = (ref, test) if i % 2 == 0 else (test, ref)
+        run += [_leg(len(run) + 1, n(first, s), first, ["chain", s], s, s, "first"),
+                _leg(len(run) + 2, n(second, s), second, ["chain", s], s, s, "second")]
+    run += [_leg(len(run) + 1, n(test, "reload"), test, ["chain", "reload"], "reload", "reload", "first"),
+            _leg(len(run) + 2, n(ref, "reload"), ref, ["chain", "reload"], "reload", "reload", "second")]
+    run = tuple(run)
+    makeup = (_leg(len(run) + 1, n(ref, "makeup"), ref, ["makeup"], "makeup", "makeup", "first"),
+              _leg(len(run) + 2, n(test, "makeup"), test, ["makeup"], "makeup", "makeup", "second"))
+    rehearsal = (_leg("R1", f"tg1-m76-rehearsal-{ref}", ref, ["chain", "s1"], "rehearsal", "r1", "first", "manifest",
+                      extra=["--rehearsal"]),
+                 _leg("R1", f"tg1-m76-rehearsal-{test}", test, ["chain", "s1"], "rehearsal", "r1", "second", "manifest",
+                      extra=["--rehearsal"]),
+                 _leg("R2", "tg1-m76-rehearsal-mismatch", test, ["chain", "s1"], "rehearsal", record="manifest",
+                      extra=["--rehearsal", "--inject", "reconcile-mismatch"], expect="INVALID"),
+                 _leg("R3", "tg1-m76-rehearsal-kill", ref, ["chain", "s1"], "rehearsal", record="manifest",
+                      extra=["--rehearsal", "--inject", "stall-kill"]))
+    return dict(run=run, makeup=makeup, rehearsal=rehearsal)
+
+
+def kv_dossier_name(pair, ref, n, test, m):
+    return f"{pair}__{ref}-a{n}__{test}-a{m}.json"
 
 
 def spec_of(leg):
@@ -114,7 +171,8 @@ def out_root_of(leg, attempt, out_base) -> Path:
     return Path(out_base) / f"{spec['name']}.a{attempt}"                 # flat for every attempt, make-up included (spec 16.8)
 
 
-def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=None, occurrences=None, identity=None) -> list:
+def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=None, occurrences=None, identity=None,
+             lever="mtp") -> list:
     """The chain argv of one leg attempt (spec 6.7): the arm's own venv python and `run_tg1_chain.py` from its worktree, the common
     flags, then (second legs) `--pair-receipt`, (make-up) `--occurrences`. `record_path` is the record the leg runs under (v8 base for
     legs 1-2, the timeout amendment for 3-10, the rehearsal manifest for R1-R3); a manifest carries no probe identity, so
@@ -134,10 +192,12 @@ def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=Non
     arm = spec["arm"]
     wt = Path(worktrees[arm])
     argv = [str(wt / ".venv-bench/bin/python"), str(wt.joinpath(*CHAIN_ENTRY)), *spec["head"], "--p426",
-            "--models", ENTRY, "--predictor", PREDICTOR[arm], "--out-root", str(out_root_of(spec, attempt, out_base)),
+            "--models", ENTRY, "--predictor", predictor_of(lever, arm), "--out-root", str(out_root_of(spec, attempt, out_base)),
             "--probe-code-sha", base["probe_code_sha256"], "--policy-sha", base["scaffold_policy_sha256"],
             "--frozen-prompt-date", base["frozen_prompt_date"], "--campaign-core", base[f"{arm}_commit"],
             "--frozen-record", str(record_path), *spec["extra"]]
+    if lever == "kv":                                           # M76: the chain names its arm (record keys, pair gate)
+        argv += ["--lever", "kv", "--kv-arm", arm]
     if pair_receipt is not None:
         argv += ["--pair-receipt", str(pair_receipt)]
     if occurrences is not None:
@@ -148,7 +208,7 @@ def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=Non
 # ----------------------------------------------------------------------------------------------- deadlines (spec 10.2)
 def deadline_s(session, langs, amendment) -> float:
     """`T = 1.5 x sum_lang n_lang x w_lang + 1800 s` with the amendment's walls; `langs` = {lang: n}."""
-    if session not in SESSIONS:
+    if session not in KV_SESSIONS:
         raise ValueError(f"unknown session {session!r}")
     return fz.deadline_formula(langs, {"python": amendment["w_python_s"], "go": amendment["w_go_s"]})
 
@@ -168,12 +228,12 @@ def leg_deadline(amendment, base, leg, langs=None) -> float:
 
 
 # ----------------------------------------------------------------------------------------------- make-up (spec 5.5)
-def canonical_occurrences(occurrences) -> list:
+def canonical_occurrences(occurrences, s3=False) -> list:
     """The union of the occurrences, one record per (session, language, item, seed) with the DNF'd arms merged, in the section 5.5
     order: s1 then s2, the session's language order, `occurrence` (the 0-based position in the leg's frozen order), item. One
-    implementation, shared with the chain's make-up schedule (`schedules.makeup_canonical`)."""
+    implementation, shared with the chain's make-up schedule (`schedules.makeup_canonical`). `s3=True`: M76 (lever kv)."""
     from . import schedules
-    return schedules.makeup_canonical(occurrences)
+    return schedules.makeup_canonical(occurrences, **({"s3": True} if s3 else {}))
 
 
 def makeup_groups(occurrences) -> list:
@@ -295,7 +355,17 @@ class Sequencer:
     def __init__(self, a, ops, clock, sleep, wd):
         self.a, self.ops, self.clock, self.sleep, self.wd = a, ops, clock, sleep, Path(wd)
         self.out = Path(a.out_base)
-        self.worktrees = {"off": Path(a.worktree_off), "on": Path(a.worktree_on)}
+        self.lever = getattr(a, "lever", "mtp")                       # M76 B3: the KV lever names the arms by their KV label
+        if self.lever == "kv":
+            self.arms = tuple(a.arms)
+            self.worktrees = {arm: Path(p) for arm, p in a.worktrees.items()}
+            self.table = kv_legs(*self.arms)
+        else:
+            self.arms = ("off", "on")
+            self.worktrees = {"off": Path(a.worktree_off), "on": Path(a.worktree_on)}
+            self.table = dict(run=RUN_LEGS, makeup=MAKEUP_LEGS, rehearsal=REHEARSAL_LEGS)
+        self.by_name = {leg["name"]: leg for legs in self.table.values() for leg in legs}
+        self.pilots = tuple(leg["name"] for leg in self.table["run"] if leg["kind"] == "pilot")
         self.pause = Path(a.pause_file) if a.pause_file else self.out / "PAUSE"
         self.record_dir = Path(a.record_dir) if getattr(a, "record_dir", None) else None
         self.seq = read_sequence(self.out)
@@ -329,6 +399,10 @@ class Sequencer:
 
     def root(self, spec, attempt):
         return out_root_of(spec, attempt, self.out)
+
+    def pair_legs(self, pair):
+        """{arm: leg spec} of one pair, from this lever's table."""
+        return {leg["arm"]: leg for leg in self.by_name.values() if leg["pair"] == pair}
 
     # -- records (spec 10.1, 16.1)
     def load_records(self):
@@ -373,7 +447,7 @@ class Sequencer:
             raise Stop(1, f"STOP: a record changed: {exc}") from None
         if self.a.cmd == "rehearsal":
             problems = []
-            for arm in ("off", "on"):
+            for arm in self.arms:
                 st = self.ops.worktree_state(self.worktrees[arm])
                 if st.get("head") != self.base[f"{arm}_commit"]:
                     problems.append(f"the {arm} worktree HEAD {str(st.get('head'))[:12]} != the manifest's {self.base[f'{arm}_commit'][:12]}")
@@ -431,7 +505,7 @@ class Sequencer:
         """The first leg's receipt for the second leg of a pair (spec 6.5); a restart between the legs resumes from the persisted file."""
         if spec["role"] != "second":
             return None
-        first = pair_legs(spec["pair"])
+        first = self.pair_legs(spec["pair"])
         first = next(s for s in first.values() if s["role"] == "first")
         entry = self.selected(first["name"])
         if entry is None:
@@ -503,7 +577,7 @@ class Sequencer:
             occurrences = self.out / "makeup" / f"occurrences.{spec['arm']}.jsonl"
             atomic_text(occurrences, "".join(json.dumps(m, sort_keys=True) + "\n" for m in self.canon))
         argv = leg_argv(spec, attempt, worktrees=self.worktrees, record_path=self.record_path(spec), out_base=self.out,
-                        pair_receipt=first_receipt, occurrences=occurrences, identity=self.identity)
+                        pair_receipt=first_receipt, occurrences=occurrences, identity=self.identity, lever=self.lever)
         entry = dict(leg=spec["name"], attempt=attempt, state="RUNNING")
         self.seq["legs"].append(entry)
         self.save()
@@ -564,7 +638,9 @@ class Sequencer:
 
     # -- pairs and the pilot gate
     def ensure_dossier(self, spec):
-        legs = pair_legs(spec["pair"])
+        if self.lever == "kv":
+            return self.ensure_kv_dossier(spec)
+        legs = self.pair_legs(spec["pair"])
         sel = {arm: self.selected(s["name"]) for arm, s in legs.items()}
         if None in sel.values():
             return
@@ -600,6 +676,48 @@ class Sequencer:
         if verdict != "PASS":
             raise Stop(1, f"STOP: the pair gate failed for {spec['pair']} (dossier {path.name}); the operator decides")
 
+    def _kv_gate(self, roots):
+        ref, test = self.arms
+        first, second = fz.read_receipt(roots[ref]), fz.read_receipt(roots[test])
+        problems = pr.kv_pair_problems(first, second)
+        differences = pr.kv_observed_differences(first, second) if not problems else [
+            dict(process="-", field="pair_gate", **{ref: None, test: p}) for p in problems]
+        return problems, differences, "PASS" if not problems else "FAIL"
+
+    def ensure_kv_dossier(self, spec):
+        """M76 B3: the KV pair's dossier `pairs/<pair>__<ref>-a<n>__<test>-a<m>.json` (the KV pair gate, recomputed every time)."""
+        ref, test = self.arms
+        legs = self.pair_legs(spec["pair"])
+        sel = {arm: self.selected(s["name"]) for arm, s in legs.items()}
+        if None in sel.values():
+            return
+        attempts = {arm: f"{legs[arm]['name']}.a{sel[arm]['attempt']}" for arm in sel}
+        path = self.out / "pairs" / kv_dossier_name(spec["pair"], ref, sel[ref]["attempt"], test, sel[test]["attempt"])
+        record = next((p for p in self.seq["pairs"] if p.get(ref) == attempts[ref] and p.get(test) == attempts[test]), None)
+        roots = {arm: self.root(legs[arm], sel[arm]["attempt"]) for arm in sel}
+        problems, differences, verdict = self._kv_gate(roots)
+        harvests = {arm: Path(self.ops.harvest_path(attempts[arm])) / "HARVEST.json" for arm in sel}
+        if path.exists():
+            self.verify_dossier(path, spec["pair"], attempts, roots, harvests, differences, verdict, arms=self.arms)
+        else:
+            pr.write_kv_dossier(path, pair=spec["pair"], ref=ref, test=test, differences=differences, verdict=verdict,
+                                arms={arm: dict(attempt=attempts[arm], receipt=roots[arm] / "receipt.json", harvest=harvests[arm])
+                                      for arm in (ref, test)})
+        if record is None:
+            record = {"pair": spec["pair"], ref: attempts[ref], test: attempts[test], "dossier": f"pairs/{path.name}",
+                      "verdict": verdict}
+            self.log(f"DOSSIER {path.name}: {verdict}" + ("" if verdict == "PASS" else " — " + "; ".join(problems)[:600]))
+            self.publish_dossier_or_stop(path)
+            record["published"] = self.a.cmd != "rehearsal"
+            self.seq["pairs"].append(record)
+            self.save()
+        elif not record.get("published") and self.a.cmd != "rehearsal":
+            self.publish_dossier_or_stop(path)
+            record["published"] = True
+            self.save()
+        if verdict != "PASS":
+            raise Stop(1, f"STOP: the KV pair gate failed for {spec['pair']} (dossier {path.name}); the operator decides")
+
     def publish_dossier_or_stop(self, path):
         """Publish one pair dossier (idempotent: the same bytes are done); a rehearsal publishes nothing. A failure is exit 4."""
         if self.a.cmd == "rehearsal":
@@ -623,6 +741,17 @@ class Sequencer:
     def reverify_recorded_dossier(self, record):
         """A recorded pair dossier is re-verified with `verify_dossier` against the CURRENT receipts / harvests of its two attempts
         (verdict recomputed, nothing trusted); a mismatch stops (rc 1). Returns the recomputed verdict."""
+        if self.lever == "kv":
+            attempts = {arm: record[arm] for arm in self.arms}
+            roots = {arm: self.out / attempts[arm] for arm in attempts}
+            path = self.out / record["dossier"]
+            try:
+                problems, differences, verdict = self._kv_gate(roots)
+            except fz.Refusal as exc:
+                raise Stop(1, f"STOP: the pair dossier {path.name} cannot be re-verified: {exc} (the operator decides)") from None
+            harvests = {arm: Path(self.ops.harvest_path(attempts[arm])) / "HARVEST.json" for arm in attempts}
+            self.verify_dossier(path, record["pair"], attempts, roots, harvests, differences, verdict, arms=self.arms)
+            return verdict
         attempts = dict(off=record["off"], on=record["on"])
         roots = {arm: self.out / attempts[arm] for arm in attempts}
         path = self.out / record["dossier"]
@@ -639,7 +768,7 @@ class Sequencer:
         return verdict
 
     @staticmethod
-    def verify_dossier(path, pair, attempts, roots, harvests, differences, verdict):
+    def verify_dossier(path, pair, attempts, roots, harvests, differences, verdict, arms=("off", "on")):
         """An existing dossier equals what the current records give (self-hash, pair, arms, receipt / harvest hashes, differences,
         verdict); the first mismatch stops the sequence (rc 1) naming the field."""
         def stop(field):
@@ -659,9 +788,9 @@ class Sequencer:
             stop("sha256 (missing or not the self-hash)")
         if doc.get("pair") != pair:
             stop("pair")
-        arms = doc.get("arms") if isinstance(doc.get("arms"), dict) else {}
-        for arm in ("off", "on"):
-            got = arms.get(arm) if isinstance(arms.get(arm), dict) else {}
+        recorded = doc.get("arms") if isinstance(doc.get("arms"), dict) else {}
+        for arm in arms:
+            got = recorded.get(arm) if isinstance(recorded.get(arm), dict) else {}
             for field, want in (("attempt", attempts[arm]), ("receipt_sha256", sha(roots[arm] / "receipt.json")),
                                 ("harvest_sha256", sha(harvests[arm]))):
                 if want is None or got.get(field) != want:
@@ -674,8 +803,8 @@ class Sequencer:
     def ensure_amendment(self):
         """After legs 1-2: the pilot gate; all conditions pass -> the timeout amendment is written (once)."""
         path = self.record_dir / "amendment.json"
-        off, on = (self.selected(n) for n in ("tg1-p426-off-pilot", "tg1-p426-on-pilot"))
-        roots = [self.root(BY_NAME[n], e["attempt"]) for n, e in (("tg1-p426-off-pilot", off), ("tg1-p426-on-pilot", on))]
+        off, on = (self.selected(n) for n in self.pilots)
+        roots = [self.root(self.by_name[n], e["attempt"]) for n, e in zip(self.pilots, (off, on))]
         if path.exists():
             self.verify_amendment(path, off, on, roots)
             return
@@ -691,11 +820,11 @@ class Sequencer:
         path = self.record_dir / "amendment.json"
         if not path.exists():
             return
-        off, on = (self.selected(n) for n in ("tg1-p426-off-pilot", "tg1-p426-on-pilot"))
+        off, on = (self.selected(n) for n in self.pilots)
         if off is None or on is None:
             raise Stop(1, f"STOP: the timeout amendment {path.name} exists but the pilots it was gated on are not recorded "
                           "in sequence.json (the operator decides)")
-        roots = [self.root(BY_NAME[n], e["attempt"]) for n, e in (("tg1-p426-off-pilot", off), ("tg1-p426-on-pilot", on))]
+        roots = [self.root(self.by_name[n], e["attempt"]) for n, e in zip(self.pilots, (off, on))]
         self.verify_amendment(path, off, on, roots)
 
     def verify_amendment(self, path, off, on, roots):
@@ -712,13 +841,14 @@ class Sequencer:
             stop(f"kind {doc.get('kind')!r}")
         if doc.get("v8_base_sha256") != base["sha256"]:
             stop("v8_base_sha256 is not the v8 base's sha256")
-        names = (f"tg1-p426-off-pilot.a{off['attempt']}", f"tg1-p426-on-pilot.a{on['attempt']}")
-        pair = next((p for p in self.seq["pairs"] if p["pair"] == "pilot" and (p["off"], p["on"]) == names), None)
+        names = (f"{self.pilots[0]}.a{off['attempt']}", f"{self.pilots[1]}.a{on['attempt']}")
+        pair = next((p for p in self.seq["pairs"] if p["pair"] == "pilot" and (p.get(self.arms[0]), p.get(self.arms[1])) == names),
+                    None)
         if pair is None or pair.get("verdict") != "PASS":
             stop("the selected pilots have no PASS pilot dossier")
         if self.reverify_recorded_dossier(pair) != "PASS":    # freshly verified against the current receipts, not the stored verdict
             stop("the pilot dossier no longer verifies as a PASS against the current receipts")
-        dossier = fz.pilot_dossier_path(*roots)
+        dossier = fz.pilot_dossier_path(*roots, arms=self.arms)
         try:
             sha = hashlib.sha256(dossier.read_bytes()).hexdigest()
         except OSError:
@@ -735,7 +865,7 @@ class Sequencer:
             raise Stop(1, f"STOP: {spec['name']}.a{entry['attempt']} is {entry['state']} (a rerun is an operator decision)")
         if spec["pair"] and spec["role"] == "second":
             self.ensure_dossier(spec)
-        if spec["name"] == "tg1-p426-on-pilot":
+        if spec["name"] == self.pilots[1]:
             self.ensure_amendment()
 
     def process(self, spec):
@@ -763,15 +893,15 @@ class Sequencer:
     # -- the command
     def legs(self):
         if self.a.cmd == "rehearsal":
-            return list(REHEARSAL_LEGS)
+            return list(self.table["rehearsal"])
         if self.a.cmd == "makeup":
-            return list(MAKEUP_LEGS)
-        return list(RUN_LEGS)
+            return list(self.table["makeup"])
+        return list(self.table["run"])
 
     def run(self):
         self.load_records()
         if self.a.cmd == "makeup":
-            self.canon = canonical_occurrences(read_occurrences(self.a.occurrences))
+            self.canon = canonical_occurrences(read_occurrences(self.a.occurrences, s3=self.lever == "kv"), s3=self.lever == "kv")
         if (self.out / OVERRUN_FILE).exists():
             raise Stop(1, f"STOP: {OVERRUN_FILE} exists: the operator removes it to resume")
         self.emails = tuple(self.ops.operator_emails())
@@ -809,7 +939,7 @@ class Sequencer:
         nested = self.base.get("identity") if isinstance(self.base.get("identity"), dict) else {}
         found = {k: self.base.get(k) or nested.get(k) for k in ("probe_code_sha256", "scaffold_policy_sha256")}
         if not all(found.values()):
-            live = self.ops.identity(self.worktrees["off"])
+            live = self.ops.identity(self.worktrees[self.arms[0]])
             found = {k: live[k] for k in found}
         return dict(found, frozen_prompt_date=self.base["frozen_prompt_date"])
 
@@ -821,7 +951,7 @@ class Sequencer:
         self.run_files_done = True
 
 
-def read_occurrences(path) -> list:
+def read_occurrences(path, s3=False) -> list:
     try:
         lines = [json.loads(x) for x in Path(path).read_text().splitlines() if x.strip()]
     except (OSError, ValueError):
@@ -829,7 +959,7 @@ def read_occurrences(path) -> list:
     if not lines:
         raise fz.Refusal(f"--occurrences {Path(path).name} holds no occurrences")
     try:
-        canonical_occurrences(lines)
+        canonical_occurrences(lines, s3=s3)
     except (KeyError, ValueError, TypeError) as exc:
         raise fz.Refusal(f"--occurrences {Path(path).name}: {exc}") from None
     return lines
@@ -840,10 +970,11 @@ class BoxSeqOps(fz.BoxOps):
     """The real `ops`: subprocess launch (nothing inherited: `pass_fds=()`, stdin closed, output to a file), start-time identity
     (`ChainOps.create_time`), `pmset` power, and the harvest / publication of `bench.p426_harvest` (s9)."""
 
-    def __init__(self, workdir, *, main_root, evidence_stage, historical_walls=None, build_inputs=None):
+    def __init__(self, workdir, *, main_root, evidence_stage, historical_walls=None, build_inputs=None, lever="mtp"):
         super().__init__(workdir, build_inputs, historical_walls)
         self.main_root, self.evidence_stage = Path(main_root), Path(evidence_stage)
         self._procs = {}
+        self.lever = lever                                   # M76 B3: kv publishes below benchmark/results/m76/
 
     def launch(self, argv, *, cwd, pass_fds):
         if "--out-root" in argv:
@@ -891,11 +1022,15 @@ class BoxSeqOps(fz.BoxOps):
         return emails
 
     def harvest_path(self, attempt):
+        if self.lever == "kv":
+            return self.main_root / "benchmark/results/m76/wave2" / attempt
         return self.main_root / "benchmark/results/p426/wave2" / attempt                  # the destination directory (spec 16.8)
 
     def harvest(self, root, *, emails):
         argv = [sys.executable, "-m", "bench.p426_harvest", "wave2", "--leg-root", str(root), "--main-root", str(self.main_root),
                 "--evidence-stage", str(self.evidence_stage)]
+        if self.lever == "kv":
+            argv += ["--lever", "kv"]
         for e in emails:
             argv += ["--operator-email", e]
         run = subprocess.run(argv, cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, text=True, timeout=3600,
@@ -921,11 +1056,13 @@ class BoxSeqOps(fz.BoxOps):
 
     def publish_dossier(self, path, *, emails):
         mod, scrub = self._scrub(emails, secrets=self._credentials())
-        return mod.publish_dossier(path, main_root=self.main_root, evidence_stage=self.evidence_stage, scrub=scrub)
+        publish = mod.publish_dossier_kv if self.lever == "kv" else mod.publish_dossier
+        return publish(path, main_root=self.main_root, evidence_stage=self.evidence_stage, scrub=scrub)
 
     def publish_run_files(self, paths, *, emails):
         mod, scrub = self._scrub(emails, secrets=self._credentials())
-        return mod.publish_run_files(paths, main_root=self.main_root, scrub=scrub)
+        publish = mod.publish_run_files_kv if self.lever == "kv" else mod.publish_run_files
+        return publish(paths, main_root=self.main_root, scrub=scrub)
 
     def notify(self, message):
         print(message, file=sys.stderr, flush=True)
@@ -942,8 +1079,11 @@ def parse_args(argv):
     sub = ap.add_subparsers(dest="cmd", required=True)
     for name in ("run", "makeup", "rehearsal"):
         p = sub.add_parser(name)
-        p.add_argument("--worktree-off", required=True)
-        p.add_argument("--worktree-on", required=True)
+        p.add_argument("--worktree-off", default=None, help="lever mtp (required)")
+        p.add_argument("--worktree-on", default=None, help="lever mtp (required)")
+        p.add_argument("--lever", default="mtp", choices=("mtp", "kv"), help="M76 B3: kv = a KV pair, both MTP ON")
+        p.add_argument("--pair", default=None, help="lever kv: <reference>,<treatment>")
+        p.add_argument("--arm-worktree", action="append", default=[], help="lever kv: <arm>=<worktree> (each arm of the pair)")
         p.add_argument("--out-base", required=True)
         p.add_argument("--pause-file", default=None, help="default <out-base>/PAUSE")
         p.add_argument("--rerun", action="append", default=[], metavar="LEG", help="the operator's labelled rerun: a new attempt of LEG")
@@ -964,24 +1104,62 @@ def parse_args(argv):
     return ap.parse_args(argv)
 
 
+def _check_lever_args(a):
+    """`a.arms` / `a.worktrees` of the lever: mtp `--worktree-off` / `--worktree-on`; kv `--pair` + `--arm-worktree` (M76 B3)."""
+    a.lever = getattr(a, "lever", "mtp")
+    if a.lever == "mtp":
+        if getattr(a, "pair", None) or getattr(a, "arm_worktree", None):
+            raise fz.Refusal("--pair / --arm-worktree are lever kv flags")
+        if not a.worktree_off or not a.worktree_on:
+            raise fz.Refusal("the following arguments are required: --worktree-off, --worktree-on")
+        return
+    from . import p426_plan
+
+    if a.worktree_off or a.worktree_on:
+        raise fz.Refusal("--worktree-off / --worktree-on are lever mtp flags (lever kv: --arm-worktree <arm>=<path>)")
+    try:
+        pair = p426_plan.check_kv_pair(*(a.pair or "").split(",", 1)) if a.pair and "," in a.pair else None
+    except ValueError as exc:
+        raise fz.Refusal(str(exc)) from None
+    if pair is None:
+        raise fz.Refusal("--lever kv needs --pair <reference>,<treatment>")
+    if "v" in pair:   # erratum v1.2: stage 4 (V) is not in B3 — refused at preflight, before any leg
+        raise fz.Refusal(f"the pair {list(pair)} names V: stage 4 (V vs X / N16) is not in B3 — its V-only / X-reuse / sentinel "
+                         "workflow is planned before stage 4 (S23-P49); nothing runs")
+    trees = {}
+    for v in a.arm_worktree:
+        arm, sep, path = v.partition("=")
+        if not sep or arm not in pair or arm in trees or not path:
+            raise fz.Refusal(f"--arm-worktree {v!r} is not <arm>=<path> for an arm of the pair (once each)")
+        trees[arm] = Path(path)
+    if set(trees) != set(pair):
+        raise fz.Refusal(f"--arm-worktree names {sorted(trees)}, the pair is {list(pair)}")
+    a.arms, a.worktrees = pair, trees
+
+
 def check_args(a, wd):
+    _check_lever_args(a)
+    kv = a.lever == "kv"
     base = Path(a.out_base).resolve()
-    rehearsal_dir = (Path(wd) / REHEARSAL_DIR).resolve()
+    reh = KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
+    scratch = KV_WAVE2_DIR.rsplit("/", 1)[0] if kv else "p426"
+    rehearsal_dir = (Path(wd) / reh).resolve()
     inside = base == rehearsal_dir or rehearsal_dir in base.parents
     if a.cmd == "rehearsal" and not inside:
-        raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/{REHEARSAL_DIR}/")
-    if a.cmd != "rehearsal" and (inside or (Path(wd) / "p426").resolve() not in base.parents):
-        raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/p426/ and not in {REHEARSAL_DIR}/")
-    names = [s["name"] for s in {"run": RUN_LEGS, "makeup": MAKEUP_LEGS, "rehearsal": REHEARSAL_LEGS}[a.cmd]]
+        raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/{reh}/")
+    if a.cmd != "rehearsal" and (inside or (Path(wd) / scratch).resolve() not in base.parents):
+        raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/{scratch}/ and not in {reh}/")
+    table = kv_legs(*a.arms) if kv else dict(run=RUN_LEGS, makeup=MAKEUP_LEGS, rehearsal=REHEARSAL_LEGS)
+    names = [s["name"] for s in table[a.cmd]]
     for flag in a.rerun:
         if flag not in names:
             raise fz.Refusal(f"--rerun {flag!r} is not a leg of this command ({', '.join(names)})")
     if a.rerun and not a.rerun_reason:
         raise fz.Refusal("--rerun needs --rerun-reason (a rerun is labelled)")
     if a.cmd == "run" and a.through is not None:
-        by_number = {str(s["n"]): s["name"] for s in RUN_LEGS}
+        by_number = {str(s["n"]): s["name"] for s in table["run"]}
         if a.through not in names and a.through not in by_number:
-            raise fz.Refusal(f"--through {a.through!r} is neither a leg name nor a number 1-8")
+            raise fz.Refusal(f"--through {a.through!r} is neither a leg name nor a number 1-{len(table['run'])}")
         a.through = by_number.get(a.through, a.through)
 
 
@@ -992,7 +1170,7 @@ def frozen_env_files(a, wd):
         record = Path(a.manifest) if a.cmd == "rehearsal" else Path(a.record_dir) / "v8_base.json"
         doc = json.loads(record.read_text())
         out = []
-        for arm in ("off", "on"):
+        for arm in (doc.get("arms") if doc.get("lever") == "kv" else ("off", "on")):     # M76: the KV pair's worktrees
             value = doc.get(f"{arm}_worktree")
             tree = fz.expand(value, wd) if value else None
             if tree:
@@ -1008,7 +1186,8 @@ def build_box_ops(a, wd):
     """The real ops of one command: the main checkout, the evidence stage and the credential sources of the frozen record."""
     scratch = Path(a.out_base) / "scratch"
     main_root = Path(a.main_root) if a.main_root else (scratch / "main" if a.cmd == "rehearsal" else Path(__file__).resolve().parents[2])
-    ops = BoxSeqOps(wd, main_root=main_root, evidence_stage=a.evidence_stage or scratch / "evidence", historical_walls=a.historical_walls)
+    ops = BoxSeqOps(wd, main_root=main_root, evidence_stage=a.evidence_stage or scratch / "evidence", historical_walls=a.historical_walls,
+                    lever=getattr(a, "lever", "mtp"))
     ops.env_files = tuple(frozen_env_files(a, wd))
     return ops
 

@@ -53,6 +53,15 @@ class LegSpec:
     pins: dict = None  # K2: stack_head, stack_clean, mlx_vlm, mlx_serve, registry_off_sha, registry_on_sha
     cwd: str = None
     build: str = "s"  # T3 §4: the build label; != "s" = arms as commits (the ON registry is the ON worktree's committed file)
+    # M76 B3: `kv` = an M76 KV arm (`n16` / `x` / `v`, MTP ON); `off_registry_text` is then the recorded N16 base's registry
+    lever: str = "mtp"
+    driver_argvs: list = None  # A5: one invocation per item, run in order (`driver_argv` is the first)
+    rows_paths: dict = None  # A5: {item id: its runner's result file}
+
+    @property
+    def role(self):
+        """The engagement role the checks apply: the arm itself under `mtp`; `on` for every KV arm (both MTP ON)."""
+        return self.arm if self.lever == "mtp" else "on"
 
 
 P426_ON = {  # the exact settings the ON arm adds (the C177 lines restored), pinned independently of the fork rule (H2)
@@ -107,11 +116,19 @@ def _models(text):
     return dict(zip(names, models)), names, {k: v for k, v in doc.items() if k != "models"}
 
 
-def registry_delta_problems(on_text, off_text, entry, expected=None, allow_added_comments=False):
+def registry_delta_problems(on_text, off_text, entry, expected=None, allow_added_comments=False, lever="mtp", arms=None):
     """ON == OFF except that ``entry`` gains exactly its pinned MTP settings (``P426_ON``): strict, type-aware, and the text
     delta is exactly those lines added with only comment lines removed (B4 code round 2 H2). ``allow_added_comments``: the
     committed ON registry of T3 §4 also carries its ``PROVISIONAL P426`` note (comment lines only; the sequencer asserts the
-    patch itself)."""
+    patch itself).
+
+    M76 B3 ``lever="kv"``: the two texts (first, second) are two KV arms' registries whose ``entry`` differs only in
+    ``{kv_bits, tq4_attention}`` (+ the arm note), both MTP ON (``p426_plan.kv_registry_delta_problems``); ``arms`` = their
+    labels (default: each text's own KV state)."""
+    from bench.p426_plan import check_lever
+
+    if check_lever(lever) == "kv":
+        return _kv_registry_delta(on_text, off_text, entry, arms)
     expected = expected if expected is not None else P426_ON.get(entry)
     if not expected:
         return [f"{entry}: no pinned ON settings"]
@@ -284,9 +301,34 @@ def watch_problems(watch, start, end):
     return problems
 
 
-def model_argv_problems(cmdline, registry_text, model):
+def _kv_registry_delta(a_text, b_text, entry, arms=None):
+    from bench.p426_plan import kv_arm_of_entry, kv_registry_delta_problems
+
+    if arms is None:
+        try:
+            arms = tuple(kv_arm_of_entry(_models(t)[0].get(entry)) for t in (a_text, b_text))
+        except ValueError as exc:
+            return [f"registry: {exc}"]
+        if None in arms:
+            return [f"{entry}: a registry's KV state is no M76 arm (n16 / x / v): {list(arms)}"]
+    return kv_registry_delta_problems(a_text, b_text, entry, *arms)
+
+
+def model_argv_problems(cmdline, registry_text, model, lever="mtp", arm=None):
     """``--model`` is the registry's; M2: the predictor flags are EXACTLY the arm's (ON: --draft-kind mtp, the entry's
-    --draft-model and --mtp-verify-scan; OFF: none of them, --draft-kind at most none / off)."""
+    --draft-model and --mtp-verify-scan; OFF: none of them, --draft-kind at most none / off). M76 B3 ``lever="kv"``: the
+    ``--model`` as above and the KV arm's flags (``kv_worker_problems``: its ``--kv-bits`` / ``--tq4-attention``, MTP ON);
+    ``arm`` = the KV label (default: the registry entry's own KV state)."""
+    from bench.p426_plan import check_lever, kv_arm_of_entry
+
+    if check_lever(lever) == "kv":
+        entry = _models(registry_text)[0].get(model) or {}
+        arm = arm or kv_arm_of_entry(entry)
+        if arm is None:
+            return [f"{model}: the registry's KV state is no M76 arm (n16 / x / v)"]
+        got = argv_flag((cmdline or "").split(), "--model")
+        problems = [] if got == [entry.get("hf_path")] else [f"worker --model {got} != registry {entry.get('hf_path')!r}"]
+        return problems + kv_worker_problems(cmdline, arm)
     entry = _models(registry_text)[0].get(model) or {}
     toks = (cmdline or "").split()
     problems = []
@@ -308,6 +350,58 @@ def model_argv_problems(cmdline, registry_text, model):
     return problems
 
 
+def kv_worker_problems(cmdline, arm):
+    """M76 B3: the worker argv carries exactly the KV arm's `--kv-bits` / `--tq4-attention` and MTP ON (`p426_plan`)."""
+    from bench.p426_plan import kv_arm_argv_problems
+
+    toks = (cmdline or "").split()
+    return kv_arm_argv_problems(toks[1:] if toks and toks[0].isdigit() else toks, arm)
+
+
+def kv_registry_leg_problems(spec):
+    """M76 B3: the KV arm serves its committed registry; against the recorded N16 base (`off_registry_text`) it differs in
+    exactly the KV delta (`p426_plan.kv_registry_delta_problems`); the N16 leg serves the base itself."""
+    from bench.p426_plan import KV_REF, kv_registry_delta_problems, kv_registry_problems
+
+    if spec.arm == KV_REF:
+        problems = kv_registry_problems(spec.registry_text, spec.model, spec.arm)
+        if spec.registry_text != spec.off_registry_text:
+            problems.append(f"the {KV_REF} arm must serve the recorded base registry verbatim")
+        return problems
+    return kv_registry_delta_problems(spec.off_registry_text, spec.registry_text, spec.model, KV_REF, spec.arm)
+
+
+def longctx_rows(spec):
+    """M76 A5: (rows, calibration session ids, problems) of the per-item result files — a retrieval result's `records[0].rows`
+    and `calibration_session_id`, a reasoning journal's rows and its sidecar's `calibration_session_id`; each item exactly one
+    row, keyed by the item id."""
+    rows, extras, problems = [], [], []
+    for iid in spec.planned:
+        path = Path((spec.rows_paths or {}).get(iid, ""))
+        if not path.is_file():
+            problems.append(f"{iid}: its result file {path.name} is missing")
+            continue
+        try:
+            if path.name.startswith("retrieval."):
+                doc = json.loads(path.read_text())
+                got = [r for rec in doc.get("records") or [] for r in rec.get("rows") or []]
+                cal = doc.get("calibration_session_id")
+            else:
+                got = read_rows(path)
+                cal = json.loads(Path(f"{path}.provenance.json").read_text()).get("calibration_session_id")
+        except (OSError, ValueError, AttributeError) as exc:
+            problems.append(f"{iid}: {path.name} unreadable ({type(exc).__name__})")
+            continue
+        if len(got) != 1:
+            problems.append(f"{iid}: {len(got)} rows in {path.name} (one draw per item)")
+        rows += [dict(r, id=iid) for r in got]
+        if cal:
+            extras.append(cal)
+        else:
+            problems.append(f"{iid}: no calibration_session_id beside {path.name}")
+    return rows, extras, problems
+
+
 def sha256_text(text):
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 
@@ -326,6 +420,14 @@ def pin_problems(state, spec):
         problems = [f"{k}: {state.get(k)!r} != pinned {want.get(k)!r}" for k in want if k != "registry_sha" and state.get(k) != want.get(k)]
     else:
         problems = [f"{k}: {state.get(k)!r} != pinned {pins.get(k)!r}" for k in PIN_KEYS if state.get(k) != pins.get(k)]
+    if spec.lever == "kv":  # M76 B3: the arm's committed registry and the N16 base's, both as recorded
+        from bench.p426_plan import KV_REF
+
+        if sha256_text(spec.registry_text) != pins.get(f"registry_{spec.arm}_sha"):
+            problems.append(f"registry_{spec.arm}_sha: the {spec.arm} worktree's registry is not the recorded one")
+        if sha256_text(spec.off_registry_text) != pins.get(f"registry_{KV_REF}_sha"):
+            problems.append(f"registry_{KV_REF}_sha: the base registry is not the recorded {KV_REF} one")
+        return problems
     if sha256_text(spec.off_registry_text) != pins.get("registry_off_sha"):
         problems.append("registry_off_sha: the committed registry is not the pinned one")
     if spec.arm == "on" and sha256_text(spec.registry_text) != pins.get("registry_on_sha"):
@@ -464,12 +566,14 @@ def _guard_pre(spec, ops, repo_state, pins_check):
         pre.append(f"receipt exists: {_receipt_path(spec)} (a leg is run once)")
     state = repo_state()
     pre += pin_problems(state, spec) + destination_problems(spec.destinations)
-    if spec.arm == "on":
+    if spec.lever == "kv":
+        pre += kv_registry_leg_problems(spec)
+    elif spec.arm == "on":
         pre += registry_delta_problems(spec.registry_text, spec.off_registry_text, spec.model,
                                        allow_added_comments=spec.build != "s")
     elif spec.registry_text != spec.off_registry_text:
         pre.append("the OFF arm must serve the committed registry verbatim")
-    pre += pins_check(spec.model, spec.arm)
+    pre += pins_check(spec.model, spec.role)
     if not ops.power_ok():
         pre.append("power / orphan gate failed at entry")
     busy = ops.busy_procs()
@@ -520,18 +624,25 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         ident = ops.load(spec.model)
         receipt["worker"] = ident
         problems += model_argv_problems(ident.get("cmdline"), spec.registry_text, spec.model)
+        if spec.lever == "kv":
+            problems += kv_worker_problems(ident.get("cmdline"), spec.arm)
         stop_watch = watcher(spec)
         log = Path(spec.server_log)
         offset = log.stat().st_size if log.exists() else 0  # E1: only this leg's records count
-        env = dict(ops.env_base(), MLX_BENCH_SESSION_PREFIX=f"p426-{spec.name}")  # K5: per-request identity
-        try:
-            rc = run_driver(spec.driver_argv, env, spec.timeout_s, spec.cwd)
-        except subprocess.TimeoutExpired as exc:  # G1: receipted, and every post-driver check still runs
-            rc = None
-            problems.append(f"driver timed out after {exc.timeout} s")
+        prefix = f"p426-{spec.name}" if spec.lever == "mtp" else spec.name  # M76: the leg name is already `m76`-namespaced
+        env = dict(ops.env_base(), MLX_BENCH_SESSION_PREFIX=prefix)  # K5: per-request identity
+        rc = 0
+        for argv in spec.driver_argvs or [spec.driver_argv]:  # A5: the per-item invocations in order, the first failure stops
+            try:
+                rc = run_driver(argv, env, spec.timeout_s, spec.cwd)
+            except subprocess.TimeoutExpired as exc:  # G1: receipted, and every post-driver check still runs
+                rc = None
+                problems.append(f"driver timed out after {exc.timeout} s")
+            if rc != 0:
+                break
         tail = log.read_bytes()[offset:].decode("utf-8", errors="replace") if log.exists() else ""
         lines = tail.splitlines()
-        log_found, receipt["log"] = log_problems(lines, spec.arm, spec.expected_requests)
+        log_found, receipt["log"] = log_problems(lines, spec.role, spec.expected_requests)
         problems += log_found
         if rc not in (0, None):
             problems.append(f"driver exit {rc}")
@@ -540,11 +651,15 @@ def run_leg(spec, ops, *, run_driver, pins_check, watcher, battery_intervals, cl
         now = ops.worker_ident(spec.model)
         if not now or (now["pid"], now["create_time"]) != (ident["pid"], ident["create_time"]):
             problems.append(f"worker identity changed: {ident.get('pid')} -> {now}")
-        rows = read_rows(spec.rows_path)
+        if spec.rows_paths is not None:
+            rows, a5_extras, a5_problems = longctx_rows(spec)
+            problems += a5_problems
+        else:
+            rows = read_rows(spec.rows_path)
         problems += membership_problems(spec.planned, rows, spec.row_key)
-        problems += engagement_problems(spec.arm, rows, spec.row_key)
+        problems += engagement_problems(spec.role, rows, spec.row_key)
         problems += seed_problems(spec.seeds or {}, rows, spec.row_key)
-        extras, extra_problems = extra_ids_for(spec)
+        extras, extra_problems = (a5_extras, []) if spec.rows_paths is not None else extra_ids_for(spec)
         problems += extra_problems + request_match_problems(rows, lines, extras)
         if not ops.power_ok():
             speed.append("power / orphan gate failed at exit")
@@ -613,10 +728,13 @@ def run_qualify_leg(spec, ops, *, run_driver, pins_check, battery_intervals, clo
         report_path = Path(out_dir) / "report.json"
         report = json.loads(report_path.read_text()) if report_path.exists() else {}
         receipt["report"] = {k: report.get(k) for k in ("predictor", "entries", "reviewed_head", "registry_sha256",
-                                                        "production")}
-        problems += qualify_problems(report, spec.model, spec.arm, (spec.pins or {}).get("production_ref"))
-        if spec.build != "s" and spec.arm == "on":  # T3 §4 (P504): qualify's own copy of the ON registry is the committed one
-            overlay = Path(out_dir) / f"overlay-{spec.model}.yaml"
+                                                        "production") + (("certified_by",) if spec.lever == "kv" else ())}
+        problems += qualify_problems(report, spec.model, spec.arm, (spec.pins or {}).get("production_ref"), lever=spec.lever)
+        overlay = Path(out_dir) / f"overlay-{spec.model}.yaml"
+        if spec.lever == "kv" and spec.arm != "n16" and not overlay.exists():
+            receipt["overlay"] = dict(file=None, note="qualify --kv-arm --predictor on serves the arm registry without an overlay")
+        elif spec.lever == "kv" or (spec.build != "s" and spec.arm == "on"):
+            # T3 §4 (P504): qualify's own copy of the ON registry is the committed one (M76: every arm is MTP ON)
             served, committed = (hashlib.sha256(overlay.read_bytes()).hexdigest() if overlay.is_file() else None), sha256_text(spec.registry_text)
             receipt["overlay"] = dict(file=overlay.name, sha256=served, registry_on_sha256=committed)
             if served != committed:
@@ -728,6 +846,94 @@ def _watcher_for(repo, total, out_dir, interval_s=None, startup_s=10.0):
 FROZEN = "p426/frozen.json"  # K2: S's frozen-build record, under $STACK_WORKDIR (a label's: `p426_plan.frozen_path`)
 
 
+def _main_kv(args, build, name):
+    """M76 B3 (lever kv): the arm's own worktree serves its committed registry; the record is
+    `$STACK_WORKDIR/m76/p426/frozen.<label>.json` (`p426_plan.kv_record_problems`); the delta's base is the recorded N16
+    commit's registry (`git show` in the arm worktree); the same pre-leg, leg and receipt rules as under `mtp`."""
+    import os
+
+    from bench import p426_plan
+
+    stub = LegSpec(name=name, arm=args.arm, kind=args.axis, model=None, registry_text="", off_registry_text="",
+                   driver_argv=[], destinations=[], rows_path=None, planned=[], receipt_dir=Path(args.receipt_dir),
+                   server_log=None, lever="kv")
+    try:
+        from bench.chain_ops import ChainOps
+
+        if args.registry_on or args.stack_root_off:
+            raise ValueError("--registry-on / --stack-root-off are retired under lever kv: each arm serves its worktree's "
+                             "committed registry; the base is the recorded n16 commit")
+        configured = os.environ.get("STACK_WORKDIR")
+        if not configured or Path(configured).resolve() != Path(args.workdir).resolve():
+            raise ValueError(f"--workdir {args.workdir} is not $STACK_WORKDIR ({configured})")
+        repo = Path(args.stack_root).resolve()
+        frozen_path = p426_plan.kv_frozen_path(Path(args.workdir).resolve(), build)
+        if not frozen_path.is_file():
+            raise FileNotFoundError(f"frozen record {frozen_path} is missing")
+        frozen_bytes = frozen_path.read_bytes()
+        pins = dict(json.loads(frozen_bytes), frozen_sha=hashlib.sha256(frozen_bytes).hexdigest())
+        refused = p426_plan.kv_record_problems(pins, build, (args.arm,))
+        if refused:
+            raise ValueError(f"frozen record {frozen_path.name} is not build {build}'s: {'; '.join(refused)[:600]}")
+        plan = p426_plan.plan_leg(repo, args.axis, args.arm, args.block, smoke=args.smoke, workdir=args.workdir,
+                                  reviewed_head=pins.get("mlx_vlm"), production_ref=pins.get("production_ref"), build=build,
+                                  lever="kv", tier=args.tier, certified_by=args.certified_by)
+        own_path = repo / "main_models.yaml"
+        own_text = own_path.read_bytes().decode("utf-8")
+        base = subprocess.run(["git", "-C", str(repo), "show", f"{pins[f'stack_head_{p426_plan.KV_REF}']}:main_models.yaml"],
+                              capture_output=True, timeout=60)
+        if base.returncode != 0:
+            raise ValueError(f"the recorded {p426_plan.KV_REF} commit's main_models.yaml cannot be read in the arm worktree")
+        rows_paths = plan.get("rows_paths")
+        spec = LegSpec(
+            name=name, arm=args.arm, kind=args.axis, model=plan["entry"], registry_text=own_text,
+            off_registry_text=base.stdout.decode("utf-8"), driver_argv=plan["driver_argv"], build=build, lever="kv",
+            destinations=p426_plan.existing_outputs(plan) + ([plan["rows_path"]] if plan.get("rows_path") else [])
+            + list((rows_paths or {}).values()),
+            rows_path=plan.get("rows_path"), planned=plan["planned"], receipt_dir=Path(args.receipt_dir),
+            server_log=repo / "logs/mlx_vlm.log", timeout_s=args.timeout_s, row_key=plan["row_key"],
+            expected_requests=plan["expected_requests"], expected_extra=plan["expected_extra"], seeds=plan["seeds"],
+            pins=pins, cwd=plan["cwd"], driver_argvs=plan.get("driver_argvs"), rows_paths=rows_paths,
+        )
+        log_path = Path(args.receipt_dir) / f"{name}.log"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+
+        def log(msg):
+            with log_path.open("a") as f:
+                f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')} {msg}\n")
+
+        ops = ChainOps(repo, Path(args.workdir), str(own_path), log, predictor="mtp", out_root=Path(args.receipt_dir))
+        fork_dev = repo / "src" / "mlx-vlm" / "dev"
+        sys.path.insert(0, str(fork_dev))
+        from p369_phase2 import qualify
+
+        def battery(start, end):
+            return battery_window(start, end, qualify=qualify)
+
+        base_state = _repo_state_for(repo)
+
+        def repo_state():
+            state = dict(base_state(), frozen_sha=hashlib.sha256(frozen_path.read_bytes()).hexdigest())
+            live = p426_plan.arm_state(repo)
+            state.update({k: live[k] for k in ("uv_lock_sha256", "bench_lock_sha256", "venvs")})
+            return state
+
+        common = dict(run_driver=_real_driver, pins_check=_pins_check_for(fork_dev), battery_intervals=battery,
+                      clock=utc_stamp, repo_state=repo_state)
+    except BaseException as exc:  # noqa: BLE001 — K1: planning / loading failures are receipted too
+        _refuse(stub, dict(name=name, arm=args.arm, kind=args.axis, problems=[], speed_problems=[]), exc)
+        if not isinstance(exc, Exception):
+            raise
+        print(f"[p426_leg] NOT_STARTED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 2
+    if plan["kind"] == "qualify":
+        receipt = run_qualify_leg(spec, ops, out_dir=plan["out_dir"], **common)
+    else:
+        receipt = run_leg(spec, ops, watcher=_watcher_for(repo, len(spec.planned), args.receipt_dir), **common)
+    print(json.dumps({k: receipt.get(k) for k in ("name", "verdict", "speed_valid", "problems", "speed_problems")}, indent=1))
+    return 0 if receipt["verdict"] == "VALID" else 1
+
+
 def main(argv=None):
     """``--axis --arm (--block N | --smoke) --stack-root <frozen worktree> --workdir <STACK_WORKDIR> --registry-on <overlay>
     --receipt-dir <dir>``: the leg is PLANNED from ids.json (K3) and pinned to ``<workdir>/p426/frozen.json`` (K2); a failure
@@ -739,7 +945,8 @@ def main(argv=None):
 
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--axis", required=True)
-    ap.add_argument("--arm", required=True, choices=("off", "on"))
+    ap.add_argument("--arm", required=True, choices=("off", "on", "n16", "x", "v"),
+                    help="off / on (lever mtp); n16 / x / v (lever kv, M76)")
     sel = ap.add_mutually_exclusive_group(required=True)
     sel.add_argument("--block", type=int)
     sel.add_argument("--smoke", action="store_true")
@@ -750,15 +957,33 @@ def main(argv=None):
     ap.add_argument("--timeout-s", type=float, default=6 * 3600)
     ap.add_argument("--build", default="s", help="T3 §4: the build label (default s = S); S′ runs use s2")
     ap.add_argument("--stack-root-off", help="a label's ON leg: the OFF worktree whose committed registry is the delta's base")
+    ap.add_argument("--lever", default="mtp", choices=("mtp", "kv"),
+                    help="M76 B3: kv = an M76 KV arm (n16 / x / v, MTP ON) on build s3; the base is the recorded n16 commit")
+    ap.add_argument("--tier", type=int, default=1, choices=(1, 2), help="lever kv, math500 / longctx: the tier")
+    ap.add_argument("--certified-by", default=None, help="lever kv, a TQ4 arm's m1 leg: the stage-2 record (M76 B2)")
     args = ap.parse_args(argv)
     from bench import p426_plan
 
     try:
         build = p426_plan.check_build(args.build)
+        lever = p426_plan.check_lever(args.lever)
+        p426_plan.check_arm(lever, args.arm)
+        if lever == "kv":
+            p426_plan.check_kv_build(build)
+        elif args.tier != 1 or args.certified_by:
+            raise ValueError("--tier / --certified-by are lever kv flags")
     except ValueError as exc:
         print(f"[p426_leg] refused: {exc}", file=sys.stderr)
         return 2
-    name = p426_plan.leg_name(args.axis, args.arm, "smoke" if args.smoke else args.block, build)
+    sel_ = "smoke" if args.smoke else args.block
+    if lever == "kv":
+        try:
+            name = p426_plan.kv_leg_name(args.axis, args.arm, sel_, args.tier)
+        except ValueError as exc:
+            print(f"[p426_leg] refused: {exc}", file=sys.stderr)
+            return 2
+        return _main_kv(args, build, name)
+    name = p426_plan.leg_name(args.axis, args.arm, sel_, build)
     stub = LegSpec(name=name, arm=args.arm, kind=args.axis, model=None, registry_text="", off_registry_text="",
                    driver_argv=[], destinations=[], rows_path=None, planned=[], receipt_dir=Path(args.receipt_dir),
                    server_log=None)

@@ -155,14 +155,19 @@ def shebang_interpreter(script):
     return path if path and os.path.isabs(path) and len(path.split()) == 1 and os.path.basename(path) != "env" else None
 
 
-def worker_argv_problems(actual, expected, arm, interpreter=None) -> list:
+def worker_argv_problems(actual, expected, arm, interpreter=None, lever="mtp") -> list:
     """The worker's argv equals the one mlx-serve builds from the served entry EXACTLY (spec 16.7); the only tolerated leading
     token is `interpreter`, the shebang interpreter of the built argv's script (P581: the OS reports a console script's process
-    as `[interpreter, script, …]`). The arm's predictor flags are exactly its own: OFF none of the three, ON each exactly once."""
+    as `[interpreter, script, …]`). The arm's predictor flags are exactly its own: OFF none of the three, ON each exactly once.
+    M76 (lever kv): a KV arm (`n16` / `x` / `v`) is MTP ON and carries exactly its own `--kv-bits` / `--tq4-attention`."""
     problems = []
     actual, expected = [str(t) for t in actual], [str(t) for t in expected]
     if actual != expected and not (interpreter and actual == [str(interpreter)] + expected):
         problems.append("argv.worker: the worker command line differs from the one mlx-serve builds from the served entry")
+    if lever == "kv":
+        from bench.p426_plan import kv_arm_argv_problems
+
+        return problems + kv_arm_argv_problems(actual, arm)
     for flag in MTP_FLAGS:
         n = sum(t == flag for t in actual)
         if arm == "off" and n:
@@ -227,7 +232,7 @@ def sealed_problem(name, receipt):
 
 def pair_problems(first, second) -> list:
     """Every difference between the two legs' receipts that the closed `ALLOWED_DIFFERENCES` list does not name (spec 6.5);
-    the closed and volatile lists are module constants, not parameters (spec 16.7)."""
+    the closed and volatile lists are module constants, not parameters (spec 16.7). M76 (lever kv): `kv_pair_problems`."""
     allowed, volatile = ALLOWED_DIFFERENCES, VOLATILE_KEYS
     bad = [p for p in (sealed_problem("first", first), sealed_problem("second", second)) if p]
     if bad:
@@ -294,7 +299,8 @@ def pair_problems(first, second) -> list:
 def observed_differences(first, second) -> list:
     """The allowed differences actually present, as dossier entries `{process: router|worker|probe|-, field, off, on}` (spec
     16.7; `field` is the dotted receipt path; the receipts are already canonicalized and hold no credential value, so an
-    entry never carries one). Sorted by (process, field); `off` / `on` are the OFF leg's and the ON leg's value."""
+    entry never carries one). Sorted by (process, field); `off` / `on` are the OFF leg's and the ON leg's value. M76 (lever
+    kv): `kv_observed_differences`."""
     arms = (arm_of(first), arm_of(second))
     off, on = (first, second) if arms[0] == "off" else (second, first)
     out = []
@@ -315,6 +321,7 @@ def observed_differences(first, second) -> list:
 
 # -- the pair dossier (spec 6.5, 16.1, 16.7)
 PAIRS = ("r1", "pilot", "s1", "s2", "reload", "makeup")
+KV_DOSSIER_PAIRS = PAIRS + ("s3",)                    # M76 (lever kv): + tg1 session s3 (erratum v1.2)
 ATTEMPT = re.compile(r"^.+\.a([1-9][0-9]*)$")
 
 
@@ -353,3 +360,153 @@ def write_dossier(path, *, pair, off, on, differences, verdict) -> dict:
             raise ValueError("a PASS dossier cannot carry pair problems: " + "; ".join(found)[:400])
     return ph.write_exclusive(path, dict(pair=pair, arms=arms, differences=list(differences), verdict=verdict,
                                          at=co.utc_stamp()))
+
+
+# -- M76 B3: the KV lever's pair gate (`docs/specs/m76-b3-b5-p426-kv-lever.md`)
+KV_ALLOWED_DIFFERENCES = ("worker_argv.kv_pairs",)      # the only difference two KV arms may show (both MTP ON, one drafter)
+
+
+def gate_problems(first, second, lever="mtp"):
+    """The pair gate of a lever: `pair_problems` (mtp) or `kv_pair_problems` (kv)."""
+    return kv_pair_problems(first, second) if lever == "kv" else pair_problems(first, second)
+
+
+def gate_differences(first, second, lever="mtp"):
+    return kv_observed_differences(first, second) if lever == "kv" else observed_differences(first, second)
+
+
+def kv_arm_of(receipt):
+    """The KV label (`n16` / `x` / `v`) the worker argv's `--kv-bits` / `--tq4-attention` say; None for anything else."""
+    from bench.p426_plan import KV_ARMS, KV_FLAGS, kv_argv, strip_flags
+
+    _, flags = strip_flags(receipt["argv"]["worker"], KV_FLAGS)
+    got = [t for f in KV_FLAGS for v in flags[f] for t in (f, v)]
+    return next((arm for arm in KV_ARMS if kv_argv(arm) == got), None)
+
+
+def _equal_problems(first, second):
+    """Router argv, environments (closed volatile list), credential keys, interpreters, native images, probe entry, target and
+    drafter snapshots: equal between the two legs (spec 6.5 as `pair_problems`, both arms MTP ON)."""
+    problems = []
+    if first["argv"]["router"] != second["argv"]["router"]:
+        problems.append("argv.router: differs between the legs")
+    for proc in PROCESSES:
+        a, b = first["env"][proc], second["env"][proc]
+        for key in sorted(set(a) | set(b)):
+            if is_volatile(key, VOLATILE_KEYS):
+                continue
+            if VOLATILE in (a.get(key), b.get(key)):
+                problems.append(f"env.{proc}: {key} is marked volatile but is not on the closed volatile list")
+            elif key not in a or key not in b:
+                problems.append(f"env.{proc}: {key} is present in the {'first' if key in a else 'second'} leg only")
+            elif a[key] != b[key]:
+                problems.append(f"env.{proc}: {key} differs")
+        ca, cb = set(first["credential_keys"][proc]), set(second["credential_keys"][proc])
+        for key in sorted(ca ^ cb):
+            problems.append(f"credential_keys.{proc}: {key} is present in the {'first' if key in ca else 'second'} leg only")
+    if first["interpreters"] != second["interpreters"]:
+        problems.append("interpreters: the interpreters' paths, content inventories or editable source trees differ")
+    if first["loaded_images"] != second["loaded_images"]:
+        problems.append("loaded_images: the native libraries the workers loaded differ")
+    if first["probe_entry"] != second["probe_entry"]:
+        problems.append("probe_entry: differs between the legs")
+    if first["snapshots"]["target"] != second["snapshots"]["target"]:
+        problems.append("snapshots.target: the target snapshot revision or file hashes differ")
+    da, db = first["snapshots"].get("drafter"), second["snapshots"].get("drafter")
+    if not da or not db:
+        problems.append("snapshots.drafter: both KV arms are MTP ON and record the drafter snapshot")
+    elif da != db:
+        problems.append("snapshots.drafter: the drafter snapshot differs between the KV arms")
+    return problems
+
+
+def kv_pair_problems(first, second) -> list:
+    """M76 B3: two KV-arm receipts (a pair of `p426_plan.KV_PAIRS`, either order) are equal except that the worker argvs differ
+    by exactly `--kv-bits <b>` / `--tq4-attention <mode>` (`p426_plan.kv_argv_problems`: both MTP ON, every other token equal in
+    order); the drafter snapshot is the one both workers name."""
+    from bench.p426_plan import KV_PAIRS, kv_argv_problems
+
+    bad = [p for p in (sealed_problem("first", first), sealed_problem("second", second)) if p]
+    if bad:
+        return bad
+    arms = (kv_arm_of(first), kv_arm_of(second))
+    if arms not in KV_PAIRS and arms[::-1] not in KV_PAIRS:
+        return [f"receipt: a KV pair is two different M76 arms of {list(KV_PAIRS)} (the worker argvs say {arms[0]} and {arms[1]})"]
+    if "worker_argv.kv_pairs" not in KV_ALLOWED_DIFFERENCES:
+        return ["argv.worker: the KV flag pairs are not an allowed difference"]
+    problems = kv_argv_problems(first["argv"]["worker"], second["argv"]["worker"], *arms)
+    problems += _equal_problems(first, second)
+    drafter = (first["snapshots"].get("drafter") or {}).get("hf_path")
+    for doc in (first, second):
+        _, pairs = strip_pairs(doc["argv"]["worker"])
+        if pairs["--draft-model"] and pairs["--draft-model"][0] != drafter:
+            problems.append("snapshots.drafter: a worker's --draft-model is not the drafter snapshot that was hashed")
+    return problems
+
+
+def kv_observed_differences(first, second) -> list:
+    """The KV pair's observed differences as dossier entries: the worker argv's KV flags per arm (`{process, field, <arm>: flags}`)
+    and the presence differences of volatile keys, sorted by (process, field)."""
+    from bench.p426_plan import KV_FLAGS, strip_flags
+
+    arms = (kv_arm_of(first), kv_arm_of(second))
+    out = []
+    if arms[0] != arms[1]:
+        flags = {}
+        for arm, doc in zip(arms, (first, second)):
+            _, found = strip_flags(doc["argv"]["worker"], KV_FLAGS)
+            flags[arm] = " ".join(f"{f} {v}" for f in KV_FLAGS for v in found[f])
+        out.append(dict(process="worker", field="argv.worker", **flags))
+    for proc in PROCESSES:
+        a, b = first["env"][proc], second["env"][proc]
+        for key in sorted(set(a) | set(b)):
+            if is_volatile(key) and (key in a) != (key in b):
+                out.append(dict(process=proc, field=f"env.{key}", **{arms[0]: a.get(key), arms[1]: b.get(key)}))
+    return sorted(out, key=lambda d: (d["process"], d["field"]))
+
+
+def kv_difference_problems(entries) -> list:
+    """Every entry of a KV pair's observed differences is on the KV allowed list: the worker argv, or a key of the closed volatile
+    list (the drafter snapshot is NOT a KV difference: both arms load it)."""
+    problems = []
+    for e in entries:
+        process, field = e.get("process"), str(e.get("field"))
+        key = field[len("env."):] if field.startswith("env.") else None
+        if not ((process == "worker" and field == "argv.worker") or (key is not None and is_volatile(key))):
+            problems.append(f"kv differences: {process} {field} is outside the KV allowed list")
+    return problems
+
+
+def write_kv_dossier(path, *, pair, ref, test, arms, differences, verdict) -> dict:
+    """The KV pair dossier `pairs/<pair>__<ref>-a<n>__<test>-a<m>.json` (exclusive-created, self-hashed): `{pair, lever: kv,
+    ref, test, arms: {<arm>: {attempt, receipt_sha256, harvest_sha256}}, differences, verdict, at}`; a PASS is re-checked
+    against its own receipts (`kv_pair_problems`)."""
+    from . import chain_ops as co
+    from bench.p426_plan import check_kv_pair
+
+    check_kv_pair(ref, test)
+    if pair not in KV_DOSSIER_PAIRS:
+        raise ValueError(f"pair must be one of {KV_DOSSIER_PAIRS}, not {pair!r}")
+    out, nums = {}, {}
+    for arm in (ref, test):
+        spec = arms[arm]
+        m = ATTEMPT.match(str(spec["attempt"]))
+        if not m:
+            raise ValueError(f"{arm}.attempt must be the attempt name <leg>.a<n>, not {spec['attempt']!r}")
+        nums[arm] = m.group(1)
+        out[arm] = dict(attempt=spec["attempt"], receipt_sha256=_file_sha256(spec["receipt"]),
+                        harvest_sha256=_file_sha256(spec["harvest"]))
+    path = Path(path)
+    name = f"{pair}__{ref}-a{nums[ref]}__{test}-a{nums[test]}.json"
+    if path.name != name:
+        raise ValueError(f"the dossier's name must be {name}, not {path.name}")
+    if verdict == "PASS":
+        try:
+            found = kv_pair_problems(json.loads(Path(arms[ref]["receipt"]).read_text()),
+                                     json.loads(Path(arms[test]["receipt"]).read_text()))
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            found = [f"a receipt is unreadable or malformed ({type(exc).__name__})"]
+        if found:
+            raise ValueError("a PASS dossier cannot carry pair problems: " + "; ".join(found)[:400])
+    return ph.write_exclusive(path, dict(pair=pair, lever="kv", ref=ref, test=test, arms=out, differences=list(differences),
+                                         verdict=verdict, at=co.utc_stamp()))

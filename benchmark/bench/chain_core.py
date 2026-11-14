@@ -1163,12 +1163,13 @@ class Chain:
         """The tg1 schedule of THIS invocation over the recorded `--models` (C221); P426 mode: the seeded order (spec 7)."""
         params = self.config.schedule["params"]
         try:
-            if self.a.mode == "makeup":                       # spec 5.5: the occurrences file IS the plan (one fresh-load leg)
+            m76 = {"s3": True} if params.get("m76_s3") is True else {}      # M76: tg1 session s3 (seed 3003), lever kv only
+            if self.a.mode == "makeup":
                 return schedules.tg1_makeup(self.occurrence_records(), self.names, picks=tuple(params["models"]),
-                                            predictor=getattr(self.a, "predictor", "off"))
+                                            predictor=getattr(self.a, "predictor", "off"), **m76)
             return schedules.tg1(self.a.mode, self.a.sessions, self.names, smoke=getattr(self.a, "smoke", False),
                                  predictor=getattr(self.a, "predictor", "off"), picks=tuple(params["models"]),
-                                 p426=params.get("p426") is True, rehearsal=bool(getattr(self.a, "rehearsal", False)))
+                                 p426=params.get("p426") is True, rehearsal=bool(getattr(self.a, "rehearsal", False)), **m76)
         except ValueError as exc:
             raise co.ChainAbort(f"the schedule cannot be built: {exc}") from None
 

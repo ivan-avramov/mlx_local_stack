@@ -45,6 +45,7 @@ Timers, RecordInvalid, Stopped, Refused = core.Timers, core.RecordInvalid, core.
 Heartbeat, dir_bytes, receipt_from_manifest, quantile = core.Heartbeat, core.dir_bytes, core.receipt_from_manifest, core.quantile
 SCAFFOLD = co.SCAFFOLD
 SEEDS = {"s1": 1001, "s2": 2002, "reload": 1001}
+SEEDS_M76 = schedules.TG1_SEEDS_M76            # M76 (`--kv-arm`): + s3 (3003), erratum v1.2; never under lever mtp
 LANGS = ("python", "go")
 PILOT_N = core.PILOT_N
 SMOKE_PILOT_N, SMOKE_FULL_N, SMOKE_ARM_IDLE_S = core.SMOKE_PILOT_N, core.SMOKE_FULL_N, core.SMOKE_ARM_IDLE_S
@@ -85,11 +86,15 @@ def tg1_config(a):
     generic prediction default. `--p426` selects the distinct `tg1-p426` config (one model, the seeded schedule, spec 2)."""
     predictor = getattr(a, "predictor", "off")
     models, p426 = list(a.models), bool(getattr(a, "p426", False))
-    params = dict(seeds=SEEDS, legs={k: [list(x) for x in v] for k, v in schedules.tg1_legs_table(models, LANGS, p426).items()},
+    m76 = bool(p426 and getattr(a, "kv_arm", None))         # M76 B3: the KV lever's config adds session s3 (seed 3003)
+    table = schedules.tg1_legs_table(models, LANGS, p426, **({"s3": True} if m76 else {}))
+    params = dict(seeds=SEEDS_M76 if m76 else SEEDS, legs={k: [list(x) for x in v] for k, v in table.items()},
                   pilot_n=PILOT_N, smoke_pilot_n=SMOKE_PILOT_N, smoke_full_n=SMOKE_FULL_N, models=models,
                   generic_pred_s=core.GENERIC_PRED_S)       # spec 2 / 16.1: recorded in chain.json via the ChainConfig
     if p426:
         params["p426"] = True
+    if m76:
+        params["m76_s3"] = True
     return rc.ChainConfig(
         config_id=rc.P426_CONFIG_ID if p426 else "tg1",
         arms=(rc.ArmBinding(arm="oc", probe=probe_entry(a), label=SCAFFOLD, arm_spec="oc",
@@ -101,12 +106,59 @@ def tg1_config(a):
 
 
 class Chain(core.Chain):
-    """The tg1 chain with the pre-P371 constructor (`Chain(args, ops, timers, log, names, out_root, lifecycle_files)`)."""
+    """The tg1 chain with the pre-P371 constructor (`Chain(args, ops, timers, log, names, out_root, lifecycle_files)`).
+    M76 B3 (`--kv-arm`): the P426 arm is the KV label (the record's `<arm>_commit`, the rows' arm) and the after-load checks use
+    the KV worker-argv rule and the KV pair gate (`p426_receipt`, lever kv); without it everything is `chain_core`'s."""
 
     def __init__(self, args, ops, timers, log, names, out_root, lifecycle=None, campaign=None):
         super().__init__(tg1_config(args), args, ops, timers, log, repo=REPO, out_root=out_root, names=names,
                          lifecycle_files=lifecycle if lifecycle else lifecycle_files(REPO),
                          campaign=campaign if campaign is not None else campaign_core.Campaign(REPO, **core_specs(args)))
+
+    def p426_arm_name(self):
+        kv = getattr(self.a, "kv_arm", None)
+        return kv if kv else super().p426_arm_name()
+
+    def p426_after_load(self, load, ident):
+        if not getattr(self.a, "kv_arm", None):
+            return super().p426_after_load(load, ident)
+        import json
+        from bench import p426_hooks as ph
+        from bench import p426_receipt as pr
+        arm = self.p426_arm_name()
+        router = getattr(self, "p426_router", None)
+        if not router or self.p426_router_problems():
+            raise co.ChainAbort("owned router identity changed or missing after load (systemic)")
+        self.p426_census("after load", load)
+        expected = self.ops.expected_worker_argv(self.ops.overlay, load["model"])
+        problems = pr.worker_argv_problems(self.ops.proc_argv(ident["pid"]), expected, arm,
+                                           interpreter=pr.shebang_interpreter(expected[0]) if expected else None, lever="kv")
+        if problems:
+            raise co.ChainAbort("worker argv: " + "; ".join(problems))
+        launch = dict(argv=[str(self.py), str(self.probe_of(self.arm_ids[0]))], env=self.ops.env_base())
+        try:
+            receipt = pr.arm_receipt(self.ops, worktree=self.p426_worktree(), out_root=self.out_root, model=load["model"],
+                                     probe_launch=launch, pids=dict(router=router["pid"], worker=ident["pid"], probe=None))
+        except pr.ReceiptError as exc:
+            raise co.ChainAbort(f"arm-equality receipt: {exc}") from None
+        if pr.kv_arm_of(receipt) != arm:
+            raise co.ChainAbort(f"arm-equality receipt: the worker argv says {pr.kv_arm_of(receipt)}, not the KV arm {arm}")
+        try:
+            ph.write_exclusive(self.out_root / "receipt.json", receipt)
+        except FileExistsError:
+            raise co.ChainAbort("receipt.json exists: a leg runs on a fresh out-root (the receipt is exclusive-created)") from None
+        self.log(f"RECEIPT {arm} sha256={receipt['sha256'][:16]} credential keys={ {p: len(k) for p, k in receipt['credential_keys'].items()} }")
+        self.p426_snapshot_checks(receipt["snapshots"], "after load")
+        first_path = getattr(self.a, "pair_receipt", None)
+        if first_path:
+            try:
+                first = json.loads(Path(first_path).read_text())
+            except (OSError, ValueError):
+                raise co.ChainAbort("pair gate: the first leg's receipt is unreadable") from None
+            diff = pr.kv_pair_problems(first, receipt)
+            if diff:
+                raise co.ChainAbort("pair gate: " + "; ".join(diff))
+            self.log(f"PAIR GATE passed (observed differences: {pr.kv_observed_differences(first, receipt)})")
 
 
 # --------------------------------------------------------------------------- schedule
@@ -194,9 +246,16 @@ def check_frozen_record(a):
     re-reads it through the same `p426_record.load` before every invocation."""
     from bench import p426_record
     try:
-        return p426_record.load(a.frozen_record, mode=a.mode, rehearsal=a.rehearsal)
+        rec = p426_record.load(a.frozen_record, mode=a.mode, rehearsal=a.rehearsal)
     except p426_record.RecordError as e:
         raise Refused(f"REFUSED: --frozen-record {e}") from None
+    kv_arm, base = getattr(a, "kv_arm", None), rec["base"]       # M76 B3: a KV record runs only KV legs of its own pair
+    if (base.get("lever") == "kv") != bool(kv_arm):
+        raise Refused("REFUSED: --frozen-record " + ("is a KV (lever kv) record: the leg needs --kv-arm" if not kv_arm
+                                                    else "is not a KV record: --kv-arm needs a lever-kv record"))
+    if kv_arm and kv_arm not in (base.get("arms") or []):
+        raise Refused(f"REFUSED: --kv-arm {kv_arm} is not an arm of the record's pair {base.get('arms')}")
+    return rec
 
 
 def check_pair_receipt(path):
@@ -265,7 +324,14 @@ def parse_args(argv):
     ap.add_argument("--pair-receipt", default=None, metavar="PATH",
                     help="--p426 only: the first leg's arm-equality receipt; this leg's receipt is compared with it after load, "
                          "before item one (spec 6.5); any difference outside the closed allowed list is systemic")
+    ap.add_argument("--lever", default="mtp", choices=["mtp", "kv"],
+                    help="M76 B3 (--p426 only): kv = an M76 KV arm (--kv-arm), MTP ON, a lever-kv frozen record, the KV pair gate")
+    ap.add_argument("--kv-arm", default=None, choices=["n16", "x", "v"], help="--lever kv: the leg's KV arm")
     a = ap.parse_args(argv)
+    if (a.lever == "kv") != (a.kv_arm is not None):
+        ap.error("--lever kv and --kv-arm go together")
+    if a.kv_arm is not None and not (a.p426 and a.predictor == "mtp"):
+        ap.error("--lever kv is for --p426 --predictor mtp (both KV arms are MTP ON)")
     if a.inject is not None and not a.rehearsal:
         ap.error("--inject exists only with --rehearsal")
     if a.occurrences is not None and a.mode != "makeup":
@@ -298,7 +364,7 @@ def parse_args(argv):
             ap.error(f"--probe-code-sha is required for {a.mode}")
     if a.mode == "chain":
         a.sessions = a.sessions or ["s1", "s2", "reload"]
-        bad = [s for s in a.sessions if s not in SEEDS]
+        bad = [s for s in a.sessions if s not in (SEEDS_M76 if a.kv_arm else SEEDS)]     # s3: the M76 KV lever only
         if bad:
             ap.error(f"unknown session {bad}")
     return a
@@ -369,9 +435,10 @@ def main(argv=None, ops=None, timers=None, log_out=None, lifecycle_files=None, c
     if a.p426 and out_root.exists():
         raise Refused(f"REFUSED: --out-root {out_root.name} exists (a --p426 leg runs on a fresh out-root)")
     if a.rehearsal:                                                  # spec 1 / 16.3: a rehearsal writes only under the rehearsal directory
-        reh = (Path(wd) / "p426" / "rehearsal").resolve()
+        rel = ("m76", "p426", "rehearsal") if getattr(a, "kv_arm", None) else ("p426", "rehearsal")     # M76: the KV scratch
+        reh = Path(wd).joinpath(*rel).resolve()
         if reh not in out_root.resolve().parents:
-            raise Refused(f"REFUSED: --rehearsal writes only under $STACK_WORKDIR/p426/rehearsal/ (--out-root {out_root.name})")
+            raise Refused(f"REFUSED: --rehearsal writes only under $STACK_WORKDIR/{'/'.join(rel)}/ (--out-root {out_root.name})")
     if a.p426:
         check_frozen_record(a)
     if a.pair_receipt:

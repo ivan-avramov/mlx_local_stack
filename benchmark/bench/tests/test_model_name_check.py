@@ -115,6 +115,16 @@ def test_the_pinned_off_registry_fixture_is_data_not_prose():
     assert MN.diff_violations(lookalike) != []
 
 
+def test_the_m76_b3_registry_fixtures_are_data_not_prose():
+    """C341 (as C246): the four sha256-pinned arm registry copies under `fixtures/m76_b3_fe/` are data; a lookalike stays checked."""
+    line = '+    display_name: "Ornith-1.0-35B (256K agentic, MoE)"\n'
+    for arm in ("n16", "x", "v", "xo"):
+        fixture = f"+++ b/benchmark/bench/tests/fixtures/m76_b3_fe/{arm}_main_models.yaml\n@@ -0,0 +1,1 @@\n" + line
+        assert MN.diff_violations(fixture) == []
+    for other in ("m76_b3_fe/y_main_models.yaml", "m76_b3_fe/notes.md", "m76_b3_fe_x/x_main_models.yaml"):
+        assert MN.diff_violations(f"+++ b/benchmark/bench/tests/fixtures/{other}\n@@ -0,0 +1,1 @@\n" + line) != [], other
+
+
 def test_this_module_and_its_test_are_exempt_by_path():
     """A file that DEFINES the patterns must be able to contain them.
 

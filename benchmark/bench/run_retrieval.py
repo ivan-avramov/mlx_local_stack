@@ -21,15 +21,26 @@ RESULTS = os.path.join(os.path.dirname(__file__), "..", "results")
 _CAL_FILLER = "The quick brown fox jumps over the lazy dog near the riverbank at sunset. "
 
 
-def calibrate_cpt(driver, model: str) -> float:
+def calibrate_cpt(driver, model: str, with_session: bool = False):
+    """Chars-per-token (``with_session``: also the calibration request's session id, the leg's one row-less request)."""
     out = driver.complete(model, [{"role": "user", "content": _CAL_FILLER * 200}],
                           {"max_tokens": 1, "temperature": 0.0}, timeout=120)
     chars = len(_CAL_FILLER * 200)
     pt = out.get("prompt_tokens") or 1
-    return chars / pt
+    return (chars / pt, out.get("session_id")) if with_session else chars / pt
 
 
-def main(argv=None) -> int:
+def ladder_seeds(args) -> dict:
+    """M76 B5: the seeding kwargs of the ladder; {} without the flags (today's call)."""
+    return {k: getattr(args, k) for k in ("task_seed_base", "request_seed_base") if getattr(args, k, None) is not None}
+
+
+def seeded_runtime(args) -> dict:
+    """The seed bases recorded in the result / provenance runtime; {} without the flags (today's records)."""
+    return ladder_seeds(args)
+
+
+def build_parser():
     ap = argparse.ArgumentParser(
         description="Retrieval ladder (multi-needle NIAH curve at production params).")
     ap.add_argument("--model", required=True)
@@ -48,9 +59,20 @@ def main(argv=None) -> int:
     ap.add_argument("--out-tag", default=None,
                     help="write retrieval.<tag>.json instead of retrieval.json")
     ap.add_argument("--no-preload", action="store_true")
+    ap.add_argument("--task-seed-base", type=int, default=None,
+                    help="M76 B5: needle seed = base + trial (single-rung grid only; default ctx * 1000 + trial)")
+    ap.add_argument("--request-seed-base", type=int, default=None,
+                    help="M76 B5: explicit per-draw request seed sample_seed('retrieval:<seed>', 0, base)")
+    return ap
+
+
+def main(argv=None) -> int:
+    ap = build_parser()
     args = ap.parse_args(argv)
 
     grid = tuple(int(x) for x in args.grid.split(","))
+    if args.task_seed_base is not None and len(grid) != 1:
+        ap.error("--task-seed-base needs a single-rung --grid (seeds would repeat across rungs)")
 
     # M50: the process owning the router port must serve THIS driver's registry; checked before
     # anything is read, written or requested (the serving-state precheck below already reads).
@@ -80,7 +102,12 @@ def _run(args, grid, router, guard) -> int:
         print("[retrieval] WARNING: model server process not found; "
               "memory sampling disabled", flush=True)
 
-    cpt = calibrate_cpt(driver, args.model)
+    seeds = ladder_seeds(args)
+    calibration_session_id = None
+    if seeds:
+        cpt, calibration_session_id = calibrate_cpt(driver, args.model, with_session=True)
+    else:
+        cpt = calibrate_cpt(driver, args.model)
     provenance.assert_serving_state(args.model, expect=serving_entry)   # M57/M58: re-resolve once loaded; the scan must not change
 
     # Profile params verbatim; apply explicit CLI overrides only.
@@ -103,7 +130,7 @@ def _run(args, grid, router, guard) -> int:
     records = run_retrieval_ladder(
         driver, args.model, cpt, model_pid=model_pid, params=params,
         grid=grid, threshold=args.threshold, samples=args.samples,
-        sampler_factory=MemorySampler, request_timeout=args.request_timeout)
+        sampler_factory=MemorySampler, request_timeout=args.request_timeout, **seeds)
 
     for r in records:
         print(f"[retrieval] ctx={r['ctx']} acc={r['accuracy']} "
@@ -122,6 +149,8 @@ def _run(args, grid, router, guard) -> int:
         "records": records,
         "retrieval_effective_ctx": retrieval_effective_ctx,
     }
+    if seeds:  # M76 B5: only a seeded run records its bases and its one row-less request
+        result.update(seeded_runtime(args), calibration_session_id=calibration_session_id)
 
     out_dir = os.path.join(RESULTS, args.model)
     os.makedirs(out_dir, exist_ok=True)
@@ -139,7 +168,7 @@ def _run(args, grid, router, guard) -> int:
         man = provenance.gather(args.model, profile=args.sampling_profile,
                                 overrides=overrides,
                                 runtime={"probe": "retrieval", "grid": list(grid),
-                                         "samples": args.samples},
+                                         "samples": args.samples, **seeded_runtime(args)},
                                 router=router)
     except provenance.ServedConfigError:
         # M57: a late serving-state refusal is never swallowed; the guard sets the new result

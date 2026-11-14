@@ -33,11 +33,23 @@ COMPRESS_BYTES = 8 * 1024 * 1024  # a larger dossier file is published `<name>.x
 WAVE1 = Path("benchmark") / "results" / "p426" / "wave1"
 
 
-def wave1_dir(build="s"):
-    """`wave1` for S, `wave1.<label>` for any other build (T3 §4: a label never reads or writes another label's dossiers)."""
-    from bench.p426_plan import check_build, is_s
+M76 = Path("benchmark") / "results" / "m76"          # M76 B3: every KV-lever result lives here, never under p426/
 
+
+def wave1_dir(build="s", lever="mtp"):
+    """`wave1` for S, `wave1.<label>` for any other build (T3 §4: a label never reads or writes another label's dossiers).
+    M76 (lever kv): `benchmark/results/m76/wave1` (the KV builds, `p426_plan.KV_BUILDS`)."""
+    from bench.p426_plan import check_build, check_kv_build, is_s
+
+    if lever == "kv":
+        check_kv_build(build)
+        return M76 / "wave1"
     return WAVE1 if is_s(build) else WAVE1.with_name(f"wave1.{check_build(build)}")
+
+
+def panel_dir(lever="mtp"):
+    """The committed panel directory: P426's, or (lever kv) `benchmark/results/m76/panel`."""
+    return M76 / "panel" if lever == "kv" else WAVE1.parent / "panel"
 
 
 class HarvestError(RuntimeError):
@@ -111,7 +123,7 @@ def _sources(name, plan, receipts, stdout, log_slice, dossier):
     else:
         res = Path(plan["results_dir"])
         if res.exists():
-            for p in sorted(res.glob(f"{plan['stem']}.*")):
+            for p in sorted(q for s in plan.get("stems") or [plan["stem"]] for q in res.glob(f"{s}.*")):  # M76 A5: two stems
                 if p.is_file():
                     items.append((Path("benchmark") / "results" / plan["entry"] / p.name, p))
     for p in sorted(Path(receipts).glob(f"{name}.*")):
@@ -124,8 +136,19 @@ def _sources(name, plan, receipts, stdout, log_slice, dossier):
 
 
 def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub, build="s"):
+    return _harvest(name, plan, main_root=main_root, receipts=receipts, stdout=stdout, log_slice=log_slice, scrub=scrub,
+                    build=build, lever="mtp")
+
+
+def harvest_kv(name, plan, *, main_root, receipts, stdout, log_slice, scrub, build):
+    """M76 B3: `harvest` of a KV-lever leg, its dossier under `benchmark/results/m76/wave1/`."""
+    return _harvest(name, plan, main_root=main_root, receipts=receipts, stdout=stdout, log_slice=log_slice, scrub=scrub,
+                    build=build, lever="kv")
+
+
+def _harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub, build, lever):
     main_root = Path(main_root)
-    dossier = wave1_dir(build) / name
+    dossier = wave1_dir(build, lever) / name
     problems, staged = [], []
     if (main_root / dossier).exists():
         problems.append(f"{dossier} exists (a leg is harvested once)")
@@ -154,9 +177,9 @@ def harvest(name, plan, *, main_root, receipts, stdout, log_slice, scrub, build=
     return manifest
 
 
-def harvest_run_files(paths, *, main_root, scrub, overwrite=(), build="s"):
+def harvest_run_files(paths, *, main_root, scrub, overwrite=(), build="s", lever="mtp"):
     """The run-level records (frozen.json, the ON overlay; `overwrite` = append-only logs refreshed each harvest)."""
-    wave1 = wave1_dir(build)
+    wave1 = wave1_dir(build, lever)
     run = Path(main_root) / wave1 / "run"
     staged, problems = [], []
     for p in paths:
@@ -182,11 +205,12 @@ NAMESPACE_RE = re.compile(r"wave2(?:\.[a-z0-9][a-z0-9.-]*)?")          # X8: `wa
 PRIVATE_LIST = "excluded_private_state.json"                          # X7: the per-file list of the private-state exclusions (evidence)
 
 
-def namespace_root(namespace="wave2"):
-    """X8: the `benchmark/results/p426/<namespace>` directory of a harvest; anything but `wave2` / `wave2.<label>` is refused."""
+def namespace_root(namespace="wave2", lever="mtp"):
+    """X8: the `benchmark/results/p426/<namespace>` directory of a harvest; anything but `wave2` / `wave2.<label>` is refused.
+    M76 (lever kv): `benchmark/results/m76/<namespace>`."""
     if not isinstance(namespace, str) or not NAMESPACE_RE.fullmatch(namespace):
         raise HarvestError(f"namespace {namespace!r} is not `wave2` or `wave2.<label>` (label: [a-z0-9][a-z0-9.-]*)")
-    return WAVE2.with_name(namespace)
+    return M76 / namespace if lever == "kv" else WAVE2.with_name(namespace)
 
 
 LEG_STATES = ("VALID", "VALID_WITH_DNF", "INVALID", "NOT_STARTED", "OVERRUN")
@@ -861,13 +885,15 @@ def _fold_private_state(entries):
 
 
 def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, worktree=None, workdir=None, absent_sources=(),
-                  dry_run=False, namespace="wave2"):
+                  dry_run=False, namespace="wave2", lever="mtp"):
     """Harvest one attempt (B2 spec 11): `HARVEST.json` (a dict) or a `HarvestError` with nothing published. `secrets` = the credential
     values (`p426_secrets.credential_values`, in memory only); `worktree` = the arm worktree whose `logs/` hold the server logs;
     `workdir` = `$STACK_WORKDIR` (default: `scrub.workdir`). `dry_run` (P587): inventory, classify, scrub and secret checks run over
     the whole tree, every problem is collected (`HarvestError.problems`), and nothing is written or removed. `namespace` (X8) =
-    `wave2` or `wave2.<label>`: the directory below `benchmark/results/p426/` of every destination and published path."""
-    ns = namespace_root(namespace)
+    `wave2` or `wave2.<label>`: the directory below `benchmark/results/p426/` of every destination and published path. M76
+    (lever kv): below `benchmark/results/m76/`, the review file under `$STACK_WORKDIR/m76/p426/review/`."""
+    ns = namespace_root(namespace, lever)
+    review_rel = "m76/p426/review" if lever == "kv" else "p426/review"
     leg_root, main_root, evidence_stage = Path(leg_root), Path(main_root), Path(evidence_stage)
     workdir = Path(workdir) if workdir is not None else Path(scrub.workdir)
     if not _plain_dir(leg_root):
@@ -969,7 +995,7 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
             raise HarvestError("two files map to one published path")
         review_emails = gate.review_emails()
         doc = dict(leg=leg["leg"], attempt=leg["attempt"], state=state, files=[e.record() for e in entries],
-                   review=dict(emails_count=len(review_emails), emails_file=f"{PORTABLE_ROOT}/p426/review/{name}.emails.json",
+                   review=dict(emails_count=len(review_emails), emails_file=f"{PORTABLE_ROOT}/{review_rel}/{name}.emails.json",
                                absent_secret_sources=sorted(absent_sources)),
                    created=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         doc["sha256"] = _canon_sha(doc)
@@ -992,7 +1018,7 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
     # publish: this attempt's incomplete destinations go, then evidence, then `main`: the rename of the `main` destination that
     # carries HARVEST.json is the single commit point
     # the other addresses (spec 11.3 / 16.8) go to a local review file for the operator, never published
-    review = workdir / "p426" / "review" / f"{name}.emails.json"
+    review = workdir / review_rel / f"{name}.emails.json"
     review.parent.mkdir(parents=True, exist_ok=True)
     review.write_text(json.dumps(review_emails, indent=1, sort_keys=True) + "\n")
     for dest in (ev_dest, main_dest):
@@ -1011,12 +1037,13 @@ def _published_sub(entry):
 
 
 # -------------------------------------------------------------------------------------------- records: the pair dossier, the run files
-def _publish_records(paths, *, main_root, scrub, sub, require_self_hash, may_advance=(), exempt=(), namespace="wave2"):
+def _publish_records(paths, *, main_root, scrub, sub, require_self_hash, may_advance=(), exempt=(), namespace="wave2",
+                     lever="mtp"):
     """Publish single record files to `<main>/benchmark/results/p426/wave2/<sub>/<name>`: every file is validated first (a regular
     file, never a link; self-hash; the scrub is byte-identity; no credential format, no operator address; no PII), staged beside its
     destination, verified, then renamed into place. An existing destination with the same bytes is done; a different one is
     refused unless its name is in `may_advance` (a state file the sequencer replaces atomically)."""
-    ns = namespace_root(namespace)
+    ns = namespace_root(namespace, lever)
     gate = Gate(scrub, scrub.secrets)                        # the same exact in-memory credential values as the leg harvest
     main_root = Path(main_root)
     pending, published, problems = [], [], []
@@ -1118,6 +1145,18 @@ def publish_run_files(paths, *, main_root, scrub, namespace="wave2"):
                             may_advance=("sequence.json",), exempt=("sequence.json",), namespace=namespace)
 
 
+def publish_dossier_kv(path, *, main_root, evidence_stage, scrub, namespace="wave2"):
+    """M76 B3: `publish_dossier` below `benchmark/results/m76/`."""
+    return _publish_records([path], main_root=main_root, scrub=scrub, sub="pairs", require_self_hash=True, namespace=namespace,
+                            lever="kv")
+
+
+def publish_run_files_kv(paths, *, main_root, scrub, namespace="wave2"):
+    """M76 B3: `publish_run_files` below `benchmark/results/m76/`."""
+    return _publish_records(paths, main_root=main_root, scrub=scrub, sub="run", require_self_hash=True,
+                            may_advance=("sequence.json",), exempt=("sequence.json",), namespace=namespace, lever="kv")
+
+
 # -------------------------------------------------------------------------------------------- the CLI
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
@@ -1130,7 +1169,7 @@ def _arm_of(leg):
         return "on"
     if leg.endswith("rehearsal-kill"):
         return "off"
-    m = re.search(r"-(off|on)(?:-|$)", leg)
+    m = re.search(r"-(off|on)(?:-|$)", leg) or re.search(r"-m76-(n16|x|v)(?:-|$)", leg)   # M76: `tg1-m76-<arm>-<session>`
     return m.group(1) if m else None
 
 
@@ -1148,10 +1187,10 @@ def leg_worktrees(leg_root, workdir):
         for cand in (folder / "v8_base.json", Path(path)):
             if cand.is_file() and not cand.is_symlink():
                 doc = json.loads(cand.read_bytes())
-                if "off_worktree" in doc:
+                if "off_worktree" in doc or doc.get("lever") == "kv":
                     break
         out = {}
-        for arm in ("off", "on"):
+        for arm in ("off", "on", *(doc.get("arms") or [] if doc.get("lever") == "kv" else [])):    # M76: the KV arms' worktrees
             wt = _expand(doc.get(f"{arm}_worktree"), workdir) if doc.get(f"{arm}_worktree") else None
             if wt:
                 out[arm] = Path(wt)
@@ -1172,6 +1211,8 @@ def _parse(argv):
     w2.add_argument("--env-file", action="append", default=[], help="an extra <WT>/.env credential source (repeatable)")
     w2.add_argument("--namespace", default="wave2", help="`wave2` or `wave2.<label>`: the directory below benchmark/results/p426/ "
                                                          "of the destinations and published paths")
+    w2.add_argument("--lever", default="mtp", choices=("mtp", "kv"),
+                    help="M76 B3: kv publishes below benchmark/results/m76/ (never p426/)")
     w2.add_argument("--dry-run", action="store_true", help="inventory, classify, scrub and secret-check the whole tree, print every "
                                                            "problem, write nothing (rc 0 clean, 4 otherwise)")
     return ap.parse_args(argv)
@@ -1207,7 +1248,8 @@ def main(argv=None, *, environ=None, home=None):
             raise HarvestError(str(exc)) from None
         absent = p426_secrets.absent_sources(home=home, config_path=config, env_files=env_files)
         harvest_wave2(leg_root, main_root=a.main_root, evidence_stage=a.evidence_stage, scrub=scrub, secrets=values,
-                      worktree=worktree, workdir=workdir, absent_sources=absent, dry_run=a.dry_run, namespace=a.namespace)
+                      worktree=worktree, workdir=workdir, absent_sources=absent, dry_run=a.dry_run, namespace=a.namespace,
+                      lever=a.lever)
     except HarvestError as exc:
         if dry_run:                                     # P587: every problem, one per line, rc 4
             for problem in exc.problems:
