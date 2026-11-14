@@ -692,8 +692,17 @@ def test_restart_refused_when_worker_identity_changed(env):
 
 # --------------------------------------------------------------------------- STOP
 def test_stop_during_pilot_exit_3_archives_under_stopped(env):
-    helper = _stop_after(env, 0.4, lambda: None)
+    synced = {}
+
+    def helper():
+        # S23-P14: wait for the pilot to be launched and in its item (manifest ACK), never a fixed delay — a STOP written
+        # before the launch takes the "STOP present at start" path and archives nothing (the full-suite failure under load).
+        # The results are asserted in the test body (an assert in this thread would only warn).
+        synced["launched"] = wait_for(lambda: len(invocations(env)) == 1)
+        synced["in_item"] = wait_for(lambda: list((env["out"] / "pilot").glob("*.a1.ACK")))
+        (env["out"] / "STOP").write_text("")
     rc = run(env, PILOT, behaviour="hang_in_item", helper=helper)
+    assert synced == {"launched": True, "in_item": True}, synced
     assert rc == 3
     stopped = list((env["out"] / "pilot" / "stopped").glob("*"))
     assert len(stopped) == 1 and stopped[0].name.startswith(f"{PICK1}.pilot.opencode_python.")
