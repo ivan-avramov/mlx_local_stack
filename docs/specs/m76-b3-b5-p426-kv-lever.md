@@ -147,6 +147,8 @@ tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs t
   (list or mapping), refuse a count that is not a positive integer, and refuse a calibration outside a sane range (1–10 chars / token).
 - Tests use a real `transformers` tokenizer object where one is available offline (the entry's tokenizer from the local HF cache;
   skipped with a stated reason when absent) and a stand-in that returns a `BatchEncoding`-like mapping otherwise; plus an end-to-end
-  check that a generated A5 prompt's frozen count is within 1 % of its rung target.
+  check that a generated A5 prompt's frozen count lies within [−3 %, 0 %] of its rung target — never above it (prompt + resolved
+  budget must fit); the measured deviation per cell is recorded in `ids.json` (designer, S23-P82: the runners' chars / token
+  calibration lands ≈ −1.5 %; both arms get the identical prompt and frozen count, so a small undershoot is harmless).
 - The offline counter runs with the same transformers version as the serving worker (the arm worktree's venv); the record names the
   version, and B8's per-row count equality stays the guard.
