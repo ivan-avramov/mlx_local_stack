@@ -1,4 +1,4 @@
-# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.1, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions)
+# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.2, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions; v1.2 = two harm-detection options)
 
 ## Goal
 
@@ -88,3 +88,13 @@ Adopting a variant (the operator's Go); changing the screen trigger (C324 amendm
 - **`build_report(b71=False)` by default;** the CLI and B7.1's tests set it.
 - **GPU hours:** two columns — modelled comparison legs, and whole-stage totals including the mandatory pilot / reload, smokes and
   idles from M76 §9 (sources listed).
+
+## Amendment v1.2 (2026-11-14, designer; S23-P68: the A8 path misses a true 10 pp tg2 loss ≈ 17.5 % under T0, mostly via a screen that does not trigger)
+
+Two more A8 options, reported exactly like T0 / T1 / T2 (never applied; C324 amendment candidates):
+- **T3 — sensitive trigger:** macro-average < 0 pp ∨ any language < −10 pp.
+- **TD — always the decider:** the screen still runs (diagnostic, C168) but the decider runs on every plan; the A8 path is clean iff
+  decider PASS ∧ no flag ∧ no HOLD.
+Per option, as for the others: trigger rate at loss 0, detection at a macro 10 pp loss and at a 10 pp loss in one language, the A8
+path's false-clean rate at a macro 10 pp loss, the joint clean PASS (both A7 cells; with and without A5-2L), and modelled / whole-stage
+GPU hours. Tests: TD's trigger rate is 1 and its false-clean rate equals the decider's false-PASS-and-no-flag rate.
