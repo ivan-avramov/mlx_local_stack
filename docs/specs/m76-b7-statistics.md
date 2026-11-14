@@ -1,4 +1,4 @@
-# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.1, 2026-11-13 (four-eyes light; C325, C324; v1.1 = C331, §Amendment)
+# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.2, 2026-11-13 (four-eyes light; C325, C324; v1.1 = C331, §Amendment; v1.2 = C335)
 
 ## Goal
 
@@ -139,3 +139,12 @@ chosen α* is safe at every grid cell (upper MC bound ≤ 0.025) and the next la
 the same nuisance and different net loss give the same record). 7. `session_interaction`: SD-0 firing ≤ 0.05 (MC upper bound
 reported); identical sessions → p = 1. 8. The regenerated report covers all of the above and states A5's n, A7 / A8's α*, and the
 final plan; the simulation runs in ≤ 60 min on CPU (or reports its replications).
+
+## Amendment v1.2 (C335, 2026-11-13)
+
+- A8's calibration grid: session SD {0, 0.25} (pass rate and discordance unchanged). α* = the largest candidate safe at every
+  realisable cell of that grid. The SD 0.5 cells are still simulated and reported as a sensitivity reading (per cell: the worst
+  upper bound at the chosen α* and the smallest candidate safe there, or "none"); they never set α*. `recheck("A8", …)` uses the v1.2
+  grid. A7 unchanged (concentration 4; SD {0, 0.25, 0.5}).
+- Acceptance: criterion 5 holds on the v1.2 A8 grid; `axis_plan("A8")` returns the committed α*; the report states the SD 0.5
+  sensitivity for A8.
