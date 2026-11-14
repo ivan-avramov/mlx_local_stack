@@ -1,4 +1,4 @@
-# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.1, 2026-11-13 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum)
+# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.2, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions)
 
 ## Goal
 
@@ -90,3 +90,30 @@ tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs t
   is replaced by `bench.m76_rule.session_interaction(a, b)` (`flag`, `pvalue`), still blocking; per-session results stay descriptive.
 - B7 is built in parallel: code against these names; tests mock `bench.m76_rule` / `bench.stats` B7 functions where they are absent
   from the copy (an import shim in the test, never in the product code); the designer re-runs the signals tests after B7 lands.
+
+## Erratum v1.2 (2026-11-14, designer; the B3 change review's adopted dispositions)
+
+- **Scope (designer correction):** A7's s3 (seed 3003) needs `benchmark/bench/schedules.py` and `benchmark/bench/chain_core.py`;
+  both join the scope. The lever's sessions and looks come from B7's `axis_plan("A7")`; incomplete evidence (a planned session
+  missing) is refused, never verdicted.
+- **Signals call B7's final entry point:** every mechanical verdict comes from `bench.m76_rule.axis_verdict(axis, look, a, b)` (A5
+  through it to `verdict_a5`), keeping its α, bound, verdict, per-session results, interaction flag and `size_warnings`; any size
+  warning is a blocking flag (→ the operator). `paired_delta` / `paired_session_delta` appear only as descriptive columns.
+- **A5 budgets:** the planner freezes each item's actual prompt token count (offline tokenizer count of the exact prompt) and its
+  resolved `max_tokens` = min(deployed budget, 262,144 − prompt tokens); B8 requires both arms' rows to carry the same prompt token
+  count and resolved budget per item; strict convergence uses the row's own resolved budget (`convergence.resolved_thinking_budget`
+  and the resolved `max_tokens`), never a planner constant. (The v1 "65,536 at 196,608" is the cap before the prompt's own tokens.)
+- **A5 / A4 outputs never collide:** axis-specific tunes / stems; a test runs A4 then A5 into one populated results directory.
+- **B8 completeness and provenance:** any rejected planned key (seed mismatch, missing row) rejects the pair; the pair compares the
+  complete normalized provenance fingerprint (runtime controls, sampling profile, serving-path hashes, fingerprint version) with an
+  explicit whitelist for the KV / mode keys and the arm commit.
+- **Panel, end to end for `kv`:** export → freeze (bound to B8 and the packet hashes) → judge → seal, as the `mtp` lever's panel;
+  two judge families required (a single-family set refused unless the operator labels it, C166 / C206); signals verify the frozen
+  record. A5's panel: chain-4 both-correct pairs under the reasoning rubric; retrieval both-correct pairs are identical strings and
+  excluded (stated in the sheet).
+- **Decode per item:** P426's T2 estimator (descriptive).
+- **Lever surface as specified:** the existing functions take `lever=` (`registry_delta_problems`, `model_argv_problems`, `leg_name`,
+  `frozen_path`, `schedule`, `leg_argv`; dispatching to the `kv_*` implementations); `--lever mtp|kv` (default `mtp`) at the top level
+  of `p426_verify` and `p426_panel`.
+- **Stage 4 (V) is not in B3:** the V-only / X-reuse / sentinel workflow and V's M1 binding are a stage-4 item (planned before stage 4,
+  S23-P49). Until then a `kv` sequence naming V refuses at preflight, before any leg runs.
