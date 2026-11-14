@@ -1,4 +1,4 @@
-# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.4, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions; v1.3 = verify dispositions; v1.4 = C339)
+# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.5, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions; v1.3 = verify dispositions; v1.4 = C339; v1.5 = designer-found counter defect)
 
 ## Goal
 
@@ -138,3 +138,15 @@ tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs t
 - **A5 signals per look:** like A1 — the looks and their α come from `m76_rule.axis_plan("A5")` (B7.1 v1.4); look 1 on tier 1, look 2
   on tier 1 + tier 2 only when look 1 is UNDECIDED; a look-1 LOSS stops; the per-task point gates at the deciding look.
 - The A5 sizes come from the plan (`axis_plan("A5")` looks' `n`), never constants.
+
+## Erratum v1.5 (2026-11-14, designer: a defect found running the generator on the box)
+
+- `m76_ids.offline_counter` counts `len(tok.apply_chat_template(..., tokenize=True))`; under the box's transformers 5.15 that returns a
+  `BatchEncoding`, so every count is 2 (the two keys) — the calibration becomes ≈ 7,400 chars / token and every A5 prompt is built
+  ≈ 1,600× too long (the generator ran > 70 min without finishing). Fix: count the token ids (`input_ids`) whatever the return type
+  (list or mapping), refuse a count that is not a positive integer, and refuse a calibration outside a sane range (1–10 chars / token).
+- Tests use a real `transformers` tokenizer object where one is available offline (the entry's tokenizer from the local HF cache;
+  skipped with a stated reason when absent) and a stand-in that returns a `BatchEncoding`-like mapping otherwise; plus an end-to-end
+  check that a generated A5 prompt's frozen count is within 1 % of its rung target.
+- The offline counter runs with the same transformers version as the serving worker (the arm worktree's venv); the record names the
+  version, and B8's per-row count equality stays the guard.

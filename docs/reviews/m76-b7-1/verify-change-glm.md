@@ -1,0 +1,27 @@
+## Dispositions
+
+**Sol P1 (A8 nesting)** — resolved. `a8_nested_draw` (`m76_sim.py:1175-1200`) draws one 80-item set per replication (4 langs × 20), screen on each language's first 10 (= the decider's first 40, m65 draw rule 2), decider s1/s2 over all 80 with shared item parameters. `simulate_a8_nested` (`:1222-1239`) reads every replication regardless of trigger. Test `test_nested_prefix_outcomes_predict_the_decider_verdict` covers the dependence. Report `joint.independence` states "no independence assumed between them". A8 path clean 77.63% nested vs 77.82% old formula — the weak coupling is a property of the per-session loss model, stated by the implementer.
+
+**Sol P2 (A5 per-task point gates)** — resolved. `a5_task_gates` (`:1311-1319`) gates on `i % 2` parity (retrieval/chain-4), each task's point ≥ −5 pp. `simulate_a5_gates` (`:1321-1333`) adds G/F counts on B7's own A5 RNG stream (P/L/U counts match B7). `_a5_term` uses `clean = G`. Report `assumed.a5_task_gates` names only the ≥ 0.85 absolute gates as assumed; the point gates are simulated. A5 clean dropped 82.35% → 74.27% (8.08 pp fail a gate), which is the main driver of the headline drop.
+
+**Sol P3 (A8 large-harm HOLD)** — resolved (adapted). `HOLD_THRESHOLDS = (("none", None), ("lt25", -25), ("lt20", -20))` (`:984`); `a8_decider_read` returns per-language min Σd (`:1209-1211`); `hold_fires` (`:1214-1216`) does the exact integer comparison; `a8_path_from` and `simulate_joint` apply HOLD at every threshold. `HEADLINE_HOLD = "lt20"` and the headline labels the assumed threshold. All three thresholds give identical numbers in the simulated scenarios (the decider PASS and a language < −20 pp don't co-occur under the joint loss model) — a stated property, not a gap; the test-writer's constructed-histogram test covers HOLD firing.
+
+**Sol P4 (GPU hours)** — resolved. `_plan_hours` (`:1377-1390`) emits `expected/worst/best` (modelled legs) plus `whole_stage_*` adding `STAGE_OVERHEAD` (2×0.3 h tg1 pilot/reload + 5.0 h smokes/idles = 5.6 h, sourced to M76 §9). Report shows 48.9/65.8 modelled and 54.5/71.4 whole-stage. REPORT.md joint table carries both columns.
+
+**GLM F1 (headline at non-realisable A7 cell)** — resolved. `HEADLINE_CELL = "nearest_realisable"` (`:986`); `report.json` `joint.headline.cell = "nearest_realisable"`, `a7_cell = {m: 0.96, D: 0.05, extrapolated: false}`, `clean_pass = 49.11%`. The planning cell (m=0.965, D=0.1, extrapolated) is secondary: `cells.planning` carries 35.46%. REPORT.md line 289 headlines 49.11% at the nearest realisable cell and labels the planning cell "extrapolated; secondary".
+
+**GLM F2 (A5-2L not at realisable cell)** — resolved. `_finish_variant` sets `clean_pass0 = grid[head][HEADLINE_HOLD]` and `clean_pass0_by_cell` for both cells. `report.json` `variants.A5-2L.clean_pass0 = 62.23%` (nearest realisable), `clean_pass0_by_cell` has both `nearest_realisable` (62.23%) and `planning` (44.93%). The `pays` rule (`a5["clean0"]["lo"] > t0h["A5"]["clean"]["hi"]`: 0.6116 > 0.8265? No — 0.9677 > 0.8265) is cell-independent and True, as the opinion noted.
+
+**GLM F3 (A7-2L branch aborts build)** — resolved. The `raise NotImplementedError` is gone. `_variants_a7` (`:1755-1766`): when both looks calibrate safe, sets `available=True, flag=FLAG_5S` ("five-session interaction flag not simulated"), `by_cell`, `safe`, and continues — no abort. Today's data has `available=False` (no safe look-1 α*; worst 1.94% > spend 0.003808), so the branch is reached only via monkeypatch; `test_a7_2l_available_records_flag_without_abort` covers it. The renderer (`:2237-2243`) handles available-but-unsafe gracefully as "not available: a final look is not safe".
+
+**GLM F4 (consistency check not fail-closed)** — resolved. `require_consistent` (`:1467-1471`) raises `RuntimeError` when any |z| > 3; `_joint` calls it after building all 12 checks (`:1506`). `test_joint_build_fails_closed_on_disagreement` injects a zeroed direct simulation and asserts the raise. Report's 12 checks all consistent (max |z| 0.67).
+
+**GLM F5 (`b71=True` default)** — resolved. `build_report(..., b71=False)` and `write_report(..., b71=False)` defaults (`:1899`); the CLI sets `b71=True`. `test_build_report_b71_defaults_false_and_cli_sets_it` covers both.
+
+**GLM F7 (scope extras kept)** — resolved. `one_language10` scenario (`:996`), `grid_ranges_realisable` (`:1149-1153`), per-option `clean_pass0`/`a8_path_clean0`/`a8_path_clean_at_loss10` (`:1866-1869`), and the `PAYS_RULE` definition (`:1802-1803`) are all present.
+
+## Anything else the diff breaks or leaves failing
+
+The implementer's open points (P6–P11, P13–P14) are stated limits or operator decisions, not defects: the HOLD-threshold choice is labelled and the operator's (P6); the five-session interaction flag is not simulated and flagged on A7-5S/A7-2L with `pays=None` (P7); A5 task assignment by item parity is stated in `assumed.a5_task_gates` (P8); the 5.6 h overhead is sourced to §9 (P9); the 12 checks sharing 4 simulations is a known weakening, with a gross-injection test (P10); A7-2L unavailable is correct (P11); the T3/TD tradeoff and the with-A5-2L term replacement are operator/stated (P13–P14). None fails the request's protection (every final look ≤ 0.025 false-PASS): A5-2L exact size 2.164% ≤ 2.5%, A7-5S worst realisable upper 2.07% ≤ 2.5%, A7-2L correctly fails closed, and the committed plan's worst final-look upper is A5 2.23% ≤ 2.5%.
+
+NOTHING OF SUBSTANCE
