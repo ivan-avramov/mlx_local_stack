@@ -241,7 +241,7 @@ def test_stack_steps_build_the_scratch_venv_and_assert_imports_inside_it(tmp_pat
 def test_fork_steps_order_and_audits(tmp_path):
     steps = G.steps_for("mlx-vlm", tmp_path / "s", parity="952d4f6b")
     names = [s.name for s in steps]
-    assert names[:4] == ["clone", "upstream", "sync", "extras"] and names[4] == "pre-commit"
+    assert names[:6] == ["clone", "sibling", "sibling-sync", "upstream", "sync", "extras"] and names[6] == "pre-commit"  # M80
     assert [n for n in names if n.startswith("audit:")] == [f"audit:{i}" for i in range(8)]
     assert names[-1] == "pytest"
 

@@ -889,9 +889,15 @@ def gate_run(tmp, repo, sha):
     baselines = Path(tmp) / "baselines"
     baselines.mkdir(parents=True, exist_ok=True)
     (baselines / "mlx-vlm.skips.txt").write_text("")
+    sibling = Path(repo).parent / "mlx-serve"   # M80: an mlx-vlm run pairs with `../mlx-serve` at a pinned commit
+    if not (sibling / ".git").exists():
+        init_repo(sibling)
+        (sibling / "pyproject.toml").write_text("[project]\nname='mlx-serve'\n")
+        commit_all(sibling, "sibling")
     runner = GateRunner()
     path = G.run("mlx-vlm", sha, live=repo, gate_dir=Path(tmp) / "gate", baselines=baselines, runner=runner,
-                 busy=lambda: [], dirty=lambda scratch, after_step: False, artifacts=lambda d: True)
+                 busy=lambda: [], dirty=lambda scratch, after_step: False, artifacts=lambda d: True,
+                 mlx_serve_sha=git(sibling, "rev-parse", "HEAD"))
     return json.loads(Path(path).read_text()), runner
 
 

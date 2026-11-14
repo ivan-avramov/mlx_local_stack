@@ -14,6 +14,11 @@ with the failing step's full output `<receipt stem>.<step>.log` and the pytest J
 (`--prune`) the remote, requires a PASS receipt under the CURRENT policy digest for every pushed sha, scans every introduced
 commit (added lines: PII + naming; message: naming), and for the stack requires PASS receipts for both gitlinks and their
 reachability from the fork's `origin/main`. Threat model: accidental pushes only (§1).
+
+M80 (`docs/specs/m80-gate-sibling-mlx-serve.md`): an mlx-vlm run's scratch is a per-run directory holding the fork clone
+(`<run>/mlx-vlm`) and a sibling `<run>/mlx-serve` cloned from `../mlx-serve` at a pinned sha (`--mlx-serve-sha`, else the stack
+HEAD's `src/mlx-serve` gitlink) with its own venv; the receipt records `paired`, and every test marked `requires_mlx_serve`
+must have passed.
 """
 
 import argparse
@@ -40,6 +45,10 @@ GITLINKS = {"src/mlx-vlm": "mlx-vlm", "src/mlx-serve": "mlx-serve"}
 EVIDENCE_REF = "refs/heads/evidence"  # P447
 SEMVER_TAG = re.compile(r"^v(\d+)\.(\d+)\.(\d+)$")  # P448: stack releases
 FORK_EXTRAS = ("pytest-subtests", "pytest-asyncio", "cryptography>=43.0.0", "psutil")  # psutil: P452 topology tests
+SIBLING = "mlx-serve"                 # M80: the mlx-vlm gate's sibling clone, `<run>/mlx-serve` beside `<run>/mlx-vlm`
+SIBLING_MARKER = "requires_mlx_serve"  # M80: a test carrying it must pass in the mlx-vlm gate
+PYTEST_NO_ADDOPTS = ("-o", "addopts=")  # M80: the mlx-vlm pytest runs ignore configured addopts ...
+PYTEST_ENV_DROP = {"PYTEST_ADDOPTS": None, "PYTEST_PLUGINS": None}  # ... and these (None = removed from the environment)
 
 
 class GateError(RuntimeError):
@@ -123,6 +132,38 @@ def ran_and_passed_from_junit(path):
     return sorted(tid for tid, ok in clean.items() if ok)
 
 
+def marked_from_junit(path, marker=SIBLING_MARKER):
+    """M80: junit ids of testcases carrying a `<property>` whose name or value is `marker`."""
+    if not Path(path).exists():
+        return []
+    root = ET.parse(path).getroot()
+    return sorted({f"{tc.get('classname')}::{tc.get('name')}" for tc in root.iter("testcase")
+                   if any(marker in (p.get("name"), p.get("value")) for p in tc.iter("property"))})
+
+
+def nodeid_to_junit(nodeid):
+    """`a/b/test_x.py::C::test_y[p]` → `a.b.test_x.C::test_y[p]` (pytest's junit classname::name); None if not a test node id."""
+    if "::" not in nodeid:
+        return None
+    path, *rest = nodeid.split("::")
+    if not path.endswith(".py") or not rest:
+        return None
+    mod = path[:-3].replace("/", ".").replace("\\", ".")
+    return f"{'.'.join([mod, *rest[:-1]])}::{rest[-1]}"
+
+
+def marked_from_listing(output):
+    """M80: junit ids from a `pytest --collect-only -q -m <marker>` listing (one node id per line; summary lines ignored).
+    GateError when the listing cannot be read as node ids: per-file counts (`-qq`) or a collected count that differs."""
+    ids = sorted({j for j in (nodeid_to_junit(line.strip()) for line in output.splitlines()) if j})
+    if any(re.fullmatch(r"\S+\.py: \d+", line.strip()) for line in output.splitlines()):
+        raise GateError(f"{SIBLING_MARKER} listing holds per-file counts, not test ids (extra -q?)")
+    m = re.search(r"^(\d+)(?:/\d+)? tests? collected", output, re.MULTILINE)
+    if m and int(m.group(1)) != len(ids):
+        raise GateError(f"{SIBLING_MARKER} listing: {m.group(1)} collected but {len(ids)} test ids read")
+    return ids
+
+
 # ------------------------------------------------------------------ steps
 @dataclasses.dataclass
 class Step:
@@ -140,7 +181,14 @@ def _workdir():
     return wd
 
 
+def sibling_path(scratch):
+    """M80: the sibling mlx-serve clone of an mlx-vlm scratch (`<run>/mlx-vlm` → `<run>/mlx-serve`)."""
+    return Path(scratch).parent / SIBLING
+
+
 def steps_for(repo, scratch, parity, audits=None):
+    """mlx-vlm (M80): `scratch` is the fork clone `<run>/mlx-vlm`; `sibling` / `sibling-sync` (in `<run>/mlx-serve`) always
+    follow `clone`."""
     s = Path(scratch)
     junit = f"--junitxml={s / '.gate-junit.xml'}"
     if repo == "stack":
@@ -157,14 +205,17 @@ def steps_for(repo, scratch, parity, audits=None):
         ]
     if repo == "mlx-vlm":
         py = str(s / ".venv" / "bin" / "python")
+        sib = sibling_path(s)
         return [
             Step("clone", [], s),
+            Step("sibling", [], sib),
+            Step("sibling-sync", ["uv", "sync", "--frozen", "--all-extras"], sib),
             Step("upstream", ["git", "fetch", "--quiet", "--no-tags", "upstream", "main", "+refs/tags/*:refs/tags/*"], s),
             Step("sync", ["uv", "sync", "--python", "3.12", "--locked", "--extra", "test"], s),
             Step("extras", ["uv", "pip", "install", "--python", py, *FORK_EXTRAS], s),
             Step("pre-commit", ["uvx", "pre-commit", "run", "--all-files"], s),
             *[Step(f"audit:{i}", argv, s) for i, argv in enumerate(audit_argvs(py, parity, audits))],
-            Step("pytest", [py, "-m", "pytest", "-q", junit, "mlx_vlm/tests"], s),
+            Step("pytest", [py, "-m", "pytest", "-q", *PYTEST_NO_ADDOPTS, junit, "mlx_vlm/tests"], s, env=dict(PYTEST_ENV_DROP)),
         ]
     if repo == "mlx-serve":
         return [
@@ -227,8 +278,31 @@ def _submodules(scratch, live):
         clone_scratch(sibling, sha, target)
 
 
+def pinned_mlx_serve(live, override=None, stack=None):
+    """M80: the mlx-serve sha an mlx-vlm run pairs with — `override` (`--mlx-serve-sha`) if given, else the `src/mlx-serve`
+    gitlink of the stack repository's HEAD (`stack`, default `_stack_repo()`); GateError unless it is a commit in
+    `<live>.parent / "mlx-serve"`. Returns the full sha."""
+    source = Path(live).parent / SIBLING
+    if not (source / ".git").exists():
+        raise GateError(f"no mlx-serve checkout at {source}: an mlx-vlm run always pairs with ../mlx-serve")
+    if override:
+        if not re.fullmatch(r"[0-9a-fA-F]{4,40}", override):
+            raise GateError(f"--mlx-serve-sha {override!r} is not a hex commit sha")
+        sha = override
+    else:
+        stack = Path(stack) if stack is not None else _stack_repo()
+        row = _git(stack, "ls-tree", "HEAD", "src/mlx-serve", check=False).split()
+        if len(row) < 3 or row[1] != "commit":
+            raise GateError(f"no src/mlx-serve gitlink at the HEAD of {stack} (pass --mlx-serve-sha)")
+        sha = row[2]
+    if _git(source, "cat-file", "-t", sha, check=False) != "commit":
+        raise GateError(f"mlx-serve {sha} is not a commit in {source}")
+    return _git(source, "rev-parse", f"{sha}^{{commit}}")
+
+
 def _real_runner(argv, cwd, env):
-    r = subprocess.run(argv, cwd=cwd, env={**os.environ, **env}, capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    merged = {k: v for k, v in {**os.environ, **env}.items() if v is not None}   # a None value removes the variable (M80)
+    r = subprocess.run(argv, cwd=cwd, env=merged, capture_output=True, text=True, stdin=subprocess.DEVNULL)
     return r.returncode, r.stdout + r.stderr   # full: a FAIL keeps it beside the receipt (M75)
 
 
@@ -342,24 +416,58 @@ def _junit_ids(path):
     return {f"{tc.get('classname')}::{tc.get('name')}" for tc in ET.parse(path).getroot().iter("testcase")}
 
 
-def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real_busy, dirty=_real_dirty, artifacts=_artifacts):
+def uses_marker(scratch, marker=SIBLING_MARKER):
+    """M80: the fork's test sources (`mlx_vlm/tests/**/*.py`) mention the marker."""
+    tests = Path(scratch) / "mlx_vlm" / "tests"
+    return tests.is_dir() and any(marker in p.read_text(errors="replace") for p in tests.rglob("*.py") if p.is_file())
+
+
+def _marked_problems(runner, scratch, passed_ids, junit):
+    """M80: (problems, marked ids, listing output) — every `requires_mlx_serve` test (junit properties ∪ a `--collect-only` listing in the
+    same scratch) must be among the passed ids; when the test sources use the marker the listing must name at least one."""
+    py = str(Path(scratch) / ".venv" / "bin" / "python")
+    argv = [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", *PYTEST_NO_ADDOPTS, "--collect-only", "-m", SIBLING_MARKER,
+            "mlx_vlm/tests"]
+    rc, out = runner(argv, scratch, dict(PYTEST_ENV_DROP))
+    if rc not in (0, 5):  # 5: nothing selected
+        return [f"{SIBLING_MARKER} listing: rc {rc}"], [], out
+    try:
+        listed = marked_from_listing(out)
+    except GateError as exc:
+        return [str(exc)], [], out
+    if not listed and uses_marker(scratch):
+        return [f"{SIBLING_MARKER} marked tests expected but none collected"], [], out
+    marked = sorted(set(listed) | set(marked_from_junit(junit)))
+    not_passed = [t for t in marked if t not in set(passed_ids)]
+    return ([f"{SIBLING_MARKER} tests skipped: {not_passed}"] if not_passed else []), marked, out
+
+
+def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real_busy, dirty=_real_dirty, artifacts=_artifacts,
+        mlx_serve_sha=None):
     live, gate_dir = Path(live), Path(gate_dir)
     if busy():
         raise GateError("box busy: " + "; ".join(busy())[:400])
     if identity(_git(live, "remote", "get-url", "origin")) != repo:
         raise GateError(f"{live} origin is not the canonical {repo}")
+    if mlx_serve_sha and repo != "mlx-vlm":
+        raise GateError("--mlx-serve-sha pairs an mlx-vlm run only")
     sha = _git(live, "rev-parse", f"{sha}^{{commit}}")
+    # M80: an mlx-vlm run always pairs — the pin resolves to a commit in `../mlx-serve` or the run is refused before any step
+    paired = pinned_mlx_serve(live, mlx_serve_sha) if repo == "mlx-vlm" else None
     parity = current_parity(repo, live, sha)
     audits = _audits_for(repo, live, sha)
     baseline_file = Path(baselines) / f"{repo}.skips.txt"
     baseline = baseline_file.read_text() if baseline_file.exists() else None
     digest = policy_digest(repo, _gate_source(), baseline if baseline is not None else "<none>", parity, audits)
-    scratch = gate_dir / "scratch" / f"{repo}-{sha[:12]}-{time.time_ns()}"
+    run_dir = gate_dir / "scratch" / f"{repo}-{sha[:12]}-{time.time_ns()}"
+    scratch = run_dir / "mlx-vlm" if repo == "mlx-vlm" else run_dir   # M80: the fork clone beside `<run>/mlx-serve`
     receipt = dict(repo=repo, sha=sha, policy_digest=digest, parity_ref=parity, python="3.12", steps=[], problems=[],
                    baseline_skips_ran=[], baseline_skips_absent=[], live_head=_git(live, "rev-parse", "HEAD", check=False),
                    started=time.strftime("%Y-%m-%d %H:%M:%S"),
                    not_covered="python 3.10 (fork CI)" if repo == "mlx-vlm" else
                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
+    if repo == "mlx-vlm":
+        receipt["paired"] = {SIBLING: paired}
     last = None          # (step name, full output) of the last step that ran — kept on FAIL (M75)
     junit_bytes = None
     try:
@@ -373,6 +481,9 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                 rc, out = 0, ""
             elif step.name == "submodules":
                 _submodules(scratch, live)
+                rc, out = 0, ""
+            elif step.name == "sibling":   # M80: `<live>.parent / "mlx-serve"` at the pinned sha, beside the fork clone
+                clone_scratch(live.parent / SIBLING, paired, step.cwd)
                 rc, out = 0, ""
             elif step.name == "upstream":
                 _git(scratch, "remote", "add", "upstream", UPSTREAM_VLM)
@@ -392,7 +503,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
             if step.check == "artifacts" and not artifacts(scratch / ".gate-dist"):
                 receipt["problems"].append("build: wheel / sdist missing")
                 break
-            if step.name not in ("clone", "submodules") and dirty(scratch, step.name):
+            if step.name not in ("clone", "submodules", "sibling") and dirty(scratch, step.name):
                 receipt["problems"].append(f"{step.name} left tracked files modified")
                 break
         else:
@@ -422,6 +533,12 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                 unexplained = [w for w in unexplained if w not in absent]
                 if unexplained:
                     receipt["problems"].append(f"baseline skip neither skipped nor passed: {unexplained}")
+            if repo == "mlx-vlm" and passed_ids is not None:   # M80: no marked test skips (or is deselected) silently
+                problems, marked, out = _marked_problems(runner, scratch, passed_ids, junit)
+                receipt[f"{SIBLING_MARKER}_tests"] = len(marked)
+                if problems:
+                    receipt["problems"] += problems
+                    last = (SIBLING_MARKER, out)
     except (GateError, subprocess.CalledProcessError, OSError) as exc:
         receipt["problems"].append(f"{type(exc).__name__}: {exc}"[:600])
     finally:
@@ -429,7 +546,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
             junit_bytes = (scratch / ".gate-junit.xml").read_bytes()
         except OSError:
             junit_bytes = None
-        shutil.rmtree(scratch, ignore_errors=True)
+        shutil.rmtree(run_dir, ignore_errors=True)
     receipt["verdict"] = "PASS" if not receipt["problems"] and len(receipt["steps"]) == len(steps_for(repo, scratch, parity, audits)) \
         else "FAIL"
     receipt["ended"] = time.strftime("%Y-%m-%d %H:%M:%S")
@@ -708,6 +825,8 @@ def main(argv=None):
     r = sub.add_parser("run")
     r.add_argument("--repo", required=True, choices=sorted(CANONICAL))
     r.add_argument("--sha", default="HEAD")
+    r.add_argument("--mlx-serve-sha", default=None,
+                   help="mlx-vlm only: the ../mlx-serve commit to pair with (default: the stack HEAD's src/mlx-serve gitlink)")
     c = sub.add_parser("check")
     c.add_argument("--repo-dir", required=True)
     c.add_argument("remote")
@@ -752,7 +871,8 @@ def main(argv=None):
             print(json.dumps(out, indent=1))
             return 0
         if args.cmd == "run":
-            path = run(args.repo, args.sha, live=live[args.repo], gate_dir=gate_dir, baselines=_baselines())
+            path = run(args.repo, args.sha, live=live[args.repo], gate_dir=gate_dir, baselines=_baselines(),
+                       mlx_serve_sha=args.mlx_serve_sha)
             doc = json.loads(path.read_text())
             print(json.dumps({k: doc.get(k) for k in ("repo", "sha", "verdict", "problems")}, indent=1), f"\n{path}")
             return 0 if doc["verdict"] == "PASS" else 1
