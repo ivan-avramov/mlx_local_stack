@@ -21,7 +21,7 @@ decision id **C331**.
 
 - **Builds:** B0 = M77 ✔ (pushed); B1 ✔ (pushed); B2 ✔ (pushed); M78 ✔; M79 ✔; **M80 accepted (C330), committed, not gated**;
   **B7** built (four-eyes: implementer + test-writer delivery 1 done in `$STACK_WORKDIR/fe-m76b7/`; candidate not yet reviewed)
-  — its simulation found the rule unsafe for A5 / A8 → **S22-P25 / P26 OPEN** (designer's quality-biased rec recorded); the B7 fix
+  — its simulation found the rule unsafe for A5 / A8 → **S22-P25 / P26 OPEN** (designer's quality-biased rec recorded, incl. the addendum: A5 exact bound; A8 least-favourable α over a nuisance grid + a pre-registered re-check on the tg2 screen's real N16 data before the decider); the B7 fix
   round implements the operator's ruling, then test-writer delivery 2, change review, Accept. **B3 + B5** spec
   `docs/specs/m76-b3-b5-p426-kv-lever.md`, **B4** spec `docs/specs/m76-b4-tg2-legs.md`: not dispatched.
 - **Stage 0 ✔:** 7 / 7 preflights PASS (`$STACK_WORKDIR/m76/p475/{preflight,engagement}/`); qualify phase peaks at 260,096
