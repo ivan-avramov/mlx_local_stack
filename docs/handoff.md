@@ -1,61 +1,62 @@
-# Handoff — 2026-11-13 (session 22 → 23: M76 stages 0–1 done, stage 2 smoke RUNNING; M80 applied, gates pending; B7 waits for S22-P25 / P26)
+# Handoff — 2026-11-14 (session 23, in progress: stage 2 PASS; B7 accepted; B3 fix round, B7.1 build running; M80 fork pushed)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76–M80, then `docs/open-questions.md` top entries (newest first: S22-P25 / P26,
-C330, S22-P18, C329, C328, C327 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for
-quality; GPU time is the binding resource (funnel, C323); ask only at Go / Accept / pushes / scope changes; lead calls filed.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76–M82, then `docs/open-questions.md` top entries (newest first: C337,
+S23-P14, C336, C335, C334, C333, C332, C331 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance
+(C334): guardrails prevent wrong data or wasted time, not ceremony; cheap fixes welcome; label every point `S23-P<n>`.
 
-Decisions: session 22 ruled C323–C330. **Discussion ids restart: session 23 uses `S23-P1 …`** (session 22 used S22-P1 … P26). Next
-decision id **C331**.
+Decisions: session 23 ruled C331–C337 (next **C338**); discussion ids `S23-P1 …` (last used S23-P52).
 
-## FIRST (each "no" is a blocker)
+## FIRST
 
-1. **A stage-2 process may be running.** The P369 smoke for tuple `m76-x` was launched 2026-11-13 (pid 13696; log
-   `$STACK_WORKDIR/m76/p369-smoke.log`; out `$STACK_WORKDIR/p369/phase2/m76-x-smoke/`). Check by PID / log, never with a pattern
-   in your argv. While it (or a later stage-2 full run) runs: **no pytest anywhere** (the P369 / qualify census refuses any `pytest`
-   or `mlx-serve` in a process argv — `orchestrate.REFUSED_EXECUTABLES`), no gate, no four-eyes helper.
-2. Power 140 W / 28 V, GPU idle ≈ 0 % before new GPU work; OrbStack up before any gate.
-3. Pushed: stack `origin/main` = `c67dd7e9`; fork `34a21208`; mlx-serve `0555b2f`. Local, unpushed: stack `90098748` … `093e7176`
-   + this handoff (S22-P18, stage-1 data `93290bd2`, specs B7 / B3+B5 / B4, M80 `093e7176`), fork `babb0c9d` (M80 marker).
+1. Background helpers may be running (check `$STACK_WORKDIR/fe-m76b3/out/status`, `fe-m76b71/out/status`): B3 fix round 1
+   (implementer, spec v1.2), B7.1 implementer + test-writer delivery 1. CPU only; no GPU work is running.
+2. No clean-clone gate while a helper runs a test suite (S20-P19). OrbStack up before a gate.
+3. Pushed: fork `babb0c9d` (M80 marker, 2026-11-14); stack `origin/main` = `c67dd7e9`; mlx-serve `0555b2f`. Local, unpushed: stack
+   `c67dd7e9..HEAD` (~26 commits: session 22–23 docs, stage-1 / stage-2 data, M80, B7). The stack push waits for ONE stack gate after
+   B3 lands (S23-P50); then one push ask.
 
-## State of M76 (`docs/specs/m76-tq4-certification.md` v1.2, GO C325)
+## State of M76
 
-- **Builds:** B0 = M77 ✔ (pushed); B1 ✔ (pushed); B2 ✔ (pushed); M78 ✔; M79 ✔; **M80 accepted (C330), committed, not gated**;
-  **B7** built (four-eyes: implementer + test-writer delivery 1 done in `$STACK_WORKDIR/fe-m76b7/`; candidate not yet reviewed)
-  — its simulation found the rule unsafe for A5 / A8 → **S22-P25 / P26 OPEN** (designer's quality-biased rec recorded, incl. the addendum: A5 exact bound; A8 least-favourable α over a nuisance grid + a pre-registered re-check on the tg2 screen's real N16 data before the decider); the B7 fix
-  round implements the operator's ruling, then test-writer delivery 2, change review, Accept. **B3 + B5** spec
-  `docs/specs/m76-b3-b5-p426-kv-lever.md`, **B4** spec `docs/specs/m76-b4-tg2-legs.md`: not dispatched.
-- **Stage 0 ✔:** 7 / 7 preflights PASS (`$STACK_WORKDIR/m76/p475/{preflight,engagement}/`); qualify phase peaks at 260,096
-  tokens: N16 37.66 / 37.97 GB (MTP OFF / ON), TQ4 + `m72_exact` 26.33 / 26.64 GB.
-- **Stage 1 ✔:** `benchmark/results/m76/matrix/MATRIX.Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.md` (12 VALID legs incl. deciding
-  b3): peak 39.86 → 26.81 GB (−13.0 GB, −33 %); prefill 0.95–0.99×; decode X 0.78–0.97×, V 0.86–1.41× (beats N16 1.34–1.41× at
-  196K–256K), X / XO (MTP ON / OFF) 1.18–1.61×; **stage-4 trigger met** (V / X 1.30–1.47 at ≥ 128K). Caveat (S22-P22): one 256-token
-  sample per rung, acceptance content-dependent — decode ratios directional; stage 3's per-item decode is the better speed evidence.
-- **Stage 2 (P369 E1c + E2 on X, cross-load OFF = XO):** smoke RUNNING. On smoke PASS: the full run
-  (`orchestrate.py --tuple m76-x --phase full --smoke-summary <smoke summary> --reviewed-head <fork HEAD of the X worktree>`) — if it
-  projects > 8 h it refuses without `--operator-approved-hours` (ask the operator). Commands: run from
-  `$STACK_WORKDIR/worktrees/m76-f45-x` with its `.venv/bin/python src/mlx-vlm/dev/p369_phase2/orchestrate.py --stack-root …/m76-f45-x
-  --fork-root …/m76-f45-x/src/mlx-vlm --off-stack-root …/m76-f45-xo --tuple m76-x --out $STACK_WORKDIR/p369/phase2/<run>` (out must
-  be under `$STACK_WORKDIR/p369/phase2/`). On FAIL → the operator (stage-2 FAIL / ABORT branches, spec §7).
+- **Stage 2 ✔ PASS** (`benchmark/results/m76/stage2/`, `b607c6ea`): 8 E1c cells 0 mismatches, E2 27 identical, cross-load identical.
+  Full summaries staged for `evidence` in `$STACK_WORKDIR/m76/stage2-evidence-stage/`; raw arrays in `$STACK_WORKDIR/p369/phase2/m76-x-full/`.
+- **M80 ✔** fork gate PASS (146 marked tests ran with sibling mlx-serve `3b02e4c`), fork pushed. Stack gate pending (S23-P50).
+- **B7 ✔ accepted (C337)**, `34543b2e`: plan A1 two looks; A5 n 72 exact test; A7 one look s1+s2+s3 α* 0.001; A8 decider α* 0.001;
+  stage 3 calls `m76_rule.axis_verdict`. Ledger `docs/reviews/m76-b7/`.
+- **B7.1 (C337 (2))** building in `$STACK_WORKDIR/fe-m76b71/`: joint clean-PASS probability, follow-up variants (A7-2L, A5-2L), A8
+  screen-trigger options → the operator at the stage-3 Go. Spec `docs/specs/m76-b7-1-joint-plan.md`.
+- **B3 + B5** in `$STACK_WORKDIR/fe-m76b3/`: candidate 1 reviewed (test-writer d2 "fix then merge"; Sol 5 blockers; GLM interface);
+  fix round 1 on spec v1.2 (`6f0026fe`) running; then test-writer d3 (frozen tests `fe-m76b3/frozen/v1`; GLM F3 golden + brittle API
+  tests are the test-writer's to amend), panel verify, Accept. Stage-4 V workflow deferred (S23-P49).
+- **B4** (tg2 legs) after B3 (shares `p426_wave2.py` / the tg1 chain).
+- **Then:** M81 + M82 (light path, C334), S23-P14 (flaky c147 test) before the stack gate; `ids.json` generation (designer, needs B7
+  report + Math500 universe); timed A5 / tg2 smokes; stage-3 Go with B7 + B7.1 reports.
 
 ## Next, in order
 
-1. FIRST. Finish stage 2 (smoke → full; GPU; overnight if long).
-2. When no stage-2 process runs: **M80 gates** — fork gate on `babb0c9d` (`bench.local_gate run --repo mlx-vlm`; criterion 2: the 146
-   marked B2 tests run and pass inside the gate with the sibling; skip list = the 37-line baseline), then the stack gate on the
-   latest stack commit (the gate source changed: every receipt re-runs); push asks (fork, stack).
-3. The operator's ruling on S22-P25 / P26 → B7 fix round (fresh implementer in `$STACK_WORKDIR/fe-m76b7/`), test-writer delivery 2
-   (session in `fe-m76b7/out/testwriter-1.json`), change review (Sol + GLM), Accept, commit with the regenerated simulation report.
-4. B3 + B5 and B4 four-eyes (specs written; helper copies stack-only; never while a GPU stage runs).
-5. Stage 3 Go to the operator with: B7's report (kept looks, A5 n, calibrated alphas), timed A5 / tg2 smokes, the per-axis plan; then
-   stage 3 (and 4: V legs) per spec §7 / §8.
-6. Open, not blocking: S22-P23 (pairing checked at push = M81, recommended).
+1. B3 fix round → test-writer d3 → panel verify → Accept → apply to `main`.
+2. B7.1 → test-writer d2 → panel opinion → Accept.
+3. M81, M82, S23-P14 (light path); then the stack gate on HEAD; one push ask (stack).
+4. B4 four-eyes (after B3 lands).
+5. `ids.json`, timed smokes, stage-3 Go to the operator.
 
 ## Worktrees and scratch
 
-- Stack worktrees (serve M76 stages 1–4; remove after stage 4 is harvested): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` on
-  local branches `m76-f45-*` (X `ec114753`, V `0795beb1`, XO `b9e6b91e`, N16 = base `89205085`).
-- Four-eyes scratch (regenerable; the cited records are committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7}/`; review copies
-  `$STACK_WORKDIR/reviews/m76-design-r1/`; ask before deleting.
+- Stack worktrees (M76 stages 1–4; remove after stage 4 harvest): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (X `ec114753`, V
+  `0795beb1`, XO `b9e6b91e`, N16 base `89205085`).
+- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71}/`; ask before deleting.
+- P369 runs: `$STACK_WORKDIR/p369/phase2/{m76-x-smoke,m76-x-smoke-rh,m76-x-full,m76-x-full.refused-unbound-smoke}` (only `-rh` and
+  `-full` cited).
+
+## Rules learned (session 23)
+
+- A P369 smoke binds a full run only with `--reviewed-head` (M82 will bind by recorded identity, C333).
+- The P369 orchestrator censuses processes only at launch; `qualify` before every entry — stack-only CPU helpers may overlap untimed
+  GPU stages (C334); clean-clone gates still need a quiet box.
+- Run `bench.*` modules from `benchmark/` (`cd benchmark && ../.venv-bench/bin/python -m bench.<mod>`).
+- A conditional bound on the discordant split (Clopper–Pearson given b + c) is not a safe loss bound; use an exact unconditional test.
+- Simulated safety transfers only if stage 3 calls the simulated statistic: share one function.
+- Per-axis safety settings multiply: check the joint clean-PASS probability before a Go (B7.1).
+- The naming hook flags the model snapshot inventory (a subfolder named after the quantizer) in P369 summaries: main gets a compact verdict + sha256, full files go to `evidence`.
 
 ## Rules learned (session 22)
 
