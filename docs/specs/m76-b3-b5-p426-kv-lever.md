@@ -1,4 +1,4 @@
-# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.2, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions)
+# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.3, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions; v1.3 = verify dispositions)
 
 ## Goal
 
@@ -117,3 +117,15 @@ tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs t
   of `p426_verify` and `p426_panel`.
 - **Stage 4 (V) is not in B3:** the V-only / X-reuse / sentinel workflow and V's M1 binding are a stage-4 item (planned before stage 4,
   S23-P49). Until then a `kv` sequence naming V refuses at preflight, before any leg runs.
+
+## Erratum v1.3 (2026-11-14, designer; the B3 verify's adopted findings)
+
+- **A7 provenance:** each A7 session pair loads both arms' per-invocation provenance manifests and compares them with
+  `kv_provenance_problems` (same normalisation and whitelist as Wave 1); any other difference rejects the session pair.
+- **Panel inputs bound to B8's items:** packet prompts / attachments are derived by the tool from the benchmark inputs of the items
+  B8 covers (Math500 problem text, cjudge prompt, vision image + question, A4 / A5 question only — never the long context), with a
+  per-item input sha frozen in `FROZEN.json` and checked against the item id; a `--prompts` file, if kept, is validated against those
+  shas. No caller-supplied mapping enters a packet unvalidated.
+- **Incomplete panel blocks:** signals require every B8-expected member and every frozen judge × order verdict slot; otherwise a
+  blocking `panel_incomplete` flag (→ the operator). Partial ingestion only under an explicit `--partial` mode, labelled.
+- **Exclusion accounting:** a rejected pair's panel exclusions include its rejected keys (deduplicated).
