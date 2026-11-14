@@ -1,4 +1,4 @@
-# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.3, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions; v1.3 = verify dispositions)
+# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.4, 2026-11-14 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum; v1.2 = change-review dispositions; v1.3 = verify dispositions; v1.4 = C339)
 
 ## Goal
 
@@ -129,3 +129,12 @@ tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs t
 - **Incomplete panel blocks:** signals require every B8-expected member and every frozen judge × order verdict slot; otherwise a
   blocking `panel_incomplete` flag (→ the operator). Partial ingestion only under an explicit `--partial` mode, labelled.
 - **Exclusion accounting:** a rejected pair's panel exclusions include its rejected keys (deduplicated).
+
+## Amendment v1.4 (C339, 2026-11-14: A5 two looks)
+
+- **A5 tier 2:** `ids.json` holds A5's 120 items: tier 1 = the first 72 (as today), tier 2 = 48 more, drawn by the same seeded
+  generator (seed 7605) as the continuation of the same per-task × rung cells (8 more per cell; tier prefixes nested, never a redraw);
+  each item's frozen prompt count and resolved budget as v1.2. A leg names its A5 tier (`--tier 1|2`, as Math500).
+- **A5 signals per look:** like A1 — the looks and their α come from `m76_rule.axis_plan("A5")` (B7.1 v1.4); look 1 on tier 1, look 2
+  on tier 1 + tier 2 only when look 1 is UNDECIDED; a look-1 LOSS stops; the per-task point gates at the deciding look.
+- The A5 sizes come from the plan (`axis_plan("A5")` looks' `n`), never constants.

@@ -1,4 +1,4 @@
-# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.3, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions; v1.2 = two harm-detection options; v1.3 = C338 + verify dispositions)
+# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.4, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions; v1.2 = two harm-detection options; v1.3 = C338 + verify dispositions; v1.4 = C339 registration)
 
 ## Goal
 
@@ -108,3 +108,15 @@ GPU hours. Tests: TD's trigger rate is 1 and its false-clean rate equals the dec
   rate and safety and says "clean PASS not estimated (interaction flag unsimulated)"; `pays` stays undetermined.
 - **Worst final look:** the column is "worst on the committed grid"; every plan with A8 shows the C336 residual beside it (3 realisable
   SD 0.5 cells, up to 2.82 %).
+
+## Amendment v1.4 (C339, 2026-11-14: register the chosen plan in `m76_rule`; folds the planned B7.2)
+
+- `m76_rule.axis_plan("A5")` returns two looks: n 72 at one-sided α 0.003808 and n 120 at 0.021192 (O'Brien–Fleming at t₁ = 0.6; the
+  values the committed report's A5-2L computed — read from `report.json`, never retyped), statistic `exact_paired_loss`; a look-1
+  LOSS stops. `verdict_a5(b, c, n, *, alpha=…)` takes the look's α (default 0.025 = today's single look, unchanged) and
+  `axis_verdict("A5", look, a, b)` passes it; the per-task point gates apply at the deciding look.
+- `m76_rule.A8_HOLD_PP = -0.20` and `a8_hold(per_language)` (any language's decider point estimate < −20 pp → HOLD, blocking);
+  `axis_verdict("A8", …)` reports it when per-language rows are given.
+- The report's committed plan = TD + A5-2L (C338, C339); A7-5S and T0–T3 shown as not adopted. A1 / A7 / A8 rules unchanged.
+- Tests: A5 two-look verdicts (look-1 PASS, UNDECIDED → look 2, LOSS stops) at the registered α; the exact two-look size matches the
+  report; `verdict_a5`'s default output byte-identical to today's; HOLD boundaries (−20 pp exactly does not fire).
