@@ -10,9 +10,11 @@ published deltas sat inside the noise floor. Everything here exists to stop that
   see an effect this small at N=15" is visible instead of inferred.
 * FAILING TO REJECT IS NOT EQUIVALENCE. `paired_delta` says "wash" (P359): no shown difference, MDE alongside.
 
-Stdlib only, on purpose: this module is imported by tooling that runs in `.venv-bench` (no
-numpy/scipy) as well as in the full venvs. Every function is pure; every randomized function
-takes an explicit `seed` and is byte-reproducible for it.
+Stdlib at import, on purpose: this module is imported by tooling in several venvs, some without
+numpy/scipy. The M76 B7 exact functions (`exact_paired_loss`, `exact_loss_region`,
+`exact_loss_size`) import numpy lazily, inside the call; every other function is stdlib-only.
+Every function is pure; every randomized function takes an explicit `seed` and is
+byte-reproducible for it.
 
 Minimum usable n, per metric (stated again on each function):
     wilson              n >= 1; below ~10 it is wide but honest (that is the point).
@@ -223,8 +225,15 @@ def reliability(per_item):
 
 
 # ------------------------------------------------------------------------------ paired delta
-def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strata=None):
+def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strata=None,
+                 interval_alpha=0.05, exact_alpha=0.05):
     """Two-stage PAIRED bootstrap of pass@1(a) - pass@1(b) over the SHARED item set.
+
+    M76 B7: `interval_alpha` (two-sided; percentiles interval_alpha/2 and 1 - interval_alpha/2) and `exact_alpha`
+    (one-sided; zero-discordance bound 1 - exact_alpha^(1/n)). At the defaults (both 0.05) the output dict is
+    byte-identical to the pre-B7 function. With any other value the dict additionally carries `discordance_upper` (the
+    bound at `exact_alpha`), `interval_alpha` and `exact_alpha`; `discordance_upper95` keeps its meaning (the bound at
+    0.05, None when `exact_alpha` differs).
 
     Returns {"delta", "lo", "hi", "verdict", "n_items", "mde"}. Stage 1 resamples item ids ONCE
     and applies the same ids to both runs (that is the pairing — item difficulty is the largest
@@ -298,7 +307,12 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
                 sb += sum(db[rng.randrange(len(db))] for _ in range(len(db))) / len(db)
         reps.append((sa - sb) / n)
     reps.sort()
-    lo, hi = _percentile(reps, 0.025), _percentile(reps, 0.975)
+    defaults = interval_alpha == 0.05 and exact_alpha == 0.05
+    if defaults:
+        lo, hi = _percentile(reps, 0.025), _percentile(reps, 0.975)
+    else:
+        _check_alpha("paired_delta", interval_alpha, exact_alpha)
+        lo, hi = _percentile(reps, interval_alpha / 2), _percentile(reps, 1 - interval_alpha / 2)
     delta = (pass_at_1({i: a_per_item[i] for i in ids})
              - pass_at_1({i: b_per_item[i] for i in ids}))
     if lo > 0:
@@ -313,9 +327,325 @@ def paired_delta(a_per_item, b_per_item, iters=10000, seed=0, margin=0.05, strat
     degenerate = lo == hi
     discordant = sum(sum(da) / len(da) != sum(db) / len(db) for da, db in zip(a_draws, b_draws))
     upper = (1 - 0.05 ** (1 / n)) if degenerate and discordant == 0 else None
-    return {"delta": delta, "lo": lo, "hi": hi, "verdict": verdict, "n_items": n,
-            "mde": mde(n), "degenerate": degenerate, "discordance_upper95": upper,
-            "directional": directional}
+    out = {"delta": delta, "lo": lo, "hi": hi, "verdict": verdict, "n_items": n,
+           "mde": mde(n), "degenerate": degenerate, "discordance_upper95": upper,
+           "directional": directional}
+    if not defaults:
+        if exact_alpha != 0.05:
+            out["discordance_upper95"] = None
+        out["discordance_upper"] = (1 - exact_alpha ** (1 / n)) if degenerate and discordant == 0 else None
+        out["interval_alpha"] = interval_alpha
+        out["exact_alpha"] = exact_alpha
+    return out
+
+
+def _check_alpha(fn, interval_alpha, exact_alpha):
+    for name, a in (("interval_alpha", interval_alpha), ("exact_alpha", exact_alpha)):
+        if not (isinstance(a, (int, float)) and 0.0 < a < 1.0):
+            raise ValueError(f"{fn}: {name} must be in (0, 1), got {a!r}")
+
+
+def paired_session_delta(a, b, *, iters=10000, seed=426, interval_alpha=0.05, exact_alpha=0.05, strata=None):
+    """M76 B7 (C324): paired bootstrap of arm a − arm b over items that each carry several SESSIONS.
+
+    `a` / `b` map item_id → {session_id: 0/1}. Both arms must hold the identical item set, and every item the identical
+    session set in both arms and across items (else ValueError naming the difference). Stage 1 resamples ITEMS (within
+    `strata` when given, {item_id: key}); each resampled item contributes its whole vector of per-session differences
+    d_s = a_s − b_s — the arms' sessions are NEVER resampled independently, so a session's pairing survives. Statistic:
+    mean over items of the mean over sessions of d_s. Percentile interval at 1 − interval_alpha (two-sided); the
+    zero-discordance exact bound 1 − exact_alpha^(1/n_items) when the interval is degenerate and no item has any
+    nonzero d_s. `per_session[s]` is `paired_delta` of that session alone (same iters / seed / strata, 95 %).
+
+    Returns {delta, lo, hi, n_items, n_sessions, degenerate, discordant_items, discordance_upper, per_session}.
+    """
+    import random
+    _check_alpha("paired_session_delta", interval_alpha, exact_alpha)
+    a_ids, b_ids = set(a), set(b)
+    if a_ids != b_ids:
+        raise ValueError(f"paired_session_delta: item sets differ — a-only={sorted(a_ids - b_ids, key=str)}, "
+                         f"b-only={sorted(b_ids - a_ids, key=str)}")
+    ids = sorted(a_ids, key=str)
+    if not ids:
+        raise ValueError("paired_session_delta: no items")
+    sessions = None
+    for i in ids:
+        sa, sb = set(a[i]), set(b[i])
+        if sa != sb:
+            raise ValueError(f"paired_session_delta: item {i!r}: session sets differ — a-only="
+                             f"{sorted(sa - sb, key=str)}, b-only={sorted(sb - sa, key=str)}")
+        if not sa:
+            raise ValueError(f"paired_session_delta: item {i!r} has no sessions")
+        if sessions is None:
+            sessions, first = sa, i
+        elif sa != sessions:
+            raise ValueError(f"paired_session_delta: item {i!r} sessions {sorted(sa, key=str)} differ from item "
+                             f"{first!r} sessions {sorted(sessions, key=str)}")
+    sess = sorted(sessions, key=str)
+    n, k = len(ids), len(sess)
+    vals = [sum(a[i][s] - b[i][s] for s in sess) / k for i in ids]
+    discordant = sum(1 for i in ids if any(a[i][s] != b[i][s] for s in sess))
+    groups = None
+    if strata is not None:
+        g = {}
+        for pos, i in enumerate(ids):
+            g.setdefault(strata.get(i), []).append(pos)
+        groups = list(g.values())
+    rng = random.Random(seed)
+    reps = []
+    for _ in range(iters):
+        t = 0.0
+        if groups is not None:
+            for positions in groups:
+                gn = len(positions)
+                for _ in range(gn):
+                    t += vals[positions[rng.randrange(gn)]]
+        else:
+            for _ in range(n):
+                t += vals[rng.randrange(n)]
+        reps.append(t / n)
+    reps.sort()
+    lo, hi = _percentile(reps, interval_alpha / 2), _percentile(reps, 1 - interval_alpha / 2)
+    degenerate = lo == hi
+    upper = (1 - exact_alpha ** (1 / n)) if degenerate and discordant == 0 else None
+    per_session = {s: paired_delta({i: [a[i][s]] for i in ids}, {i: [b[i][s]] for i in ids},
+                                   iters=iters, seed=seed, strata=strata) for s in sess}
+    return {"delta": sum(vals) / n, "lo": lo, "hi": hi, "n_items": n, "n_sessions": k, "degenerate": degenerate,
+            "discordant_items": discordant, "discordance_upper": upper, "per_session": per_session}
+
+
+# ------------------------------------------------------------------------------- alpha spending
+def _phi(x):
+    """Standard normal CDF."""
+    return 0.5 * math.erfc(-x / math.sqrt(2.0))
+
+
+def _phi_inv(p):
+    """Standard normal quantile by bisection on `_phi` (stdlib only; |error| < 1e-14)."""
+    if not (0.0 < p < 1.0):
+        raise ValueError(f"_phi_inv: p must be in (0, 1), got {p!r}")
+    lo, hi = -40.0, 40.0
+    for _ in range(200):
+        mid = (lo + hi) / 2
+        if _phi(mid) < p:
+            lo = mid
+        else:
+            hi = mid
+        if hi - lo < 1e-15:
+            break
+    return (lo + hi) / 2
+
+
+def obf_alpha(t, alpha_total):
+    """Lan–DeMets O'Brien–Fleming spending α(t) = 2 · (1 − Φ(z_{1−α/2} / √t)) for a one-sided total α at information
+    fraction t ∈ (0, 1]; α(1) = α exactly."""
+    if not (0.0 < alpha_total < 1.0):
+        raise ValueError(f"obf_alpha: alpha_total must be in (0, 1), got {alpha_total!r}")
+    if not (0.0 < t <= 1.0):
+        raise ValueError(f"obf_alpha: t must be in (0, 1], got {t!r}")
+    if t == 1:
+        return alpha_total
+    return 2.0 * (1.0 - _phi(_phi_inv(1.0 - alpha_total / 2.0) / math.sqrt(t)))
+
+
+def obf_looks(fractions, alpha_total):
+    """Per-look nominal one-sided alphas from O'Brien–Fleming spending: look k gets α(t_k) − α(t_{k−1}) (α(t_0) = 0).
+    `fractions` strictly increasing in (0, 1]."""
+    fr = list(fractions)
+    if not fr:
+        raise ValueError("obf_looks: need at least one information fraction")
+    for x, y in zip(fr, fr[1:]):
+        if not y > x:
+            raise ValueError(f"obf_looks: fractions must be strictly increasing, got {fr}")
+    out, spent = [], 0.0
+    for t in fr:
+        cum = obf_alpha(t, alpha_total)
+        out.append(cum - spent)
+        spent = cum
+    return out
+
+
+# ------------------------------------------------------------------ exact unconditional paired loss test (M76 B7 v1.1)
+# numpy is imported lazily inside these functions only (it is in benchmark/requirements-bench.lock); importing
+# bench.stats stays stdlib-only.
+_TANGO_TOL = 1e-9            # |T − t_obs| ≤ tol counts as a tie (ties are ordered together)
+_GRID_INTERIOR = 1000        # default nuisance grid: 1000 interior points plus both endpoints
+_BOUND_STEP = 1000           # the reported bound lives on a 0.001 grid in [0, 1]
+_LOG0 = -1e4                 # stands in for log(0): exp(k · _LOG0) is exactly 0.0 for k ≥ 1; 0 · _LOG0 = 0
+_EXACT_TABLES = {}
+
+
+def _np():
+    import numpy
+    return numpy
+
+
+def _exact_table(n):
+    """All (b, c) with b + c ≤ n and the log trinomial coefficients (cached per n)."""
+    if n not in _EXACT_TABLES:
+        np = _np()
+        bs, cs = [], []
+        for b in range(n + 1):
+            for c in range(n - b + 1):
+                bs.append(b)
+                cs.append(c)
+        b = np.array(bs, dtype=float)
+        c = np.array(cs, dtype=float)
+        r = n - b - c
+        lg = np.array([math.lgamma(k + 1) for k in range(n + 1)])
+        lc = lg[n] - lg[b.astype(int)] - lg[c.astype(int)] - lg[r.astype(int)]
+        _EXACT_TABLES[n] = (b, c, r, lc)
+    return _EXACT_TABLES[n]
+
+
+def _tango(b, c, n, m):
+    """Tango (1998) score statistic for H0 p_b − p_c = m at the constrained MLE (works on scalars and arrays).
+    b ↔ Tango's x12 (N16 pass, X fail), c ↔ x21. Zero variance: T = 0 when the numerator is 0, else ±inf."""
+    np = _np()
+    b = np.asarray(b, dtype=float)
+    c = np.asarray(c, dtype=float)
+    A = 2.0 * n
+    B = -b - c + (2.0 * n - b + c) * m
+    C = -c * m * (1.0 - m)
+    sq = np.sqrt(np.maximum(B * B - 4.0 * A * C, 0.0))
+    with np.errstate(divide="ignore", invalid="ignore"):
+        # the nonnegative root (−B + √disc) / 2A, in the cancellation-free form when B > 0
+        p21 = np.where(B > 0, np.where(sq + B > 0, -2.0 * C / (sq + B), 0.0), (sq - B) / (2.0 * A))
+        var = n * (2.0 * p21 + m * (1.0 - m))
+        num = b - c - n * m
+        t = np.where(var > 0, num / np.sqrt(np.where(var > 0, var, 1.0)), np.sign(num) * np.inf)
+    return np.where(num == 0, 0.0, t)
+
+
+def _nuisance_grid(margin, grid, grid_margin):
+    """p_c values for the test at `margin`: the default grid (1000 interior points + endpoints of [0, (1 − m)/2]) or a
+    user grid given for `grid_margin`, rescaled to [0, (1 − margin)/2] in proportion."""
+    np = _np()
+    hi = (1.0 - margin) / 2.0
+    if grid is None:
+        g = hi * np.arange(_GRID_INTERIOR + 2) / (_GRID_INTERIOR + 1)
+    else:
+        g = np.asarray(sorted(float(x) for x in grid), dtype=float)
+        top = (1.0 - grid_margin) / 2.0
+        if g.size == 0 or g[0] < -1e-15 or g[-1] > top + 1e-12:
+            raise ValueError(f"exact_paired_loss: grid must be non-empty p_c values in [0, {top}] for margin "
+                             f"{grid_margin}")
+        g = np.clip(g, 0.0, top)
+        g = g * (hi / top) if top > 0 else np.zeros_like(g)
+    return g
+
+
+def _exact_probs(n, margin, grid, grid_margin, cols):
+    """Trinomial(n; p_b = p_c + margin, p_c) probabilities, rows = nuisance grid points, columns = table cells `cols`."""
+    np = _np()
+    b, c, r, lc = _exact_table(n)
+    pc = _nuisance_grid(margin, grid, grid_margin)
+    pb = pc + margin
+    p0 = 1.0 - pb - pc
+    with np.errstate(divide="ignore"):
+        lp = np.stack([np.where(x > 0, np.log(np.where(x > 0, x, 1.0)), _LOG0) for x in (pb, pc, p0)], axis=1)
+    counts = np.stack([b[cols], c[cols], r[cols]], axis=0)
+    return np.exp(lp @ counts + lc[cols])
+
+
+def _exact_pvalue(n, margin, t_thr, grid, grid_margin, extra=None):
+    """sup over the nuisance grid of P(T ≤ t_thr [∧ extra]) at the H0 boundary p_b − p_c = margin."""
+    np = _np()
+    b, c, _, _ = _exact_table(n)
+    t = _tango(b, c, n, margin)
+    mask = t <= t_thr + _TANGO_TOL * (1.0 + abs(t_thr))
+    if extra is not None:
+        mask &= extra
+    cols = np.nonzero(mask)[0]
+    if cols.size == 0:
+        return 0.0
+    return float(min(1.0, _exact_probs(n, margin, grid, grid_margin, cols).sum(axis=1).max()))
+
+
+def _check_exact(fn, b, c, n, margin, alpha):
+    """Validate the exact-test arguments; returns (b, c, n) as Python ints (numpy integers accepted)."""
+    import numbers
+    for name, v in (("b", b), ("c", c), ("n", n)):
+        if not isinstance(v, numbers.Integral) or isinstance(v, bool):
+            raise ValueError(f"{fn}: {name} must be an int, got {v!r}")
+    b, c, n = int(b), int(c), int(n)
+    if n < 1 or b < 0 or c < 0 or b + c > n:
+        raise ValueError(f"{fn}: need n ≥ 1, b, c ≥ 0 and b + c ≤ n, got b={b}, c={c}, n={n}")
+    if not (0.0 <= margin <= 1.0):
+        raise ValueError(f"{fn}: margin must be in [0, 1], got {margin!r}")
+    if not (0.0 < alpha < 1.0):
+        raise ValueError(f"{fn}: alpha must be in (0, 1), got {alpha!r}")
+    return b, c, n
+
+
+def exact_paired_loss(b, c, n, *, margin=0.10, alpha=0.025, grid=None):
+    """M76 B7 v1.1 (C331): exact unconditional test of a paired loss, H0: p_b − p_c ≥ margin vs H1: < margin.
+
+    Per item d = X − N16 ∈ {−1, 0, +1}; `b` = #(d = −1) (N16 pass, X fail), `c` = #(d = +1), `n` items. Ordering
+    statistic: Tango's score statistic at `margin` with the constrained MLE (Tango 1998, Statistics in Medicine 17:891); ties
+    (|ΔT| ≤ 1e-9 relative) are ordered together. p-value = sup over p_c ∈ [0, (1 − margin)/2] (p_b = p_c + margin; the
+    H0 boundary) of P(T ≤ t_obs) under trinomial(n; p_b, p_c), by exact enumeration of every (b, c) with b + c ≤ n.
+    Nuisance grid: 1000 interior points plus both endpoints (default), or `grid` (p_c values for `margin`; rescaled
+    in proportion to [0, (1 − m)/2] when the bound scan tests another margin m).
+
+    Returns {pvalue, reject (pvalue ≤ alpha), bound, bound_attained, delta = (c − b)/n, b, c, n, margin, alpha}.
+    `bound` = the smallest margin on the 0.001 grid in [0, 1] at which H0 is rejected (the loss bound; 1.0 with
+    `bound_attained` False when no margin rejects). Margins m with b − c ≥ n·m and m < 1 − 2/n are skipped without
+    evaluation when the default grid is used and alpha < 1/4: there t_obs ≥ 0, and at the endpoint p_c = (1 − m)/2,
+    P(T ≤ 0) = P(Bin(n, (1 + m)/2) ≤ n(1 + m)/2) > 1/4 (Greenberg & Mohri 2014), so they cannot reject.
+    """
+    b, c, n = _check_exact("exact_paired_loss", b, c, n, margin, alpha)
+    t_obs = float(_tango(b, c, n, margin))
+    pvalue = _exact_pvalue(n, margin, t_obs, grid, margin)
+    bound, attained = 1.0, False
+    for j in range(_BOUND_STEP + 1):
+        m = j / _BOUND_STEP
+        if grid is None and alpha < 0.25 and _BOUND_STEP * (b - c) >= j * n and m < 1.0 - 2.0 / n:
+            continue
+        if _exact_pvalue(n, m, float(_tango(b, c, n, m)), grid, margin) <= alpha:
+            bound, attained = m, True
+            break
+    return {"pvalue": pvalue, "reject": pvalue <= alpha, "bound": bound, "bound_attained": attained,
+            "delta": (c - b) / n, "b": b, "c": c, "n": n, "margin": margin, "alpha": alpha}
+
+
+def exact_loss_region(n, *, margin=0.10, alpha=0.025, grid=None):
+    """The set of (b, c) (b + c ≤ n) that `exact_paired_loss` rejects at (margin, alpha, grid): a prefix of the
+    T-ordering (the p-value is non-decreasing in t_obs), found by bisection over the distinct T values with the same
+    p-value computation `exact_paired_loss` uses. Returns a frozenset of (b, c)."""
+    _, _, n = _check_exact("exact_loss_region", 0, 0, n, margin, alpha)
+    np = _np()
+    b, c, _, _ = _exact_table(n)
+    t = _tango(b, c, n, margin)
+    levels = []
+    for x in np.sort(t):
+        if not levels or x > levels[-1] + _TANGO_TOL * (1.0 + abs(levels[-1])):
+            levels.append(float(x))
+    lo, hi = -1, len(levels) - 1          # invariant: levels[≤ lo] reject; levels[> hi] do not
+    if _exact_pvalue(n, margin, levels[0], grid, margin) > alpha:
+        return frozenset()
+    lo = 0
+    while lo < hi:
+        mid = (lo + hi + 1) // 2
+        if _exact_pvalue(n, margin, levels[mid], grid, margin) <= alpha:
+            lo = mid
+        else:
+            hi = mid - 1
+    thr = levels[lo]
+    mask = t <= thr + _TANGO_TOL * (1.0 + abs(thr))
+    return frozenset((int(x), int(y)) for x, y, k in zip(b, c, mask) if k)
+
+
+def exact_loss_size(n, region, *, margin=0.10, point_floor=-0.05, grid=None):
+    """Exact size of the A5 PASS rule at the H0 boundary: max over the nuisance grid of
+    P((b, c) ∈ region ∧ (c − b)/n ≥ point_floor) under trinomial(n; p_c + margin, p_c)."""
+    np = _np()
+    b, c, _, _ = _exact_table(n)
+    keep = np.array([(int(x), int(y)) in region for x, y in zip(b, c)], dtype=bool)
+    keep &= (c - b) >= point_floor * n - 1e-9
+    cols = np.nonzero(keep)[0]
+    if cols.size == 0:
+        return 0.0
+    return float(_exact_probs(n, margin, grid, margin, cols).sum(axis=1).max())
 
 
 def verdict_label(d, a="A", b="B"):
