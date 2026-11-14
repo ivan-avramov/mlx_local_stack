@@ -266,7 +266,7 @@ per-axis decode is descriptive (not order-balanced against X).
 ## 8. Decision rule and the funnel (pre-registered) [r1 rewrite]
 
 - **Statistic per mechanical axis:** paired `acc_strict@budget` difference (X − N16; stage 4 V − X and V − N16), DNF included,
-  bootstrap over items (10,000 resamples, seed 426; strata for A5); agentic axes with several sessions use `paired_session_delta`
+  bootstrap over items (B7 v1.4: the exact item bootstrap `m76_rule.exact_interval_values`, which the simulation also uses; A5 the exact unconditional test; strata for A5); agentic axes with several sessions use `paired_session_delta`
   (B7; S22-P8 / C324); per-session deltas with their own 95 % intervals reported beside it; [r2] session-disagreement flag:
   for any pair of sessions that ran, the two point estimates have opposite signs AND each session's 95 % interval excludes the
   other's point → flagged to the operator (a PASS keeps the flag beside it).

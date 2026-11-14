@@ -1,4 +1,4 @@
-# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.3, 2026-11-13 (four-eyes light; C325, C324; v1.1 = C331, §Amendment; v1.2 = C335; v1.3 = C336)
+# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.4, 2026-11-14 (four-eyes light; C325, C324; v1.1 = C331, §Amendment; v1.2 = C335; v1.3 = C336; v1.4 = change-review dispositions)
 
 ## Goal
 
@@ -157,3 +157,21 @@ final plan; the simulation runs in ≤ 60 min on CPU (or reports its replication
 - `recheck("A8", …)`: applies min(0.001, re-calibrated α*); when the observed nuisance falls outside the grid and no candidate is
   safe there, the record says so (`alpha_star_applied` 0.001, `unsafe_at_observed: true`) → the operator.
 - Acceptance: `axis_plan("A8")` = 0.001; the report states A8's PASS(0) at 0.001 (planning cell) and the full-grid table.
+
+## Amendment v1.4 (2026-11-14, designer; the B7 change review's adopted dispositions — no rule change)
+
+- **The decision statistic is the exact item bootstrap** (enumerated / convolved; strata honoured; per-item session vectors kept
+  together), computed by `m76_rule.exact_interval_values`; stage 3 calls `m76_rule.axis_verdict(axis, look, a, b)` (α from
+  `axis_plan`; A5 routes to `verdict_a5`). The simulation calls the same function, so the simulated and the shipped bound are one.
+  Wherever v1–v1.3 (or M76 §8) say "`paired_session_delta`'s / `paired_delta`'s lower percentile" or "10,000 resamples" for an M76
+  decision, read this; those functions stay as descriptive statistics.
+- `loss_interval` / `verdict_of` require the α explicitly (never the default 0.05 bound).
+- `recheck`: outside the hull also when the estimated concentration is below the committed one or the model cannot realise the
+  observed nuisance (then no recalibration is attempted; the record flags `observed_unrealisable` and `operator_review`); a
+  different identified concentration recalibrates every cell at it; the v1.3 flag is named `unsafe_on_extended_grid` (no candidate
+  safe anywhere on the extended grid).
+- Per-session results beside an agentic verdict are descriptive at the 95 % two-sided level (one-sided 0.025), independent of α*.
+- Report labels: A8 "safe on the v1.2 grid" with `residual_cells` (C336); A7's planning cell "not realisable (extrapolated)".
+- Residuals (recorded, not fixed): `recheck` has no session-SD dimension (C336); a concentration above the committed 4 keeps the
+  committed calibration (designer sweep, S23-P12: A7 α* rises from 0.001 at concentration 4 to 0.0035 at 10–1000, so 4 is the least
+  favourable of those tested); `axis_verdict` reports size mismatches as `size_warnings` (consumers treat them as blocking: B3).
