@@ -1,4 +1,4 @@
-# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1, 2026-11-13 (four-eyes light; C325)
+# M76 B3 + B5 — P426 lever `kv`, build label `s3`, and the Wave 1 extensions (Math500 300, A5 `longctx`) — SPEC v1.1, 2026-11-13 (four-eyes light; C325; v1.1 = B7 v1.1 / C331, §Erratum)
 
 ## Goal
 
@@ -79,3 +79,14 @@ panel (Holm), decode per item (P426 T2 estimator) with acceptance, coverage. Lab
 ## Non-goals
 
 tg2 legs (B4); B7's statistics; running anything on the GPU (the designer runs the smokes).
+
+## Erratum v1.1 (C331; follows B7 spec v1.1, `docs/specs/m76-b7-statistics.md` §Amendment v1.1)
+
+- A5 n: the value B7's report states, a multiple of 6 in 42 … 120 (two tasks × three rungs, equal cells); `m76_ids.py` reads it from
+  `benchmark/results/m76/b7-simulation/report.json` (`a5.n`) or takes `--a5-n` (must be a multiple of 6 in range; default: the report's
+  value; refuse when neither exists). Items split equally per task × rung.
+- Signals: A5's verdict and loss bound come from `bench.m76_rule.verdict_a5(b, c, n)` (exact test), not a bootstrap; A7 / A8's loss
+  bound is `paired_session_delta` at the calibrated α* that `bench.m76_rule.axis_plan(axis)` returns; the session-disagreement flag
+  is replaced by `bench.m76_rule.session_interaction(a, b)` (`flag`, `pvalue`), still blocking; per-session results stay descriptive.
+- B7 is built in parallel: code against these names; tests mock `bench.m76_rule` / `bench.stats` B7 functions where they are absent
+  from the copy (an import shim in the test, never in the product code); the designer re-runs the signals tests after B7 lands.
