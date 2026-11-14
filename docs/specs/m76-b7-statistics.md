@@ -1,4 +1,4 @@
-# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.2, 2026-11-13 (four-eyes light; C325, C324; v1.1 = C331, §Amendment; v1.2 = C335)
+# M76 B7 — statistics for the M76 decision rule and its simulation — SPEC v1.3, 2026-11-13 (four-eyes light; C325, C324; v1.1 = C331, §Amendment; v1.2 = C335; v1.3 = C336)
 
 ## Goal
 
@@ -148,3 +148,12 @@ final plan; the simulation runs in ≤ 60 min on CPU (or reports its replication
   grid. A7 unchanged (concentration 4; SD {0, 0.25, 0.5}).
 - Acceptance: criterion 5 holds on the v1.2 A8 grid; `axis_plan("A8")` returns the committed α*; the report states the SD 0.5
   sensitivity for A8.
+
+## Amendment v1.3 (C336, 2026-11-13)
+
+- A8's decider α* is fixed at 0.001 (the smallest candidate; operator ruling), not chosen by the capped grid. `calibrate("A8")`
+  still runs on the v1.2 grid and reports its result (α* 0.005) as context; the report adds, per cell of the full grid (SD 0, 0.25,
+  0.5), the false-PASS(10) upper bound at 0.001 and states the cells over 0.025. `axis_plan("A8")` returns 0.001.
+- `recheck("A8", …)`: applies min(0.001, re-calibrated α*); when the observed nuisance falls outside the grid and no candidate is
+  safe there, the record says so (`alpha_star_applied` 0.001, `unsafe_at_observed: true`) → the operator.
+- Acceptance: `axis_plan("A8")` = 0.001; the report states A8's PASS(0) at 0.001 (planning cell) and the full-grid table.
