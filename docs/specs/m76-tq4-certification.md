@@ -283,7 +283,7 @@ per-axis decode is descriptive (not order-balanced against X).
   interval also excludes 0 with N16 better, PASS carries the annotation "loss shown, within tolerance (X pp)"); LOSS — point estimate
   < −5 pp with the interval excluding 0 → flag to the operator, no tier 2; UNDECIDED — anything else → tier 2 at a kept look 1,
   "loss not ruled out above X pp" → operator at the final look. A wash is labelled "directional (not a shown difference)" (C172).
-- **A8 tg2:** the screen is a trigger, not a look (C168: diagnostic): a material finding = macro-average point estimate < −5 pp or any
+- **A8 tg2:** [C338, 2026-11-14: the decider ALWAYS runs; the screen stays diagnostic only and no longer triggers it; the decider is read by B7's rule at α* 0.001 (C336). Superseded text follows.] the screen is a trigger, not a look (C168: diagnostic): a material finding = macro-average point estimate < −5 pp or any
   language < −15 pp → the decider, read by the rule above at 95 %; the decider's large-harm HOLD (m65 spec) stands. A clean screen
   is reported as "no material finding (not safety evidence)". Expected decider resolution: bound ≈ 10–12 pp (p_d .182) — reported as
   measured.
