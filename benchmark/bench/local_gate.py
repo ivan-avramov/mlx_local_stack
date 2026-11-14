@@ -661,8 +661,27 @@ def _scan(repo_dir, commits, naming=True):
     return out
 
 
+def pairing_problems(links, *, gate_dir, digest_for):
+    """M81 (C332): the fork gitlink needs a PASS receipt (current policy) whose `paired` mlx-serve is the stack commit's own
+    src/mlx-serve gitlink — the M80 pairing is checked against what the stack actually pins. No-op without both gitlinks."""
+    fork, serve = links.get("src/mlx-vlm"), links.get("src/mlx-serve")
+    if not fork or not serve:
+        return []
+    digest = digest_for(GITLINKS["src/mlx-vlm"], fork)
+    for p in sorted(Path(gate_dir).glob(f"mlx-vlm-{fork}-{digest[:12]}*.json")):
+        try:
+            doc = json.loads(p.read_text())
+        except (OSError, ValueError):
+            continue
+        if (doc.get("verdict") == "PASS" and doc.get("sha") == fork and doc.get("policy_digest") == digest
+                and (doc.get("paired") or {}).get(SIBLING) == serve):
+            return []
+    return [f"src/mlx-vlm {fork[:8]}: its PASS receipts are not paired with src/mlx-serve {serve[:8]} (run: bench.local_gate run "
+            f"--repo mlx-vlm --sha {fork} --mlx-serve-sha {serve})"]
+
+
 def gitlink_problems(links, forks, *, gate_dir, digest_for):
-    out = []
+    out = pairing_problems(links, gate_dir=gate_dir, digest_for=digest_for)
     for path, sha in links.items():
         repo, fork = GITLINKS[path], Path(forks[path])
         if not has_pass(gate_dir, repo, sha, digest_for(repo, sha)):
@@ -724,6 +743,11 @@ def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=No
             level, detail, problems = push_level(repo, repo_dir, remote, local_ref, sha, remote_ref, gate_dir=gate_dir,
                                                  digest_for=digest_for)
             ref_out += problems
+            if repo == "stack" and not evidence and any(  # M81: a push that changes a gitlink re-checks the pairing
+                    p in GITLINKS for c in introduced(repo_dir, remote, sha, exclude_evidence=True)
+                    for p in _touched(repo_dir, c)):
+                links, missing = _gitlinks_at(repo_dir, sha)  # a deleted gitlink fails closed (cold read, GLM)
+                ref_out += missing + pairing_problems(links, gate_dir=gate_dir, digest_for=digest_for)
             shown = f"full (receipt {detail})" if level == "full" else level
         out += ref_out
         if shown and not ref_out and levels is not None:
