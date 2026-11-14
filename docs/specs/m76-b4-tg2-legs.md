@@ -1,4 +1,4 @@
-# M76 B4 — tg2 legs in P426 lever `kv` (A8) — SPEC v1, 2026-11-13 (four-eyes light; C325, C169 GPU go via C323)
+# M76 B4 — tg2 legs in P426 lever `kv` (A8) — SPEC v1.1, 2026-11-14 (four-eyes light; C325, C169 GPU go via C323; v1.1 = C338)
 
 ## Goal
 
@@ -49,3 +49,11 @@ legs, the forks.
 ## Non-goals
 
 New tg2 items or graders; tg2 outside M76.
+
+## Amendment v1.1 (C338, 2026-11-14)
+
+- The DECIDER legs always run for every M76 arm pair (no trigger): the sequencer schedules SCREEN then DECIDER (s1, s2, reload)
+  unconditionally; the SCREEN stays a diagnostic (C168). The decider's verdict comes from B7's `m76_rule.axis_verdict("A8", 1, a, b)`
+  (α* 0.001, C336) via B3's signals — never a 95 % percentile bootstrap. Any per-language large-harm HOLD follows the operator's
+  threshold at the stage-3 Go (S23-P63).
+- B4 builds on B3's `kv` lever as landed on `main` (B3 v1.3); the per-leg discipline, injected positives and the 4-item smoke are as v1.
