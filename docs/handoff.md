@@ -4,7 +4,9 @@ THE one handoff. Read this, then `docs/PLAN.md` rows M76–M82, then `docs/open-
 S23-P14, C336, C335, C334, C333, C332, C331 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance
 (C334): guardrails prevent wrong data or wasted time, not ceremony; cheap fixes welcome; label every point `S23-P<n>`.
 
-Decisions: session 23 ruled C331–C337 (next **C338**); discussion ids `S23-P1 …` (last used S23-P52).
+Decisions: session 23 ruled C331–C339 (next **C340**); discussion ids `S23-P1 …` (last used S23-P77). Stage-3 plan (C337–C339):
+A1 two looks; A5 two looks 72 → 120 (A5-2L); A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (TD, C338) α* 0.001 + HOLD any language < −20 pp;
+screen diagnostic only. Clean PASS at no loss ≈ 38 %; whole-stage GPU ≈ 72 h expected (B7.1 report).
 
 ## FIRST
 
