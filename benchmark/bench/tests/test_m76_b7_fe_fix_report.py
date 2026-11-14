@@ -75,7 +75,12 @@ def test_committed_report_a7_alpha_matches_plan_and_sha():  # (a) axis_plan read
     plan = axis_plan("A7")
     assert plan["report_sha256"] == sha
     assert plan["alpha_star"] == pytest.approx(rep["axes"]["A7"]["calibration"]["alpha_star"])
-    assert axis_plan("A5")["items"] == rep["axes"]["A5"]["n"]
+    # AMENDED (B7.1 spec v1.4, C339): the registered A5 plan is A5-2L's two looks (n 72, 120), read from the report. Look 1's
+    # size is B7's sized n; `items` is the final look's size (A1's convention: axis_plan("A1")["items"] == 300).
+    a5 = axis_plan("A5")
+    assert a5["looks"][0]["size"] == rep["axes"]["A5"]["n"]
+    assert [lk["size"] for lk in a5["looks"]] == [lk["size"] for lk in rep["variants"]["A5-2L"]["looks"]]
+    assert a5["items"] == a5["looks"][-1]["size"]
 
 
 def test_report_headline_numbers_are_internally_consistent():  # (a) a regenerated report must not contradict its plan

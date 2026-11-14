@@ -10,6 +10,7 @@ numpy.
 import bisect
 import hashlib
 import json
+from fractions import Fraction
 from pathlib import Path
 
 from bench import stats
@@ -273,6 +274,7 @@ def session_disagreement(per_session):
 A5_N_RANGE = (42, 120)
 A5_N_STEP = 6                # two tasks × three rungs, equal cells
 LOSS_TEST_ALPHA = 0.05       # two-sided exact binomial on b | b + c for A5 LOSS
+A5_TASK_GATE = Fraction(-5, 100)   # per-task point gate (retrieval, chain-4): each task's point ≥ −5 pp (M76 §8)
 
 
 class A5Verdict(tuple):
@@ -466,6 +468,10 @@ def axis_plan(axis, *, keep_look1=None, n=None, calibrated=True, report=None):
     - A1 (v1 rule, unchanged): O'Brien–Fleming looks at n 100 / 300; `keep_look1=False` → one look at 300, α 0.025.
     - A5 (v1.1): one look, `exact_paired_loss` at α 0.025, margin 0.10; n = `n` or, by default, the committed
       report's sized n (42 ≤ n ≤ 120).
+    - A5 (B7.1 v1.4, C339): by default (`n` None, `calibrated`), when the report carries B7.1's `variants`, the
+      registered A5-2L plan: two looks with the sizes / α of `variants.A5-2L.looks` (O'Brien–Fleming at t₁ = n₁ / n₂);
+      look-1 LOSS stops (`look1_loss_stops`); refuses a missing / unavailable / unsafe variant. A B7-only report
+      (no `variants`), an explicit `n` or `calibrated=False` keep B7's single look.
     - A7 / A8 (v1.1): calibrated (default) → the least-favourable α* of the committed report (`report`: a path,
       default `REPORT_JSON`); A7 has two looks only when the report keeps look 1 (`keep_look1=True` otherwise raises;
       `keep_look1=False` forces the single look). `calibrated=False` → the v1 O'Brien–Fleming nominal plan
@@ -481,6 +487,8 @@ def axis_plan(axis, *, keep_look1=None, n=None, calibrated=True, report=None):
     rep = sha = None
     if axis == "A5" and n is None and calibrated:
         rep, sha = load_report(report)
+        if rep is not None and "variants" in rep:
+            return _a5_registered_plan(spec, rep, sha, report)
         n = rep["axes"]["A5"]["n"] if rep is not None and "A5" in rep.get("axes", {}) else None
     if axis == "A5" and n is not None:
         _check_a5_n(n)
@@ -505,6 +513,27 @@ def axis_plan(axis, *, keep_look1=None, n=None, calibrated=True, report=None):
             lk.pop("interval_alpha")
             lk["test"] = "exact_paired_loss"
     return out
+
+
+def _a5_registered_plan(spec, rep, sha, report):
+    """v1.4 (C339): A5-2L's two looks, sizes and α read from the committed report's `variants.A5-2L` (never retyped);
+    refuses when the variant is missing, unavailable, unsafe or not two looks."""
+    v = rep["variants"].get("A5-2L")
+    src = report if report is not None else REPORT_JSON
+    if not v or not v.get("available") or v.get("safe") is not True or len(v.get("looks") or ()) != 2:
+        raise ValueError(f"axis_plan: the registered A5-2L plan (C339) is missing, unavailable, unsafe or not two "
+                         f"looks in {src} (run `python -m bench.m76_sim`)")
+    looks = []
+    for k, w in enumerate(v["looks"]):
+        _check_a5_n(w["size"])
+        looks.append(dict(look=k + 1, fraction=w["fraction"], size=w["size"], unit=spec["unit"], alpha=w["alpha"],
+                          exact_alpha=w["alpha"], test="exact_paired_loss"))
+    return dict(axis="A5", name=spec["name"], statistic=spec["statistic"], alpha_total=ALPHA_TOTAL, two_look=True,
+                looks=looks, strata=spec["strata"], items=looks[-1]["size"], sessions=spec["sessions"],
+                calibrated=False, n_range=A5_N_RANGE, n_step=A5_N_STEP, loss_margin=LOSS_MARGIN,
+                point_floor=POINT_FLOOR, loss_test="two-sided exact binomial on b | b + c, alpha 0.05, b > c",
+                look1_loss_stops=True, task_gate=float(A5_TASK_GATE), plan_source="variants.A5-2L",
+                exact_size=(v.get("exact") or {}).get("size"), decision="C339", report_sha256=sha)
 
 
 def _calibrated_plan(axis, spec, keep_look1, report):
@@ -543,8 +572,53 @@ def _calibrated_plan(axis, spec, keep_look1, report):
                 alpha_star=cal["alpha_star"], binding_cell=cal["binding_cell"], report_sha256=sha)
 
 
+# ------------------------------------------------------------------------------------------------- A8 HOLD (v1.4)
+A8_HOLD_PP = -0.20           # C339: any language's decider point estimate < −20 pp → HOLD (blocking)
+_A8_HOLD = Fraction(-20, 100)
+
+
+def _below(x, threshold):
+    """x < threshold, exact for int / Fraction; floats with `_EPS` slack (a computed −0.2 may read −0.20000000000000004)."""
+    if isinstance(x, (int, Fraction)) and not isinstance(x, bool):
+        return Fraction(x) < threshold
+    return float(x) < float(threshold) - _EPS
+
+
+def a8_hold(per_language):
+    """Large-harm HOLD (C339): `per_language` maps language → the decider's point estimate (float / Fraction, or a
+    dict with "delta"). HOLD ⇔ some language's point < `A8_HOLD_PP` (−20 pp exactly does not fire); blocking.
+    Returns {hold, blocking, threshold, languages (sorted, firing), per_language (floats)}."""
+    if not per_language:
+        raise ValueError("a8_hold: no per-language decider estimates")
+    pts = {k: (v["delta"] if isinstance(v, dict) else v) for k, v in per_language.items()}
+    fired = sorted((k for k, x in pts.items() if _below(x, _A8_HOLD)), key=str)
+    return dict(hold=bool(fired), blocking=bool(fired), threshold=A8_HOLD_PP, languages=fired,
+                per_language={k: float(x) for k, x in pts.items()})
+
+
+def _groups_of(fn, what, mapping, ids):
+    missing = [i for i in ids if i not in mapping]
+    if missing:
+        raise ValueError(f"{fn}: items without a {what}: {missing[:10]}")
+    g = {}
+    for i in ids:
+        g.setdefault(mapping[i], []).append(i)
+    return g
+
+
+def _a5_task_gates(ids, d, tasks):
+    """{task: {n, delta, pass}} on this look's items: each task's point (c − b) / n_t ≥ −5 pp (exact)."""
+    row = dict(zip(ids, d))
+    out = {}
+    for t, items in sorted(_groups_of("axis_verdict", "task", tasks, ids).items(), key=lambda kv: repr(kv[0])):
+        s = Fraction(sum(row[i][0] for i in items), len(items))
+        out[t] = dict(n=len(items), delta=float(s), **{"pass": s >= A5_TASK_GATE})
+    return out
+
+
 # ------------------------------------------------------------------------------------------- stage-3 / 4 verdict
-def axis_verdict(axis, look, a, b, *, strata=None, report=None, interaction_iters=10000, seed=426):
+def axis_verdict(axis, look, a, b, *, strata=None, report=None, interaction_iters=10000, seed=426, tasks=None,
+                 languages=None):
     """The §8 verdict of X (`a`) vs N16 (`b`) on `axis` at `look` (1-based), from real rows.
 
     `a` / `b` map item_id → {session_id: 0/1}; A1 and A5 hold a single session. α = `axis_plan(axis,
@@ -553,10 +627,20 @@ def axis_verdict(axis, look, a, b, *, strata=None, report=None, interaction_iter
     one-sided `PER_SESSION_ALPHA` 0.025 (95 % two-sided, v1.4; independent of α); and `session_interaction` (k ≥ 2;
     its flag blocks a ship recommendation). A5: `verdict_a5` on the pooled (b, c, n).
     Item / session counts that differ from the plan's are listed in `size_warnings` (→ the operator).
+    v1.4 (C339): A5 runs the registered two looks at the look's α (look 2 on the cumulative rows); `stop` / `next_look`
+    say whether the look decides (PASS or LOSS, or the final look) or UNDECIDED goes on to look 2. `tasks` = optional
+    {item_id: task}: the per-task point gates (each ≥ −5 pp) on this look's items → `task_gates`, `task_gates_pass`
+    and `clean` (PASS ∧ gates; a gate failure never triggers look 2); None when `tasks` is not given. A8: `languages`
+    = optional {item_id: language} → `hold` = `a8_hold` of each language's point over all sessions (None without it);
+    `blocking` = interaction flag ∨ HOLD.
     Returns {axis, look, alpha, verdict, annotation, label, delta, lo, hi, loss_bound, n_items, n_sessions,
     discordant_items, exact_bound_used, per_session, per_session_alpha (A1 / A7 / A8), interaction, interaction_flag,
-    expected_items,
-    expected_sessions, size_warnings, report_sha256}."""
+    expected_items, expected_sessions, size_warnings, report_sha256, blocking; A5: a5, stop, next_look, task_gates,
+    task_gates_pass, clean; A8: hold}."""
+    if tasks is not None and axis != "A5":
+        raise ValueError(f"axis_verdict: `tasks` (per-task gates) applies to A5 only, not {axis}")
+    if languages is not None and axis != "A8":
+        raise ValueError(f"axis_verdict: `languages` (the HOLD) applies to A8 only, not {axis}")
     plan = axis_plan(axis, report=report)
     looks = plan["looks"]
     if isinstance(look, bool) or not (isinstance(look, int) and 1 <= look <= len(looks)):
@@ -581,9 +665,13 @@ def axis_verdict(axis, look, a, b, *, strata=None, report=None, interaction_iter
         cc = sum(1 for row in d if row[0] == 1)
         v = verdict_a5(bb, cc, n, alpha=alpha)
         res = dict(verdict=v.verdict, annotation=v.annotation, label=v.label, delta=v.delta, loss_bound=v.bound)
+        gates = _a5_task_gates(ids, d, tasks) if tasks is not None else None
+        gp = None if gates is None else all(g["pass"] for g in gates.values())
+        stop = v.verdict != UNDECIDED or look == len(looks)
         out.update(res, lo=None, hi=None, discordant_items=bb + cc, exact_bound_used=False,
                    per_session={sess[0]: dict(res, b=bb, c=cc)}, interaction=None, interaction_flag=False,
-                   a5=v.as_dict())
+                   a5=v.as_dict(), stop=stop, next_look=None if stop else look + 1, task_gates=gates,
+                   task_gates_pass=gp, clean=None if gp is None else (v.verdict == PASS and gp), blocking=False)
         return out
     r = loss_bound(a, b, alpha=alpha, strata=strata)
     v = r["verdict"]
@@ -594,9 +682,17 @@ def axis_verdict(axis, look, a, b, *, strata=None, report=None, interaction_iter
         per[s] = dict(delta=rs["delta"], lo=rs["lo"], hi=rs["hi"], loss_bound=rs["loss_bound"],
                       verdict=str(rs["verdict"]), label=rs["verdict"].label)
     inter = session_interaction(a, b, iters=interaction_iters, seed=seed) if k >= 2 else None
+    hold = None
+    if axis == "A8" and languages is not None:
+        rows = dict(zip(ids, d))
+        hold = a8_hold({ln: Fraction(sum(sum(rows[i]) for i in items), len(items) * k)
+                        for ln, items in _groups_of("axis_verdict", "language", languages, ids).items()})
+    flag = bool(inter and inter["flag"])
     out.update(verdict=str(v), annotation=v.annotation, label=v.label, delta=r["delta"], lo=r["lo"], hi=r["hi"],
                loss_bound=r["loss_bound"], discordant_items=r["discordant_items"],
                exact_bound_used=r["exact_bound_used"], per_session=per, per_session_alpha=PER_SESSION_ALPHA,
                interaction=inter,
-               interaction_flag=bool(inter and inter["flag"]))
+               interaction_flag=flag, blocking=flag or bool(hold and hold["hold"]))
+    if axis == "A8":
+        out["hold"] = hold
     return out

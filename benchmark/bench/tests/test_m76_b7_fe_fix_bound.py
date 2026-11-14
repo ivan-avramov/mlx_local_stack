@@ -200,10 +200,13 @@ def test_axis_verdict_warns_when_sizes_differ_from_the_plan():  # (c) docstring:
 
 
 def test_axis_verdict_a5_goes_through_the_exact_rule():  # (b) verdict_a5 on pooled (b, c, n)
-    from bench.m76_rule import axis_verdict, verdict_a5
+    # AMENDED (B7.1 spec v1.4, C339): the registered A5 plan has two looks, so look 1 (n 72) runs `verdict_a5` at look 1's
+    # registered α (0.003808, read from the plan), not at the single-look 0.025; `verdict_a5`'s default α is unchanged
+    # (pinned in test_m76_b7_1_fe_fix_v14.py). The LOSS case below is the same exact rule at that α.
+    from bench.m76_rule import axis_plan, axis_verdict, verdict_a5
     a, b = _a1_rows(72, 0)
     res = axis_verdict("A5", 1, a, b)
-    ref = verdict_a5(0, 0, 72)
+    ref = verdict_a5(0, 0, 72, alpha=axis_plan("A5")["looks"][0]["alpha"])
     assert str(res["verdict"]) == str(ref[0])
     assert res["loss_bound"] == pytest.approx(ref[1])
     assert res["lo"] is None and res["hi"] is None

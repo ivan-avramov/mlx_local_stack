@@ -49,3 +49,19 @@ byte-identical); `A8_HOLD_PP = -0.20`, `a8_hold`.
 ## Tests
 
 On the final candidate: test-writer 221, implementer 126, B7 + stats 343 — 690 pass.
+
+## Accept
+
+Operator Accept 2026-11-14 ("accepted", S23-P80; C340). Applied to `main`: the final candidate (`m76_sim.py`, `m76_rule.py`, the
+implementer's `test_m76_b7_1_impl_*.py`, regenerated `benchmark/results/m76/b7-simulation/`, `report.json` `b1fbc9a5…`) and the
+test-writer's tests (`test_m76_b7_1_fe_*.py`; its amendments of B7's `test_m76_b7_fe_fix_bound.py` / `test_m76_b7_fe_fix_report.py`).
+On the operator's tree: 831 passed (B7 + B7.1 + stats + consumers).
+
+```
+[four-eyes 0.7.0] outcome: completed; mode: light
+designer, implementer, fixes: Claude Code: Claude Opus 5.5 (designer); claude -p: Claude Opus, candidate fa19996d, fixes 499d3c77, f655ee9f, 78d2648a, 08e4d7b6
+test-writer: claude -p: Claude Sonnet, 493be4f1; continued; tests frozen before the candidate was revealed (delivery 1)
+panel: cold on candidate 1: cursor-agent gpt-5.6-sol-high, read-only snapshot, user instructions unconfirmed, returned; cursor-agent glm-5.2-high, same, returned; verify (fix 2, fresh sessions, briefed with the opinion): sol returned, glm returned
+shared: implementer, test-writer and designer are Anthropic; not covered by them: errors Claude models make consistently (the panel is two other vendors)
+go: C337 (2) (2026-11-14, "go with your rec above"); accept: C340 (2026-11-14, "accepted"); commit: see git log; push: none
+```
