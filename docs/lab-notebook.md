@@ -4882,3 +4882,21 @@ process-level ledger; allocator counters miss cached buffers and lazy evaluation
   inline with MTP and the mode; continuous batching (MTP off, batch cache classes) only with the session cache off, anonymous
   sessions off, or message-less requests (S21-P10).
 - Records: `benchmark/results/m72/{e2e/e2e-131072-pipe2.json, m72-13/}`; ledgers `docs/reviews/m72-1.3-design/`; C317–C322.
+
+## 2026-11-14 (session 23) — M76 stage 2 PASS; two tokenizer facts found building A5's prompts (`Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed`)
+
+- **Stage 2 (P369 E1c + E2, arm X = TQ4 KV + `tq4_attention: m72_exact`, MTP ON) PASS** (`benchmark/results/m76/stage2/`): 8 E1c cells
+  (short … 260,096) 0 mismatches, max TV 0.0, C1 identical; E2 27 greedy requests identical ON vs OFF and cross-load (XO). The D2
+  exact verify kernel served every cell above the 2,048-token routing threshold, the per-query exact path below it; no fallbacks.
+  Mechanism note: exactness here is a property of the kernel's per-query bit-identity with the singleton (M72 1.3, C319), not of
+  tolerance — so it holds at every cell length tested, including the D2 block-count tier above 65,536.
+- **transformers 5.x `apply_chat_template(..., tokenize=True)` returns a `BatchEncoding`**: `len()` of it is 2 (its keys). B3's offline
+  counter took that as the token count, so the chars / token calibration read ≈ 7,400 and every A5 prompt was built ≈ 1,600× too
+  long (the generator ran > 70 min without finishing; mocked tests passed). Fixed in B3 v1.5 (count `input_ids`; refuse a calibration
+  outside 1–10 chars / token). Lesson: count tokens through the real tokenizer object in at least one test.
+- **The "incorrect regex pattern … set `fix_mistral_regex=True`" warning (transformers 5.15) is a false positive for this model**: the
+  pre-tokenizer is Qwen's own pattern (`(?i:'s|'t|…)|[^\r\n\p{L}\p{N}]?[\p{L}\p{M}]+|\p{N}| ?[^\s\p{L}\p{M}\p{N}]+[\r\n]*|\s…`), not the
+  Mistral one the linked report concerns; loading with and without the fix gives identical token ids on a 200K-character A5 prompt,
+  code, numbers / dates, mixed Unicode (CJK, accents, emoji), contractions, odd whitespace and JSON. No effect on serving or benchmarks.
+- With the real tokenizer the runners' filler calibration (4.55 chars / token) lands A5 prompts ≈ −1.5 % below each rung — harmless
+  for the paired comparison (identical prompt and frozen count per arm); the band [−3 %, 0 %] is enforced at generation (S23-P82).
