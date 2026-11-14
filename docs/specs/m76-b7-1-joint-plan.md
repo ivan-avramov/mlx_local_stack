@@ -1,4 +1,4 @@
-# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46)
+# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.1, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions)
 
 ## Goal
 
@@ -66,3 +66,25 @@ deterministic; byte-identical outside the new keys / section.
 
 Adopting a variant (the operator's Go); changing the screen trigger (C324 amendment → the operator); B3's signals for variant looks
 (after the operator picks).
+
+## Erratum v1.1 (2026-11-14, designer; the B7.1 change review's adopted dispositions)
+
+- **A8 nesting:** the screen's 40 items are the decider's first 40 (`docs/specs/m65-tg2-corpus.md` draw rule 2); the screen is its own
+  k = 1 session, the decider s1 / s2 (+ reload) are separate sessions over all 80. Simulate one A8 item set per replication (item
+  parameters shared), the screen on its prefix, the decider on all items; no independence assumption between screen and decider.
+  A test where prefix outcomes predict the decider verdict.
+- **A5 clean term includes the per-task point gates** (retrieval and chain-4 each ≥ −5 pp) besides the pooled exact test; only the
+  absolute per-arm ≥ 0.85 gates stay an assumption. Recompute the committed plan and A5-2L.
+- **A8 large-harm HOLD:** no numeric threshold is pre-registered (m65 / M76 name it only). Simulate per-language decider outcomes and
+  report the A8 path and the clean PASS at HOLD thresholds {none, any language decider point < −25 pp, < −20 pp}; the threshold is the
+  operator's at the stage-3 Go (S23-P63); the headline is labelled with the threshold it assumes.
+- **Cells:** every plan / variant row reports clean PASS at both A7 cells — the nearest realisable cell (headline, decision-relevant)
+  and the extrapolated planning cell (secondary, labelled).
+- **New variant A7-5S:** one look over s1 … s5 (seeds 1001 … 5005) at a calibrated α* (B7's `calibrate` method on A7's grid);
+  report as the other variants (+ hours: always 5 sessions per arm).
+- **A7-2L when both looks calibrate safe:** record `available: true, flag: "five-session interaction flag not simulated"` (no abort);
+  a test monkeypatches the calibration to reach it.
+- **Fail closed:** the build raises when the direct joint simulation disagrees with the product (|z| > 3).
+- **`build_report(b71=False)` by default;** the CLI and B7.1's tests set it.
+- **GPU hours:** two columns — modelled comparison legs, and whole-stage totals including the mandatory pilot / reload, smokes and
+  idles from M76 §9 (sources listed).
