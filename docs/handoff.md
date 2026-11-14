@@ -1,55 +1,76 @@
-# Handoff — 2026-11-12 (session 22: M76 Go; builds B0 = M77, B1, B2 accepted and pushed; M78 / M79 done; M80 next; GPU stages next)
+# Handoff — 2026-11-13 (session 22 → 23: M76 stages 0–1 done, stage 2 smoke RUNNING; M80 applied, gates pending; B7 waits for S22-P25 / P26)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M66–M80, then `docs/open-questions.md` top entries (newest first: C329, C328,
-C327, S22-P16, C326, C325, C324, C323 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias
-for quality, GPU time is the binding resource (funnel, C323); ask only at Go / Accept / pushes / scope changes.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76–M80, then `docs/open-questions.md` top entries (newest first: S22-P25 / P26,
+C330, S22-P18, C329, C328, C327 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: bias for
+quality; GPU time is the binding resource (funnel, C323); ask only at Go / Accept / pushes / scope changes; lead calls filed.
 
-Decisions: session 22 ruled C323–C329. Discussion ids used `S22-P1 … S22-P17`; a new session restarts at P1. Next decision id **C330**.
+Decisions: session 22 ruled C323–C330. **Discussion ids restart: session 23 uses `S23-P1 …`** (session 22 used S22-P1 … P26). Next
+decision id **C331**.
 
-## State (2026-11-12)
+## FIRST (each "no" is a blocker)
 
-- **M76 spec** `docs/specs/m76-tq4-certification.md` v1.2 — GO (C325). Builds: B0 = **M77** (`tq4_attention` with MTP OFF; fork
-  `f9bf743f`, mlx-serve `3b02e4c`; real-model criterion 6 PASS `benchmark/results/m77/`), **B1** (`bench.p475_kv` campaign `f45`;
-  stack `d2369748`), **B2** (fork dev tools: `qualify` / `registry_states` / P369 tuple `m76-x`; fork `5762e66d` + `34a21208`) —
-  all four-eyes light, accepted (C326 / C328), pushed. **M78** (P475 resume gaps, `d5dc4f1c`) and **M79** (mlx-serve stale golden,
-  `0555b2f`, pushed) done. **M80** (the fork gate provides a sibling mlx-serve; spec `docs/specs/m80-gate-sibling-mlx-serve.md`) GO
-  (C329), not built; until then the 146 mlx-serve-dependent B2 tests are TEMPORARY entries in `benchmark/gate/mlx-vlm.skips.txt`
-  (`c8cd6981`) and their evidence is the full-layout local run (1,460 passed beside mlx-serve `0555b2f`).
-- Pushed: fork `origin/main` = `34a21208`; mlx-serve `0555b2f`; stack `origin/main` = `bc89767f`. Local stack ahead: docs, M77
-  records, M78, the temporary skip baseline, the B2 gitlink bump — stack gate pending → push ask.
-- Remaining builds before their stages: B3 (P426 lever `kv`, build label `s3`), B4 (tg2 legs), B5 (Wave 1 extensions, `longctx`),
-  B7 (statistics + rule simulation) — before stage 3; M80 before stage 2.
-- GPU next (stage 0 → 1): `python -m bench.p475_kv --campaign f45 prepare` (base = the stack commit with the B2 bump), the per-arm
-  `preflight` (OFF) + `--engagement` (X, V), smokes N16 / X (grid 8192), then the stage-1 run (two blocks, N16 → X → V → XO and the
-  reverse); pass `--expected-rung-seconds` from the smoke walls; after any interruption wait 600 s before resuming (M78 fixed the
-  window; the rule stays as a habit).
+1. **A stage-2 process may be running.** The P369 smoke for tuple `m76-x` was launched 2026-11-13 (pid 13696; log
+   `$STACK_WORKDIR/m76/p369-smoke.log`; out `$STACK_WORKDIR/p369/phase2/m76-x-smoke/`). Check by PID / log, never with a pattern
+   in your argv. While it (or a later stage-2 full run) runs: **no pytest anywhere** (the P369 / qualify census refuses any `pytest`
+   or `mlx-serve` in a process argv — `orchestrate.REFUSED_EXECUTABLES`), no gate, no four-eyes helper.
+2. Power 140 W / 28 V, GPU idle ≈ 0 % before new GPU work; OrbStack up before any gate.
+3. Pushed: stack `origin/main` = `c67dd7e9`; fork `34a21208`; mlx-serve `0555b2f`. Local, unpushed: stack `90098748` … `093e7176`
+   + this handoff (S22-P18, stage-1 data `93290bd2`, specs B7 / B3+B5 / B4, M80 `093e7176`), fork `babb0c9d` (M80 marker).
 
-## FIRST — verify (each "no" is a blocker)
+## State of M76 (`docs/specs/m76-tq4-certification.md` v1.2, GO C325)
 
-1. Power 140 W / 28 V, GPU idle ≈ 0 % (`ioreg -r -d 1 -c IOAccelerator | grep "Device Utilization %"`), tiny-op floor ≈ 0.17 ms
-   (`benchmark/results/m72/d1d2/floor.py`). OrbStack running before any gate.
-2. Nothing running (check from a script file, never with the patterns in your argv); `:8000` / `:8091` free.
-3. Worktrees: none in the stack beyond main (the M77 check worktree was removed); four-eyes scratch under `$STACK_WORKDIR/fe-m77`,
-   `fe-m76b1`, `fe-m76b2`, review copies under `$STACK_WORKDIR/reviews/m76-design-r1` (regenerable; ask before deleting).
+- **Builds:** B0 = M77 ✔ (pushed); B1 ✔ (pushed); B2 ✔ (pushed); M78 ✔; M79 ✔; **M80 accepted (C330), committed, not gated**;
+  **B7** built (four-eyes: implementer + test-writer delivery 1 done in `$STACK_WORKDIR/fe-m76b7/`; candidate not yet reviewed)
+  — its simulation found the rule unsafe for A5 / A8 → **S22-P25 / P26 OPEN** (designer's quality-biased rec recorded); the B7 fix
+  round implements the operator's ruling, then test-writer delivery 2, change review, Accept. **B3 + B5** spec
+  `docs/specs/m76-b3-b5-p426-kv-lever.md`, **B4** spec `docs/specs/m76-b4-tg2-legs.md`: not dispatched.
+- **Stage 0 ✔:** 7 / 7 preflights PASS (`$STACK_WORKDIR/m76/p475/{preflight,engagement}/`); qualify phase peaks at 260,096
+  tokens: N16 37.66 / 37.97 GB (MTP OFF / ON), TQ4 + `m72_exact` 26.33 / 26.64 GB.
+- **Stage 1 ✔:** `benchmark/results/m76/matrix/MATRIX.Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.md` (12 VALID legs incl. deciding
+  b3): peak 39.86 → 26.81 GB (−13.0 GB, −33 %); prefill 0.95–0.99×; decode X 0.78–0.97×, V 0.86–1.41× (beats N16 1.34–1.41× at
+  196K–256K), X / XO (MTP ON / OFF) 1.18–1.61×; **stage-4 trigger met** (V / X 1.30–1.47 at ≥ 128K). Caveat (S22-P22): one 256-token
+  sample per rung, acceptance content-dependent — decode ratios directional; stage 3's per-item decode is the better speed evidence.
+- **Stage 2 (P369 E1c + E2 on X, cross-load OFF = XO):** smoke RUNNING. On smoke PASS: the full run
+  (`orchestrate.py --tuple m76-x --phase full --smoke-summary <smoke summary> --reviewed-head <fork HEAD of the X worktree>`) — if it
+  projects > 8 h it refuses without `--operator-approved-hours` (ask the operator). Commands: run from
+  `$STACK_WORKDIR/worktrees/m76-f45-x` with its `.venv/bin/python src/mlx-vlm/dev/p369_phase2/orchestrate.py --stack-root …/m76-f45-x
+  --fork-root …/m76-f45-x/src/mlx-vlm --off-stack-root …/m76-f45-xo --tuple m76-x --out $STACK_WORKDIR/p369/phase2/<run>` (out must
+  be under `$STACK_WORKDIR/p369/phase2/`). On FAIL → the operator (stage-2 FAIL / ABORT branches, spec §7).
+
+## Next, in order
+
+1. FIRST. Finish stage 2 (smoke → full; GPU; overnight if long).
+2. When no stage-2 process runs: **M80 gates** — fork gate on `babb0c9d` (`bench.local_gate run --repo mlx-vlm`; criterion 2: the 146
+   marked B2 tests run and pass inside the gate with the sibling; skip list = the 37-line baseline), then the stack gate on the
+   latest stack commit (the gate source changed: every receipt re-runs); push asks (fork, stack).
+3. The operator's ruling on S22-P25 / P26 → B7 fix round (fresh implementer in `$STACK_WORKDIR/fe-m76b7/`), test-writer delivery 2
+   (session in `fe-m76b7/out/testwriter-1.json`), change review (Sol + GLM), Accept, commit with the regenerated simulation report.
+4. B3 + B5 and B4 four-eyes (specs written; helper copies stack-only; never while a GPU stage runs).
+5. Stage 3 Go to the operator with: B7's report (kept looks, A5 n, calibrated alphas), timed A5 / tg2 smokes, the per-axis plan; then
+   stage 3 (and 4: V legs) per spec §7 / §8.
+6. Open, not blocking: S22-P23 (pairing checked at push = M81, recommended).
+
+## Worktrees and scratch
+
+- Stack worktrees (serve M76 stages 1–4; remove after stage 4 is harvested): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` on
+  local branches `m76-f45-*` (X `ec114753`, V `0795beb1`, XO `b9e6b91e`, N16 = base `89205085`).
+- Four-eyes scratch (regenerable; the cited records are committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7}/`; review copies
+  `$STACK_WORKDIR/reviews/m76-design-r1/`; ask before deleting.
 
 ## Rules learned (session 22)
 
-- A pre-registered decision rule needs its error checked, not only its power: simulate false-PASS at the harm boundary before
-  keeping a sequential look; per-axis information fractions differ, so one fixed O'Brien–Fleming pair is wrong.
-- Size every axis of a lossy-lever comparison for reseed-level discordance (simulate at the planned n); MTP-ON/OFF byte identity
-  made P426's bounds easy.
-- An exact bound and a percentile interval in the same code can sit at different α: name both levels in any rule that uses both.
-- A widened load-time refusal must receive the state it conditions on (M77: the stamp check never saw the drafter state).
-- Agentic reuse sentinels use P640's identical-context criterion; whole-output identity fails on tool-output timestamps.
-- Mocked tests miss real-path facts: two of B2's blockers (the production ref default; `joint_v1`'s `cache` reason below 2,048)
-  were found only by reading the real call chain — ask the panel to trace real paths.
-- Frozen tests must locate the fork from `__file__` (the gate's clean clone is not named `mlx-vlm`) and guard any sibling
-  dependency; the fork's isort reorders imports that rely on a `sys.path` side effect (`# isort: skip_file`).
-- The fork gate compares skips to `benchmark/gate/mlx-vlm.skips.txt`: new environment skips fail it — list them (temporarily) or
-  provide the environment (M80).
+- Any `pytest` (or `mlx-serve` in an argv) on the box refuses P369 / qualify runs; chain legs similarly — GPU stages and four-eyes
+  helpers cannot overlap; batch build windows and GPU runs. Name helper copies of mlx-serve neutrally (`serve/`).
+- Timed legs (prefill / decode) run on a quiet box (S22-P18); untimed GPU work may overlap non-pytest CPU work only.
+- A pre-registered decision rule needs its error simulated, not only its power; percentile bootstraps undercover with few discordant
+  items — prefer exact bounds where they exist.
+- Per-rung decode ratios from one generated sample are confounded by MTP acceptance (content); use many-item estimators for speed.
+- Mocked tests miss real-path facts; ask the panel to trace real call chains (two B2 blockers, M80's PYTEST_ADDOPTS hole).
+- Frozen tests must locate the fork from `__file__`, guard sibling dependencies, survive the fork's isort (`# isort: skip_file`).
+- The fork gate compares skips to `benchmark/gate/mlx-vlm.skips.txt`; a gate-source change invalidates every receipt.
 - `run_capacity` gathers the manifest after the ladder: per-leg route counters are the exit snapshot's absolute values.
-- The pre-push hook refuses a code range above a gated sha: push the gated sha itself.
-- The router loads the worker on demand: `/health` on :8091 exists only after a first request.
+- Push the gated sha itself when docs or code sit above it (the pre-push hook levels the whole range).
+- The router loads the worker on demand: `/health` on :8091 only after a first request.
 
 ## Done in session 21 (for reference)
 
