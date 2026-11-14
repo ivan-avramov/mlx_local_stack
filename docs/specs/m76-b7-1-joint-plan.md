@@ -1,4 +1,4 @@
-# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.2, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions; v1.2 = two harm-detection options)
+# M76 B7.1 — joint plan and pre-registered follow-up looks — SPEC v1.3, 2026-11-14 (four-eyes light; C337 (2), S23-P44 … P46; v1.1 = change-review dispositions; v1.2 = two harm-detection options; v1.3 = C338 + verify dispositions)
 
 ## Goal
 
@@ -98,3 +98,13 @@ Two more A8 options, reported exactly like T0 / T1 / T2 (never applied; C324 ame
 Per option, as for the others: trigger rate at loss 0, detection at a macro 10 pp loss and at a 10 pp loss in one language, the A8
 path's false-clean rate at a macro 10 pp loss, the joint clean PASS (both A7 cells; with and without A5-2L), and modelled / whole-stage
 GPU hours. Tests: TD's trigger rate is 1 and its false-clean rate equals the decider's false-PASS-and-no-flag rate.
+
+## Amendment v1.3 (2026-11-14; C338 + the B7.1 verify's adopted findings)
+
+- **The committed plan is TD (C338):** the decider always runs. Every joint quantity, direct check, variant, hours figure, rendering
+  and test uses TD as the committed A8 path; T0–T3 are reported as alternatives only (labelled superseded by C338). The report's
+  header names spec v1.3.
+- **A7-5S:** its five-session interaction flag is not simulated, so no clean-PASS estimate is shown; the row reports A7-5S's own PASS
+  rate and safety and says "clean PASS not estimated (interaction flag unsimulated)"; `pays` stays undetermined.
+- **Worst final look:** the column is "worst on the committed grid"; every plan with A8 shows the C336 residual beside it (3 realisable
+  SD 0.5 cells, up to 2.82 %).
