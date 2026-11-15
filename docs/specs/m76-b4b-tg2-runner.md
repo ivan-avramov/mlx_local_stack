@@ -1,4 +1,4 @@
-# M76 B4b — tg2 runnable end to end in P426 lever `kv` (A8) — SPEC v1 DRAFT, 2026-11-15 (four-eyes STRICT; C342, C343)
+# M76 B4b — tg2 runnable end to end in P426 lever `kv` (A8) — SPEC v1.1 DRAFT, 2026-11-15 (C345) (four-eyes STRICT; C342, C343)
 
 ## Goal
 
@@ -62,14 +62,14 @@ corpus's inject seam (as `--tg1-inject`), plus a grader known-positive per langu
 **Chain.** `run_tg1_chain.py --corpus tg2 --tier screen|decider` (or `run_tg2_chain.py` as its configuration — the implementer
 states which) under `--p426 --lever kv` only; corpus-specific `CORE_SPECS` / `LANGS` / universe / scaffold; schedule from the draw:
 s1 seed 1001 in language order rust, javascript, java, cpp; s2 seed 2002 reversed; reload = first 5 items of s1's first language at
-1001; smoke = first item per language (screen tier). Transport DNFs as tg1 (`p426_dnf`); make-up legs: **open question Q1**.
+1001; smoke = first item per language (screen tier). Transport DNFs and make-up legs as tg1 (`p426_dnf`; C345 Q1).
 
 **Freeze / sequencer.** `p426_freeze v8 --lever kv --corpus tg2` writes the tg2 frozen record (corpus, draw sha256, tier) (L18); the
 timeout amendment's tg2 walls `w_rust_s` / `w_javascript_s` / `w_java_s` / `w_cpp_s` come from the four-language smoke's sizing report
 (max over smoke walls and the M55 heavy-tail allowance) and are verified present and numeric at amendment verification (L7);
 `deadline_formula` accepts the tg2 languages. `p426_wave2 --corpus tg2` sequences per arm pair: smoke pair → strict pilot gate (both
 arms VALID, 0 DNF, 4 realised rows, speed-valid, engaged, pair-gated; L5) → amendment → positives gate → screen pair → C331 (3)
-re-check → decider s1, s2, reload (make-up per Q1), first arm alternating as tg1. Leg names `tg2-m76-<arm>-{smoke,screen,s1,s2,reload}`;
+re-check → decider s1, s2, reload, make-up (C345 Q1), first arm alternating as tg1. Leg names `tg2-m76-<arm>-{smoke,screen,s1,s2,reload}`;
 `p426_receipt` pairs and dossiers accept `smoke`, `screen` (L17).
 
 **Harvest.** `wave2-tg2` under `benchmark/results/m76/`; classification rules for every file `tg2_grade` writes per grade
@@ -100,8 +100,9 @@ counts per arm / language. The B4 `item_record` / `a8_decider_inputs` path is no
 
 New tg2 items, graders or draws; tg2 outside M76; M64; stage 4 (V).
 
-## Open questions (designer recommendation)
+## Settled by the operator (C345)
 
-- Q1 make-up legs for tg2 transport DNFs — rec: as tg1 (one make-up leg per session recovering transport-DNF slots, `MAX_DNF` 2);
-  remaining DNFs strict fail. Counterpoint: tg2 items are long (≈ 6 min mean, 61 min max); a make-up leg can add hours.
-- Q2 smoke size — rec: 1 item per language (4) as B4; counterpoint: the sizing report's heavy tail rests on 4 items + M55 means.
+- Q1 make-up legs for tg2 transport DNFs: as tg1 — one make-up leg per session recovering transport-DNF slots (`MAX_DNF` 2 per leg);
+  remaining DNFs strict fail (C343 (3)).
+- Q2 smoke size: 1 item per language (4), the screen tier's first item; the sizing report adds the M55 heavy-tail allowance to the
+  smoke walls.
