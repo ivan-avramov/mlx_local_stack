@@ -3,10 +3,14 @@ C239). Built on the frozen P426 world (`b2_frozen_add_support.world`, `b2_frozen
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 
 from bench.tests import b2_frozen_add_support as A
 from bench.tests import b2_frozen_support as S
+
+WATCH_INTERVAL_TEST_S = "1.0"  # S23-P93: the topology watcher interval (on the watcher's own deterministic clock)
+POLL_REAL_S = 0.01             # S23-P93: real time per watcher sleep
 
 SESSION_OUT = {"pilot": "pilot", "s1": "s1", "s2": "s2", "reload": "reload"}
 
@@ -169,14 +173,28 @@ class Topology:
                 self.sys.path.insert(0, str(S.BENCH / "m1"))
             import bench_watch as W
             watch_argv = list(argv[2:])
+            # S23-P93: the in-process watcher runs on its OWN deterministic clock — each sleep advances its stamps by exactly the
+            # requested interval while waiting only POLL_REAL_S of real time — so (a) its tick gaps equal the interval whatever the
+            # box's load (a real 0.1 s interval let one scheduling stall break the speed rule's 2 x allowance: pilot speed-invalid
+            # -> rc 1 in a loaded gate) and (b) it notices the chain's exit within milliseconds (a longer real interval outlived
+            # the sequencer's fake-clock 900 s exit wait). The speed rule itself is the product's, unchanged.
             if "--interval" in watch_argv:
-                watch_argv[watch_argv.index("--interval") + 1] = "0.1"
+                watch_argv[watch_argv.index("--interval") + 1] = WATCH_INTERVAL_TEST_S
             else:
-                watch_argv += ["--interval", "0.1"]
+                watch_argv += ["--interval", WATCH_INTERVAL_TEST_S]
+
+            wt = [time.time()]
+
+            def wclock():
+                return wt[0]
+
+            def wsleep(seconds):
+                time.sleep(POLL_REAL_S)
+                wt[0] += float(seconds)
 
             def target():
                 try:
-                    res["rc"] = W.main(watch_argv, power=self.power)
+                    res["rc"] = W.main(watch_argv, power=self.power, clock=wclock, sleep=wsleep)
                 except BaseException as e:  # noqa: BLE001
                     res["rc"], res["exc"] = 1, e
                 finally:

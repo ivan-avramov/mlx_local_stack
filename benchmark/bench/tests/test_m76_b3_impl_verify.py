@@ -23,11 +23,23 @@ GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": "/dev/null", "GIT_AU
            "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid", "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin"}
 
 
+_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "m76_b3_fe"
+_FIXTURE_ARM = {"89205085": "n16", "origin/m76-f45-x": "x", "origin/m76-f45-v": "v", "origin/m76-f45-xo": "xo"}
+
+
 def _show(ref):
-    r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:main_models.yaml"], capture_output=True)
+    """The arm's committed registry: the sha256-pinned fixture copy (`fixtures/m76_b3_fe/`, checked against its source revision by
+    `test_m76_b3_registry_fixtures_pinned.py`) — so the test runs on any clone, not only where the local `m76-f45-*` branches exist
+    (S23-P93); any other ref / path from git."""
+    arm = _FIXTURE_ARM.get(ref)
+    if arm and "main_models.yaml" == "main_models.yaml":
+        data = (_FIXTURES / f"{arm}_main_models.yaml").read_bytes()
+        return data
+    r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{"main_models.yaml"}"], capture_output=True)
     if r.returncode:
         pytest.skip(f"{ref} is not in this repository's objects")
-    return r.stdout
+    data = r.stdout
+    return data
 
 
 def git(repo, *args):

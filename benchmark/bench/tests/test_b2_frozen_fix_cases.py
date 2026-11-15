@@ -534,3 +534,24 @@ def test_fix_p536_topology_a_makeup_leg_that_stops_early_records_its_unrun_occur
     assert rc == 1 and rec["state"] == "INVALID", (rc, rec)
     assert [(o["session"], o["language"], o["item"], o["seed"]) for o in rec["not_run"]] == [
         ("s1", "python", order[1], 1001), ("s1", "python", order[3], 1001)]
+
+
+def test_s23_p93_the_topology_watcher_interval_leaves_a_margin_for_a_scheduling_stall():
+    """S23-P93 (zero flakes): a 0.25 s stall between two watcher ticks broke the 2 x 0.1 s allowance on a loaded box; the topology's
+    interval keeps the same rule (the product's) with a margin such a stall cannot reach."""
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "m1"))
+    try:
+        import bench_watch as W
+    finally:
+        _sys.path.pop(0)
+    from bench.tests import b2_frozen_fix_support as FS
+
+    def journal(interval, gap):
+        t0 = 1_800_000_000.0
+        tick = dict(watts=140, volts=28, battery=80, interval_s=interval)
+        return [dict(tick, t=t0), dict(tick, t=t0 + gap), dict(exit_state="exited", t=t0 + gap, interval_s=interval,
+                                                                battery_intervals=[])]
+    # only the gap clause is under test (the other clauses read fields this minimal journal does not carry)
+    assert "tick gap" in W._verdict(journal(0.1, 0.25))["reason"]                       # the old margin: one stall fails
+    assert "tick gap" not in W._verdict(journal(float(FS.WATCH_INTERVAL_TEST_S), 0.25))["reason"]

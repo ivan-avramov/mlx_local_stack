@@ -19,11 +19,23 @@ ENTRY = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 REFS = {"n16": "89205085", "x": "origin/m76-f45-x", "v": "origin/m76-f45-v"}
 
 
+_FIXTURES = Path(__file__).resolve().parent / "fixtures" / "m76_b3_fe"
+_FIXTURE_ARM = {"89205085": "n16", "origin/m76-f45-x": "x", "origin/m76-f45-v": "v", "origin/m76-f45-xo": "xo"}
+
+
 def _show(ref):
-    r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:main_models.yaml"], capture_output=True)
+    """The arm's committed registry: the sha256-pinned fixture copy (`fixtures/m76_b3_fe/`, checked against its source revision by
+    `test_m76_b3_registry_fixtures_pinned.py`) — so the test runs on any clone, not only where the local `m76-f45-*` branches exist
+    (S23-P93); any other ref / path from git."""
+    arm = _FIXTURE_ARM.get(ref)
+    if arm and "main_models.yaml" == "main_models.yaml":
+        data = (_FIXTURES / f"{arm}_main_models.yaml").read_bytes()
+        return data.decode()
+    r = subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{"main_models.yaml"}"], capture_output=True)
     if r.returncode:
         pytest.skip(f"{ref} is not in this repository's objects")
-    return r.stdout.decode()
+    data = r.stdout
+    return data.decode()
 
 
 @pytest.fixture(scope="module")
