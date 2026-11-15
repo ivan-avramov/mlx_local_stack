@@ -1,8 +1,13 @@
-# M76 B4b-1 — tg2 legs to harvested evidence in P426 lever `kv` (A8) — SPEC v3, 2026-11-15 (four-eyes STRICT; C342, C343, C345, C346, C347)
+# M76 B4b-1 — tg2 legs to harvested evidence in P426 lever `kv` (A8) — SPEC v4, 2026-11-15 (four-eyes STRICT; C342, C343, C345, C346, C347, C348)
 
 v3 = B4b-1 after the split (C347). It applies design review round 1 (D1–D21) and round 2 (E1–E4, E6–E8, E12–E14) for everything up to
 harvested evidence; ledger `docs/reviews/m76-b4b/design-review-ledger-report.md`. B8 A8, signals A8 and panel A8 (v2 §5–§6, E5, E9–E11)
-are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). Round 3 of 3 verifies v3.
+are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). v4 applies round 3 (G1–G15); round 4 (C348) reviews it against the goal.
+
+**How to read this spec (C348).** It fixes behaviour and names the seams. Where a code-level detail here conflicts with the code
+(a helper's precondition, a CLI's required flags, a constant's name), the implementer keeps the stated behaviour, follows the
+code's contract and reports the deviation; the test-writer tests behaviour through the real call paths (no mocks of the functions
+this spec names).
 
 ## Goal
 
@@ -60,14 +65,18 @@ the forks.
   `needs_docker` (True for every language), `identity` (grader `VERSION`, image digest, universe and draw sha256,
   `grader_timeout_s[lang] = 2 × max_entries(timeout_s) + 300`).
 - **Prompt (E1), exact bytes:** `"Implement the solution in {S} so that the tests in {T} pass. The specification follows.\n\n{SPEC}\n\nDo
-  NOT modify the tests or the build files. Do not create new files unless the specification requires them; {H}"` — `S` / `T` = the
+  NOT modify the tests or the build files except as stated below. Do not create new files unless the specification requires them; {H}"` — `S` / `T` = the
   entry's `solutions` / `tests` joined with `", "`; `SPEC` = the bytes of `.docs/instructions.md` followed (blank line) by
-  `.docs/instructions.append.md` when present, both from `tg2_materialize.exercise_dir(source_root(lang), lang, slug)/.docs/` (slug =
-  the item id after `<lang>/`; the pinned corpus, never the materialised tree, which excludes `.docs`); `H` = the language's helper rule from M65 v5 ("Rust: helper modules under
-  src/", "Java: helper classes only in the solution's package", "JavaScript: helper .js files beside the solution", "C++: helper .h /
-  .cpp files not named by any CMake test glob"). An inject kind appends `" " + INJECT_ADDENDA[kind]` (tg1's three texts, byte-equal;
+  `.docs/instructions.append.md` when present, both read as UTF-8 from `source_root(lang)/<slug>/.docs/` (`source_root(lang)` =
+  `<polyglot checkout>/<lang>/exercises/practice` per the `Corpus` contract; slug = the item id after `<lang>/`; never the materialised
+  tree, which excludes `.docs`); `H` = exactly one of: Rust `"Helper modules may go under src/; you may add [dependencies] from the offline crates listed in
+  OFFLINE_CRATES.md to Cargo.toml."`, Java `"Helper classes may go only in the solution's package."`, JavaScript `"Helper .js files
+  may go beside the solution."`, C++ `"Helper .h / .cpp files may go beside the solution."`. The prompt ends with `H`. An inject kind appends `" " + INJECT_ADDENDA[kind]` (tg1's three texts, byte-equal;
   `inject_addendum_sha256`).
-- **Grade call (E7):** `tg2_grade.grade_item(lang, work, slug, private, prepared=prepared.prepared, solutions=entry["solutions"],
+- **Snapshot (G1):** `Tg2Corpus.snapshot` captures into a directory outside `grading-private` (a sibling `grading-snap/` in the run dir;
+  `tg2_grade` refuses a work tree inside its private dir); `private` stays `grading-private`.
+- **Grade call (E7, G9):** `snap is None` or a protected-tree violation → the tampered outcome without calling the grader; else
+  `tg2_grade.grade_item(prepared.lang, snap.path, slug, private, prepared=prepared.prepared, solutions=entry["solutions"],
   prepared_cargo_toml=entry.get("prepared_cargo_toml"), extra_crates=(), keep=keep, seq=seq, boundary=boundary, final=final,
   guard=guard, timeout=entry["timeout_s"])` (`extra_crates` empty for model runs; the reference's extra crates never apply).
 - **Grader mapping, `corpus_tg2.grade_outcome(result, entry, *, seq, boundary, final) -> GradeOutcome`:** `GradeOutcome.outcome =
@@ -76,11 +85,11 @@ the forks.
   `mem_kill`, `crash`, `storage_cap` → every leaf failing; `tampered` → `tampered=True`, `failing=None`, `leaves=()`;
   `resources.grader_oom = (outcome == "oom")`, `resources.grader_mem_kill = (outcome == "mem_kill")`, both False otherwise;
   `phases = ({seq, boundary, final, outcome},)`; `reports = dict(result.artifacts)`.
-- **Final tree (E8):** tg1's content-addressed layout (`objects/<sha>` + `manifest.json`) over every path the grader accepts as a model
-  edit: the declared solutions, every allowed helper file present, and `Cargo.toml` when it differs from the prepared one; `missing`
+- **Final tree (E8):** tg1's content-addressed layout (`objects/<sha>` + `manifest.json`) over the declared solutions plus every file new or changed in a
+  tree that `tg2_grade`'s tamper check accepts (helpers, a changed `Cargo.toml`) — the complement of what it rejects; `missing`
   lists declared solutions absent.
 - `structured_grade.validate_reports` accepts the tg2 languages with `tg2_grade`'s outcome set and per-language `parsed` artifacts
-  (Java / C++ `junit-NNN.xml` / `report.xml`, JavaScript `report.json`, Rust the execute step's stdout).
+  matched by pattern (Java `junit-*.xml`, C++ `report.xml`, JavaScript `report.json`, Rust the execute step's stdout).
 - Carrier: configgen target `opencode-bench-v2-web-tg2` → `benchmark/opencode_bench_v2_web_tg2.json` (tg1's carrier, tg2 label), in
   `GENERATED_PATHS`; generation data = the tg1 plugins + this carrier. `provenance`, `arm_opencode`, `chain_ops.validate_leg`,
   `chain_ops.a4_gate` and `session_pinning_gate` take the scaffold from the leg's `ArmBinding.label` / accept the tg2 carrier.
@@ -96,10 +105,12 @@ the forks.
   `CORE_SPECS` name `run_tg2_probe.py`, the tg2 generation data and itself; `LANGS = ("rust","javascript","java","cpp")`.
 - **`--leg` → shared-core mapping (E2):** `pilot` → `mode="pilot"`, `sessions=[]`, record kind `p426_v8_base`; `s1` / `s2` / `reload` →
   `mode="chain"`, `sessions=[<leg>]`, record kind `p426_timeout_amendment`; `--rehearsal r2|r3` → `mode="chain"`, `sessions=["s1"]`,
-  `rehearsal=True`, record kind `p426_rehearsal`. `chain.json` records both the normalised `mode` / `sessions` and `tg2_leg`.
+  `rehearsal=True`, `inject="reconcile-mismatch"` (r2) / `"stall-kill"` (r3), record kind `p426_rehearsal`. `chain.json` records both the normalised `mode` / `sessions` and `tg2_leg`.
 - `run_config`: `P426_CONFIG_IDS = ("tg1-p426", "tg2-p426")`; `tg2-p426` = builder `tg2_p426`, `p426=True`, one model, transport
-  `p426_continue`. `chain_core` keys `freezes_schedule`, the overlay skip, the prediction defaults (tg1's, never M64's `PRED_S`) and
-  `verify_schedule` on `config_id in P426_CONFIG_IDS`; `plan` dispatches builder `tg2_p426` to the tg1 P426 planner parameterised by
+  `p426_continue`. `ChainConfig` accepts `p426_continue` for every `P426_CONFIG_IDS` config with its own builder (`tg1` / `tg2_p426`).
+  `chain_core` keys `freezes_schedule`, the overlay skip, the prediction defaults (tg1's, never M64's `PRED_S`), `verify_schedule` and
+  the probe's `--evidence p426` argv (G3: today only `tg1-p426` gets it, which would drop the item barrier) on `config_id in
+  P426_CONFIG_IDS`; `plan` dispatches builder `tg2_p426` to the tg1 P426 planner parameterised by
   the corpus `LANGS`; `needs_docker` comes from the corpus.
 - **Builder (E12) `schedules.tg2_p426(draw, leg, model, predictor)`:** tg1's P426 document shape `blocks[].legs[].invocations[]`, one
   block, ONE schedule leg per (session, language) in the table's language order, each with one invocation of that language's items;
@@ -112,9 +123,9 @@ the forks.
 | `s1` | `s1` | 1001 | rust, javascript, java, cpp | first 20 |
 | `s2` | `s2` | 2002 | cpp, java, javascript, rust | first 20 |
 | `reload` | `reload` | 1001 | rust, javascript, java, cpp | first 5 |
-| rehearsal `r2` / `r3` | `s1` | 1001 | rust | first 1 |
+| rehearsal `r2` / `r3` (each arm) | `s1` | 1001 | rust | first 1 |
 
-- Leg / attempt names `tg2-m76-<arm>-<leg>.a<n>`, `tg2-m76-n16-rehearsal-{r2,r3}.a<n>`; slot prefix `tg2-p426`.
+- Leg / attempt names `tg2-m76-<arm>-<leg>.a<n>`, `tg2-m76-<arm>-rehearsal-{r2,r3}.a<n>`; slot prefix `tg2-p426`.
 
 ### 3. Positives, rehearsals, freeze, sequencer
 
@@ -122,40 +133,45 @@ the forks.
   the pilot item's stub graded FAIL and its reference graded PASS through `Tg2Corpus.grade` (docker, no GPU); (b) on N16, stall / loop /
   alloc on the pilot item per language at seed 1001 (12 `run_tg2_probe.py --tg2-inject` runs, out `$STACK_WORKDIR/m65/inject/`), each
   verified by `m62/inject_verify.py --scaffold opencode-v2-web-tg2 --run <dir> --kind <k>` with that kind's existing causal predicate;
-  one retry per run only on a transport abort. It writes one sealed (self-hashed) record: probe identity, per (language, kind) the
+  one retry per run only on a transport abort. The positives run as a leg: the sequencer starts the lean router on N16's worktree, passes the A4 gate and loads the worker as for
+  any leg, with the frozen prompt date `--frozen-prompt-date <D>` given by the operator (the rehearsal manifest and v8 must carry the
+  same date). It writes one sealed (self-hashed) record: probe / generation / scaffold identity, N16 commit, universe / draw / image
+  sha256, per (language, kind) the
   item, seed, attempts, row / evidence sha256 and verdict, per language the two grader results; all must pass. N16 only: the positives
   prove the harness; X's serving path is proven by stage 2 and the pilot pair's engagement + pair gate.
-- **Rehearsals (E3):** `p426_freeze rehearsal --lever kv --corpus tg2 --arm-worktree n16=<W> --out-root <m76/p426/rehearsal.tg2>
-  --out manifest.json`; legs `tg2-m76-n16-rehearsal-r2` (the `p426_hooks` reconciliation-mismatch injection fires on the first item of
+- **Rehearsals (E3, G4):** `p426_freeze rehearsal --lever kv --corpus tg2 --pair n16,x --arm-worktree n16=<W> --arm-worktree x=<W>
+  --frozen-prompt-date <D> --out-root <m76/p426/rehearsal.tg2> --out manifest.json` (the pair's manifest, as tg1's); legs
+  `tg2-m76-<arm>-rehearsal-r2` (the `p426_hooks` reconciliation-mismatch injection fires on the first item of
   the leg's first language — tg1: the first Go item, tg2: the first Rust item — → INVALID with `R2_REASON`) and `-r3` (the probe kill
-  injected into the first Rust item → VALID with the kill scored); `p426_hooks` takes the target language from the corpus.
+  injected into the first Rust item → VALID with the kill scored); `p426_hooks` and `chain_core.p426_inject_stall` take the target
+  language from the corpus (tg1: Go / Python as today).
 - **v8 base:** `p426_freeze v8 --lever kv --corpus tg2 --pair n16,x --arm-worktree n16=<W> --arm-worktree x=<W> --rehearsal-manifest M
   --r2 L --r3 L --positives P --out v8_base.json` → `kind p426_v8_base` with `corpus: "tg2"`, `tg2_draw_sha256`, `positives_sha256`, the
   R2 / R3 receipts, `pilot_deadline_s = REHEARSAL_DEADLINE_S` (6 h), `settle_bound_s = max(P426_SETTLE_BOUND_S, 2 × max request elapsed
-  over R2 and R3)`; no R1, no historical walls (the pilot pair takes R1's positive-pair role).
+  over the rehearsal legs' item records)` (a killed item without a record is skipped; none at all → `P426_SETTLE_BOUND_S`); no R1, no historical walls (the pilot pair takes R1's positive-pair role).
 - **Order per pair (N16 = ref, X = test):** positives → rehearsals → v8 → pilot (ref → test) → the strict pilot gate (both arms VALID,
-  not VALID_WITH_DNF; 4 reconciled rows each; 0 DNF; speed-valid; engaged; pair-gated; `pilot_gate_problems` parameterised by leg name
-  and n = 4) → `write_amendment --corpus tg2`: `w_<lang>_s = max(max pilot wall of <lang> over both arms, 382)`, `leg_deadline_s[leg] =
+  not VALID_WITH_DNF; 4 reconciled rows each; 0 DNF; speed-valid; engaged; pair-gated; `pilot_gate_problems(..., leg_name=, n=)`, tg2: `tg2-m76-<arm>-pilot`, n = 4) → `write_amendment --corpus tg2`: `w_<lang>_s = max(max pilot wall of <lang> over both arms, 382)`, `leg_deadline_s[leg] =
   1.5 × Σ_lang n_lang × w_<lang>_s + 1800 + 3660` (n from the table; 3660 s = one P223 maximum item), `settle_bound_s` as tg1's
   amendment; verified present, numeric and positive → s1 (ref → test) → re-check 1 → s2 (test → ref) → reload (test → ref) →
-  re-check 2. The sequencer re-verifies the positives record's sha against v8 at start and on resume.
-- `p426_receipt` pairs for tg2: `pilot`, `s1`, `s2`, `reload` (`r1`, `makeup`, `s3` refused for tg2).
+  re-check 2. v8 compares every identity field of the positives record and the N16 commit to its live inputs (a sealed record of another identity
+  refuses); the sequencer re-verifies the record's sha against v8 at start and on resume.
+- `p426_receipt` dossier pairs per corpus: tg2 `pilot`, `s1`, `s2`, `reload` (`r1`, `makeup`, `s3` refused for tg2; tg1 unchanged).
 - **Strict rows (for the re-checks):** `p426_wave2.tg2_strict_rows(leg_roots, session)` → `{item: {session: 0/1}}` from the harvested
   rows: 1 iff `passed is True and converged is True`; a `p426_dnf` slot → 0; a planned slot with neither a row nor a DNF record refuses.
 - **Re-checks (E4):** after both s1 legs are harvested, `m76_sim.recheck("A8", n16, x, out=<tmp dir>)` over s1's strict rows; the
-  sequencer publishes its `recheck-A8.json` as `<out-base>/run/recheck-s1.json` and records the file's sha256 in `sequence.json`
-  (`rechecks.s1`). `inside` → continue; otherwise (outside / `operator_review`) the sequencer stops with rc 5 and resumes only with
-  `--recheck-ack <that sha256>`, recorded in `sequence.json` (`rechecks.s1.ack` with the time). After s2: the same over s1 + s2 →
+  sequencer seals its `recheck-A8.json` (`ph.seal`) into `<out-base>/run/recheck-s1.json`, published with the other run files
+  (`publish_run_files`), and records the sealed `sha256` in `sequence.json` (`rechecks.s1`). `inside` → continue; otherwise (outside /
+  `operator_review`) the sequencer stops with rc 5 and resumes only with `p426_wave2 run … --recheck-ack <that sealed sha256>`, recorded in `sequence.json` (`rechecks.s1.ack` with the time). After s2: the same over s1 + s2 →
   `run/recheck-s2.json`, recorded; never stops (B4b-2 labels the verdict).
 
 ### 4. Harvest
 
 Namespace `wave2.tg2` (`benchmark/results/m76/wave2.tg2/`). Added rules: under `<item>.grades/seq-NNNN/`, `<step>.{stdout,stderr,inspect,
 inspect.err}` for step ∈ {setup-image, setup-launch, preflight, compile, execute, collect} and the bookkeeping files whose stem matches
-`TG2_BOOKKEEPING_RE` → evidence, where `TG2_BOOKKEEPING_RE = ^(holder|own-holder|cl-holder|cl-rm|ls-ps|ls-vol|(plan|volume|own|rm|cl)-[a-z0-9][a-z0-9_.-]*|(setup-image|setup-launch|preflight|compile|execute|collect)-(pre|n|rm|v|x))\.(out|err)$`
-(the implementer checks it against every `_plain` / step call site of `tg2_grade` and the recorded real fixtures; a real file it does
-not match fails the harvest); `grading-private/.tg2-registry/*.json` → evidence, before the generic `.json` → main rule;
-`run/positives.json`, `run/recheck-s{1,2}.json` → main. Anything else stays unclassified (the harvest fails).
+`TG2_BOOKKEEPING_RE` → evidence, where `TG2_BOOKKEEPING_RE = ^(holder|own-holder|ls-ps|ls-vol|cl-rm|(plan|volume|own|rm|cl|ls)-[A-Za-z0-9][A-Za-z0-9_.-]*|[a-z-]+-(pre|n|rm|v|x|n-x|rm-x|v-x))\.(out|err)$`
+(derived from `tg2_grade`'s call sites; pinned by the recorded real grade trees, every file of which must match; a near-match
+refuses); `grading-private/.tg2-registry/*.json` → evidence, before the generic `.json` → main rule;
+`run/positives.json` and `run/recheck-s{1,2}.json` are sealed run records, published by `publish_run_files` (main). Anything else stays unclassified (the harvest fails).
 
 ## Supported conditions
 
