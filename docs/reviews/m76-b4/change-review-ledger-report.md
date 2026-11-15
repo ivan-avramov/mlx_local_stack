@@ -3,7 +3,7 @@
 Candidate 1 (implementer Claude Opus, `claude -p`, session `07df4029`) on baseline `2da56449`; spec `docs/specs/m76-b4-tg2-legs.md` v1.1.
 Panel (cursor-agent, `--mode ask`, context `checkout` snapshot with rule files renamed, user instructions unconfirmed):
 Sol `gpt-5.6-sol-high` (returned, 7 findings), GLM `glm-5.2-high` (returned, 11 findings + 2 scope notes). Raw:
-`opinion-change-sol.md`, `opinion-change-glm.md`. Test-writer delivery 2 (Claude Sonnet, session `86224b98`, continued): pending.
+`opinion-change-sol.md`, `opinion-change-glm.md`. Test-writer delivery 2 (Claude Sonnet, session `86224b98`, continued; `testwriter-delivery2-report.md`): verdict fix-then-merge; 130 / 131 on the candidate.
 Settled for the review: C342 (the tg2 runner is B4b; its absence is not a finding).
 
 | id | raised by | finding | severity (designer) | disposition | why |
@@ -24,6 +24,30 @@ Settled for the review: C342 (the tg2 runner is B4b; its absence is not a findin
 | L14 | GLM S2 | the first-arm alternation (screen ref, s1 test, s2 ref, reload test) is the implementer's call | scope request | → operator via the spec | spec states it |
 | L15 | GLM F8 | positives run before the power / idle checks | minor | declined | CPU-only docker grading, no GPU; the leg's power check and idle wait still precede every launch |
 | L16 | GLM F2, F11 | guard ordering / split messages | — | declined | no material consequence |
+| L17 | test-writer d2 F1 | the `screen` pair has no dossier name: `p426_receipt.write_kv_dossier` / `PAIRS` accept `r1, pilot, s1, s2, reload, makeup, s3` only → `ValueError` after the screen pair; the decider never scheduled (C338) | blocker | adopted (→ B4b) | red post-reveal test `test_m76_b4_fe_postreveal_pairs.py::…[screen]` |
+| L18 | test-writer d2 F3 | no tool writes a tg2 frozen record (`corpus`, `tg2_draw_sha256`, tier) — every tg2 leg refuses | major | adopted (→ B4b) | `p426_freeze` writes none of these |
+| L19 | test-writer d2 F2 | tg2 has no make-up legs, tg1 resolves transport DNFs by make-up | major | → B4b spec open question | C343 (3) scores a remaining DNF 0; whether tg2 adds make-up is B4b's call (designer lean: as tg1) |
+| L20 | test-writer d2 F5, residual | `--tg2-draw` never parsed (dead `getattr`); one amended refusal case (`bad2`) vacuous | minor | adopted (→ B4b) | name the draw seam in the spec or drop it |
 
 Designer root cause: B4's spec assumed a runnable tg2 (C342) and scoped B4 to the chain / sequencer only, omitting the B8 verifier and
 signals path A7 uses — L2, L3, L4, L7, L8 all sit on that boundary. Proposed handling: S24-P5 (docs/open-questions.md).
+
+Test amendments (S24-P1): the 26 world-mismatched v1 tests were amended in delivery 2 (lever kv world; stub probe = the world's fake
+probe; draw refusal via a patched repo root). One assertion changed, reported: the screen leg's frozen session label (v1 `{"s1"}` →
+one value in `{s1, screen}`; the spec does not fix it). Post-reveal tests: `test_m76_b4_fe_postreveal_{mapping,pairs}.py` (38).
+Full-suite comparison: not completed (the copies' empty submodules broke collection on the first run; the rerun was stopped once C343
+stopped B4).
+
+## Outcome (C343)
+
+```
+[four-eyes 0.7.0] outcome: stopped; mode: light (C325; B4b continues STRICT per C343)
+designer, implementer, fixes: Claude Code: Claude Opus 5.5 (designer, sessions 23–24); claude -p: Claude Opus, session 07df4029 (implementer); fixes: none
+test-writer: claude -p: Claude Sonnet, session 86224b98; continued; tests frozen 2026-11-15T06:56:54Z, candidate revealed 2026-11-15T06:59:25Z
+panel: cold on candidate: Sol cursor-agent gpt-5.6-sol-high, no session id, checkout (user instructions unconfirmed), returned; GLM cursor-agent glm-5.2-high, no session id, checkout (user instructions unconfirmed), returned; verify: none
+shared: designer and implementer Anthropic Claude Opus; test-writer Anthropic; not covered: Anthropic-family blind spots outside the two non-Anthropic panel members
+go: 2026-11-11 C325 "go" (+ C338 amendment); accept: none; commit: none (candidate 1 not applied; records only); push: none of the candidate
+```
+
+Stopped at the change review: candidate 1 has verified blockers (L2–L4, L17) on the boundary with the unbuilt tg2 runner; it and
+every finding carry into B4b (PLAN M83). Nothing of the candidate was committed or pushed.
