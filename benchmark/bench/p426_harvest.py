@@ -99,11 +99,12 @@ def _publish(src_bytes, rel, scrub, compressible=False):
         text = src_bytes.decode("utf-8")
     except UnicodeDecodeError:
         hits = [m.decode() for m in scrub.raw_markers() if m and m in src_bytes]
-        scrubbed, problems = src_bytes, ([f"{rel}: binary file carries PII markers {hits}"] if hits else [])
+        scrubbed, problems = src_bytes, ([f"{rel}: binary file carries {len(hits)} PII marker(s)"] if hits else [])   # never the markers
     else:
         out = scrub.text(text)
         scrubbed = out.encode("utf-8")
-        problems = [f"{rel}: PII after scrub: {v}" for v in piicheck.violations(out, path=rel, line=1)]
+        problems = [f"{rel}: PII after scrub: {v.path}:{v.line}: {v.why}"            # never the match (S24-P17: it is published)
+                    for v in piicheck.violations(out, path=rel, line=1)]
     published = scrubbed
     if compressible and len(scrubbed) > COMPRESS_BYTES:
         rel, published = f"{rel}.xz", lzma.compress(scrubbed)
