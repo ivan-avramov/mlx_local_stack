@@ -1,34 +1,47 @@
-# Handoff — 2026-11-14 (session 23, in progress: stage 2 PASS; B7 accepted; B3 fix round, B7.1 build running; M80 fork pushed)
+# Handoff — 2026-11-14 (session 23 → 24: stack pushed; B4 candidate 1 reviewed only by its implementer; stage 3 split, C342)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76–M82, then `docs/open-questions.md` top entries (newest first: C337,
-S23-P14, C336, C335, C334, C333, C332, C331 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance
-(C334): guardrails prevent wrong data or wasted time, not ceremony; cheap fixes welcome; label every point `S23-P<n>`.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C342, S23-P93,
+C341 … C331). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance (C334): guardrails prevent wrong
+data or wasted time, not ceremony; cheap fixes welcome; GPU time is the binding resource; label every point `S24-P<n>`.
 
-Decisions: session 23 ruled C331–C341 (next **C342**); discussion ids `S23-P1 …` (last used S23-P98). Stage-3 plan (C337–C339):
-A1 two looks; A5 two looks 72 → 120 (A5-2L); A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (TD, C338) α* 0.001 + HOLD any language < −20 pp;
-screen diagnostic only. Clean PASS at no loss ≈ 38 %; whole-stage GPU ≈ 72 h expected (B7.1 report).
+Decisions: session 23 ruled C331–C342 (next **C343**); discussion ids restart at `S24-P1` (session 23 used S23-P1 … P100).
+
+## Goal (restated for convergence, operator asked)
+
+Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (the gain is
+memory: −13 GB at 256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, and stage 3: A1, A5 (incl. per-task gates, each arm ≥ 0.85),
+A7, A8 decider all PASS (point ≥ −5 pp, loss bound ≤ 10 pp), no tg2 HOLD (any language < −20 pp), no panel / interaction flag; else the
+per-axis signals → the operator. Then publish (registry CERTIFIED, README, gate, push ask). Stage 4 (V) decided at the readout.
 
 ## FIRST
 
-1. Pushed 2026-11-14: stack `origin/main` = `6db8b56d` (stage 1–2 data, M80, M81, B7, B7.1, B3+B5, S23-P14, S23-P93); fork
-   `babb0c9d`; mlx-serve `0555b2f` (stack gitlinks: fork `34a21208`, mlx-serve `3b02e4c`).
-2. B4 (tg2 legs, spec v1.1) four-eyes in `$STACK_WORKDIR/fe-m76b4/` may be running (check `out/status`). No GPU work is running.
-3. No clean-clone gate while a helper runs a test suite (S20-P19).
-
-## State of M76
-
-- Stage 0 ✔, stage 1 ✔ (memory −13 GB at 256K), stage 2 ✔ PASS (`benchmark/results/m76/stage2/`).
-- Builds accepted: B0–B2 (session 22), B7 (C337), B7.1 (C340, folds B7.2), B3+B5 (C341; `benchmark/results/m76/ids.json`).
-- Stage-3 plan (C337–C339): A1 two looks; A5 two looks 72 → 120; A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (C338) α* 0.001
-  + HOLD any language < −20 pp; clean PASS at no loss ≈ 38 %; ≈ 72 whole-stage GPU h (B7.1 report).
-- Deferred: stage-4 V workflow (S23-P49); decide stage 4 at the stage-3 readout (S23-P91).
+1. Local, unpushed: stack `6db8b56d..HEAD` (handoff + C342 + PLAN M83, docs only). Pushed: stack `6db8b56d`, fork `babb0c9d`,
+   mlx-serve `0555b2f` (stack gitlinks fork `34a21208`, mlx-serve `3b02e4c`).
+2. Nothing runs (no GPU, no helpers). Power 140 W / 28 V before GPU work; OrbStack up before a gate; no clean-clone gate while a
+   helper runs a test suite (S20-P19).
 
 ## Next, in order
 
-1. B4 four-eyes (light) → Accept → gate → push ask.
-2. Light-path follow-up S23-P88 (ids `load()` re-checks the prompt band).
-3. Timed A5 / tg2 smokes (GPU, quiet box), recalibrated hours → stage-3 Go to the operator.
-4. Stage 3 (≈ 72 GPU h) → readout → publish or the operator's call; stage 4 decision.
+1. **B4 four-eyes, continue** (`$STACK_WORKDIR/fe-m76b4/`, baseline `6db8b56d`, spec `docs/specs/m76-b4-tg2-legs.md` v1.1):
+   implementer candidate 1 = `candidate/candidate-1.diff` (+ `candidate/implementer-report.md`: its Q1 tg2 runner missing → C342; Q2
+   who writes the tg2 walls → B4b's sizing report; Q3 judgement calls to settle); test-writer `86224b98` delivery 1 frozen
+   2026-11-15T06:56:54Z (`frozen/v1`; its gaps: no grader-mapping test without a seam name — the implementer's is in
+   `benchmark/chains/c147/run_tg2_chain.py`; interface guesses `--tg2-draw`, `BoxSeqOps(corpus=)`). Next: delivery 2 (reveal the
+   candidate; apply it yourself in `tw/stack` — the helper cannot run `git apply`), panel opinion (Sol + GLM), one fix round, Accept.
+2. **B4b spec** (PLAN M83, C342): M65 build steps 3–4 — `bench/tg2_runner.py`, `run_tg2_probe.py`, `bench/corpus_tg2.py` on the
+   shared cores, positives, four-language smoke + sizing report (walls). Then four-eyes light.
+3. **Stage 3a, in parallel with B4b's CPU work:** build stage-3 arm worktrees (N16 / X on the current base, `m76-q-<arm>` or as B3 §
+   Settled constraints), the timed A5 smoke (quiet box) → measured hours → **stage-3a Go to the operator** (A1, A5 two looks, A7, M1,
+   panel axes; ≈ 50 GPU h). Light-path follow-up first if cheap: S23-P88 (`m76_ids.load()` re-checks the prompt band).
+4. Stage 3b (A8) after B4b; readout; publish or the operator's call; stage 4 decision (S23-P91: lean no).
+
+## State of M76
+
+- Stage 0 ✔; stage 1 ✔ (`benchmark/results/m76/matrix/`); stage 2 ✔ PASS (`benchmark/results/m76/stage2/`).
+- Accepted builds: B0–B2 (session 22), B7 (C337), B7.1 (C340), B3+B5 (C341; `benchmark/results/m76/ids.json` sha `6c9455a2…`).
+- Stage-3 plan (C337–C339, C342): A1 two looks; A5 two looks 72 → 120 (A5-2L); A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (C338)
+  α* 0.001 + HOLD < −20 pp; clean PASS at no loss ≈ 38 %; ≈ 72 whole-stage GPU h (B7.1 report) — the tg2 part unmeasured.
+- Deferred: stage-4 V workflow (S23-P49).
 
 ## Worktrees and scratch
 
