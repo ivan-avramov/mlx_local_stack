@@ -107,8 +107,9 @@ def test_agentbench_os_results_real_home_paths_still_flagged_P17():
 
 def test_agentbench_os_results_home_exemption_does_not_leak_to_other_files_P17():
     """A file that merely LOOKS similar (wrong directory, wrong stem) gets no exemption -- the
-    glob match is narrow on purpose."""
-    d = _diff("benchmark/results/some-model/not_agentbench.jsonl", 'cd /home/user1/os/linux')
+    glob match is narrow on purpose. (C349 / S24-P17 exempts `/home/` in model-output rows — every `benchmark/results/**.jsonl` —
+    so the look-alike here is a non-row results file.)"""
+    d = _diff("benchmark/results/some-model/not_agentbench.md", 'cd /home/user1/os/linux')
     assert piicheck.diff_violations(d), "must NOT be exempt outside the narrow glob"
 
 

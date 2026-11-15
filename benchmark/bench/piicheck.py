@@ -95,8 +95,28 @@ _GUEST_OS_HOME_EXEMPT_GLOBS = (
 )
 
 
+# S24-P17 / C349: MODEL OUTPUT harvested by the benchmark as result rows quotes
+# model-written `/home/<name>/` paths (e.g. a code answer that `cd`s into a made-up Linux home). Both boxes are macOS: a real
+# home path here is `/Users/<name>/`, which stays enforced, as do the dash-flattened forms, tokens and hostnames. Only the
+# `/home/` pattern is suppressed, and only on these exact path forms (anchored regexes, path components bounded):
+#   * a per-model / judge row file: `benchmark/results/<dir>/<name>.jsonl` (depth 2 only; receipts, watch journals and logs
+#     live deeper or are not `.jsonl`);
+#   * a P426 Wave 2 row, published (`benchmark/results/{p426,m76}/wave2…/<attempt>/<session>/<stem>.jsonl`) or as the
+#     harvest's leg-relative source (`leg:<session>/<stem>.jsonl`), stem `<model>.<session>.opencode_<lang>.L<n>.<phase>.a<n>`;
+# Transcripts and final trees are evidence, gated by `p426_secrets` and the scrub, not by this check (verify round 2: an
+# unanchored component exemption would have reached any same-named directory); none is exempt here.
+_W2_SESSION = r"(?:pilot|reload|makeup|s[0-9]+)"
+_W2_STEM = r"[^/]+\.opencode_[a-z0-9]+\.L[0-9]+\.[a-z]+\.a[0-9]+\.jsonl"
+_MODEL_OUTPUT_HOME_EXEMPT_RES = tuple(re.compile(r) for r in (
+    r"^benchmark/results/[^/]+/[^/]+\.jsonl$",
+    rf"^benchmark/results/(?:p426|m76)/wave2[^/]*/[^/]+/{_W2_SESSION}/{_W2_STEM}$",
+    rf"^leg:{_W2_SESSION}/{_W2_STEM}$",
+))
+
+
 def _is_guest_os_home_exempt(path: str) -> bool:
-    return any(fnmatch.fnmatchcase(path, g) for g in _GUEST_OS_HOME_EXEMPT_GLOBS)
+    return (any(fnmatch.fnmatchcase(path, g) for g in _GUEST_OS_HOME_EXEMPT_GLOBS)
+            or any(rx.search(path) for rx in _MODEL_OUTPUT_HOME_EXEMPT_RES))
 
 
 def is_exempt(path: str) -> bool:
