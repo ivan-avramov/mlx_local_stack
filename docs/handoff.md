@@ -4,42 +4,31 @@ THE one handoff. Read this, then `docs/PLAN.md` rows M76–M82, then `docs/open-
 S23-P14, C336, C335, C334, C333, C332, C331 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance
 (C334): guardrails prevent wrong data or wasted time, not ceremony; cheap fixes welcome; label every point `S23-P<n>`.
 
-Decisions: session 23 ruled C331–C339 (next **C340**); discussion ids `S23-P1 …` (last used S23-P77). Stage-3 plan (C337–C339):
+Decisions: session 23 ruled C331–C341 (next **C342**); discussion ids `S23-P1 …` (last used S23-P98). Stage-3 plan (C337–C339):
 A1 two looks; A5 two looks 72 → 120 (A5-2L); A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (TD, C338) α* 0.001 + HOLD any language < −20 pp;
 screen diagnostic only. Clean PASS at no loss ≈ 38 %; whole-stage GPU ≈ 72 h expected (B7.1 report).
 
 ## FIRST
 
-1. Background helpers may be running (check `$STACK_WORKDIR/fe-m76b3/out/status`, `fe-m76b71/out/status`): B3 fix round 1
-   (implementer, spec v1.2), B7.1 implementer + test-writer delivery 1. CPU only; no GPU work is running.
-2. No clean-clone gate while a helper runs a test suite (S20-P19). OrbStack up before a gate.
-3. Pushed: fork `babb0c9d` (M80 marker, 2026-11-14); stack `origin/main` = `c67dd7e9`; mlx-serve `0555b2f`. Local, unpushed: stack
-   `c67dd7e9..HEAD` (~26 commits: session 22–23 docs, stage-1 / stage-2 data, M80, B7). The stack push waits for ONE stack gate after
-   B3 lands (S23-P50); then one push ask.
+1. Pushed 2026-11-14: stack `origin/main` = `6db8b56d` (stage 1–2 data, M80, M81, B7, B7.1, B3+B5, S23-P14, S23-P93); fork
+   `babb0c9d`; mlx-serve `0555b2f` (stack gitlinks: fork `34a21208`, mlx-serve `3b02e4c`).
+2. B4 (tg2 legs, spec v1.1) four-eyes in `$STACK_WORKDIR/fe-m76b4/` may be running (check `out/status`). No GPU work is running.
+3. No clean-clone gate while a helper runs a test suite (S20-P19).
 
 ## State of M76
 
-- **Stage 2 ✔ PASS** (`benchmark/results/m76/stage2/`, `b607c6ea`): 8 E1c cells 0 mismatches, E2 27 identical, cross-load identical.
-  Full summaries staged for `evidence` in `$STACK_WORKDIR/m76/stage2-evidence-stage/`; raw arrays in `$STACK_WORKDIR/p369/phase2/m76-x-full/`.
-- **M80 ✔** fork gate PASS (146 marked tests ran with sibling mlx-serve `3b02e4c`), fork pushed. Stack gate pending (S23-P50).
-- **B7 ✔ accepted (C337)**, `34543b2e`: plan A1 two looks; A5 n 72 exact test; A7 one look s1+s2+s3 α* 0.001; A8 decider α* 0.001;
-  stage 3 calls `m76_rule.axis_verdict`. Ledger `docs/reviews/m76-b7/`.
-- **B7.1 (C337 (2))** building in `$STACK_WORKDIR/fe-m76b71/`: joint clean-PASS probability, follow-up variants (A7-2L, A5-2L), A8
-  screen-trigger options → the operator at the stage-3 Go. Spec `docs/specs/m76-b7-1-joint-plan.md`.
-- **B3 + B5** in `$STACK_WORKDIR/fe-m76b3/`: candidate 1 reviewed (test-writer d2 "fix then merge"; Sol 5 blockers; GLM interface);
-  fix round 1 on spec v1.2 (`6f0026fe`) running; then test-writer d3 (frozen tests `fe-m76b3/frozen/v1`; GLM F3 golden + brittle API
-  tests are the test-writer's to amend), panel verify, Accept. Stage-4 V workflow deferred (S23-P49).
-- **B4** (tg2 legs) after B3 (shares `p426_wave2.py` / the tg1 chain).
-- **Then:** M81 + M82 (light path, C334), S23-P14 (flaky c147 test) before the stack gate; `ids.json` generation (designer, needs B7
-  report + Math500 universe); timed A5 / tg2 smokes; stage-3 Go with B7 + B7.1 reports.
+- Stage 0 ✔, stage 1 ✔ (memory −13 GB at 256K), stage 2 ✔ PASS (`benchmark/results/m76/stage2/`).
+- Builds accepted: B0–B2 (session 22), B7 (C337), B7.1 (C340, folds B7.2), B3+B5 (C341; `benchmark/results/m76/ids.json`).
+- Stage-3 plan (C337–C339): A1 two looks; A5 two looks 72 → 120; A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (C338) α* 0.001
+  + HOLD any language < −20 pp; clean PASS at no loss ≈ 38 %; ≈ 72 whole-stage GPU h (B7.1 report).
+- Deferred: stage-4 V workflow (S23-P49); decide stage 4 at the stage-3 readout (S23-P91).
 
 ## Next, in order
 
-1. B3 fix round → test-writer d3 → panel verify → Accept → apply to `main`.
-2. B7.1 → test-writer d2 → panel opinion → Accept.
-3. M81, M82, S23-P14 (light path); then the stack gate on HEAD; one push ask (stack).
-4. B4 four-eyes (after B3 lands).
-5. `ids.json`, timed smokes, stage-3 Go to the operator.
+1. B4 four-eyes (light) → Accept → gate → push ask.
+2. Light-path follow-up S23-P88 (ids `load()` re-checks the prompt band).
+3. Timed A5 / tg2 smokes (GPU, quiet box), recalibrated hours → stage-3 Go to the operator.
+4. Stage 3 (≈ 72 GPU h) → readout → publish or the operator's call; stage 4 decision.
 
 ## Worktrees and scratch
 
@@ -50,6 +39,10 @@ screen diagnostic only. Clean PASS at no loss ≈ 38 %; whole-stage GPU ≈ 72 h
   `-full` cited).
 
 ## Rules learned (session 23)
+
+- A test helper running a real thread beside a fake fast clock needs explicit ordering at every handoff (S23-P93: three gate
+  rounds); margins only move the race.
+- Tests must not read local-only branches; commit sha-pinned fixture copies (a fresh clone would skip, and the gate refuses skips).
 
 - A P369 smoke binds a full run only with `--reviewed-head` (M82 will bind by recorded identity, C333).
 - The P369 orchestrator censuses processes only at launch; `qualify` before every entry — stack-only CPU helpers may overlap untimed
