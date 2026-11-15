@@ -4,7 +4,7 @@ THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-q
 C341 … C331). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance (C334): guardrails prevent wrong
 data or wasted time, not ceremony; cheap fixes welcome; GPU time is the binding resource; label every point `S24-P<n>`.
 
-Decisions: session 23 ruled C331–C342 (next **C343**); discussion ids restart at `S24-P1` (session 23 used S23-P1 … P100).
+Decisions: session 23 ruled C331–C342; session 24 so far C343 (next **C344**); discussion ids `S24-P<n>` (next S24-P7).
 
 ## Goal (restated for convergence, operator asked)
 
@@ -15,25 +15,21 @@ per-axis signals → the operator. Then publish (registry CERTIFIED, README, gat
 
 ## FIRST
 
-1. Local, unpushed: stack `6db8b56d..HEAD` (handoff + C342 + PLAN M83, docs only). Pushed: stack `6db8b56d`, fork `babb0c9d`,
-   mlx-serve `0555b2f` (stack gitlinks fork `34a21208`, mlx-serve `3b02e4c`).
-2. Nothing runs (no GPU, no helpers). Power 140 W / 28 V before GPU work; OrbStack up before a gate; no clean-clone gate while a
-   helper runs a test suite (S20-P19).
+1. Session 24 (in progress): C343 ruled — B4 stopped at its change review and folded into B4b (PLAN M83, four-eyes STRICT); S24-P6
+   adds an end-to-end per-axis smoke before the stage-3a Go. Stack `main` pushed through the C343 commit.
+2. Running at the time of writing: B4 test-writer delivery 2 (input to B4b) and full-suite runs on the B4 baseline / candidate copies
+   (`$STACK_WORKDIR/fe-m76b4/out/suite-*.txt`). Power 140 W / 28 V before GPU work; OrbStack up before a gate.
 
 ## Next, in order
 
-1. **B4 four-eyes, continue** (`$STACK_WORKDIR/fe-m76b4/`, baseline `6db8b56d`, spec `docs/specs/m76-b4-tg2-legs.md` v1.1):
-   implementer candidate 1 = `candidate/candidate-1.diff` (+ `candidate/implementer-report.md`: its Q1 tg2 runner missing → C342; Q2
-   who writes the tg2 walls → B4b's sizing report; Q3 judgement calls to settle); test-writer `86224b98` delivery 1 frozen
-   2026-11-15T06:56:54Z (`frozen/v1`; its gaps: no grader-mapping test without a seam name — the implementer's is in
-   `benchmark/chains/c147/run_tg2_chain.py`; interface guesses `--tg2-draw`, `BoxSeqOps(corpus=)`). Next: delivery 2 (reveal the
-   candidate; apply it yourself in `tw/stack` — the helper cannot run `git apply`), panel opinion (Sol + GLM), one fix round, Accept.
-2. **B4b spec** (PLAN M83, C342): M65 build steps 3–4 — `bench/tg2_runner.py`, `run_tg2_probe.py`, `bench/corpus_tg2.py` on the
-   shared cores, positives, four-language smoke + sizing report (walls). Then four-eyes light.
-3. **Stage 3a, in parallel with B4b's CPU work:** build stage-3 arm worktrees (N16 / X on the current base, `m76-q-<arm>` or as B3 §
-   Settled constraints), the timed A5 smoke (quiet box) → measured hours → **stage-3a Go to the operator** (A1, A5 two looks, A7, M1,
-   panel axes; ≈ 50 GPU h). Light-path follow-up first if cheap: S23-P88 (`m76_ids.load()` re-checks the prompt band).
-4. Stage 3b (A8) after B4b; readout; publish or the operator's call; stage 4 decision (S23-P91: lean no).
+1. **B4b spec** (PLAN M83, C343): `docs/specs/m76-b4b-tg2-runner.md` — the runner (M65 steps 3–4) + B4's legs (candidate 1,
+   `$STACK_WORKDIR/fe-m76b4/candidate/`) + every adopted finding (`docs/reviews/m76-b4/change-review-ledger-report.md`, L1–L14) + A8
+   through harvest → B8 → signals as A7 (DNF = strict fail); every seam named (grader mapping included); acceptance on real output.
+   Then strict design review (Sol + GLM + Claude Sonnet, real call-chain traces) → Go → fresh blind test-writer + implementer.
+2. **Stage 3a, in parallel with B4b's CPU work:** arm worktrees (N16 / X on the current base), S24-P6 end-to-end smoke per axis (A1,
+   A5, A7, M1, panel; leg → harvest → B8 → signals → verdict) + cold panel trace, the timed A5 smoke (quiet box) → measured hours →
+   **stage-3a Go to the operator** (≈ 50 GPU h). Light-path follow-up first if cheap: S23-P88.
+3. Stage 3b (A8) after B4b; readout; publish or the operator's call; stage 4 decision (S23-P91: lean no).
 
 ## State of M76
 
@@ -47,7 +43,7 @@ per-axis signals → the operator. Then publish (registry CERTIFIED, README, gat
 
 - Stack worktrees (M76 stages 1–4; remove after stage 4 harvest): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (X `ec114753`, V
   `0795beb1`, XO `b9e6b91e`, N16 base `89205085`).
-- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71,m76b4}/` (B4 active; `fe-m76b3/integ` = the B3 integration clone); ask before deleting.
+- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71,m76b4}/` (B4 stopped (C343), input to B4b; `fe-m76b3/integ` = the B3 integration clone); ask before deleting.
 - P369 runs: `$STACK_WORKDIR/p369/phase2/{m76-x-smoke,m76-x-smoke-rh,m76-x-full,m76-x-full.refused-unbound-smoke}` (only `-rh` and
   `-full` cited).
 
