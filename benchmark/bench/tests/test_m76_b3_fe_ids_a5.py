@@ -89,28 +89,33 @@ def test_math500_first_100_keep_p426_block_split():
     assert set(old["block1"]) in lists and set(old["block2"]) in lists
 
 
-# (c) the 200 new ids come from `random.Random(7601)` over the REMAINING Math500 ids: re-derivation (needs the dataset, else skip)
+# (c) the 200 new ids come from `random.Random(7601)` over the REMAINING Math500 ids (the universe minus P426's 100).
+# AMENDED (delivery 7): re-derived from the universe the record itself carries (`axes.math500.universe`, bound by its recorded
+# `universe_sha256`), so it runs everywhere; the dataset is only an extra cross-check when it loads (never a skip).
 def test_math500_extra_200_are_drawn_by_random_7601_from_the_remaining_ids():
+    import hashlib
     import random
 
-    doc = committed()
-    extra = set().union(*map(set, math500_lists(doc).values())) - p426_math500()
+    m = committed()["axes"]["math500"]
+    universe = m["universe"]
+    assert len(universe) == len(set(universe)) == m.get("universe_n", len(universe))
+    # the recorded universe is the one its recorded sha names (independent computation of the sha)
+    assert hashlib.sha256("\n".join(sorted(universe)).encode()).hexdigest() == m["universe_sha256"]
+    old = p426_math500()
+    assert old <= set(universe)
+    rest = sorted(set(universe) - old)
+    assert len(rest) == len(universe) - 100
+    drawn = random.Random(7601).sample(rest, 200)
+    assert list(m["order"][100:]) == drawn                       # the draw, in order, is the record's tier-2 ids
+    assert set(drawn) == set(m["tier2"]["block1"]) | set(m["tier2"]["block2"])
+    # extra cross-check, only when the dataset loads: its ids are the recorded universe
     try:
-        from datasets import load_dataset
+        from bench import benchmarks
 
-        ds = load_dataset("HuggingFaceH4/MATH-500", split="test")
-    except Exception as exc:  # noqa: BLE001 — unavailable dependency => skip with the reason
-        pytest.skip(f"MATH-500 not loadable offline: {type(exc).__name__}")
-    from bench import benchmarks
-
-    try:
-        universe = [f"math500_{i}" for i in range(len(ds))] if not hasattr(benchmarks, "math500_ids") else benchmarks.math500_ids()
-    except Exception as exc:  # noqa: BLE001
-        pytest.skip(f"cannot enumerate Math500 ids: {exc}")
-    if not extra <= set(universe):
-        pytest.skip("the dataset's id spelling is not the committed spelling (cannot re-derive the draw)")
-    rest = sorted(set(universe) - p426_math500())
-    assert set(random.Random(7601).sample(rest, 200)) == extra
+        dataset_ids = {it["id"] for it in benchmarks.load("math500")}
+    except Exception:  # noqa: BLE001 — dataset unavailable: the recorded-universe derivation above stands alone
+        return
+    assert dataset_ids == set(universe)
 
 
 # DELETED (delivery 4): test_ids_json_equals_a_rebuild_and_builds_are_deterministic — it called v1's `build(repo, a5_n=…)`; v1.2's
