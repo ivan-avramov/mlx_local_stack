@@ -189,8 +189,17 @@ class Topology:
             def wclock():
                 return wt[0]
 
+            topo = self
+
             def wsleep(seconds):
                 time.sleep(POLL_REAL_S)
+                # S23-P93 (gate run 3): production's order — the sequencer notices a chain's exit before its watcher (300 s
+                # interval) does — kept deterministic: once the chains' threads are done, the watcher waits (bounded) until the
+                # sequencer has observed their exit, so it cannot vanish while the sequencer still counts a chain as running.
+                deadline = time.time() + WATCHER_EXIT_JOIN_S
+                while (topo.chains() and not any(c.thread.is_alive() for c in topo.chains())
+                       and not all(getattr(c, "exit_seen", False) for c in topo.chains()) and time.time() < deadline):
+                    time.sleep(0.005)
                 wt[0] += float(seconds)
 
             def target():
@@ -211,8 +220,9 @@ class Topology:
     def alive(self, pid, start):
         from bench import chain_ops as co
         h = next((x for x in self.launches if x.pid == pid), None)
-        if h is not None and h.kind == "watcher" and not any(c.thread.is_alive() for c in self.chains()):
-            # S23-P93 (cold read, Sol): once the chains have exited, the in-process watcher is given real time to see it before the
+        if h is not None and h.kind == "watcher" and self.chains() and all(getattr(c, "exit_seen", False) for c in self.chains()):
+            # S23-P93 (cold read, Sol; gate run 3): once the SEQUENCER has observed every chain's exit (`exit_seen`, set below when
+            # it reads a chain as not alive — never earlier, or it would see the watcher gone while it still counts the chain as running), the in-process watcher is given real time to see it before the
             # sequencer's fake-clock exit wait reads its liveness — production's ordering (a 300 s watcher interval inside a 900 s
             # wait) made deterministic; a watcher that never exits still reads alive after the bounded join.
             h.thread.join(WATCHER_EXIT_JOIN_S)
@@ -222,6 +232,8 @@ class Topology:
                 except Exception:  # noqa: BLE001 — a helper that does not end reads alive below
                     pass
         if h is None or h.helper.poll() is not None:
+            if h is not None and h.kind == "chain":
+                h.exit_seen = True
             return False
         try:
             return co.default_create_time(pid) == start
