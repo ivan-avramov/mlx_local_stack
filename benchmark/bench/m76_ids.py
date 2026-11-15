@@ -480,6 +480,11 @@ def load(repo, text=None, plan=None):
         raise ValueError(f"{OUT}: {exc}") from None
     if list(sizes) != doc["a5"]["sizes"] or source["report_sha256"] != doc["a5"].get("report_sha256"):
         raise ValueError(f"{OUT}: A5 sizes {doc['a5']['sizes']} / report sha are not the current plan's {list(sizes)}")
+    lc = doc["axes"]["longctx"]
+    try:                                                    # S23-P88: the band holds on the record, not only at generation
+        check_prompt_band(lc["items"] + lc["smoke_items"], lc["budget_inputs"].get("prompt_tokens"))
+    except IdsError as exc:
+        raise ValueError(f"{OUT}: {exc}") from None
     return doc
 
 

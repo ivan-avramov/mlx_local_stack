@@ -235,9 +235,10 @@ def fake_plan(*sizes, sha=PLAN_SHA):
 
 
 def fake_counts(n):
-    """A stand-in for the planner's offline tokenizer count: every A5 prompt's frozen token count (rung + a seeded overhead)."""
+    """A stand-in for the planner's offline tokenizer count: every A5 prompt's frozen token count (rung − a seeded shortfall;
+    v1.5a band −3 % … 0 %, re-checked by `load()` since S23-P88)."""
     d = M.longctx_draw(n if isinstance(n, tuple) else (n,))
-    return {i["id"]: i["rung"] + 200 + (i["task_seed"] % 300) for i in d["items"] + d["smoke"]}
+    return {i["id"]: i["rung"] - 200 - (i["task_seed"] % 300) for i in d["items"] + d["smoke"]}
 
 
 def build_ids(n=42, universe=None, sizes=None):
