@@ -93,7 +93,8 @@ counts per arm / language. The B4 `item_record` / `a8_decider_inputs` path is no
 2. The stack suite passes or fails only as on the baseline.
 3. (Designer, GPU, N16 then X) per language the injected positives and grader known-positives come out as expected; the four-language
    smoke VALID on both arms; its harvest, B8 (smoke as coverage) and a dry signals run succeed; the sizing report (walls, heavy tail)
-   delivered — before any screen leg.
+   delivered — before any screen leg. The sizing report states the projected screen and decider GPU hours per arm against both
+   budgets (M76 §9 / B7.1 ≈ 12 h per arm decider; M65 v5 ≈ 18–19 h per arm, a lower bound) (S24-P9); the stage-3b Go carries them.
 
 ## Non-goals
 
