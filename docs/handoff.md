@@ -1,10 +1,10 @@
-# Handoff — 2026-11-14 (session 23 → 24: stack pushed; B4 candidate 1 reviewed only by its implementer; stage 3 split, C342)
+# Handoff — 2026-11-15 (session 24, in progress: stage-3a Wave 1 running; B4b-1 Go, dispatch after Wave 1)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C342, S23-P93,
 C341 … C331). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance (C334): guardrails prevent wrong
 data or wasted time, not ceremony; cheap fixes welcome; GPU time is the binding resource; label every point `S24-P<n>`.
 
-Decisions: session 23 ruled C331–C342; session 24 so far C343 (next **C344**); discussion ids `S24-P<n>` (next S24-P7).
+Decisions: session 23 ruled C331–C342; session 24 so far C343–C351 (next **C352**); discussion ids `S24-P<n>` (next S24-P19).
 
 ## Goal (restated for convergence, operator asked)
 
@@ -15,21 +15,25 @@ per-axis signals → the operator. Then publish (registry CERTIFIED, README, gat
 
 ## FIRST
 
-1. Session 24 (in progress): C343 ruled — B4 stopped at its change review and folded into B4b (PLAN M83, four-eyes STRICT); S24-P6
-   adds an end-to-end per-axis smoke before the stage-3a Go. Stack `main` pushed through the C343 commit.
-2. Running at the time of writing: B4 test-writer delivery 2 (input to B4b) and full-suite runs on the B4 baseline / candidate copies
-   (`$STACK_WORKDIR/fe-m76b4/out/suite-*.txt`). Power 140 W / 28 V before GPU work; OrbStack up before a gate.
+1. **Stage-3a Wave 1 is RUNNING** (C344): sequencer PID in `$STACK_WORKDIR/m76/p426/wave1-s3.pid`, out `$STACK_WORKDIR/m76/p426/wave1-s3/`
+   (36 legs, N16 vs X, build `s3`, arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`, `frozen.s3.json`). Two stops so far, both fixed
+   as lead calls: S24-P17 / C349 (a model-written `/home/<name>/` path in a row → `piicheck` exempts only `/home/` on anchored
+   model-output row paths) and S24-P18 (refusals echoed the match into the published `sequence.log` → no echo; two log lines redacted,
+   original archived). Verify the PID is alive, power 140 W / 28 V, no pytest, before anything else.
+2. Local, unpushed: stack `f5ad8395..HEAD` (docs + the S23-P88, S24-P17, S24-P18 fixes). Push (C345): in the first GPU gap after
+   Wave 1, run the clean-clone stack gate, then push `main` (approved for that push).
 
 ## Next, in order
 
-1. **B4b spec** (PLAN M83, C343): `docs/specs/m76-b4b-tg2-runner.md` — the runner (M65 steps 3–4) + B4's legs (candidate 1,
-   `$STACK_WORKDIR/fe-m76b4/candidate/`) + every adopted finding (`docs/reviews/m76-b4/change-review-ledger-report.md`, L1–L14) + A8
-   through harvest → B8 → signals as A7 (DNF = strict fail); every seam named (grader mapping included); acceptance on real output.
-   Then strict design review (Sol + GLM + Claude Sonnet, real call-chain traces) → Go → fresh blind test-writer + implementer.
-2. **Stage 3a, in parallel with B4b's CPU work:** arm worktrees (N16 / X on the current base), S24-P6 end-to-end smoke per axis (A1,
-   A5, A7, M1, panel; leg → harvest → B8 → signals → verdict) + cold panel trace, the timed A5 smoke (quiet box) → measured hours →
-   **stage-3a Go to the operator** (≈ 50 GPU h). Light-path follow-up first if cheap: S23-P88.
-3. Stage 3b (A8) after B4b; readout; publish or the operator's call; stage 4 decision (S23-P91: lean no).
+1. **Wave 1 watch:** at the A5 smokes check the timing (pause rule C344: A5 projecting > 1.5 × ≈ 4 h / arm → stop at the next idle
+   boundary, ask); after the first Math500 block pair, run B8 + signals on the partial wave and the cold trace (S24-P7).
+2. **Post-Wave-1 gap:** gate + push (C345); record the real `tg2_grade` output trees (one per language and terminal outcome) into
+   `$STACK_WORKDIR/fe-m76b4b1/inputs/tg2-grade-trees/`; set `BASELINE`, make the copies (`impl/`, `tw/`, forks populated, `fe_test.sh`);
+   dispatch **B4b-1** (C351; spec `docs/specs/m76-b4b-tg2-runner.md` v5; briefs in `$STACK_WORKDIR/fe-m76b4b1/briefs/`; implementer
+   Claude Opus `claude -p`, test-writer Claude Sonnet blind; review Sol + GLM). Then B4b-1's real-output acceptance (positives,
+   rehearsals, pilot, sizing report vs both budgets, S24-P9).
+3. Then Wave 2 (A7, tg1) and stage 3b (A8). B4b-2 (A8 B8 / signals / panel, `docs/specs/m76-b4b2-a8-consumers.md` to write): spec +
+   design review during the decider; build after it, on this box (C350).
 
 ## State of M76
 
