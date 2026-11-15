@@ -47,7 +47,7 @@ per-axis signals → the operator. Then publish (registry CERTIFIED, README, gat
 
 - Stack worktrees (M76 stages 1–4; remove after stage 4 harvest): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (X `ec114753`, V
   `0795beb1`, XO `b9e6b91e`, N16 base `89205085`).
-- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71}/`; ask before deleting.
+- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71,m76b4}/` (B4 active; `fe-m76b3/integ` = the B3 integration clone); ask before deleting.
 - P369 runs: `$STACK_WORKDIR/p369/phase2/{m76-x-smoke,m76-x-smoke-rh,m76-x-full,m76-x-full.refused-unbound-smoke}` (only `-rh` and
   `-full` cited).
 
