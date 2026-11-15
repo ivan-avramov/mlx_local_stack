@@ -34,3 +34,30 @@ Verdict: the spec is not dispatchable — it names the destinations but leaves m
 | D21 | all | acceptance misses chain start, validation, schedule readers, join bound, HOLD in flags / render, public B8 / signals CLI over harvested output, freeze round-trip | minor | adopted |
 
 Next: operator calls D1–D4 (S24-P10 … P13), then spec v2 with every adopted finding, then a round-2 design review (verify) of v2.
+
+## Round 2 of 3 (verify of v2, `b81e51b5`), 2026-11-15
+
+Sol (fresh session, cursor-agent cannot resume), GLM (fresh), Claude Sonnet (resumed `4d975807`). Raw: `verify-design-{sol,glm,sonnet}.md`.
+Round 1: D1, D3, D6, D7, D8, D10, D11, D13, D15, D16, D19, D20 resolved (all three); D2, D4, D5, D9, D14, D17, D18, D21 partly. New
+(all original to v2's new text or left open by it; designer agrees with each on its trace):
+
+| id | raised by | finding | sev |
+|---|---|---|---|
+| E1 | Sol P1 | the tg1 prompt points at `.docs/instructions.md`, which tg2 materialisation excludes — the task text must be inlined from the pinned source | blocker |
+| E2 | Sol P2, Sonnet N2 | `--leg` has no mapping to the shared core's `mode` / sessions / record kind; rehearsal / inject argv missing | blocker |
+| E3 | Sol P3, Sonnet N1, N2, GLM F6 | tg2 R2 / R3 not runnable: injection hooks Python / Go-only (`p426_hooks.py` out of scope), `cmd_v8` needs R1, `settle_bound_s` from R1, rehearsal manifest step missing | blocker |
+| E4 | Sol P5, Sonnet N6 | `m76_sim.recheck(out=)` is a directory (writes `recheck-A8.json`); no sealed ack; harvest / B8 location unstated | blocker |
+| E5 | Sol P6, Sonnet N5, GLM F4 | A8 panel "as A7" impossible: singular `solution` / `test`, raw polyglot start tree (shows grader rewrites as edits), single-file diff, A7-keyed member functions | blocker |
+| E6 | Sol P8, Sonnet N4 | the positives have no sealed record and no consumer; X not stated | major |
+| E7 | Sol P4 | grade call: `prepared`, `extra_crates=()`, `guard` | major |
+| E8 | Sol P7 | final tree must hold every grader-permitted mutable file (helpers, `Cargo.toml`) | major |
+| E9 | Sol P9 | no blocking `a8_incomplete` flag | major |
+| E10 | Sol P10 | the sensitivity must compare the whole blocking state (class, HOLD languages, interaction) | major |
+| E11 | Sonnet N3 | `_sequence_leg_reasons` also rejects `VALID_WITH_DNF` | major |
+| E12 | GLM F1, F2 | builder `tg2_p426`: `freezes_schedule` / `verify_schedule` keys and the `plan_*` reader; one schedule leg per (session, language) not stated | major |
+| E13 | Sol P11 | harvest `<tag>` grammar open — exact regex / shared classifier | minor |
+| E14 | Sonnet N7 | `chain_ops.t_coop` uses tg1's grader timeout table | minor |
+
+Designer reading: the remaining defects cluster in two places — the rehearsal / freeze path (E2, E3, E6) and the post-harvest
+consumers (E4's B8 side, E5, E9, E10, E11). The post-harvest consumers read harvested evidence and are regradeable (AGENTS.md:
+regrade, not rerun). Proposal to the operator: S24-P14.
