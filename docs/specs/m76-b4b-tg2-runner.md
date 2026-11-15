@@ -1,13 +1,14 @@
-# M76 B4b-1 — tg2 legs to harvested evidence in P426 lever `kv` (A8) — SPEC v4, 2026-11-15 (four-eyes STRICT; C342, C343, C345, C346, C347, C348)
+# M76 B4b-1 — tg2 legs to harvested evidence in P426 lever `kv` (A8) — SPEC v5, 2026-11-15 (four-eyes STRICT; C342, C343, C345, C346, C347, C348)
 
 v3 = B4b-1 after the split (C347). It applies design review round 1 (D1–D21) and round 2 (E1–E4, E6–E8, E12–E14) for everything up to
 harvested evidence; ledger `docs/reviews/m76-b4b/design-review-ledger-report.md`. B8 A8, signals A8 and panel A8 (v2 §5–§6, E5, E9–E11)
-are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). v4 applies round 3 (G1–G15); round 4 (C348) reviews it against the goal.
+are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). v4 applies round 3 (G1–G15); v5 applies round 4 (C348, goal-anchored; ledger H1–H6). Final for Go.
 
 **How to read this spec (C348).** It fixes behaviour and names the seams. Where a code-level detail here conflicts with the code
 (a helper's precondition, a CLI's required flags, a constant's name), the implementer keeps the stated behaviour, follows the
 code's contract and reports the deviation; the test-writer tests behaviour through the real call paths (no mocks of the functions
-this spec names).
+this spec names). Only the router, the worker, the agent (opencode) and the docker daemon may be faked; the functions
+this spec names (the grade call, builders, readers, the harvest classifier, the hooks) run for real in tests.
 
 ## Goal
 
@@ -73,6 +74,10 @@ the forks.
   OFFLINE_CRATES.md to Cargo.toml."`, Java `"Helper classes may go only in the solution's package."`, JavaScript `"Helper .js files
   may go beside the solution."`, C++ `"Helper .h / .cpp files may go beside the solution."`. The prompt ends with `H`. An inject kind appends `" " + INJECT_ADDENDA[kind]` (tg1's three texts, byte-equal;
   `inject_addendum_sha256`).
+- **Normalised view (H2):** `manifest`, `snapshot`, the tamper check and `final_tree` read one view of the work tree that omits
+  `tg2_grade`'s top-level build outputs (`STRIP_TOP_LEVEL`: `build`, `target`, `node_modules`, `.gradle`) and treats lock files as
+  `tg2_grade`'s tamper rules do — an agent running the language's own build / test commands does not by itself make an item
+  tampered or break the snapshot (tested on a real-path tree after `cargo test` with `target/`, a symlink in it, and a helper).
 - **Snapshot (G1):** `Tg2Corpus.snapshot` captures into a directory outside `grading-private` (a sibling `grading-snap/` in the run dir;
   `tg2_grade` refuses a work tree inside its private dir); `private` stays `grading-private`.
 - **Grade call (E7, G9):** `snap is None` or a protected-tree violation → the tampered outcome without calling the grader; else
@@ -82,7 +87,7 @@ the forks.
 - **Grader mapping, `corpus_tg2.grade_outcome(result, entry, *, seq, boundary, final) -> GradeOutcome`:** `GradeOutcome.outcome =
   "model"` for every graded outcome; `tg2_grade.TransportAbort` propagates (no `GradeOutcome`). `parsed` → `failing =
   result.failing(set(entry["leaves"]))`, `leaves = sorted(universe ∩ result.passing)`; `compile_failure`, `timeout`, `oom`,
-  `mem_kill`, `crash`, `storage_cap` → every leaf failing; `tampered` → `tampered=True`, `failing=None`, `leaves=()`;
+  `mem_kill`, `crash`, `storage_cap`, `output_cap` (every scored non-`parsed` outcome `tg2_grade` emits) → every leaf failing; `tampered` → `tampered=True`, `failing=None`, `leaves=()`;
   `resources.grader_oom = (outcome == "oom")`, `resources.grader_mem_kill = (outcome == "mem_kill")`, both False otherwise;
   `phases = ({seq, boundary, final, outcome},)`; `reports = dict(result.artifacts)`.
 - **Final tree (E8):** tg1's content-addressed layout (`objects/<sha>` + `manifest.json`) over the declared solutions plus every file new or changed in a
@@ -123,9 +128,9 @@ the forks.
 | `s1` | `s1` | 1001 | rust, javascript, java, cpp | first 20 |
 | `s2` | `s2` | 2002 | cpp, java, javascript, rust | first 20 |
 | `reload` | `reload` | 1001 | rust, javascript, java, cpp | first 5 |
-| rehearsal `r2` / `r3` (each arm) | `s1` | 1001 | rust | first 1 |
+| rehearsal `r2` (on X) / `r3` (on N16) | `s1` | 1001 | rust | first 1 |
 
-- Leg / attempt names `tg2-m76-<arm>-<leg>.a<n>`, `tg2-m76-<arm>-rehearsal-{r2,r3}.a<n>`; slot prefix `tg2-p426`.
+- Leg / attempt names `tg2-m76-<arm>-<leg>.a<n>`, `tg2-m76-x-rehearsal-r2.a<n>`, `tg2-m76-n16-rehearsal-r3.a<n>`; slot prefix `tg2-p426`.
 
 ### 3. Positives, rehearsals, freeze, sequencer
 
@@ -140,9 +145,9 @@ the forks.
   item, seed, attempts, row / evidence sha256 and verdict, per language the two grader results; all must pass. N16 only: the positives
   prove the harness; X's serving path is proven by stage 2 and the pilot pair's engagement + pair gate.
 - **Rehearsals (E3, G4):** `p426_freeze rehearsal --lever kv --corpus tg2 --pair n16,x --arm-worktree n16=<W> --arm-worktree x=<W>
-  --frozen-prompt-date <D> --out-root <m76/p426/rehearsal.tg2> --out manifest.json` (the pair's manifest, as tg1's); legs
-  `tg2-m76-<arm>-rehearsal-r2` (the `p426_hooks` reconciliation-mismatch injection fires on the first item of
-  the leg's first language — tg1: the first Go item, tg2: the first Rust item — → INVALID with `R2_REASON`) and `-r3` (the probe kill
+  --frozen-prompt-date <D> --out-root <m76/p426/rehearsal.tg2> --out manifest.json` (the pair's manifest, as tg1's); two legs, tg1's
+  assignment: `tg2-m76-x-rehearsal-r2` (the `p426_hooks` reconciliation-mismatch injection fires on the first item of
+  the leg's first language — tg1: the first Go item, tg2: the first Rust item — → INVALID with `R2_REASON`) and `tg2-m76-n16-rehearsal-r3` (the probe kill
   injected into the first Rust item → VALID with the kill scored); `p426_hooks` and `chain_core.p426_inject_stall` take the target
   language from the corpus (tg1: Go / Python as today).
 - **v8 base:** `p426_freeze v8 --lever kv --corpus tg2 --pair n16,x --arm-worktree n16=<W> --arm-worktree x=<W> --rehearsal-manifest M
@@ -166,11 +171,9 @@ the forks.
 
 ### 4. Harvest
 
-Namespace `wave2.tg2` (`benchmark/results/m76/wave2.tg2/`). Added rules: under `<item>.grades/seq-NNNN/`, `<step>.{stdout,stderr,inspect,
-inspect.err}` for step ∈ {setup-image, setup-launch, preflight, compile, execute, collect} and the bookkeeping files whose stem matches
-`TG2_BOOKKEEPING_RE` → evidence, where `TG2_BOOKKEEPING_RE = ^(holder|own-holder|ls-ps|ls-vol|cl-rm|(plan|volume|own|rm|cl|ls)-[A-Za-z0-9][A-Za-z0-9_.-]*|[a-z-]+-(pre|n|rm|v|x|n-x|rm-x|v-x))\.(out|err)$`
-(derived from `tg2_grade`'s call sites; pinned by the recorded real grade trees, every file of which must match; a near-match
-refuses); `grading-private/.tg2-registry/*.json` → evidence, before the generic `.json` → main rule;
+Namespace `wave2.tg2` (`benchmark/results/m76/wave2.tg2/`). Added rules (H5): every direct `*.out` / `*.err` / `*.stdout` / `*.stderr` / `*.inspect` / `*.inspect.err` file under an exact
+`<item>.grades/seq-NNNN/` directory → evidence (only the host grader writes there; the directory and depth restriction is the
+boundary, not the tag grammar); `grading-private/.tg2-registry/*.json` → evidence, before the generic `.json` → main rule;
 `run/positives.json` and `run/recheck-s{1,2}.json` are sealed run records, published by `publish_run_files` (main). Anything else stays unclassified (the harvest fails).
 
 ## Supported conditions
@@ -182,14 +185,14 @@ The box as in AGENTS.md (single router, lean, MTP ON, quiet box for timed legs, 
 
 1. Red-first tests (mocked box; the real draw and universe; recorded real `tg2_grade` output trees, one per language, every terminal
    outcome): the `Tg2Corpus` contract runs through `arm_runner` (a mocked agent); the prompt's exact bytes per language (golden) incl. the
-   inject tails; the grade call's arguments; the grader mapping for every outcome incl. an out-of-universe failing leaf and the
-   resource flags; the final tree incl. a helper file and a changed `Cargo.toml`; the join bound against a worst-case grade; a probe
+   inject tails; the grade call's arguments; the grader mapping for every outcome (incl. `output_cap`) incl. an out-of-universe failing leaf and the
+   resource flags; the normalised view (H2); the final tree incl. a helper file and a changed `Cargo.toml`; the join bound against a worst-case grade; a probe
    without `--universe`; a tg2 leg start under `--predictor mtp` on the committed registry (no overlay abort); `validate_leg` / A4 /
    docker gates on tg2; the `--leg` / `--rehearsal` mapping and the record kinds; the schedule table (golden) and its readers
    (`planned_slots`, `classify_leg`); the pins (a consistent redraw refuses); R2 → INVALID `R2_REASON` and R3 → scored kill on Rust;
    the positives record (sealed; a failed kind refuses v8; a changed record refuses on resume); the freeze round-trip (positives →
    rehearsals → v8 → pilot → gate → amendment → s1); `tg2_strict_rows` incl. a DNF slot and a missing slot; the re-check gates (inside /
-   outside / unrealisable; the stop, rc 5, the ack); the harvest table incl. a near-match refusal and the recorded real trees; tg1
+   outside / unrealisable; the stop, rc 5, the ack); the harvest rules on the recorded real trees (every file classified) and a file outside a grade-sequence directory refused; tg1
    unchanged — golden of tg1's plan, argv, schedules, harvest, B8 and signals outputs; tg1 rows equal except the closure-derived
    identity fields (`probe_code_sha256`, `generation_identity_sha256`, `arm_identity_sha256`, the campaign-core shas), asserted to change.
 2. The stack suite passes or fails only as on the baseline.

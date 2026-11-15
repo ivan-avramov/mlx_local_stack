@@ -88,3 +88,20 @@ D8, D13, D15, D16, D18 (intent), D20, E7, E8, E12–E14 (intent). Open (each con
 
 Pattern: round 3's findings are call-site facts (a private helper's precondition, a regex vs real names, a CLI's required flags) a
 red-first implementer meets on the real path. Review budget exhausted → the operator (S24-P16).
+
+## Round 4 (goal-anchored, operator-granted C348; v4 `8f9af2a0` → v5), 2026-11-15
+
+Sol (fresh), GLM (fresh: NOTHING OF SUBSTANCE), Claude Sonnet (resumed `4d975807`: no goal failure; two minors). Raw:
+`r4-design-{sol,glm,sonnet}.md`. Converged.
+
+| id | raised by | finding | sev | disposition |
+|---|---|---|---|---|
+| H1 | Sol P1 | the outcome mapping omits `output_cap` (a scored model outcome) → a 16 MB output would invalidate a leg | major | adopted |
+| H2 | Sol P2 | an agent's own `cargo test` creates `target/` / a lock → false tamper, broken snapshot, lost evidence; one normalised view | major | adopted (behaviour + a real-path test) |
+| H3 | Sol P3, Sonnet F1 | R2 / R3 "each arm" = four rehearsals, v8 reads two → R2 on X, R3 on N16 (tg1's assignment) | major | adopted |
+| H4 | Sonnet F2 | which seams may be faked | minor | adopted (router, worker, agent, docker only) |
+| H5 | Sol P5 | the bookkeeping-tag regex duplicates the grader's private grammar → availability risk; the grade-sequence directory is the boundary | minor (over-engineering) | adopted |
+| H6 | Sol P4 | reuse tg1's carrier under the tg2 label | minor (over-engineering) | declined — the carrier is generation data in the probe identity; one generated target is cheap and keeps tg2's provenance its own |
+| H7 | Sonnet (over-eng.) | 12 injected positives → 3 (one language) | — | declined — M65 v5 (settled) asks one item per language; ≈ 30 GPU min |
+| H8 | Sonnet (over-eng.) | positives identity: sha pin + N16 commit only | — | declined — the field comparison is what catches a record from a rotated harness identity (round 3 G8) |
+| H9 | Sonnet (over-eng.) | drop the R2 / R3 GPU legs for red tests | — | declined — the tg2 probe / chain path is new; two one-item legs (≈ 15 GPU min) prove it on the real box |
