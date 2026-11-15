@@ -61,3 +61,30 @@ Round 1: D1, D3, D6, D7, D8, D10, D11, D13, D15, D16, D19, D20 resolved (all thr
 Designer reading: the remaining defects cluster in two places — the rehearsal / freeze path (E2, E3, E6) and the post-harvest
 consumers (E4's B8 side, E5, E9, E10, E11). The post-harvest consumers read harvested evidence and are regradeable (AGENTS.md:
 regrade, not rerun). Proposal to the operator: S24-P14.
+
+## Round 3 of 3 (final verify of B4b-1 v3, `63b0b573`), 2026-11-15
+
+Sol (fresh), GLM (fresh), Claude Sonnet (resumed `4d975807`). Raw: `verify3-design-{sol,glm,sonnet}.md`. Resolved (all three): D1, D3, D6,
+D8, D13, D15, D16, D18 (intent), D20, E7, E8, E12–E14 (intent). Open (each confirmed by its raiser's trace; designer agrees):
+
+| id | raised by | finding | sev |
+|---|---|---|---|
+| G1 | Sonnet G1 | the core's snapshot lives under `grading-private`; `tg2_grade._disjoint` aborts every grade → snapshot outside `private` | blocker |
+| G2 | Sol P2 | `source_root(lang)` is `<root>/<lang>/exercises/practice` by contract; `exercise_dir(source_root…)` doubles the path | blocker |
+| G3 | Sol P3 | the core sends `--evidence p426` only for `tg1-p426` → tg2 legs lose the item barrier / reconciliation | blocker |
+| G4 | Sol P4, Sonnet G5, GLM R1, R2 | rehearsals: `--rehearsal` → `inject` values unmapped; `p426_inject_stall` Python-only; `p426_freeze rehearsal` needs the pair + both worktrees + date; v8 refuses an N16-only manifest; R3 settle bound when the killed item has no record | blocker |
+| G5 | Sol P7, Sonnet G3 | re-check records lack a self-hash → `publish_run_files` refuses; ack must be the sealed record's `sha256`; publication path is `publish_run_files`, not `classify` | blocker |
+| G6 | Sonnet G2, GLM R4 | `TG2_BOOKKEEPING_RE` misses `ls-<volume>`, `<step>-n-x`, uppercase `T` in run ids | major |
+| G7 | Sonnet G4 | positives launch: router / A4 / worker load, frozen prompt date source, probe CLI inputs | major |
+| G8 | Sol P6 | v8 must compare the positives record's identities (N16 commit, generation / scaffold, universe, draw, image) to its live inputs | major |
+| G9 | Sol P5 | grade call: `snap.path` (not `work`), the `snap is None` branch | major |
+| G10 | GLM R6, R8 | `ChainConfig.__post_init__` and `chain_core.plan` / `verify_schedule` dispatch for builder `tg2_p426` named but not specified | major |
+| G11 | GLM R3, R7, R10 | `pilot_gate_problems` (name, n), sequencer re-check hooks / `Stop(5)` / `--recheck-ack` flag, `KV_DOSSIER_PAIRS` per corpus — named, not wired | major |
+| G12 | GLM R5 | `validate_reports` exact-name artifacts vs `junit-NNN.xml` | major |
+| G13 | Sol P8 | prompt forbids build-file edits the grader allows (`Cargo.toml`) | minor |
+| G14 | Sonnet G6 | `{H}` strings not exact literals | minor |
+| G15 | Sonnet G7 | final-tree enumerator: complement of `tamper_reasons` | minor |
+| G16 | GLM R9 | refusal text / inject out-root — already in v3 §1 (designer: resolved; GLM missed it) | — declined |
+
+Pattern: round 3's findings are call-site facts (a private helper's precondition, a regex vs real names, a CLI's required flags) a
+red-first implementer meets on the real path. Review budget exhausted → the operator (S24-P16).
