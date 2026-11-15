@@ -11,6 +11,7 @@ from bench.tests import b2_frozen_support as S
 
 WATCH_INTERVAL_TEST_S = "1.0"  # S23-P93: the topology watcher interval (on the watcher's own deterministic clock)
 POLL_REAL_S = 0.01             # S23-P93: real time per watcher sleep
+WATCHER_EXIT_JOIN_S = 60.0     # S23-P93: real time a watcher gets to notice its chain exited
 
 SESSION_OUT = {"pilot": "pilot", "s1": "s1", "s2": "s2", "reload": "reload"}
 
@@ -210,6 +211,16 @@ class Topology:
     def alive(self, pid, start):
         from bench import chain_ops as co
         h = next((x for x in self.launches if x.pid == pid), None)
+        if h is not None and h.kind == "watcher" and not any(c.thread.is_alive() for c in self.chains()):
+            # S23-P93 (cold read, Sol): once the chains have exited, the in-process watcher is given real time to see it before the
+            # sequencer's fake-clock exit wait reads its liveness — production's ordering (a 300 s watcher interval inside a 900 s
+            # wait) made deterministic; a watcher that never exits still reads alive after the bounded join.
+            h.thread.join(WATCHER_EXIT_JOIN_S)
+            if not h.thread.is_alive():
+                try:
+                    h.helper.wait(WATCHER_EXIT_JOIN_S)   # the helper process ends once the thread closes its stdin
+                except Exception:  # noqa: BLE001 — a helper that does not end reads alive below
+                    pass
         if h is None or h.helper.poll() is not None:
             return False
         try:

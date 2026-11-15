@@ -555,3 +555,14 @@ def test_s23_p93_the_topology_watcher_interval_leaves_a_margin_for_a_scheduling_
     # only the gap clause is under test (the other clauses read fields this minimal journal does not carry)
     assert "tick gap" in W._verdict(journal(0.1, 0.25))["reason"]                       # the old margin: one stall fails
     assert "tick gap" not in W._verdict(journal(float(FS.WATCH_INTERVAL_TEST_S), 0.25))["reason"]
+
+
+def test_s23_p93_a_watcher_slower_than_the_sequencers_fake_wait_still_exits_in_time(tmp_path, monkeypatch):
+    """S23-P93 (cold read, Sol): the watcher's real poll (here 1.5 s, slower than the sequencer's whole fake-clock exit wait in real
+    time) must not turn a clean pilot into "watcher still alive" — the fixture joins the watcher once its chain has exited."""
+    from bench import p426_wave2 as W2
+    from bench.tests import b2_frozen_fix_support as FS
+    monkeypatch.setattr(FS, "POLL_REAL_S", 1.5)
+    monkeypatch.setattr(W2, "WATCHER_GRACE_S", 10.0)   # ≈ 0.2 s real on the fake clock: well under the watcher's 1.5 s poll
+    T, rc, err = _topology_pilot(tmp_path, monkeypatch)
+    assert rc == 0, (err, "\n".join(T.lines[-30:]))
