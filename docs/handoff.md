@@ -4,7 +4,7 @@ THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-q
 C341 … C331). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance (C334): guardrails prevent wrong
 data or wasted time, not ceremony; cheap fixes welcome; GPU time is the binding resource; label every point `S24-P<n>`.
 
-Decisions: session 23 ruled C331–C342; session 24 so far C343–C351 (next **C352**); discussion ids `S24-P<n>` (next S24-P19).
+Decisions: session 23 ruled C331–C342; session 24 so far C343–C351 (next **C355**); discussion ids `S24-P<n>` (next S24-P22).
 
 ## Goal (restated for convergence, operator asked)
 
@@ -31,7 +31,10 @@ per-axis signals → the operator. Then publish (registry CERTIFIED, README, gat
    `$STACK_WORKDIR/fe-m76b4b1/inputs/tg2-grade-trees/`; set `BASELINE`, make the copies (`impl/`, `tw/`, forks populated, `fe_test.sh`);
    dispatch **B4b-1** (C351; spec `docs/specs/m76-b4b-tg2-runner.md` v5; briefs in `$STACK_WORKDIR/fe-m76b4b1/briefs/`; implementer
    Claude Opus `claude -p`, test-writer Claude Sonnet blind; review Sol + GLM). Then B4b-1's real-output acceptance (positives,
-   rehearsals, pilot, sizing report vs both budgets, S24-P9).
+   rehearsals, pilot, sizing report vs both budgets, S24-P9). In the same gap: the **B8 kv planned-kinds fix** (C354; spec
+   `docs/specs/m76-b8-kv-planned-kinds.md`; briefs `$STACK_WORKDIR/fe-m76b8k/briefs/`; four-eyes light), then B8 + signals over the
+   real stage-3a Wave 1 (`$STACK_WORKDIR/m76/s24-p7-check/run.sh`) and the cold panel trace (S24-P7). Runbook: Math500 legs need
+   `run.py grade --benches math500 --tune m76-<arm>-b<k>` before B8 (done for b1 / b2).
 3. Then Wave 2 (A7, tg1) and stage 3b (A8). B4b-2 (A8 B8 / signals / panel, `docs/specs/m76-b4b2-a8-consumers.md` to write): spec +
    design review during the decider; build after it, on this box (C350).
 
