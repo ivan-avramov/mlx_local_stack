@@ -1291,9 +1291,13 @@ class BoxSeqOps(fz.BoxOps):
         else:
             log = Path(argv[argv.index("--out") + 1]).with_name("watcher.stdout")
         log.parent.mkdir(parents=True, exist_ok=True)
+        env = None
+        if len(argv) > 1 and Path(argv[1]).name == "bench_watch.py":   # S26-P8 / P444: the watcher imports `bench` via PYTHONPATH
+            bench_dir = str(Path(cwd).resolve() / "benchmark")
+            env = dict(os.environ, PYTHONPATH=os.pathsep.join(p for p in (bench_dir, os.environ.get("PYTHONPATH")) if p))
         with open(log, "ab") as f:
             proc = subprocess.Popen(argv, cwd=str(cwd), stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT,
-                                    pass_fds=tuple(pass_fds), close_fds=True)
+                                    pass_fds=tuple(pass_fds), close_fds=True, env=env)
         self._procs[proc.pid] = proc
         return SimpleNamespace(pid=proc.pid, start=co.default_create_time(proc.pid), argv=list(argv))
 

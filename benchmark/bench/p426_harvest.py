@@ -1210,6 +1210,28 @@ def leg_worktrees(leg_root, workdir):
         return {}
 
 
+KV_TG1_REHEARSAL_RE = re.compile(r"tg1-m76-rehearsal-(n16|x|v|mismatch|kill)")
+
+
+def leg_worktree(leg_root, workdir):
+    """S26-P8: the worktree that served a leg, or None. A KV tg1 rehearsal leg (`kv_legs`: R1 `tg1-m76-rehearsal-<arm>`, R2
+    `-mismatch` on the treatment, R3 `-kill` on the reference) maps through the record's KV arms (reference, treatment, in the
+    record's order); every other leg by `_arm_of`."""
+    trees = leg_worktrees(leg_root, workdir)
+    leg = Path(leg_root).name.rsplit(".a", 1)[0]
+    m = KV_TG1_REHEARSAL_RE.fullmatch(leg)
+    if m:
+        kv = [a for a in trees if a not in ("off", "on")]
+        role = m.group(1)
+        if role in ("mismatch", "kill"):
+            arm = (kv[1] if role == "mismatch" else kv[0]) if len(kv) == 2 else None
+        else:
+            arm = role
+    else:
+        arm = _arm_of(leg)
+    return trees.get(arm)
+
+
 def _parse(argv):
     ap = _Parser(prog="bench.p426_harvest", description="P426 Wave-2 harvest (B2 spec 11)")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -1247,8 +1269,7 @@ def main(argv=None, *, environ=None, home=None):
         scrub = Scrub(workdir=workdir, repo=Path(a.main_root), home=home, user=getpass.getuser(),
                       hosts=tuple(sorted({host, host.split(".")[0]} - {""})), emails=tuple(a.operator_email))
         trees = leg_worktrees(leg_root, workdir)
-        arm = _arm_of(leg_root.name.rsplit(".a", 1)[0])
-        worktree = Path(a.worktree) if a.worktree else trees.get(arm)
+        worktree = Path(a.worktree) if a.worktree else leg_worktree(leg_root, workdir)
         env_files = [Path(p) for p in a.env_file] + [t / ".env" for t in trees.values()
                                                        if (t / ".env").exists() or os.path.islink(t / ".env")]
         env_files = list(dict.fromkeys(env_files))
