@@ -1,6 +1,6 @@
 # M65 tg2 grader timeout evidence — change review ledger (four-eyes light, opinion; round 1 of 3), 2026-11-16
 
-Candidate 1: implementer Claude Opus `claude -p` (session `34758ec5`) on `0424892c`; spec `docs/specs/m65-tg2-grade-timeout-evidence.md` v1
+Candidate 1: implementer Claude Opus `claude -p` (session `34758ec5`) on `f77c10a2` (old `0424892c`, see `docs/reviews/s25-history-scrub-map.md`); spec `docs/specs/m65-tg2-grade-timeout-evidence.md` v1
 (+ erratum v1a, S25-P5). Test-writer Claude Sonnet (session `65a87647`): delivery 1 frozen 2026-11-17T05:20:16Z (44 failed / 34 passed on the
 candidate, 127 s), delivery 2: all 44 seam guesses, amended; every test green incl. real docker (spins all four languages, 21 grader docker tests,
 the regrade: 19 / 19 rows as SUMMARY.json, the Rust spin `transport_abort` → `timeout`). Panel: Sol `gpt-5.6-sol-high`, GLM `glm-5.2-high`
