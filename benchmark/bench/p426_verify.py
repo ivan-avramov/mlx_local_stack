@@ -1362,7 +1362,8 @@ KV_ROOT = "m76"
 KV_REPO_PREFIX = "benchmark/results/m76/"          # the KV lever's HARVEST `published` prefix (results_root = <rows>/m76)
 KV_W1 = "m76/wave1"
 KV_W2 = "wave2"
-KV_W1_KINDS = ("math500", "cjudge", "vision", "reasoning", "m1", "longctx")
+from bench.p426_plan import KV_W1_KINDS  # noqa: E402  (v1.1 F5: one definition, in the plan)
+KV_ITEM_KINDS = ("math500", "cjudge", "vision", "reasoning", "longctx")     # the kinds with items in m76/ids.json (m1: none)
 KV_W1_AXIS = dict(W1_AXIS, longctx="A5")
 KV_BLOCKS = {"b1": (1, 1), "b2": (2, 1), "t2-b1": (1, 2), "t2-b2": (2, 2)}      # block label -> (block, tier)
 KV_TIER2 = ("t2-b1", "t2-b2")
@@ -1428,7 +1429,7 @@ def load_kv_ids(reader):
     if not isinstance(axes, dict):
         raise RefusalError("m76/ids.json has no axes")
     out = {}
-    for kind in ("math500", "cjudge", "vision", "reasoning", "longctx"):
+    for kind in KV_ITEM_KINDS:
         ax = axes.get(kind)
         if not isinstance(ax, dict):
             raise RefusalError(f"m76/ids.json has no axes.{kind}")
@@ -1470,16 +1471,18 @@ def load_kv_ids(reader):
     return out
 
 
-def _kv_longctx(reader, ldir, tune, ids, label, where, entry_dir):
+def _kv_longctx(reader, ldir, tune, ids, label, where, entry_dir, result_rels=None):
     """A5's per-item results: `retrieval.<tune>.<id>.json` / `reasoning.<tune>.<id>.json` (records[0].rows, one row) and their
-    manifests; rows `{id: item id, seed: sampler_seed, row}`."""
+    manifests; rows `{id: item id, seed: sampler_seed, row}`. `result_rels` (v1.1 F1.2) collects {id: the result file read}."""
     rows, manifests = [], {}
+    result_rels = {} if result_rels is None else result_rels
     for iid in ids["longctx"][label]:
         item = ids["longctx_items"].get(iid)
         if item is None:
             raise RefusalError(f"{where}: {iid} is not an A5 item")
         stem = f"{'retrieval' if item['task'] == 'retrieval' else 'reasoning'}.{tune}.{iid}"
         doc = reader.read_json(_kv_member(reader.root, entry_dir / f"{stem}.json", where), f"{where} {iid} result")
+        result_rels[iid] = reader.rel(entry_dir / f"{stem}.json")
         try:
             got = [r for rec in doc["records"] for r in rec["rows"]]
         except (KeyError, TypeError):
@@ -1525,7 +1528,8 @@ def load_kv_leg(reader, kind, arm, label, ids=None):
         return out
     edir = root / ENTRY
     if kind == "longctx":
-        out["rows"], out["manifests"] = _kv_longctx(reader, ldir, tune, ids, label, where, edir)
+        out["result_rels"] = {}
+        out["rows"], out["manifests"] = _kv_longctx(reader, ldir, tune, ids, label, where, edir, out["result_rels"])
         out["manifest"] = next(iter(out["manifests"].values()), {})
         return out
     rows_path = _kv_member(root, edir / W1_ROWS[kind].format(tune=tune), where)
@@ -1632,7 +1636,9 @@ def _kv_argv_reasons(kind, a, b):
 # volatile per run (timestamp, the router's / its exit block's pids) / checked by rule 2b (registry sha) / the arm's own tune KEY
 # (`gather(tune=)`: a key, never provenance) / M72's descriptive TQ4 route counts (present only under a TQ4 mode)
 KV_PROVENANCE_EXCLUDED = ("timestamp", "router", "router_exit", "registry", "tune", "tq4_route_counts_at_creation",
-                          "tq4_route_counts_at_exit")
+                          "tq4_route_counts_at_exit", "result_file", "result_sha256")
+KV_RESULT_STAMPS = ("result_file", "result_sha256")    # v1.1 F1.2: per-arm integrity (`_kv_result_reasons`), never cross-arm
+KV_STAMPED_KINDS = ("reasoning", "longctx")            # round 2 (R1): run_reasoning / run_retrieval write both stamps
 KV_PROVENANCE_WHITELIST = frozenset({                            # the KV / mode keys (+ the arm commit) that may differ
     ("kv", "kv_bits"), ("kv", "tq4_attention"), ("kv", "kv_quant_scheme"),
     ("runtime", "tq4_attention"), ("runtime", "kv_bits"),
@@ -1667,13 +1673,64 @@ def _leaf_diffs(a, b, path=()):
     return [] if a == b and type(a) is type(b) else [(path, a, b)]
 
 
+def _kv_strings(obj):
+    if isinstance(obj, dict):
+        return [s for v in obj.values() for s in _kv_strings(v)]
+    if isinstance(obj, (list, tuple)):
+        return [s for v in obj for s in _kv_strings(v)]
+    return [obj] if isinstance(obj, str) else []
+
+
+def _kv_own_paths(obj, arm):
+    """v1.1 F1.1: every string leaf with the arm's OWN worktree component normalised (`m76-q-ARM` / `m76-f45-ARM`)."""
+    if isinstance(obj, dict):
+        return {k: _kv_own_paths(v, arm) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_kv_own_paths(v, arm) for v in obj]
+    if isinstance(obj, str):
+        return _kv_path_re(arm).sub(lambda m: m.group(0)[:m.group(0).rfind("-")] + "-ARM", obj)
+    return obj
+
+
 def kv_provenance_problems(ma, mb, a, b):
-    """Every difference between the two arms' normalized provenance outside the whitelist (the KV / mode keys, the arm commit)."""
+    """Every difference between the two arms' normalized provenance outside the whitelist (the KV / mode keys, the arm commit).
+    v1.1 F1.1: each arm's own worktree component normalised per arm first; a leaf naming another arm's worktree is a problem.
+    Content hashes beside paths stay compared; `result_file` / `result_sha256` are per-arm integrity (`_kv_result_reasons`)."""
     pa, pb = kv_provenance(ma), kv_provenance(mb)
     if pa.get("fingerprint_version") is None:
         return [f"{a}: manifest has no fingerprint_version"]
-    return [f"{'.'.join(map(str, p))} differs ({a} {x!r}, {b} {y!r})" for p, x, y in _leaf_diffs(pa, pb)
-            if tuple(p) not in KV_PROVENANCE_WHITELIST]
+    out = [f"{arm} manifest names another arm's worktree: {foreign[:3]}"
+           for arm, prov in ((a, pa), (b, pb)) for foreign in [_kv_foreign(set(_kv_strings(prov)), arm)] if foreign]
+    pa, pb = _kv_own_paths(pa, a), _kv_own_paths(pb, b)
+    return out + [f"{'.'.join(map(str, p))} differs ({a} {x!r}, {b} {y!r})" for p, x, y in _leaf_diffs(pa, pb)
+                  if tuple(p) not in KV_PROVENANCE_WHITELIST]
+
+
+def _kv_result_reasons(reader, kind, a, b):
+    """v1.1 F1.2: per arm (per A5 item), the manifest's `result_file` is the basename of the result file B8 read and its
+    `result_sha256` the sha256 of the bytes B8 read; absent or unequal → a rule-2d reason naming the arm. Round 2 (R1): required
+    on every manifest of the stamped kinds (`KV_STAMPED_KINDS`: their runners write both); the other kinds stay unstamped."""
+    if kind not in KV_STAMPED_KINDS:
+        return []
+    per = {}
+    for m in (a, b):
+        if kind == "longctx":
+            for iid, man in m["manifests"].items():
+                per.setdefault(iid, []).append((m, man, m["result_rels"][iid]))
+        else:
+            per.setdefault(None, []).append((m, m["manifest"], m["rows_rel"]))
+    reasons = []
+    for iid, entries in sorted(per.items(), key=lambda kv: str(kv[0])):
+        mans = [man if isinstance(man, dict) else {} for _m, man, _rel in entries]
+        for (m, _man, rel), man in zip(entries, mans):
+            where = f"{m['arm']} {m['leg']}" + (f" {iid}" if iid else "")
+            want = dict(result_file=Path(rel).name, result_sha256=reader.inputs.get(rel))
+            for k in KV_RESULT_STAMPS:
+                if k not in man:
+                    reasons.append(f"rule 2d: {where} manifest has no {k} (the result file's integrity stamp)")
+                elif man[k] != want[k]:
+                    reasons.append(f"rule 2d: {where} manifest {k} {man[k]!r} != the result file B8 read ({want[k]!r})")
+    return reasons
 
 
 # erratum v1.3 (A7): per-invocation identity of a tg1 manifest (the probe run id, the worker process, the chain's binding nonce,
@@ -1894,12 +1951,20 @@ def _kv_frozen(reader, pair, build="s3"):
     return frozen, hashlib.sha256(data).hexdigest(), rel
 
 
-def verify_wave1_kv(rows_root, repo, pair, kinds=KV_W1_KINDS, build="s3"):
+def verify_wave1_kv(rows_root, repo, pair, kinds=None, build="s3"):
     """B8 Wave 1 under kv: one record per (kind, block label) of the pair; Math500's and A5's (v1.4) tier-2 blocks are
-    `not_run` (not refused) when neither arm has the leg; an A5 tier-2 leg without a tier 2 in m76/ids.json refuses."""
-    from bench.p426_plan import check_kv_pair, pair_label
+    `not_run` (not refused) when neither arm has the leg; an A5 tier-2 leg without a tier 2 in m76/ids.json refuses.
+    C354: `kinds=None` = the build's planned kinds (`p426_plan.kv_w1_kinds`); each dropped kind's blocks are `not_run` and
+    `dropped` = {kind: ruling}; a missing leg of a verified kind refuses."""
+    from bench.p426_plan import check_kv_pair, kv_w1_dropped, kv_w1_kinds, pair_label
 
     ref, test = check_kv_pair(*pair)
+    dropped = {}
+    if kinds is None:
+        try:
+            kinds, dropped = kv_w1_kinds(build), kv_w1_dropped(build)
+        except ValueError as exc:
+            raise RefusalError(str(exc)) from None
     kv_check_roots(rows_root)
     reader = Reader(rows_root, confine=True)
     frozen, frozen_sha, frozen_rel = _kv_frozen(reader, (ref, test), build)
@@ -1914,11 +1979,12 @@ def verify_wave1_kv(rows_root, repo, pair, kinds=KV_W1_KINDS, build="s3"):
     for kind in kinds:
         if kind not in KV_W1_KINDS:
             raise RefusalError(f"unknown Wave 1 kind {kind!r}")
+    for kind in kinds:
         for label in (list(KV_BLOCKS) if kind in KV_TIERED_KINDS else ["b1", "b2"]):
             if label in KV_TIER2 and not any((reader.root / KV_W1 / kv_leg_of(kind, arm, label)).exists() for arm in (ref, test)):
                 not_run.append(f"{kind}/{label}")
                 continue
-            if label not in ids[kind]:
+            if kind in KV_ITEM_KINDS and label not in ids[kind]:     # C354: an item-less kind (m1) never indexes ids
                 raise RefusalError(f"{kind}/{label}: a tier-2 leg exists but m76/ids.json has no {kind} tier 2")
             a, b = (load_kv_leg(reader, kind, arm, label, ids) for arm in (ref, test))
             reasons, scrub_ok, scrub_n = [], 0, 0
@@ -1930,6 +1996,7 @@ def verify_wave1_kv(rows_root, repo, pair, kinds=KV_W1_KINDS, build="s3"):
             reasons += _kv_registry_reasons(kind, frozen, registry_git, texts, a, b)
             reasons += _kv_argv_reasons(kind, a, b)
             reasons += _kv_equal_reasons(kind, a, b)
+            reasons += _kv_result_reasons(reader, kind, a, b)
             reasons = [_pair_reason(kind, label, a, b, r) for r in reasons]
             if kind == "m1":
                 keys, rejected, verified = [dict(key=[label], identical=False, identity="none (M1)")], [], 0
@@ -1952,8 +2019,11 @@ def verify_wave1_kv(rows_root, repo, pair, kinds=KV_W1_KINDS, build="s3"):
                 scrub=dict(verified=scrub_ok, files=scrub_n), content_sha256_verified=verified,
                 speed_problems={m["arm"]: m["receipt"].get("speed_problems") for m in (a, b)},
                 log={m["arm"]: m["receipt"].get("log") for m in (a, b)}))
+    for kind in KV_W1_KINDS:      # C354: the build's dropped kinds, by ruling (never loaded, never refused)
+        if kind in dropped and kind not in kinds:
+            not_run += [f"{kind}/{label}" for label in (list(KV_BLOCKS) if kind in KV_TIERED_KINDS else ["b1", "b2"])]
     return dict(axis="wave1", lever="kv", pair=[ref, test], label=pair_label(ref, test), generator="bench.p426_verify",
-                inputs=dict(sorted(reader.inputs.items())), pairs=pairs, not_run=not_run,
+                inputs=dict(sorted(reader.inputs.items())), pairs=pairs, not_run=not_run, dropped=dict(sorted(dropped.items())),
                 frozen=dict(sha256=frozen_sha, path=frozen_rel, **{f"stack_head_{a}": frozen.get(f"stack_head_{a}") for a in (ref, test)},
                             **{f"registry_{a}_sha": frozen.get(f"registry_{a}_sha") for a in (ref, test)}),
                 registry_git_sha256=registry_git, allowed_delta=dict(registry=["kv_bits", "tq4_attention", "arm note"],
@@ -2122,9 +2192,18 @@ def _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts):
     return reasons
 
 
-def verify_all_kv(rows_root, repo, pair, kinds=KV_W1_KINDS):
-    """One B8 record under kv: Wave 1 (+ A5) and, when `m76/wave2/run/` exists, A7."""
-    w1 = verify_wave1_kv(rows_root, repo, pair, kinds=kinds)
+def verify_all_kv(rows_root, repo, pair, kinds=None, build="s3"):
+    """One B8 record under kv: Wave 1 (+ A5) and, when `m76/wave2/run/` exists, A7. Erratum v1.1a (F4): `kinds=None` = the
+    build's planned kinds (the CLI never passes another set); a subset (tests / fixtures) still records the build's `dropped`,
+    and `compute_kv` flags every planned pair it lacks as a blocking `wave1_incomplete` (K2)."""
+    from bench.p426_plan import kv_w1_dropped
+
+    w1 = verify_wave1_kv(rows_root, repo, pair, kinds=kinds, build=build)
+    if kinds is not None:
+        try:
+            w1["dropped"] = dict(sorted(kv_w1_dropped(build).items()))
+        except ValueError as exc:
+            raise RefusalError(str(exc)) from None
     axes = dict(wave1=w1)
     union = dict(w1["inputs"])
     if (Path(rows_root) / KV_ROOT / WAVE / "run").is_dir():

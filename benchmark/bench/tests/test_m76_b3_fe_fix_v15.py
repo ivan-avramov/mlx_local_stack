@@ -291,7 +291,7 @@ class FakeTok:
     def __init__(self, mode, overhead=52, cpt=4.6):
         self.mode, self.overhead, self.cpt = mode, overhead, cpt
 
-    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True):
+    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True, **template_kwargs):   # F3: the deployed kwargs
         n = self.overhead + int(sum(len(m["content"]) for m in messages) / self.cpt)
         ids = list(range(1, n + 1))
         if self.mode == "batch":
@@ -335,7 +335,9 @@ def test_the_real_tokenizer_count_equals_an_independent_input_ids_length():
     count, cpt, meta = M.offline_counter(tokenizer=tok)
     assert 1.0 <= cpt <= 10.0 and meta["transformers_version"]
     msgs = [{"role": "user", "content": "The quick brown fox jumps over the lazy dog. " * 50}]
-    text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False)
+    kw = M.deployed_template_kwargs(G.ENTRY)                   # F3: the reference renders the deployed template too
+    assert kw and meta["template_kwargs"] == kw
+    text = tok.apply_chat_template(msgs, add_generation_prompt=True, tokenize=False, **kw)
     assert count(msgs) == len(tok(text, add_special_tokens=False)["input_ids"]) > 100       # reference: tokenise the rendered text
     assert count(msgs) > 2
 

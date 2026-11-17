@@ -137,9 +137,11 @@ class World:
                            completion_tokens=100, hits=[True] * 5, score=1.0, budget_hit=False)
                 row = row_hook(row) if row_hook else row
                 stem = f"{'retrieval' if item['task'] == 'retrieval' else 'reasoning'}.{tune}.{iid}"
-                self._write(edir / f"{stem}.json", json.dumps(dict(records=[dict(ctx=item["rung"], rows=[row])])))
-                self._write(edir / f"{stem}.manifest.json", json.dumps(manifest_hook(self.manifest(arm), iid)
-                                                                      if manifest_hook else self.manifest(arm)))
+                res = json.dumps(dict(records=[dict(ctx=item["rung"], rows=[row])]))
+                self._write(edir / f"{stem}.json", res)
+                man = dict(self.manifest(arm), result_file=f"{stem}.json",      # stamped as run_reasoning / run_retrieval do (B8 R1)
+                           result_sha256=hashlib.sha256(res.encode()).hexdigest())
+                self._write(edir / f"{stem}.manifest.json", json.dumps(manifest_hook(man, iid) if manifest_hook else man))
         return leg
 
     def verify(self, kinds=("cjudge", "longctx")):

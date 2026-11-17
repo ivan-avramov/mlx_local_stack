@@ -299,6 +299,8 @@ def main_kv(args):
 
     try:
         build = p426_plan.check_kv_build(args.build)
+        if args.axes is None:
+            args.axes = ",".join(p426_plan.kv_w1_kinds(build))
         pair = p426_plan.check_kv_pair(*str(args.pair or "").split(",", 1)) if args.pair and "," in args.pair else None
         if pair is None:
             raise ValueError("--pair <reference>,<treatment> is required under lever kv (n16,x | x,v | n16,v)")
@@ -414,8 +416,8 @@ def main(argv=None):
     ap.add_argument("--only-arm", default=None, help="lever kv: run one arm's legs only (stage 4: V against stage 3's X)")
     ap.add_argument("--certified-by", action="append", default=[], help="lever kv: <arm>=<stage-2 record> (TQ4 arms' m1 legs)")
     args = ap.parse_args(argv)
-    if args.axes is None:
-        args.axes = ",".join(KV_AXES if args.lever == "kv" else AXES)
+    if args.axes is None and args.lever != "kv":       # C354: lever kv defaults to its build's planned kinds (main_kv)
+        args.axes = ",".join(AXES)
     configured = os.environ.get("STACK_WORKDIR")
     if not configured or Path(configured).resolve() != Path(args.workdir).resolve():
         print(f"[p426_wave1] --workdir {args.workdir} is not $STACK_WORKDIR ({configured})", file=sys.stderr)

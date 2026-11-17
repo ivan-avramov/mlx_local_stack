@@ -287,6 +287,7 @@ def offline_counter(entry=ENTRY, tokenizer=None):
     from bench.run_retrieval import _CAL_FILLER
 
     hf = (_registry_models().get(entry) or {}).get("hf_path") or entry
+    kw = deployed_template_kwargs(entry)
     tok = tokenizer
     if tok is None:
         from transformers import AutoTokenizer
@@ -294,12 +295,24 @@ def offline_counter(entry=ENTRY, tokenizer=None):
         tok = AutoTokenizer.from_pretrained(hf, local_files_only=True)
 
     def count(messages):
-        return token_count(tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=True))
+        return token_count(tok.apply_chat_template(messages, add_generation_prompt=True, tokenize=True, **kw))
 
     cal = _CAL_FILLER * CAL_REPEAT
     cpt = check_calibration(len(cal) / count([{"role": "user", "content": cal}]))
     return count, cpt, dict(tokenizer=hf, chat_template_sha256=hashlib.sha256(str(tok.chat_template).encode()).hexdigest(),
-                            chars_per_token=cpt, transformers_version=_transformers_version())
+                            chars_per_token=cpt, transformers_version=_transformers_version(), template_kwargs=dict(kw))
+
+
+TEMPLATE_KWARGS = ("enable_thinking", "reasoning_effort")
+
+
+def deployed_template_kwargs(entry=ENTRY):
+    """v1.1 F3 (C355 (3), S25-P1): the chat-template kwargs the server renders the entry's deployed request with
+    (`params_for(entry, profile="deployed")`: `enable_thinking`, `reasoning_effort`, each only when set)."""
+    from bench.model_params import params_for
+
+    p = params_for(entry, profile="deployed")
+    return {k: p[k] for k in TEMPLATE_KWARGS if p.get(k) is not None}
 
 
 def count_prompts(items, count, chars_per_token, chain_len=A5_CHAIN_LEN):

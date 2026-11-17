@@ -148,8 +148,10 @@ def test_main_kv_refuses_v_before_anything_runs(tmp_path, monkeypatch, capsys):
     rc = W1.main(["--lever", "kv", "--build", "s3", "--pair", "x,v", "--arm-root", f"x={tmp_path}/x", "--arm-root",
                   f"v={tmp_path}/v", "--main-root", str(tmp_path / "main"), "--workdir", str(tmp_path), "--out", str(out)])
     assert rc == 2 and "names V" in capsys.readouterr().err and not out.exists()
+    # K1 (C354): the default axes no longer include m1; this half tests the m1 certified-by refusal, so it names m1
     rc = W1.main(["--lever", "kv", "--build", "s3", "--pair", "n16,x", "--arm-root", f"n16={tmp_path}/n", "--arm-root",
-                  f"x={tmp_path}/x", "--main-root", str(tmp_path / "main"), "--workdir", str(tmp_path), "--out", str(out)])
+                  f"x={tmp_path}/x", "--main-root", str(tmp_path / "main"), "--workdir", str(tmp_path), "--out", str(out),
+                  "--axes", "m1"])
     assert rc == 2 and "stage-2 record" in capsys.readouterr().err and not out.exists()
 
 

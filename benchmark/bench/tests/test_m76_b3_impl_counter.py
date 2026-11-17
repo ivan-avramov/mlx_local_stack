@@ -28,7 +28,7 @@ class StandIn:
     def __init__(self, mode="batch", n=None, overhead=0):
         self.mode, self.n, self.overhead = mode, n, overhead
 
-    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True):
+    def apply_chat_template(self, messages, add_generation_prompt=True, tokenize=True, **template_kwargs):   # F3: the deployed kwargs
         assert tokenize and add_generation_prompt
         chars = sum(len(m["content"]) for m in messages)
         ids = list(range(self.n if self.n is not None else math.ceil(chars / CPT) + self.overhead))

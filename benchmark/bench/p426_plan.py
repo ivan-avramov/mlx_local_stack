@@ -488,6 +488,22 @@ def check_kv_build(build):
     return build
 
 
+# C354: the Wave 1 kinds a KV build's stage planned; a dropped kind is B8 `not_run` with its ruling, never refused
+KV_W1_KINDS = ("math500", "cjudge", "vision", "reasoning", "m1", "longctx")     # v1.1 F5: the one definition (B8 imports it)
+KV_W1_DROPPED = {"s3": {"m1": "C352: M1 dropped from stage 3a (stage 1's matrix certifies memory)"}}
+
+
+def kv_w1_dropped(build):
+    """{kind: ruling} of the Wave 1 kinds build `build` dropped (ValueError on a non-KV build)."""
+    return dict(KV_W1_DROPPED.get(check_kv_build(build), {}))
+
+
+def kv_w1_kinds(build):
+    """The Wave 1 kinds build `build` planned, in `KV_W1_KINDS` order (ValueError on a non-KV build)."""
+    dropped = kv_w1_dropped(build)
+    return tuple(k for k in KV_W1_KINDS if k not in dropped)
+
+
 A5_TUNE_TAG = "lc"     # erratum v1.2: A5's own tune / stems (its `reasoning.*` files never share A4's tune)
 KV_TIERED_AXES = ("math500", "longctx")     # v1.4: A5 has a tier 2 (its second look), as Math500
 

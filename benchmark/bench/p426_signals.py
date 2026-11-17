@@ -15,6 +15,7 @@ import argparse
 import hashlib
 import json
 import math
+import re
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -1632,9 +1633,11 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
         rec = recs.get((kind, label))
         return rec if rec and rec.get("accepted") else None
 
+    dropped = dict(w1.get("dropped") or {})
     coverage = dict(accepted=sorted(f"{k}/{b}" for (k, b), r in recs.items() if r.get("accepted")),
                     rejected={f"{k}/{b}": r["reasons"] for (k, b), r in sorted(recs.items()) if not r.get("accepted")},
-                    not_run=list(w1.get("not_run") or []))
+                    not_run=list(w1.get("not_run") or []), dropped=dropped,
+                    incomplete=_kv_incomplete(_kv_build_of(w1), recs))
     decode = {}
     for kind in ("math500", "cjudge", "vision", "reasoning", "longctx"):
         d = _kv_decode_wave1(kind, recs, leg, ref, test)
@@ -1671,7 +1674,9 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
         blocks = {}
         for label in ("b1", "b2"):
             rec = recs.get((kind, label))
-            if not rec:
+            if kind in dropped and not rec:
+                blocks[label] = dict(status="not_run", ruling=dropped[kind])
+            elif not rec:
                 blocks[label] = dict(status="missing")
             elif not rec.get("accepted"):
                 blocks[label] = dict(status="rejected")
@@ -1685,6 +1690,9 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
     m1 = {}
     for label in ("b1", "b2"):
         rec = recs.get(("m1", label))
+        if "m1" in dropped and not rec:           # v1.1 F2: a dropped kind is `not_run` with its ruling, never `missing`
+            m1[label] = dict(status="not_run", ruling=dropped["m1"])
+            continue
         m1[label] = dict(status="missing" if not rec else "accepted" if rec.get("accepted") else "rejected")
         if rec and rec.get("accepted"):
             m1[label]["peak"] = {arm: (leg("m1", arm, label)["result"].get("peak") or
@@ -1699,7 +1707,8 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
         sig["panel"] = kv_panel_section(panel, b8, ref, test, b8_sha256, partial=partial)
     else:
         sig["panel"] = dict(status="pending (panel not run)")
-    sig["flags"], sig["decode"], sig["coverage"] = kv_flags(sig), decode, coverage
+    sig["decode"], sig["coverage"] = decode, coverage
+    sig["flags"] = kv_flags(sig)
     for rel, digest in reader.inputs.items():
         if b8["inputs"].get(rel) != digest:
             raise RefusalError(f"input {rel} is not covered by B8.json")
@@ -1707,6 +1716,35 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
     sig["header"].update(b8_sha256=b8_sha256, inputs_sha256=_sha_doc(sig["inputs"]), n_inputs=len(sig["inputs"]),
                          rng=dict(seed=SEED, iters=ITERS))
     return sig
+
+
+KV_FROZEN_REL_RE = re.compile(r"^m76/wave1/run/frozen\.([^./]+)\.json$")
+
+
+def _kv_build_of(w1):
+    """The build B8 verified: the recorded frozen record's path (`m76/wave1/run/frozen.<build>.json`), else a refusal."""
+    from bench.p426_plan import check_kv_build
+
+    m = KV_FROZEN_REL_RE.match(str((w1.get("frozen") or {}).get("path") or ""))
+    try:
+        return check_kv_build(m.group(1) if m else None)
+    except ValueError as exc:
+        raise RefusalError(f"B8 wave1 names no KV build (frozen.path {(w1.get('frozen') or {}).get('path')!r}): {exc}") from None
+
+
+def _kv_incomplete(build, recs):
+    """v1.1 F2: {"<kind>/<label>": text} of every planned pair (`kv_w1_kinds(build)` × b1, b2) rejected by or absent from B8."""
+    from bench.p426_plan import kv_w1_kinds
+
+    out = {}
+    for kind in kv_w1_kinds(build):
+        for label in ("b1", "b2"):
+            rec = recs.get((kind, label))
+            if not rec:
+                out[f"{kind}/{label}"] = "absent from the B8 record (no pair verified)"
+            elif not rec.get("accepted"):
+                out[f"{kind}/{label}"] = "rejected: " + "; ".join(str(r) for r in (rec.get("reasons") or [])[:3])
+    return out
 
 
 def _final_of(axis, rec):
@@ -1723,6 +1761,9 @@ def kv_flags(sig):
     B7 size warning, the A7 session × arm interaction, an A5 per-task gate not met, the panel's Holm / single-family flags."""
     flags = []
     label = sig["header"]["label"]
+    for member, text in sorted(((sig.get("coverage") or {}).get("incomplete") or {}).items()):
+        flags.append(dict(flag="wave1_incomplete", member=member, value=None, items=[], blocking=True,
+                          text=f"Wave 1 {member}: planned pair {text}"))
     for axis in ("A1", "A5", "A7"):
         rec = sig["axes"].get(axis) or {}
         looks = ([lk for lk in rec.get("looks") or [] if "verdict" in lk] if axis in ("A1", "A5") and "looks" in rec
