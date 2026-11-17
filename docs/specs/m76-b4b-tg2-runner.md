@@ -2,7 +2,7 @@
 
 v3 = B4b-1 after the split (C347). It applies design review round 1 (D1–D21) and round 2 (E1–E4, E6–E8, E12–E14) for everything up to
 harvested evidence; ledger `docs/reviews/m76-b4b/design-review-ledger-report.md`. B8 A8, signals A8 and panel A8 (v2 §5–§6, E5, E9–E11)
-are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). v4 applies round 3 (G1–G15); v5 applies round 4 (C348, goal-anchored; ledger H1–H6). Final for Go.
+are B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`). v4 applies round 3 (G1–G15); v5 applies round 4 (C348, goal-anchored; ledger H1–H6). Final for Go. Erratum v5a (2026-11-16, change review L14): re-check 2 runs after the reload pair.
 
 **How to read this spec (C348).** It fixes behaviour and names the seams. Where a code-level detail here conflicts with the code
 (a helper's precondition, a CLI's required flags, a constant's name), the implementer keeps the stated behaviour, follows the
@@ -166,7 +166,7 @@ the forks.
 - **Re-checks (E4):** after both s1 legs are harvested, `m76_sim.recheck("A8", n16, x, out=<tmp dir>)` over s1's strict rows; the
   sequencer seals its `recheck-A8.json` (`ph.seal`) into `<out-base>/run/recheck-s1.json`, published with the other run files
   (`publish_run_files`), and records the sealed `sha256` in `sequence.json` (`rechecks.s1`). `inside` → continue; otherwise (outside /
-  `operator_review`) the sequencer stops with rc 5 and resumes only with `p426_wave2 run … --recheck-ack <that sealed sha256>`, recorded in `sequence.json` (`rechecks.s1.ack` with the time). After s2: the same over s1 + s2 →
+  `operator_review`) the sequencer stops with rc 5 and resumes only with `p426_wave2 run … --recheck-ack <that sealed sha256>`, recorded in `sequence.json` (`rechecks.s1.ack` with the time). After the reload pair (erratum v5a, change-review L14: the order line holds): the same over s1 + s2 →
   `run/recheck-s2.json`, recorded; never stops (B4b-2 labels the verdict).
 
 ### 4. Harvest
