@@ -69,6 +69,16 @@ def a4_opencode(model, log, root: Path, timeout, oc_bin: str, *, opencode="v2", 
                            scaffold=scaffold, agent_system_file=agent_system_file, extra_deny_file=extra_deny_file)
 
 
+CARRIERS = {"opencode-v2": "benchmark/opencode_bench_v2.json",
+            "opencode-v2-web-tg1": "benchmark/opencode_bench_v2_web_tg1.json",
+            "opencode-v2-web-tg2": "benchmark/opencode_bench_v2_web_tg2.json"}       # M76 B4b-1: the tg2 carrier
+
+
+def carrier_path(scaffold):
+    """The committed carrier the gate copies for `scaffold` (every other scaffold: the web carrier)."""
+    return REPO / CARRIERS.get(scaffold, "benchmark/opencode_bench_v2_web.json")
+
+
 def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="opencode-v2",
                     agent_system_file=None, extra_deny_file=None) -> dict:
     from bench import provenance
@@ -96,9 +106,7 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
     for key in ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME",
                 "TMPDIR", "OPENCODE_CONFIG_DIR", "PWD"):
         Path(env[key]).mkdir(parents=True, exist_ok=True)
-    carrier = REPO / ("benchmark/opencode_bench_v2.json" if scaffold == "opencode-v2"
-                      else "benchmark/opencode_bench_v2_web_tg1.json" if scaffold == "opencode-v2-web-tg1"
-                      else "benchmark/opencode_bench_v2_web.json")
+    carrier = carrier_path(scaffold)
     if not carrier.is_file() and scaffold == "opencode-v2" and agent_system_file is None:
         carrier = REPO / "opencode_config/opencode.json"
         print("[A4 v2] WARNING: benchmark/opencode_bench_v2.json absent; copying the daily-driver carrier verbatim (compaction ON)", flush=True)
@@ -122,8 +130,9 @@ def _a4_opencode_v2(model, log, timeout, oc_bin: str, base: str, *, scaffold="op
         target.write_bytes(plugin.read_bytes())
     else:
         print("[A4 v2] WARNING: noretry.js absent; A4 verifies session headers only", flush=True)
-    if scaffold in ("opencode-v2-web-tg1", "opencode-v2-web-tg1c"):
-        # C147 §3: the tg1 carrier loads BOTH bench plugins; copied by content, never from a shared config dir.
+    if scaffold in ("opencode-v2-web-tg1", "opencode-v2-web-tg1c", "opencode-v2-web-tg2"):
+        # C147 §3: the tg1 carrier loads BOTH bench plugins; copied by content, never from a shared config dir (M76 B4b-1: tg2
+        # runs tg1's carrier, so the same plugins).
         toolbounds = REPO / "benchmark/opencode_plugins/toolbounds.js"
         if not toolbounds.is_file():
             raise SystemExit("REFUSED: tg1 A4 requires benchmark/opencode_plugins/toolbounds.js")
@@ -255,7 +264,7 @@ def main(argv=None) -> int:
     ap.add_argument("--opencode", choices=("1.18", "v2"), default="v2",
                     help="A4 client (default v2; the 1.18 leg is frozen)")
     ap.add_argument("--scaffold", choices=("opencode-v2", "opencode-v2-web", "opencode-v2-web-tg1",
-                                           "opencode-v2-web-tg1c"),
+                                           "opencode-v2-web-tg1c", "opencode-v2-web-tg2"),
                     default="opencode-v2")
     ap.add_argument("--agent-system-file")
     ap.add_argument("--extra-deny-file", type=Path)

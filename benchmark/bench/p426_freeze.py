@@ -47,6 +47,28 @@ ENTRY_POINTS = (".venv/bin/python", ".venv-bench/bin/python", "src/mlx-vlm/.venv
 HELP_ENTRIES = ("/".join(CHAIN_ENTRY), "benchmark/run_tg1_probe.py")                              # K3: the real entry point answers --help
 PINS_RELATIVE = pr.PINS_RELATIVE
 REHEARSAL_DIR = "p426/rehearsal"
+# ---- M76 B4b-1 (spec m76-b4b-tg2-runner v5, §3): the tg2 legs of lever kv
+TG2_CHAIN_ENTRY = ("benchmark", "chains", "c147", "run_tg2_chain.py")
+TG2_PROBE_ENTRY = "benchmark/run_tg2_probe.py"
+TG2_LANGS = ("rust", "javascript", "java", "cpp")
+TG2_REHEARSAL_DIR = "m76/p426/rehearsal.tg2"
+TG2_PILOT_DEADLINE_S = 6 * 3600.0                 # = p426_wave2.REHEARSAL_DEADLINE_S (tested equal): the pilot has no walls yet
+TG2_PILOT_N = 4                                   # one item per language
+TG2_WALL_FLOOR_S = 382.0                          # w_<lang>_s = max(max pilot wall of <lang> over both arms, 382)
+TG2_MAX_ITEM_S = 3660.0                           # one P223 maximum item, added to every tg2 session deadline
+TG2_ITEM_COUNT = {"s1": 20, "s2": 20, "reload": 5}             # items per language of each amended leg (the table of §2)
+TG2_PAIR = ("n16", "x")                          # change review L6: the one tg2 pair (reference N16, treatment X) of B4b-1
+
+
+def check_tg2_pair(arms):
+    """The tg2 pair contract, enforced at every tg2 entry point: exactly (n16, x) in role order; else Refusal."""
+    if tuple(arms or ()) != TG2_PAIR:
+        raise Refusal(f"the tg2 legs of B4b-1 run the pair {','.join(TG2_PAIR)} only (N16 reference, X treatment), not "
+                      f"{','.join(map(str, arms or ())) or 'none'}")
+    return TG2_PAIR
+KIND_POSITIVES = "tg2_positives"
+POSITIVE_KINDS = ("stall", "loop", "alloc")
+POSITIVE_VARIANTS = ("stub", "reference")
 
 
 class Refusal(Exception):
@@ -302,10 +324,49 @@ def r1_shape_problems(root) -> list:
     return []
 
 
-def r2_slot_problems(invalid) -> list:
-    """P589: R2's invalidated slot is a Go slot (the injection perturbs the first Go item, through the tombstone path)."""
+def r2_slot_problems(invalid, want="go") -> list:
+    """P589: R2's invalidated slot is a Go slot (the injection perturbs the first Go item, through the tombstone path); M76 B4b-1
+    tg2: a Rust slot (the first Rust item)."""
     lang = _slot_lang(invalid[0].get("slot")) if invalid else None
-    return [] if lang == "go" else [f"R2: the invalidated slot is a {lang!r} slot, it must be a Go slot (the first Go item)"]
+    name = {"go": "Go", "rust": "Rust"}.get(want, want)
+    return [] if lang == want else [f"R2: the invalidated slot is a {lang!r} slot, it must be a {name} slot (the first {name} item)"]
+
+
+def tg2_rehearsal_legs(ref, test):
+    """M76 B4b-1: the tg2 rehearsal legs of a KV pair — R2 (the reconciliation mismatch) on the treatment, R3 (the probe kill) on
+    the reference; no R1 (the pilot pair takes R1's positive-pair role)."""
+    return (("R2", f"tg2-m76-{test}-rehearsal-r2", "reconcile-mismatch"), ("R3", f"tg2-m76-{ref}-rehearsal-r3", "stall-kill"))
+
+
+def tg2_rehearsal_problems(r2, r3, *, manifest_path, manifest_sha, wd, arms):
+    """R2 INVALID for the injected mismatch on a Rust slot, R3 VALID with its kill scored (no DNF, a kill case recorded); both bound
+    to this rehearsal manifest with their leg names and injections."""
+    problems = binding_problems((r2, r3), manifest_path, manifest_sha, wd, legs=tg2_rehearsal_legs(*arms))
+    try:
+        leg = read_leg(r2)
+        invalid = read_chain(r2).get("p426_invalid") or []
+        if leg.get("state") != "INVALID":
+            problems.append(f"R2: leg state is {leg.get('state')!r}, it must be INVALID for the injected mismatch")
+        elif len(invalid) != 1 or invalid[0].get("reason") != R2_REASON or leg.get("reason") != R2_REASON:
+            problems.append(f"R2: INVALID, but not for the injected reconciliation mismatch (reason {leg.get('reason')!r})")
+        else:
+            problems += r2_slot_problems(invalid, "rust")
+    except Refusal as exc:
+        problems.append(f"R2: {exc}")
+    try:
+        leg = read_leg(r3)
+        if leg.get("state") != "VALID":
+            problems.append(f"R3: leg state is {leg.get('state')!r}, it must be VALID with the kill scored")
+        elif read_chain(r3).get("p426_dnf"):
+            problems.append("R3: the kill was recorded as a DNF, it must be a scored strict fail")
+        else:
+            cases = [json.loads(p.read_text()).get("case") for p in sorted((Path(r3) / "items").glob("*.json"))
+                     if not p.name.endswith((".ready.json", ".dnf.json"))]
+            if not any(c in KILL_CASES for c in cases):
+                problems.append("R3: no item record carries a failed-line kill case")
+    except (Refusal, ValueError) as exc:
+        problems.append(f"R3: {exc}")
+    return problems
 
 
 def rehearsal_problems(r1_off, r1_on, r2, r3, ops, *, manifest_path, manifest_sha, wd, arms=("off", "on")):
@@ -394,8 +455,17 @@ def live_problems(base, ops, wd) -> list:
 
 
 # ----------------------------------------------------------------------------------------------- preconditions
-def entry_point_problems(worktree) -> list:
-    return [f"entry point <WT>/{rel} is missing" for rel in ENTRY_POINTS if not (Path(worktree) / rel).exists()]
+def corpus_entry_points(corpus="tg1"):
+    """(entry points, `--help` entries) of a corpus's legs: tg1's, or (M76 B4b-1) tg2's chain and probe besides them."""
+    if corpus != "tg2":
+        return ENTRY_POINTS, HELP_ENTRIES
+    tg2 = ("/".join(TG2_CHAIN_ENTRY), TG2_PROBE_ENTRY)
+    return ENTRY_POINTS + tg2, tg2
+
+
+def entry_point_problems(worktree, corpus="tg1") -> list:
+    points = corpus_entry_points(corpus)[0]
+    return [f"entry point <WT>/{rel} is missing" for rel in points if not (Path(worktree) / rel).exists()]
 
 
 def venv_problems(worktree, build) -> list:
@@ -409,10 +479,10 @@ def venv_problems(worktree, build) -> list:
     return problems
 
 
-def help_problems(worktree) -> list:
+def help_problems(worktree, corpus="tg1") -> list:
     """K3: the chain and probe entry points answer `--help` from the worktree's own venv."""
     problems = []
-    for rel in HELP_ENTRIES:
+    for rel in corpus_entry_points(corpus)[1]:
         run = subprocess.run([str(Path(worktree) / ".venv-bench/bin/python"), str(Path(worktree) / rel), "--help"], cwd=str(worktree),
                              capture_output=True, text=True, timeout=120, stdin=subprocess.DEVNULL)
         if run.returncode != 0:
@@ -477,7 +547,7 @@ def suite_receipt_problems(*, receipt, receipt_sha256, off_head, wd, digest_for=
 
 
 def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_ref=None, gitlinks=None, off_head=None,
-                   suite_receipt=None, suite_receipt_sha256=None, wd=None, arms=("off", "on")) -> list:
+                   suite_receipt=None, suite_receipt_sha256=None, wd=None, arms=("off", "on"), corpus="tg1") -> list:
     """The real preconditions (spec 16.8: every one goes through `checks`): the restore diff between the two arms, both
     worktrees' entry points, and for v8 the venvs against the lock, K3 (`--help`), the production tree at the gitlink and (P609)
     a PASS stack suite receipt for the OFF commit. M76 (lever kv): `arms` = the KV pair; the KV delta between the arm commits in
@@ -488,13 +558,14 @@ def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_re
     else:
         problems = [f"restore diff: {p}" for p in p426_plan.restore_diff_problems(off_worktree, on_worktree,
                                                                                  p426_plan.p426_ids.ENTRY)]
+    extra = (corpus,) if corpus != "tg1" else ()                # tg1's calls unchanged (tests stand in for these helpers)
     for arm, wt in zip(arms, (off_worktree, on_worktree)):
-        found = entry_point_problems(wt)
+        found = entry_point_problems(wt, *extra)
         problems += [f"{arm}: {p}" for p in found]
         if kind != "v8" or found:
             continue
         problems += [f"{arm}: {p}" for p in venv_problems(wt, build)]
-        problems += [f"{arm}: {p}" for p in help_problems(wt)]
+        problems += [f"{arm}: {p}" for p in help_problems(wt, *extra)]
         problems += [f"{arm}: {p}" for p in production_tree_problems(wt, production_ref, (gitlinks or {}).get("mlx_vlm"))]
     if kind == "v8":
         problems += [f"stack suite receipt: {p}" for p in suite_receipt_problems(
@@ -505,8 +576,9 @@ def default_checks(kind, *, off_worktree, on_worktree, build="s2", production_re
 class BoxOps:
     """The real `ops`: git, the probe's `--print-identity`, and the two inputs only the operator knows (JSON files)."""
 
-    def __init__(self, workdir, build_inputs=None, historical_walls=None):
+    def __init__(self, workdir, build_inputs=None, historical_walls=None, corpus="tg1"):
         self.wd, self._inputs, self._walls = Path(workdir), build_inputs, historical_walls
+        self.probe_entry = TG2_PROBE_ENTRY if corpus == "tg2" else "benchmark/run_tg1_probe.py"    # whose identity a record names
 
     @staticmethod
     def _git(root, *args):
@@ -524,7 +596,8 @@ class BoxOps:
                     gitlinks=gitlinks)
 
     def identity(self, path):
-        run = subprocess.run([str(Path(path) / ".venv-bench/bin/python"), str(Path(path) / "benchmark/run_tg1_probe.py"),
+        entry = getattr(self, "probe_entry", "benchmark/run_tg1_probe.py")
+        run = subprocess.run([str(Path(path) / ".venv-bench/bin/python"), str(Path(path) / entry),
                               "--print-identity"], cwd=str(path), capture_output=True, text=True, timeout=300, stdin=subprocess.DEVNULL)
         lines = [x for x in run.stdout.splitlines() if x.strip()]
         try:
@@ -599,10 +672,13 @@ def _kv_fields(a):
 def cmd_rehearsal(a, ops, checks, wd):
     need(ops, "worktree_state", "identity")
     arms, kv = _kv_fields(a)
+    tg2 = getattr(a, "corpus", "tg1") == "tg2"
+    if tg2:
+        check_tg2_pair(arms)                                    # change review L6
     off, on = Path(a.off_worktree), Path(a.on_worktree)
     problems = arm_problems(ops, off, on, arms)
     out_root = Path(a.out_root).resolve()
-    reh = KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
+    reh = TG2_REHEARSAL_DIR if tg2 else KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
     if (wd / reh).resolve() not in out_root.parents:
         problems.append(f"--out-root must lie under $STACK_WORKDIR/{reh}/")
     if not datefreeze.valid(a.frozen_prompt_date):
@@ -613,10 +689,12 @@ def cmd_rehearsal(a, ops, checks, wd):
             problems.append(f"{key} differs between the arms (or is missing)")
     if problems:
         raise Refusal("; ".join(problems))
-    run_checks(checks, "rehearsal", off_worktree=off, on_worktree=on, **({"arms": arms} if kv else {}))
+    run_checks(checks, "rehearsal", off_worktree=off, on_worktree=on, **({"arms": arms} if kv else {}),
+               **({"corpus": "tg2"} if tg2 else {}))
     st = {arm: ops.worktree_state(p) for arm, p in zip(arms, (off, on))}
-    if kv:  # M76: the record names the arms by their KV label
-        return write_record(a.out, dict(kind=KIND_REHEARSAL, **kv, **{f"{arm}_commit": st[arm]["head"] for arm in arms},
+    if kv:  # M76: the record names the arms by their KV label (B4b-1: and the tg2 corpus)
+        return write_record(a.out, dict(kind=KIND_REHEARSAL, **kv, **({"corpus": "tg2"} if tg2 else {}),
+                                        **{f"{arm}_commit": st[arm]["head"] for arm in arms},
                                         **{f"{arm}_worktree": portable(p, wd, f"--arm-worktree {arm}") for arm, p in zip(arms, (off, on))},
                                         out_root=portable(out_root, wd, "--out-root"), rehearsal=True,
                                         frozen_prompt_date=a.frozen_prompt_date, **{k: ident[k] for k in IDENTITY_KEYS}))
@@ -646,8 +724,119 @@ def build_problems(inputs, gitlinks) -> list:
     return problems
 
 
+def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_id) -> list:
+    """The sealed tg2 positives record (E6) against the live inputs of v8: its self-hash, kind and PASS verdict, every identity
+    field (probe / generation / scaffold, the reference arm's commit, the universe / draw / image, the frozen date), and the
+    coverage: each (language, inject kind) once with a PASS verdict, each (language, stub / reference) once with the expected
+    grade. A sealed record of another identity refuses."""
+    from . import schedules
+    if not isinstance(doc, dict) or not ph.sealed_ok(doc):
+        return ["its sha256 does not verify (missing, or changed after sealing)"]
+    problems = []
+    if doc.get("kind") != KIND_POSITIVES:
+        problems.append(f"kind {doc.get('kind')!r} is not {KIND_POSITIVES}")
+    if doc.get("verdict") != "PASS" or doc.get("problems"):
+        problems.append(f"verdict {doc.get('verdict')!r}: " + "; ".join(doc.get("problems") or [])[:600])
+    if doc.get("arm") != arm or doc.get(f"{arm}_commit") != commit:
+        problems.append(f"it was recorded on another commit than the {arm} worktree's {str(commit)[:12]}")
+    problems += [f"{k} differs from the probe's live identity" for k in IDENTITY_KEYS if doc.get(k) != (identity or {}).get(k)]
+    for key, want in (("scaffold", "opencode-v2-web-tg2"), ("draw_sha256", schedules.TG2_DRAW_SHA256),
+                      ("universe_sha256", schedules.TG2_UNIVERSE_SHA256), ("image_id", image_id),
+                      ("frozen_prompt_date", frozen_prompt_date)):
+        if doc.get(key) != want:
+            problems.append(f"{key} {str(doc.get(key))[:40]!r} is not the live {str(want)[:40]!r}")
+    injects = {(p.get("language"), p.get("kind")): p for p in doc.get("injects") or []}
+    if len(injects) != len(doc.get("injects") or []) or set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
+        problems.append("the injected positives are not stall / loop / alloc once per tg2 language")
+    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items()) if p.get("verdict") != "PASS"]
+    grades = {(g.get("language"), g.get("variant")): g for g in doc.get("grades") or []}
+    if len(grades) != len(doc.get("grades") or []) or set(grades) != {(lang, v) for lang in TG2_LANGS for v in POSITIVE_VARIANTS}:
+        problems.append("the grader positives are not one stub and one reference per tg2 language")
+    problems += [f"{lang} {v}: graded {'PASS' if g.get('passed') else 'FAIL'}" for (lang, v), g in sorted(grades.items())
+                 if g.get("passed") is not (v == "reference")]
+    return problems
+
+
+def cmd_v8_tg2(a, ops, checks, wd):
+    """M76 B4b-1 (§3 "v8 base"): the tg2 v8 base of a KV pair — no R1 and no historical walls (the pilot pair takes R1's role);
+    R2 / R3 of the tg2 rehearsal manifest; the sealed positives record compared field by field with the live inputs."""
+    from . import chain_core
+    from . import schedules
+    from . import tg2_grade
+    need(ops, "worktree_state", "identity", "build_inputs")
+    arms, kv = _kv_fields(a)
+    if not kv:
+        raise Refusal("--corpus tg2 is a lever kv pair (--lever kv --pair <ref>,<test>)")
+    check_tg2_pair(arms)
+    if getattr(a, "r1_off", None) or getattr(a, "r1_on", None):     # change review L5: spec §3 "no R1"
+        raise Refusal("--r1-off / --r1-on: the tg2 v8 base has no R1 (the pilot pair takes R1's role)")
+    missing = [f for f, v in (("--r2", a.r2), ("--r3", a.r3), ("--positives", getattr(a, "positives", None))) if not v]
+    if missing:
+        raise Refusal("the following arguments are required: " + ", ".join(missing))
+    ref, test = arms
+    off, on = Path(a.off_worktree), Path(a.on_worktree)
+    try:
+        manifest = p426_record.load(a.rehearsal_manifest, mode="chain", rehearsal=True)["doc"]
+    except p426_record.RecordError as exc:
+        raise Refusal(f"--rehearsal-manifest {exc}") from None
+    if lever_of(manifest) != "kv" or tuple(manifest.get("arms") or ()) != arms or manifest.get("corpus") != "tg2":
+        raise Refusal("--rehearsal-manifest was not written for this KV pair's tg2 legs (--corpus tg2)")
+    problems = arm_problems(ops, off, on, arms)
+    st = {arm: ops.worktree_state(p) for arm, p in zip(arms, (off, on))}
+    gitlinks = {key: st[ref].get("gitlinks", {}).get(path) or "" for key, path in GITLINKS}
+    inputs = ops.build_inputs()
+    problems += build_problems(inputs, gitlinks)
+    if inputs.get("build") not in p426_plan.KV_BUILDS:
+        problems.append(f"build {inputs.get('build')!r} is not a KV build {p426_plan.KV_BUILDS}")
+    idents = {arm: ops.identity(p) for arm, p in zip(arms, (off, on))}
+    for key in IDENTITY_KEYS:
+        if not re.fullmatch(r"[0-9a-f]{64}", str(idents[ref].get(key))) or idents[ref].get(key) != idents[test].get(key):
+            problems.append(f"{key} differs between the arms (or is missing)")
+    pins = {arm: sha256_file(p / PINS_RELATIVE) if (p / PINS_RELATIVE).is_file() else None for arm, p in zip(arms, (off, on))}
+    if not pins[ref] or pins[ref] != pins[test]:
+        problems.append("pins.json differs between the arms (or is missing)")
+    problems += tg2_rehearsal_problems(Path(a.r2), Path(a.r3), manifest_path=a.rehearsal_manifest, manifest_sha=manifest["sha256"],
+                                       wd=wd, arms=arms)
+    image_id = tg2_grade.pinned_image_id()
+    positives = read_json(a.positives, "--positives")
+    problems += [f"positives: {p}" for p in positives_problems(positives, arm=ref, commit=st[ref].get("head"), identity=idents[ref],
+                                                               frozen_prompt_date=inputs.get("frozen_prompt_date"), image_id=image_id)]
+    draw = Path(__file__).resolve().parents[1] / "m65" / "tg2_draw.json"
+    if not draw.is_file() or sha256_file(draw) != schedules.TG2_DRAW_SHA256:
+        problems.append("the committed tg2 draw is not the pinned one (TG2_DRAW_SHA256)")
+    if problems:
+        raise Refusal("; ".join(problems))
+    elapsed = [e for e in (request_elapsed_max(a.r2), request_elapsed_max(a.r3)) if e is not None]
+    settle = max(float(chain_core.P426_SETTLE_BOUND_S), 2 * max(elapsed)) if elapsed else float(chain_core.P426_SETTLE_BOUND_S)
+    run_checks(checks, "v8", off_worktree=off, on_worktree=on, build=inputs["build"], production_ref=inputs["production_ref"],
+               gitlinks=dict(gitlinks), off_head=st[ref]["head"], suite_receipt=inputs.get("stack_suite_receipt"),
+               suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], wd=wd, arms=arms, corpus="tg2")
+
+    def receipts(root):
+        root = Path(root)
+        return dict(leg=Path(root).name, leg_sha256=sha256_file(root / "leg.json"),
+                    receipt_sha256=sha256_file(root / "receipt.json") if (root / "receipt.json").is_file() else None)
+    named = {**{f"{arm}_commit": st[arm]["head"] for arm in arms},
+             **{f"{arm}_worktree": portable(p, wd, f"--arm-worktree {arm}") for arm, p in zip(arms, (off, on))}}
+    return write_record(a.out, dict(
+        kind=KIND_V8, build=inputs["build"], **kv, corpus="tg2", **named,
+        gitlinks=gitlinks, production_ref=inputs["production_ref"], pins_sha256=pins[ref],
+        grader_image_id=inputs["grader_image_id"], frozen_prompt_date=inputs["frozen_prompt_date"],
+        pilot_deadline_s=TG2_PILOT_DEADLINE_S, settle_bound_s=settle, generic_pred_s=chain_core.GENERIC_PRED_S,
+        volatile_env_keys=list(VOLATILE_ENV_KEYS), rehearsal_manifest_sha256=manifest["sha256"],
+        rehearsal_receipts=dict(r2=receipts(a.r2), r3=receipts(a.r3)),
+        client_step_cap=dict(seconds=prc.CLIENT_STEP_CAP_S, source=prc.CLIENT_STEP_CAP_SOURCE, bound_by="opencode_exe_sha256"),
+        stack_suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], tg2_draw_sha256=schedules.TG2_DRAW_SHA256,
+        tg2_universe_sha256=schedules.TG2_UNIVERSE_SHA256, tg2_image_id=image_id, positives_sha256=positives["sha256"],
+        **{k: idents[ref][k] for k in IDENTITY_KEYS}))
+
+
 def cmd_v8(a, ops, checks, wd):
     from . import chain_core
+    if getattr(a, "corpus", "tg1") == "tg2":
+        return cmd_v8_tg2(a, ops, checks, wd)
+    if not a.r1_off or not a.r1_on:
+        raise Refusal("the following arguments are required: --r1-off, --r1-on")
     need(ops, "worktree_state", "identity", "historical_walls", "build_inputs")
     arms, kv = _kv_fields(a)
     r0, r_second = arms                                          # role order (never `r1`: the R1 legs' name below)
@@ -714,16 +903,27 @@ def planned_slots(root, chain=None) -> int:
         raise ValueError("the leg has no readable frozen schedule.json") from None
     if chain.get("schedule_sha256") != schedules.schedule_sha256(sched):
         raise ValueError("schedule.json is not the schedule chain.json froze (schedule_sha256 differs)")
-    try:                                    # what the invocations run (a pilot-only leg's `full_names` is its whole order, not its run)
+    return planned_slots_of(sched)
+
+
+def planned_slots_of(sched) -> int:
+    """The slots a frozen schedule's invocations run (a pilot-only leg's `full_names` is its whole order, not its run); the tg1
+    and the tg2 P426 schedules have the same `blocks[].legs[].invocations[]` shape."""
+    try:
         return sum(len(inv["names"]) for block in sched["blocks"] for leg in block["legs"] for inv in leg["invocations"])
     except (KeyError, TypeError):
         raise ValueError("the frozen schedule.json has no blocks / legs / invocations") from None
 
 
-def pilot_gate_problems(off_root, on_root, arms=("off", "on")) -> list:
+def tg2_pilot_leg(arm):
+    return f"tg2-m76-{arm}-pilot"
+
+
+def pilot_gate_problems(off_root, on_root, arms=("off", "on"), *, leg_name=None, n=PILOT_N) -> list:
     """The complete pilot gate (spec 1): both legs VALID with their own leg names, 5 / 5 items reconciled, zero DNF, ON engagement
     proven on every eligible request, both speed-valid, the pair gate passed. The failed conditions (empty = the gate passes).
-    M76 (lever kv): `arms` = the KV pair; both arms engaged, the KV pair gate."""
+    M76 (lever kv): `arms` = the KV pair; both arms engaged, the KV pair gate. M76 B4b-1: `leg_name(arm)` and `n` of the corpus
+    (tg2: `tg2-m76-<arm>-pilot`, 4 items)."""
     lever = "kv" if tuple(arms) != ("off", "on") else "mtp"
     problems = []
     for arm, root in zip(arms, (off_root, on_root)):
@@ -732,7 +932,7 @@ def pilot_gate_problems(off_root, on_root, arms=("off", "on")) -> list:
         except Refusal as exc:
             problems.append(f"pilot {arm}: {exc}")
             continue
-        want_leg = kv_pilot_leg(arm) if lever == "kv" else f"tg1-p426-{arm}-pilot"
+        want_leg = leg_name(arm) if leg_name else kv_pilot_leg(arm) if lever == "kv" else f"tg1-p426-{arm}-pilot"
         if leg.get("leg") != want_leg:
             problems.append(f"pilot {arm}: the leg is {leg.get('leg')!r}, not {want_leg}")
         dnf = len(chain.get("p426_dnf") or [])
@@ -746,8 +946,8 @@ def pilot_gate_problems(off_root, on_root, arms=("off", "on")) -> list:
         except ValueError as exc:
             planned = None
             problems.append(f"pilot {arm}: {exc}")
-        if planned is not None and (len(rows) != planned or planned != PILOT_N):
-            problems.append(f"pilot {arm}: {len(rows)} / {planned} items realized (the pilot is {PILOT_N})")
+        if planned is not None and (len(rows) != planned or planned != n):
+            problems.append(f"pilot {arm}: {len(rows)} / {planned} items realized (the pilot is {n})")
         problems += [f"pilot {arm}: {p}" for p in leg_items_problems(root, arm)]
         try:
             receipt = read_receipt(root)
@@ -798,17 +998,78 @@ def pilot_dossier_problems(off_root, on_root, arms=("off", "on")) -> list:
     return problems
 
 
-def write_amendment(v8_path, pilot_off, pilot_on, out, ops):
+def pilot_walls_by_lang(root) -> dict:
+    """{lang: [wall_s]} of the rows of the invocations `chain.json` counts (`pilot_walls`, keyed by the row id's language)."""
+    root, out = Path(root), {}
+    for inv in (read_chain(root).get("progress") or {}).get("invocations") or []:
+        if inv.get("status") not in COUNTED_STATUSES:
+            continue
+        path = Path(inv["file"])
+        path = path if path.is_absolute() else root / path
+        try:
+            lines = [json.loads(x) for x in path.read_text().splitlines() if x.strip()]
+        except (OSError, ValueError):
+            raise Refusal(f"{root.name}: the rows file {path.name} is unreadable") from None
+        for r in lines:
+            if isinstance(r, dict) and r.get("wall_s") is not None and "/" in str(r.get("id")):
+                out.setdefault(str(r["id"]).split("/", 1)[0], []).append(float(r["wall_s"]))
+    return out
+
+
+def tg2_deadline_s(leg, walls) -> float:
+    """§3: `leg_deadline_s[leg] = 1.5 x sum_lang n_lang x w_<lang>_s + 1800 + 3660` (n from the table; 3660 = one P223 item)."""
+    n = TG2_ITEM_COUNT[leg]
+    return DEADLINE_FACTOR * sum(n * float(walls[lang]) for lang in TG2_LANGS) + DEADLINE_SLACK_S + TG2_MAX_ITEM_S
+
+
+def write_amendment_tg2(base, pilot_a, pilot_b, out):
+    """M76 B4b-1 (§3): after the strict pilot gate (both arms VALID, not VALID_WITH_DNF; 4 reconciled rows each; 0 DNF;
+    speed-valid; engaged; pair-gated; the pilot dossier a PASS): `w_<lang>_s = max(max pilot wall of <lang> over both arms, 382)`,
+    the tg2 leg deadlines, the settle bound as tg1's; every wall / deadline verified present, numeric and positive."""
+    arms = check_tg2_pair(arms_of(base))                         # change review L6
+    problems = (pilot_gate_problems(pilot_a, pilot_b, arms, leg_name=tg2_pilot_leg, n=TG2_PILOT_N)
+                + pilot_dossier_problems(pilot_a, pilot_b, arms))
+    walls, elapsed = {}, []
+    if not problems:
+        for arm, root in zip(arms, (pilot_a, pilot_b)):
+            for lang, values in pilot_walls_by_lang(root).items():
+                walls.setdefault(lang, []).extend(values)
+            largest = request_elapsed_max(root)
+            if largest is None:
+                problems.append(f"pilot {arm}: its item records carry no request elapsed_s (the settle bound cannot be derived)")
+            else:
+                elapsed.append(largest)
+        absent = [lang for lang in TG2_LANGS if not walls.get(lang)]
+        if absent:
+            problems.append(f"the pilots carry no row wall for {absent}")
+    if problems:
+        raise Refusal("; ".join(problems))
+    w = {lang: max([*walls[lang], TG2_WALL_FLOOR_S]) for lang in TG2_LANGS}
+    deadlines = {leg: tg2_deadline_s(leg, w) for leg in TG2_ITEM_COUNT}
+    bad = [k for k, v in [*w.items(), *deadlines.items()] if not (isinstance(v, (int, float)) and v > 0)]
+    if bad:
+        raise Refusal(f"the tg2 walls / deadlines {bad} are not positive numbers")
+    return write_record(out, dict(kind=KIND_AMENDMENT, v8_base_sha256=base["sha256"], corpus="tg2",
+                                  **{f"w_{lang}_s": w[lang] for lang in TG2_LANGS}, leg_deadline_s=deadlines,
+                                  settle_bound_s=max(float(base["settle_bound_s"]), 2 * max(elapsed)),
+                                  pilot_dossier_sha256=sha256_file(pilot_dossier_path(pilot_a, pilot_b, arms))))
+
+
+def write_amendment(v8_path, pilot_off, pilot_on, out, ops, corpus="tg1"):
     """Spec 10.2, after the COMPLETE pilot gate (run here: both pilots VALID, 5 / 5 reconciled, zero DNF, ON engagement, both
     speed-valid, the pilot pair dossier a PASS): `w_python` = the largest per-item wall over both pilots and the historical value,
     `w_go` = the historical Go value; the leg deadlines of both session legs and the reload; links the v8 base's sha256 and the
-    sha256 of the pilot dossier the gate was run on."""
+    sha256 of the pilot dossier the gate was run on. M76 B4b-1: `corpus="tg2"` (a tg2 v8 base) is `write_amendment_tg2`."""
     try:
         base = p426_record.read_sealed(v8_path)
     except p426_record.RecordError as exc:
         raise Refusal(f"--v8 {exc}") from None
     if base.get("kind") != KIND_V8:
         raise Refusal(f"--v8 {Path(v8_path).name}: kind {base.get('kind')!r} is not {KIND_V8}")
+    if (base.get("corpus") == "tg2") != (corpus == "tg2"):
+        raise Refusal(f"--v8 {Path(v8_path).name}: the record's corpus is {base.get('corpus', 'tg1')!r}, not {corpus!r}")
+    if corpus == "tg2":
+        return write_amendment_tg2(base, pilot_off, pilot_on, out)
     need(ops, "historical_walls")
     arms = arms_of(base)                                         # M76 (lever kv): the v8 base's KV pair
     problems = pilot_gate_problems(pilot_off, pilot_on, arms) + pilot_dossier_problems(pilot_off, pilot_on, arms)
@@ -844,7 +1105,7 @@ def _read_leg_or(problems, root, what):
 
 
 def cmd_amend(a, ops, checks, wd):
-    return write_amendment(a.v8, Path(a.pilot_off), Path(a.pilot_on), a.out, ops)
+    return write_amendment(a.v8, Path(a.pilot_off), Path(a.pilot_on), a.out, ops, corpus=getattr(a, "corpus", "tg1"))
 
 
 class RefusingParser(argparse.ArgumentParser):
@@ -867,17 +1128,29 @@ def parse_args(argv):
     sub.choices["rehearsal"].add_argument("--frozen-prompt-date", required=True, metavar="'Www Mmm DD YYYY'",
                                           help="the date opencode shows the model during the rehearsal (recorded in the manifest)")
     v8 = sub.choices["v8"]
-    for flag in ("--rehearsal-manifest", "--r1-off", "--r1-on", "--r2", "--r3"):
+    for flag in ("--rehearsal-manifest", "--r2", "--r3"):
         v8.add_argument(flag, required=True)
+    for flag in ("--r1-off", "--r1-on"):
+        v8.add_argument(flag, default=None, help="tg1 (required): the R1 pair's leg roots; tg2 has no R1")
+    v8.add_argument("--positives", default=None, help="--corpus tg2 (required): the sealed positives record")
     am = sub.add_parser("amend")
     for flag in ("--v8", "--pilot-off", "--pilot-on", "--out"):
         am.add_argument(flag, required=True)
+    for p in (sub.choices["rehearsal"], v8, am):
+        p.add_argument("--corpus", default="tg1", choices=("tg1", "tg2"),
+                       help="M76 B4b-1: tg2 = the tg2 legs of lever kv (rehearsal R2 / R3, the positives, the tg2 walls)")
     v8.add_argument("--build-inputs", default=None, metavar="JSON", help="the box ops' input: build, production_ref, grader_image_id, ...")
     for p in (v8, am):
         p.add_argument("--historical-walls", default=None, metavar="JSON", help='the box ops\' input: {"python": s, "go": s}')
     a = ap.parse_args(argv)
     if a.cmd in ("rehearsal", "v8"):
         resolve_arms(a)
+        if a.corpus == "tg2" and a.lever != "kv":
+            raise Refusal("--corpus tg2 is for --lever kv (the tg2 legs of M76)")
+        if a.corpus == "tg2":
+            check_tg2_pair(a.arms)
+            if a.cmd == "v8" and (a.r1_off or a.r1_on):          # change review L5: spec §3 "no R1"
+                raise Refusal("--r1-off / --r1-on: the tg2 v8 base has no R1 (the pilot pair takes R1's role)")
     return a
 
 
@@ -916,7 +1189,8 @@ def main(argv=None, *, ops=None, checks=None):
         a = parse_args(sys.argv[1:] if argv is None else argv)
         if ops is None:
             import os
-            ops = BoxOps(os.environ.get("STACK_WORKDIR") or "", getattr(a, "build_inputs", None), getattr(a, "historical_walls", None))
+            ops = BoxOps(os.environ.get("STACK_WORKDIR") or "", getattr(a, "build_inputs", None), getattr(a, "historical_walls", None),
+                         corpus=getattr(a, "corpus", "tg1"))
         wd = stack_workdir(ops)
         rec = dict(rehearsal=cmd_rehearsal, v8=cmd_v8, amend=cmd_amend)[a.cmd](a, ops, checks or default_checks, wd)
     except Refusal as exc:

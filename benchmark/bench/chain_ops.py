@@ -18,6 +18,7 @@ import urllib.request
 from pathlib import Path
 
 SCAFFOLD = "opencode-v2-web-tg1"
+TG2_SCAFFOLD = "opencode-v2-web-tg2"          # M76 B4b-1: its rows' grade receipts are tg2_grade's
 PICK1 = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 PICK2 = "Qwen3.8-27B-mlx-uniform-4bit"
 GRADER_IMAGE = "aider-benchmark"     # P290: the Go grader image, as structured_grade/opencode_common run it
@@ -338,9 +339,10 @@ class ChainOps:
                  f" -> {'ok' if ok else 'FAIL'}")
         return bool(ok)
 
-    def docker_ok(self):
+    def docker_ok(self, images=None):
         """P290: Go grading runs in docker; with the probes' own environment (D1), the daemon must answer `docker info`
-        and the grader image must exist (D2). A missing binary, an error or a timeout = down."""
+        and the grader image must exist (D2). A missing binary, an error or a timeout = down. `images` (M76 B4b-1: the
+        corpus's grader images, tg2's `tg2-grader` among them) replaces tg1's one image."""
         env = self.env_base()
 
         def answer(cmd):
@@ -350,10 +352,12 @@ class ChainOps:
             except (OSError, subprocess.TimeoutExpired):
                 return ""
         version = answer(["docker", "info", "--format", "{{.ServerVersion}}"])
-        image = answer(["docker", "image", "inspect", GRADER_IMAGE, "--format", "{{.Id}}"]) if version else ""
-        ok = bool(version and image)
-        self.log(f"GATE docker={version or 'DOWN'} {GRADER_IMAGE}={'present' if image else 'MISSING'}"
-                 f" -> {'ok' if ok else 'FAIL'}")
+        found = {}
+        for image in (tuple(images) if images else (GRADER_IMAGE,)):
+            found[image] = answer(["docker", "image", "inspect", image, "--format", "{{.Id}}"]) if version else ""
+        ok = bool(version and all(found.values()))
+        self.log(f"GATE docker={version or 'DOWN'} " + " ".join(f"{i}={'present' if v else 'MISSING'}" for i, v in found.items())
+                 + f" -> {'ok' if ok else 'FAIL'}")
         return ok
 
     def free_mem_mb(self):
@@ -993,9 +997,13 @@ def alarm_s(n_remaining, mean, max_item_wall):
     return max(7200.0, 2 * n_remaining * mean + 3 * max_item_wall)
 
 
-def t_coop(last_prompt_tokens, lang):
-    """5 drain + 660 grade join + max(300, prompt/300) cancel bound + 120 export + grader timeout + 60 + 20."""
-    return (5 + 660 + max(300, (last_prompt_tokens or 0) / 300) + 120 + GRADER_TIMEOUT_S.get(lang, 300)
+def t_coop(last_prompt_tokens, lang, grader_timeout_s=None):
+    """5 drain + grade join + max(300, prompt/300) cancel bound + 120 export + grader timeout + 60 + 20. The grader bounds are
+    tg1's table (join 660 = 2 x 300 + 60) unless a corpus gives its own (M76 B4b-1: the corpus identity's
+    `grader_timeout_s`, join = 2 x its max + 60)."""
+    table = GRADER_TIMEOUT_S if grader_timeout_s is None else dict(grader_timeout_s)
+    join = 660 if grader_timeout_s is None else 2 * max(table.values()) + 60
+    return (5 + join + max(300, (last_prompt_tokens or 0) / 300) + 120 + table.get(lang, 300)
             + 60 + 20)
 
 
@@ -1154,14 +1162,14 @@ def typed_worker(w):
             and isinstance(w.get("registry_sha256"), str) and bool(HEX64.match(w["registry_sha256"])))
 
 
-def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None, spec=None):
+def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=None, spec=None, scaffold=None):
     """Completion = validation (spec 3). Returns a list of `code: detail` failure reasons; [] means complete.
 
     leg: {session, model, lang, seed_base, expected_ids, out, rc}. pinned: runtime field -> value (None = not yet
     pinned, skipped) plus `serving_path`, `registry_sha256`; scaffold policy hash and probe-code are mandatory.
     `spec` (M64, an `arm_specs.ArmSpec`): the arm's scaffold label, pinned fields and identity rules replace the tg1
-    constants; every other check is unchanged."""
-    scaffold = SCAFFOLD if spec is None else spec.label
+    constants; every other check is unchanged. `scaffold` (M76 B4b-1, flat layout): the leg's `ArmBinding.label` (tg2)."""
+    scaffold = (scaffold or SCAFFOLD) if spec is None else spec.label
     runtime_pinned = RUNTIME_PINNED if spec is None else spec.runtime_pinned
     from bench import rowschema
     from bench import chain_rows
@@ -1271,7 +1279,8 @@ def validate_leg(leg, pinned, workdir=None, policy_sha=None, frozen_prompt_date=
                 why.append(f"evidence_sha_mismatch: {rid} {name}")
         reports = r.get("grade_reports")
         from bench import structured_grade as sg
-        for reason in sg.validate_reports(reports, leg["lang"], r.get("test_modified") is True):
+        for reason in sg.validate_reports(reports, leg["lang"], r.get("test_modified") is True,
+                                          **({"grader": "tg2"} if scaffold == TG2_SCAFFOLD else {})):
             why.append(f"grade_reports: {rid} {reason}")
         for g in reports if isinstance(reports, list) else []:
             for aname, art in ((g.get("artifacts") or {}) if isinstance(g, dict) else {}).items():

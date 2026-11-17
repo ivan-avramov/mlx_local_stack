@@ -435,14 +435,36 @@ REQUIRED_ARTIFACTS = {
 }
 PARSED_EXTRA_ARTIFACTS = {"python": ("report.xml",), "go": ()}
 _HEX64 = re.compile(r"^[0-9a-f]{64}$")
+# M76 B4b-1: the tg2 languages (`bench.tg2_grade`'s outcome set; every grade that ran leaves its `phases.json`, a parsed grade
+# also the language's report, matched by pattern: Java `junit-*.xml`, C++ `report.xml`, JavaScript `report.json`, Rust the
+# execute step's stdout). Kept here as data: this module imports no tg2 code.
+TG2_LANGS = ("rust", "javascript", "java", "cpp")
+TG2_REPORT_OUTCOMES = ("parsed", "compile_failure", "timeout", "oom", "mem_kill", "crash", "storage_cap", "output_cap",
+                       "tampered")
+TG2_FINAL_OUTCOMES = TG2_REPORT_OUTCOMES
+TG2_REQUIRED_ARTIFACTS = ("phases.json",)
+TG2_PARSED_PATTERNS = {"rust": r"execute\.stdout", "java": r"junit-\d+\.xml", "javascript": r"report\.json", "cpp": r"report\.xml"}
+
+
+def _missing_artifacts(lang, outcome, artifacts, tg2=False):
+    """The required artifacts a receipt of `lang` / `outcome` lacks (names or patterns)."""
+    if tg2:
+        missing = [a for a in TG2_REQUIRED_ARTIFACTS if a not in artifacts]
+        pattern = TG2_PARSED_PATTERNS[lang]
+        if outcome == "parsed" and not any(re.fullmatch(pattern, name) for name in artifacts):
+            missing.append(pattern)
+        return missing
+    need = REQUIRED_ARTIFACTS.get(lang, ()) + (PARSED_EXTRA_ARTIFACTS.get(lang, ()) if outcome == "parsed" else ())
+    return [a for a in need if a not in artifacts]
 
 
 def _is_int(value):
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def validate_reports(reports, lang, test_modified):
-    """Schema of a row's `grade_reports` (C147 Q15, shared by inject_verify and chain validate_leg).
+def validate_reports(reports, lang, test_modified, grader=None):
+    """Schema of a row's `grade_reports` (C147 Q15, shared by inject_verify and chain validate_leg). M76 B4b-1: `grader="tg2"`
+    (the tg2 scaffold's callers) checks a tg2 language's receipts against `tg2_grade`'s outcome set and artifacts.
 
     Returns reasons; [] means valid. Every row needs a typed final receipt: exactly one `final`, with a permitted
     outcome (never infrastructure/missing_report); `parsed` receipts carry the language's required artifacts;
@@ -451,6 +473,10 @@ def validate_reports(reports, lang, test_modified):
     reasons = []
     if not isinstance(reports, list) or not reports:
         return ["grade_reports absent or empty"]
+    tg2 = grader == "tg2"
+    if tg2 and lang not in TG2_LANGS:
+        return [f"language {lang!r} is not a tg2 language"]
+    permitted, final_ok = (TG2_REPORT_OUTCOMES, TG2_FINAL_OUTCOMES) if tg2 else (REPORT_OUTCOMES, FINAL_OUTCOMES)
     seen = set()
     finals = []
     for n, r in enumerate(reports):
@@ -471,7 +497,7 @@ def validate_reports(reports, lang, test_modified):
         elif r["final"]:
             finals.append(r)
         outcome = r.get("outcome")
-        if outcome not in REPORT_OUTCOMES:
+        if outcome not in permitted:
             reasons.append(tag + f" outcome {outcome!r} not permitted")
         artifacts = r.get("artifacts")
         if not isinstance(artifacts, dict):
@@ -489,13 +515,11 @@ def validate_reports(reports, lang, test_modified):
         else:
             if not artifacts:
                 reasons.append(tag + " has no artifacts")
-            need = REQUIRED_ARTIFACTS.get(lang, ()) + (PARSED_EXTRA_ARTIFACTS.get(lang, ())
-                                                        if outcome == "parsed" else ())
-            missing = [a for a in need if a not in artifacts]
+            missing = _missing_artifacts(lang, outcome, artifacts, tg2)
             if missing:
                 reasons.append(tag + f" {outcome} receipt lacks {missing}")
     if len(finals) != 1:
         reasons.append(f"exactly one final receipt required, found {len(finals)}")
-    elif finals[0].get("outcome") not in FINAL_OUTCOMES:
+    elif finals[0].get("outcome") not in final_ok:
         reasons.append(f"final receipt outcome {finals[0].get('outcome')!r} not permitted")
     return reasons

@@ -48,6 +48,20 @@ TG2_SEED = 6501
 TG2_TIERS = {"screen": 10, "decider": 20}
 TG2_SESSIONS = {"screen": ("s1",), "decider": ("s1", "s2", "reload")}
 TG2_RELOAD_ITEMS = 5
+# M76 B4b-1 (spec m76-b4b-tg2-runner v5): the committed draw / universe the tg2 P426 legs run; the draw file, its sidecar and the
+# draw's universe sha must equal them (a consistent redraw refuses).
+TG2_DRAW_SHA256 = "8eb9d8ef5a436bfaf75bdb473121ca952adb3fd4e5ebf7d182cfd25c6733f2c3"
+TG2_UNIVERSE_SHA256 = "ff76573bf70fbe6d2ad9cf7d4f0e60e35e6ead9ffbbde9b335d94da19f8d7480"
+TG2_LANGS = ("rust", "javascript", "java", "cpp")
+# leg -> (session dir, seed base, language order, items per language): the table of spec §2 (rehearsals r2 / r3 run s1's slot)
+TG2_P426_LEGS = {
+    "pilot": ("pilot", 1001, TG2_LANGS, 1),
+    "s1": ("s1", 1001, TG2_LANGS, 20),
+    "s2": ("s2", 2002, tuple(reversed(TG2_LANGS)), 20),
+    "reload": ("reload", 1001, TG2_LANGS, 5),
+    "r2": ("s1", 1001, ("rust",), 1),
+    "r3": ("s1", 1001, ("rust",), 1),
+}
 
 
 def flat_stem(model, session, lang):
@@ -359,6 +373,59 @@ def check_tg2_membership(schedule, draw_doc, draw_sha256, *, leg=None):
     raise TransportAbort("leg is not in the frozen tg2 tier")
 
 
+def _tg2_pins(draw_doc):
+    """The committed draw: its canonical bytes hash to `TG2_DRAW_SHA256`, it names `TG2_UNIVERSE_SHA256`, seed 6501, the four
+    tg2 languages, each tier a prefix of the permutation. A redraw that is self-consistent still refuses (the pins)."""
+    if not isinstance(draw_doc, dict):
+        raise TransportAbort("the tg2 draw is not a document")
+    if draw_sha256_of(draw_doc) != TG2_DRAW_SHA256:
+        raise TransportAbort("the tg2 draw differs from the pinned sha256 (TG2_DRAW_SHA256; never redrawn)")
+    if draw_doc.get("universe_sha256") != TG2_UNIVERSE_SHA256:
+        raise TransportAbort("the tg2 draw names another universe than the pinned TG2_UNIVERSE_SHA256")
+    _tg2_check_draw(draw_doc, TG2_DRAW_SHA256, "decider")
+    if sorted(draw_doc["languages"]) != sorted(TG2_LANGS):
+        raise TransportAbort("the tg2 draw's languages are not %s" % (sorted(TG2_LANGS),))
+    for lang, entry in draw_doc["languages"].items():
+        for tier in TG2_TIERS:
+            _tg2_items(entry, lang, tier)
+
+
+def tg2_p426(draw_doc, leg, model, predictor):
+    """M76 B4b-1 (E12): one tg2 P426 leg in tg1's P426 document shape (`blocks[].legs[].invocations[]`): one block, one schedule
+    leg per (session, language) in the table's language order, each with ONE `full` invocation of that language's first `n`
+    items in the draw's permutation order (`TG2_P426_LEGS`). The pins are verified first."""
+    if leg not in TG2_P426_LEGS:
+        raise ValueError(f"unknown tg2 leg {leg!r} (one of {sorted(TG2_P426_LEGS)})")
+    _tg2_pins(draw_doc)
+    session, seed, order, n = TG2_P426_LEGS[leg]
+    legs_ = []
+    for lang in order:
+        items = list(draw_doc["languages"][lang]["permutation"][:n])
+        if len(items) != n:
+            raise TransportAbort(f"the tg2 draw has fewer than {n} {lang} items")
+        names = [i.split("/", 1)[1] for i in items]
+        legs_.append(dict(session=session, model=model, lang=lang, seed_base=seed, stem=flat_stem(model, session, lang),
+                          pilot_names=[], full_names=list(names), draft_kind=predictor,
+                          invocations=[dict(phase="full", names=list(names), limit=None, expect=list(items))]))
+    block = dict(session=session, model=model, seed_base=seed, legs=legs_, pilot_only=False)
+    return dict(schema=SCHEMA, builder="tg2_p426", mode="pilot" if leg == "pilot" else "chain", smoke=False,
+                predictor=predictor, picks=[model], blocks=[block], p426=True, corpus="tg2", tg2_leg=leg,
+                draw_sha256=TG2_DRAW_SHA256, universe_sha256=TG2_UNIVERSE_SHA256)
+
+
+def check_tg2_p426(schedule, draw_doc, leg):
+    """The frozen tg2 leg schedule re-derived from the (pinned) draw: equal, or `TransportAbort` (called before every language
+    leg's launch)."""
+    try:
+        model, predictor = schedule["picks"][0], schedule["predictor"]
+    except (KeyError, IndexError, TypeError):
+        raise TransportAbort("the tg2 schedule names no model / predictor") from None
+    if schedule.get("tg2_leg") != leg:
+        raise TransportAbort(f"the tg2 schedule is leg {schedule.get('tg2_leg')!r}, not {leg!r}")
+    if tg2_p426(draw_doc, leg, model, predictor) != schedule:
+        raise TransportAbort("the tg2 schedule differs from the pinned draw's prefix (table, order or items)")
+
+
 # ---------------------------------------------------------------- common: hash, legs, keys, checks
 def schedule_sha256(schedule):
     return hashlib.sha256(json.dumps(schedule, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
@@ -368,7 +435,7 @@ def legs(schedule):
     """Every leg of the schedule in launch order (a `blocks` leg is one (block, arm); a tg1 leg one (model, lang) of a
     block; a tg2 leg one (session, lang))."""
     out = []
-    if schedule.get("builder") == "tg1":
+    if schedule.get("builder") in ("tg1", "tg2_p426"):           # M76 B4b-1: the tg2 P426 leg has tg1's P426 shape
         for bi, block in enumerate(schedule["blocks"]):
             for li, leg in enumerate(block["legs"]):
                 out.append(dict(index=len(out), block=bi, leg=li, session=block["session"], model=block["model"],

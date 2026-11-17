@@ -35,6 +35,10 @@ ARM_IDS = ("oc", "pi", "dsh")
 WORKER_RECEIPTS = ("absent", "required")
 ITEM_BARRIER = ("off", "on")
 P426_CONFIG_ID = "tg1-p426"                      # B2 spec 2: the P426 mode's ChainConfig (distinct from `tg1`, flat record layout)
+TG2_P426_CONFIG_ID = "tg2-p426"                  # M76 B4b-1: the tg2 legs of P426 lever kv (builder `tg2_p426`)
+P426_CONFIG_IDS = (P426_CONFIG_ID, TG2_P426_CONFIG_ID)
+P426_BUILDERS = {P426_CONFIG_ID: "tg1", TG2_P426_CONFIG_ID: "tg2_p426"}       # each P426 config's own schedule builder
+SCAFFOLD_TG2 = "opencode-v2-web-tg2"
 
 
 def canonical(value):
@@ -290,12 +294,13 @@ class ChainConfig:
             raise ValueError(f"arm_switch_ops must be drawn from {ARM_SWITCH_OPS}")
         if not (isinstance(self.schedule, dict) and self.schedule.get("builder") and "params" in self.schedule):
             raise ValueError("schedule needs a builder and params")
-        if self.config_id == P426_CONFIG_ID:
+        if self.config_id in P426_CONFIG_IDS:
             params = self.schedule["params"]
-            if self.schedule["builder"] != "tg1" or params.get("p426") is not True or len(params.get("models") or ()) != 1:
-                raise ValueError(f"{P426_CONFIG_ID} is the tg1 builder in P426 mode with exactly one model")
-        if self.transport_policy == "p426_continue" and self.config_id != P426_CONFIG_ID:
-            raise ValueError(f"p426_continue is the transport policy of {P426_CONFIG_ID} only")
+            builder = P426_BUILDERS[self.config_id]
+            if self.schedule["builder"] != builder or params.get("p426") is not True or len(params.get("models") or ()) != 1:
+                raise ValueError(f"{self.config_id} is the {builder} builder in P426 mode with exactly one model")
+        if self.transport_policy == "p426_continue" and self.config_id not in P426_CONFIG_IDS:
+            raise ValueError(f"p426_continue is the transport policy of {', '.join(P426_CONFIG_IDS)} only")
         arm_ids = {b.arm for b in self.arms}
         for art in self.contract_artifacts:
             if art.arm not in arm_ids:

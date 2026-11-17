@@ -116,6 +116,11 @@ def emit_opencode_bench_v2_web_tg1(source: Source) -> str:
     return json.dumps(doc, indent=2) + '\n'
 
 
+def emit_opencode_bench_v2_web_tg2(source: Source) -> str:
+    """M76 B4b-1: the tg2 carrier (`opencode-v2-web-tg2`) is tg1's carrier, byte for byte, under its own path and label."""
+    return emit_opencode_bench_v2_web_tg1(source)
+
+
 def _emit(source: Source) -> str:
     """Native v2 daily-driver carrier; the pinned 1.18 benchmark stays on _emit_v1."""
     def model(m, *, tools: bool) -> dict:

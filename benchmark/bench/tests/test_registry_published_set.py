@@ -69,6 +69,7 @@ EXTRACTORS = {
     "opencode-bench-v2": _opencode_ids,
     "opencode-bench-v2-web": _opencode_ids,
     "opencode-bench-v2-web-tg1": _opencode_ids,
+    "opencode-bench-v2-web-tg2": _opencode_ids,
     "aider:settings": _aider_settings_ids,
     "aider-bench": _aider_settings_ids,
     "aider:metadata": lambda doc: {_bare(k) for k in doc},

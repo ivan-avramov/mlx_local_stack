@@ -272,6 +272,7 @@ def probe_rel(repo, given):
 
 # --------------------------------------------------------------------------- probe command
 INJECT_STALL_S = 30             # spec 16.8: the lowered stall limit of the rehearsal's `stall-kill` injection
+INJECT_LANGS = dict(r2="go", r3="python")      # the rehearsal injections' target language (R2 mismatch, R3 kill); tg2: Rust
 
 
 def build_cmd(py, probe, leg, step, receipt, cancel, ack, *, scaffold, universe=None, frozen=None, out=None, attempt=None,
@@ -318,13 +319,20 @@ def barrier_signal(path, payload=None):
 # --------------------------------------------------------------------------- the chain
 class Chain:
     def __init__(self, config, args, ops, timers, log, *, repo, out_root, names, lifecycle_files, campaign=None, hooks=None,
-                 needs_docker=None):
+                 needs_docker=None, inject_langs=None, docker_images=None, grader_timeout_s=None):
+        """M76 B4b-1 (from the corpus; tg1 keeps the defaults): `inject_langs` = the R2 / R3 rehearsal targets' language
+        (tg1: Go / Python), `docker_images` = the grader images the docker gate requires, `grader_timeout_s` = the corpus
+        identity's per-language grader bound (the cooperative-cancel bound `t_coop`)."""
         self.config = config
         self.repo = Path(repo)
         self.a, self.ops, self.tm, self.log = args, ops, timers, log
         self.lifecycle_files = dict(lifecycle_files)
         self.campaign = campaign
-        self.hooks = hooks or self.default_hooks(config, args, ops, out_root)
+        self.inject_langs = dict(INJECT_LANGS, **(inject_langs or {}))
+        self.docker_images = tuple(docker_images) if docker_images else None
+        self.grader_timeout_s = dict(grader_timeout_s) if grader_timeout_s else None
+        r2 = self.inject_langs["r2"]          # tg1's default call unchanged (a test may stand in for `default_hooks`)
+        self.hooks = hooks or self.default_hooks(config, args, ops, out_root, **({} if r2 == "go" else {"inject_lang": r2}))
         self.needs_docker = needs_docker or (lambda lang: lang == "go")
         self.builder = config.schedule["builder"]
         self.per_arm = self.builder == "blocks"                 # per-arm record layout (M64); tg1 / tg2 keep the flat one
@@ -368,8 +376,10 @@ class Chain:
         self.loads, self.snapshot_tools = [], {}
         self.loaded = None
         self.rc = None
-        # C221: the tg1 chain has no per-model table (models come from --models): the pilot mean, else GENERIC_PRED_S
-        self.pred, self.explicit_pred = ({} if self.builder == "tg1" else dict(PRED_S)), {}
+        # C221: the tg1 chain has no per-model table (models come from --models): the pilot mean, else GENERIC_PRED_S (M76
+        # B4b-1: every P426 config takes tg1's defaults, never M64's PRED_S)
+        self.pred, self.explicit_pred = ({} if self.builder == "tg1" or config.config_id in run_config.P426_CONFIG_IDS
+                                         else dict(PRED_S)), {}
         for spec in args.pred_s or []:
             key, val = spec.rsplit("=", 1)
             lang, model = key.split(":", 1)
@@ -495,14 +505,15 @@ class Chain:
         return None
 
     @staticmethod
-    def default_hooks(config, args, ops, out_root):
-        """B2: `tg1-p426` installs the P426 reconciliation hooks (spec 16.2); every other chain keeps the no-op hooks."""
+    def default_hooks(config, args, ops, out_root, inject_lang="go"):
+        """B2: `tg1-p426` installs the P426 reconciliation hooks (spec 16.2); every other chain keeps the no-op hooks. M76 B4b-1:
+        `tg2-p426` too, with R2's target language from the corpus (`inject_lang`)."""
         if config.transport_policy != "p426_continue":
             return chain_hooks.ChainHooks()
         from bench import p426_hooks              # lazy: only P426 mode needs it
         arm = "ON" if str(getattr(args, "predictor", "off")).lower() in ("on", "mtp") else "OFF"
         return p426_hooks.P426Hooks(ops=ops, out_root=out_root, arm=arm, settle_bound_s=Chain.p426_settle_bound(args),
-                                    inject=getattr(args, "inject", None))
+                                    inject=getattr(args, "inject", None), inject_lang=inject_lang)
 
     @staticmethod
     def p426_settle_bound(args):
@@ -813,7 +824,23 @@ class Chain:
 
     @property
     def freezes_schedule(self):
-        return self.builder in ("blocks", "tg2_tier") or self.config.config_id == run_config.P426_CONFIG_ID
+        return self.builder in ("blocks", "tg2_tier") or self.config.config_id in run_config.P426_CONFIG_IDS
+
+    def p426_evidence(self):
+        """The probe's `--evidence` of this chain: `p426` for every P426 config (the item barrier), else none (G3)."""
+        return "p426" if self.config.config_id in run_config.P426_CONFIG_IDS else None
+
+    def docker_ok(self):
+        """The docker gate: tg1's image, or (M76 B4b-1) the corpus's grader images."""
+        images = getattr(self, "docker_images", None)
+        return self.ops.docker_ok(images=images) if images else self.ops.docker_ok()
+
+    def flat_label_kw(self, arm):
+        """`{scaffold: label}` for a flat-layout arm whose label is not tg1's (M76 B4b-1: tg2), else {} (tg1's calls unchanged)."""
+        binding = (getattr(self, "bindings", None) or {}).get(arm)
+        if binding is None or getattr(self, "per_arm", False) or binding.label == co.SCAFFOLD:
+            return {}
+        return {"scaffold": binding.label}
 
     def resolve_frozen(self, previous):
         """P364: the epoch's frozen prompt date. A new epoch takes it from the reference epoch's chain.json
@@ -1174,13 +1201,14 @@ class Chain:
             raise co.ChainAbort(f"the schedule cannot be built: {exc}") from None
 
     def p426_inject_stall(self, leg, step):
-        """`--inject stall-kill` (rehearsal only, spec 16.8): the probe flags go to the ONE invocation holding the first Python item
-        of the rehearsal schedule; every other invocation runs without them."""
-        if not (self.p426 and getattr(self.a, "inject", None) == "stall-kill" and leg.get("lang") == "python"):
+        """`--inject stall-kill` (rehearsal only, spec 16.8): the probe flags go to the ONE invocation holding the first item of the
+        R3 target language (tg1: Python; tg2: Rust) of the rehearsal schedule; every other invocation runs without them."""
+        lang = getattr(self, "inject_langs", INJECT_LANGS)["r3"]
+        if not (self.p426 and getattr(self.a, "inject", None) == "stall-kill" and leg.get("lang") == lang):
             return None
         first = next((l["full_names"][0] for b in (self.schedule or {}).get("blocks", []) for l in b["legs"]
-                      if l["lang"] == "python" and l["full_names"]), None)
-        return (f"python/{first}", INJECT_STALL_S) if first is not None and first in step["names"] else None
+                      if l["lang"] == lang and l["full_names"]), None)
+        return (f"{lang}/{first}", INJECT_STALL_S) if first is not None and first in step["names"] else None
 
     def occurrence_records(self):
         """The make-up leg's occurrences (JSON lines, spec 16.7); an unreadable file aborts before anything launches."""
@@ -1204,6 +1232,12 @@ class Chain:
         params = self.config.schedule["params"]
         if self.builder == "tg1":
             return self.tg1_schedule()
+        if self.builder == "tg2_p426":                 # M76 B4b-1: one tg2 P426 leg from the pinned draw (E12)
+            try:
+                return schedules.tg2_p426(self.tg2_draw_doc(), params["tg2_leg"], params["models"][0],
+                                          getattr(self.a, "predictor", "off"))
+            except (ValueError, schedules.TransportAbort) as exc:
+                raise co.ChainAbort(f"the tg2 schedule cannot be built: {exc}") from None
         if self.builder == "blocks":
             sessions = list(self.a.sessions)
             return schedules.blocks(
@@ -1225,7 +1259,18 @@ class Chain:
             raise co.ChainAbort(f"the tg2 draw artifact cannot be read ({type(exc).__name__})") from None
 
     def verify_schedule(self, leg):
-        """A1: a tg2 leg's items are re-derived from the frozen draw artifact at EVERY launch (never redrawn)."""
+        """A1: a tg2 leg's items are re-derived from the frozen draw artifact at EVERY launch (never redrawn). M76 B4b-1
+        (`tg2_p426`): the whole frozen schedule against the pinned draw, then this language leg's items against it."""
+        if self.builder == "tg2_p426":
+            try:
+                schedules.check_tg2_p426(self.schedule, self.tg2_draw_doc(), self.config.schedule["params"]["tg2_leg"])
+            except (ValueError, schedules.TransportAbort) as exc:
+                raise co.ChainAbort(f"the tg2 draw check failed at a leg: {exc}") from None
+            want = next((list(lg["full_names"]) for b in self.schedule["blocks"] for lg in b["legs"]
+                         if lg["lang"] == leg["lang"] and lg["session"] == leg["session"]), None)
+            if want is None or list(leg["items"]) != want:
+                raise co.ChainAbort(f"the tg2 {leg['lang']} leg's items differ from the pinned draw's prefix")
+            return
         if self.builder != "tg2_tier":
             return
         try:
@@ -1237,7 +1282,7 @@ class Chain:
 
     def plan(self):
         """The schedule normalized into loads -> legs -> invocations (the per-builder 'plan')."""
-        if self.builder == "tg1":
+        if self.builder in ("tg1", "tg2_p426"):         # M76 B4b-1: the tg2 P426 leg has tg1's P426 shape
             return self.plan_tg1()
         if self.builder == "blocks":
             return self.plan_blocks()
@@ -1346,7 +1391,7 @@ class Chain:
             self.rc = 3
             return 3
         try:
-            if self.builder != "tg1":                    # C221: the tg1 chain serves the committed registry verbatim, no overlay
+            if self.builder not in ("tg1", "tg2_p426"):  # C221: the tg1 chain serves the committed registry verbatim, no overlay
                 self.ops.ensure_overlay()
             (self.pinned_shared if self.per_arm else self.pinned)["registry_sha256"] = self.ops.overlay_sha()
             if not self.ops.power_ok():
@@ -1354,7 +1399,7 @@ class Chain:
             predictor = getattr(self.a, "predictor", "off")
             self.freeze_schedule()
             loads = self.loads = self.plan()
-            if any(self.needs_docker(leg["lang"]) for load in loads for leg in load["legs"]) and not self.ops.docker_ok():
+            if any(self.needs_docker(leg["lang"]) for load in loads for leg in load["legs"]) and not self.docker_ok():
                 raise co.ChainAbort("docker gate FAIL: grading needs a reachable docker daemon")   # P290
             if self.config.arm_switch_ops:
                 self.ops.require_arm_ops()
@@ -1595,7 +1640,7 @@ class Chain:
             tag = f"{load['session']}_{n}_{load['model']}" + (f"_{arm}" if self.per_arm else "")
             a4_from = self.p426_log_offset() if self.p426 else None
             latest = (self.ops.a4_gate(load["model"], tag, scaffold=self.label_of(arm)) if self.per_arm
-                      else self.ops.a4_gate(load["model"], tag))
+                      else self.ops.a4_gate(load["model"], tag, **self.flat_label_kw(arm)))
             if self.p426:
                 self.p426_check_a4_window(a4_from, latest)      # B2 spec 4.3: per load, before the first item
             path, sha = self.bind_receipt(latest, load, wn, arm)
@@ -1981,7 +2026,7 @@ class Chain:
             self.p426_before_invocation(load)            # B2 spec 3: router identity, foreign-process census, snapshots
         if not self.ops.power_ok():
             raise co.ChainAbort("power gate FAIL before launch")
-        if self.needs_docker(leg["lang"]) and not self.ops.docker_ok():
+        if self.needs_docker(leg["lang"]) and not self.docker_ok():
             raise co.ChainAbort("docker gate FAIL before launch")                                    # P290
         self.before_invocation(load, leg, inv)
         ids = list(inv["expect"])
@@ -1992,7 +2037,8 @@ class Chain:
         cmd = build_cmd(self.py, self.probe_of(arm), view, step, load["receipts"][arm], cancel, ack, scaffold=leg["label"],
                         universe=self.universe, frozen=self.frozen, attempt=n, rerun_index=inv.get("rerun_index", 0),
                         epoch=self.epoch_arg(), nonce=nonce,
-                        evidence="p426" if self.config.config_id == run_config.P426_CONFIG_ID else None,
+                        # B2's expression (pinned by a source-text test) extended to every P426 config (M76 B4b-1, G3)
+                        evidence="p426" if self.config.config_id == run_config.P426_CONFIG_ID else None or self.p426_evidence(),
                         inject_stall=self.p426_inject_stall(leg, step))
         att = dict(attempt=n, step=inv["phase"], stem=leg["stem"], argv=cmd, cancel=str(cancel), ack=str(ack),
                    log=str(logp), worker=dict(load["worker"]), started=co.utc_stamp(), rc=None,
@@ -2031,7 +2077,7 @@ class Chain:
                     expected_ids=expect_ids, out=str(out), rc=att["rc"], draft_kind=leg.get("draft_kind", "off"),
                     arm_identity_sha256=self.arms.get(self.arm_key(leg)))
         why = co.validate_leg(vleg, self.pinned_for(arm), self.ops.wd, policy_sha=self.policy_for(arm),
-                              frozen_prompt_date=self.frozen, spec=self.spec_of(arm))
+                              frozen_prompt_date=self.frozen, spec=self.spec_of(arm), **self.flat_label_kw(arm))
         if self.per_arm:
             why += self.arm_row_problems(view, out) + self.hook_manifest_problems(view, hook)
         if not why:
@@ -2742,7 +2788,7 @@ class Chain:
                     arm_identity_sha256=self.arms.get(self.arm_key(leg)))
         bad = [w for w in co.validate_leg(vleg, self.pinned_for(leg["arm"]), self.ops.wd,
                                           policy_sha=self.policy_for(leg["arm"]), frozen_prompt_date=self.frozen,
-                                          spec=self.spec_of(leg["arm"]))
+                                          spec=self.spec_of(leg["arm"]), **self.flat_label_kw(leg["arm"]))
                if not w.startswith(("manifest_abort", "rc_nonzero"))]
         if self.per_arm:                                   # a flat (tg1) leg's rows carry no `arm` / `epoch_id`
             bad += self.arm_row_problems(leg, out)
@@ -3150,7 +3196,9 @@ class Chain:
 
     def _cancel(self, att, st, reason, hb, leg, tcoop=None):
         Path(att["cancel"]).write_text(reason + "\n")
-        t = tcoop if tcoop is not None else co.t_coop(hb.last_prompt(), leg["lang"]) * self.tm.t_coop_scale
+        bound = getattr(self, "grader_timeout_s", None)
+        t = tcoop if tcoop is not None else (co.t_coop(hb.last_prompt(), leg["lang"], grader_timeout_s=bound) if bound
+                                             else co.t_coop(hb.last_prompt(), leg["lang"])) * self.tm.t_coop_scale
         st["cancel_at"], st["tcoop"], st["stage"] = self.clock(), t, 0
         st["deadline"] = st["cancel_at"] + t
         st["base"] = None

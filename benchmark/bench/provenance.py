@@ -1994,6 +1994,10 @@ def write(model: str, bench: str, registry_path: str | None = None,
     return man
 
 
+# The scaffolds that run the tg1 plugin set (toolbounds, noretry, datefreeze): tg1 and (M76 B4b-1) tg2, which runs tg1's carrier.
+TG1_FAMILY = ("opencode-v2-web-tg1", "opencode-v2-web-tg2")
+
+
 def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overlay, *,
                           scaffold=None, toolbounds_sha=None, datefreeze_sha=None, toolwindows_sha=None):
     """P151: permit only the hashed carrier/plugin and the exact per-item seed overlay. P364: under tg1 also the
@@ -2014,7 +2018,7 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
         entries = {str(p.relative_to(config)) for p in config.rglob("*")}
         expected_entries = {"opencode.json", "plugins", "plugins/noretry.js"}
         hashes = [("opencode.json", carrier_sha), ("plugins/noretry.js", plugin_sha)]
-        if scaffold == "opencode-v2-web-tg1":
+        if scaffold in TG1_FAMILY:
             expected_entries.add("plugins/toolbounds.js")
             hashes.append(("plugins/toolbounds.js", toolbounds_sha))
             expected_entries.add("plugins/datefreeze.js")
@@ -2023,7 +2027,7 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
             refuse("toolbounds is allowed only under tg1")
         elif datefreeze_sha is not None or any(k in env for k in ("BENCH_FROZEN_PROMPT_DATE", "BENCH_DATEFREEZE_RECEIPTS")):
             refuse("datefreeze is allowed only under tg1")
-        if scaffold == "opencode-v2-web-tg1":
+        if scaffold in TG1_FAMILY:
             frozen = env.get("BENCH_FROZEN_PROMPT_DATE")
             from . import datefreeze as _datefreeze
             if not _datefreeze.valid(frozen):
@@ -2035,7 +2039,7 @@ def opencode_v2_env_check(env, run_dir, carrier_sha, plugin_sha, expected_overla
                 refuse("BENCH_DATEFREEZE_RECEIPTS must be outside the config directory")
         if toolwindows_sha is not None:
             # M64 only (A4): the hashed `toolwindows.js`, this item's receipt file OUTSIDE the config dir, the attempt id
-            if scaffold != "opencode-v2-web-tg1":
+            if scaffold not in TG1_FAMILY:
                 refuse("toolwindows is allowed only with the tg1-family plugin set")
             expected_entries.add("plugins/toolwindows.js")
             hashes.append(("plugins/toolwindows.js", toolwindows_sha))
@@ -2092,7 +2096,7 @@ def opencode_v2_destination(
         refuse("PWD differs from scratch cwd")
     try:
         carrier = json.loads(config.read_text())
-        if scaffold == "opencode-v2-web-tg1":
+        if scaffold in TG1_FAMILY:
             if (carrier.get("compaction", {}).get("auto") is not False or
                     carrier.get("agents", {}).get("title", {}).get("disabled") is not True or
                     any(dict(action=a, resource="*", effect="deny") not in carrier.get("permissions", [])
@@ -2110,7 +2114,7 @@ def opencode_v2_destination(
         )
         if r.returncode:
             refuse(f"config discovery exit {r.returncode}: {scrub_tail(r.stderr, 300)}")
-        if scaffold == "opencode-v2-web-tg1":
+        if scaffold in TG1_FAMILY:
             import shlex
             # Pinned 2.0.20 integration.list awaits Plugin.awaitActivation; config.get does not.
             activation = (runner or subprocess.run)(
@@ -2146,7 +2150,7 @@ def opencode_v2_destination(
             if not plugin.is_file() or _file_sha256(str(plugin)) != _file_sha256(str(source)):
                 refuse("pre-check plugin missing or sha256 differs from the repository plugin")
             loaded = False
-            if scaffold != "opencode-v2-web-tg1":
+            if scaffold not in TG1_FAMILY:
                 # P433 / C209: config.get returns before plugin activation logs; integration.list awaits it.
                 # The caller's env as passed: without its logging request the proof stays impossible.
                 activation = (runner or subprocess.run)(

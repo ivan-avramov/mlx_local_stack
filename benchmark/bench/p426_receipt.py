@@ -322,7 +322,13 @@ def observed_differences(first, second) -> list:
 # -- the pair dossier (spec 6.5, 16.1, 16.7)
 PAIRS = ("r1", "pilot", "s1", "s2", "reload", "makeup")
 KV_DOSSIER_PAIRS = PAIRS + ("s3",)                    # M76 (lever kv): + tg1 session s3 (erratum v1.2)
+TG2_DOSSIER_PAIRS = ("pilot", "s1", "s2", "reload")    # M76 B4b-1: the tg2 legs' pairs (no R1, make-up or s3)
 ATTEMPT = re.compile(r"^.+\.a([1-9][0-9]*)$")
+
+
+def dossier_pairs(corpus="tg1"):
+    """The KV dossier pairs of a corpus: tg1's (`KV_DOSSIER_PAIRS`) or tg2's."""
+    return TG2_DOSSIER_PAIRS if corpus == "tg2" else KV_DOSSIER_PAIRS
 
 
 def _file_sha256(path) -> str:
@@ -477,16 +483,17 @@ def kv_difference_problems(entries) -> list:
     return problems
 
 
-def write_kv_dossier(path, *, pair, ref, test, arms, differences, verdict) -> dict:
+def write_kv_dossier(path, *, pair, ref, test, arms, differences, verdict, corpus="tg1") -> dict:
     """The KV pair dossier `pairs/<pair>__<ref>-a<n>__<test>-a<m>.json` (exclusive-created, self-hashed): `{pair, lever: kv,
     ref, test, arms: {<arm>: {attempt, receipt_sha256, harvest_sha256}}, differences, verdict, at}`; a PASS is re-checked
-    against its own receipts (`kv_pair_problems`)."""
+    against its own receipts (`kv_pair_problems`). M76 B4b-1: the pairs of `corpus` (`dossier_pairs`)."""
     from . import chain_ops as co
     from bench.p426_plan import check_kv_pair
 
     check_kv_pair(ref, test)
-    if pair not in KV_DOSSIER_PAIRS:
-        raise ValueError(f"pair must be one of {KV_DOSSIER_PAIRS}, not {pair!r}")
+    allowed = dossier_pairs(corpus)
+    if pair not in allowed:
+        raise ValueError(f"pair must be one of {allowed}, not {pair!r}")
     out, nums = {}, {}
     for arm in (ref, test):
         spec = arms[arm]

@@ -21,13 +21,19 @@ DECODE_RATE_SOURCE = "completed requests (spec 8)"        # P593: the worker cou
 CLIENT_STEP_CAP_SOURCE = pr.CLIENT_STEP_CAP_SOURCE
 
 
-def _is_go(slot, done) -> bool:
-    """True when the item of this `done` barrier is a Go item: the payload's row id `go/<item>`, else the slot's language field."""
+def is_lang(slot, done, lang) -> bool:
+    """True when the item of this `done` barrier is a `lang` item: the payload's row id `<lang>/<item>`, else the slot's language
+    field."""
     item = (done or {}).get("id") if isinstance(done, dict) else None
     if isinstance(item, str) and "/" in item:
-        return item.split("/", 1)[0] == "go"
+        return item.split("/", 1)[0] == lang
     parts = str(slot).split("|")
-    return len(parts) >= 2 and parts[-2] == "go"
+    return len(parts) >= 2 and parts[-2] == lang
+
+
+def _is_go(slot, done) -> bool:
+    """True when the item of this `done` barrier is a Go item (tg1's R2 target)."""
+    return is_lang(slot, done, "go")
 
 
 # -- records
@@ -97,10 +103,11 @@ def log_bounds_problems(out_root, path) -> list:
 
 
 class P426Hooks(ch.ChainHooks):
-    def __init__(self, *, ops, out_root, arm, settle_bound_s, clock=time.time, sleep=time.sleep, inject=None):
+    def __init__(self, *, ops, out_root, arm, settle_bound_s, clock=time.time, sleep=time.sleep, inject=None, inject_lang="go"):
         self.ops, self.out_root, self.arm = ops, Path(out_root), str(arm)
         self.settle_bound_s, self.clock, self.sleep = float(settle_bound_s), clock, sleep
         self.inject = inject                                # rehearsal only (spec 16.8): `reconcile-mismatch` perturbs the first item
+        self.inject_lang = inject_lang                      # ... of this language (tg1: Go; M76 B4b-1 tg2: Rust, from the corpus)
         self._first_done = True                             # the next `done` is the leg's first item
         self.router = None                                  # {pid, start}: bound by the chain once it owns a router
         self.ready_checks = None                            # () -> [problem]: bound by the chain (spec 3, Item `ready` row)
@@ -272,7 +279,7 @@ class P426Hooks(ch.ChainHooks):
                                            f"arm {self.arm}; <=1-token requests listed: {pr.short_requests(report.requests)}")
         elif res is not None and not res.settled:
             extra["settle"]["detail"] += " (not settled within the bound)"
-        injected = self.inject == "reconcile-mismatch" and self._first_done and _is_go(slot, done)
+        injected = self.inject == "reconcile-mismatch" and self._first_done and is_lang(slot, done, self.inject_lang)
         if injected:
             self._first_done = False
         if injected:                                         # R2 (spec 1 / 16.8, P589): the first Go item's reconciliation is perturbed

@@ -32,6 +32,20 @@ T_TOKENS = 81920
 RUN_ID = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{12}$")          # the probe's `<YYYYMMDDTHHMMSS>-<12 hex>`
 ATTEMPT = re.compile(r"^(stall|loop|alloc)\.attempt(\d+)\.jsonl$")
 EVIDENCE_PATHS = {"events": "events_path", "export": "transcript_path", "stderr": "stderr_path"}
+# M76 B4b-1 (change review L1): a v2 row (`arm_opencode.row_fields`) also records its date-freeze receipts and, when present,
+# its tool-window receipts; each recorded artifact has its path field and its digest. tg2 rows are always date-frozen.
+V2_EVIDENCE_PATHS = {"datefreeze": "datefreeze_path", "toolwindows": "toolwindows_path"}
+REQUIRED_EVIDENCE = {"opencode-v2-web-tg2": ("datefreeze",)}
+
+
+def evidence_paths(row, scaffold="opencode-v2-web-tg1"):
+    """{artifact: row path field} of the artifacts the row records (the base three, plus each v2 artifact whose path field
+    the row carries); None when a required one of the scaffold is not recorded."""
+    paths = dict(EVIDENCE_PATHS)
+    paths.update({k: field for k, field in V2_EVIDENCE_PATHS.items() if field in row})
+    if not set(REQUIRED_EVIDENCE.get(scaffold, ())) <= set(paths):
+        return None
+    return paths
 
 
 class Result:
@@ -87,18 +101,20 @@ def last_progress_boundary(gate):
     return boundary
 
 
-def check_files(row, manifest, workdir):
+def check_files(row, manifest, workdir, scaffold="opencode-v2-web-tg1"):
     sha = row.get("evidence_sha256")
-    if not isinstance(sha, dict) or set(sha) != set(EVIDENCE_PATHS):
+    paths = evidence_paths(row, scaffold)
+    if not isinstance(sha, dict) or paths is None or set(sha) != set(paths):
         return "FAIL:evidence_sha256_keys"
-    for name, field in EVIDENCE_PATHS.items():
+    for name, field in paths.items():
         path = resolve(row.get(field, ""), workdir)
         if not sha[name] or not path.is_file() or sha_file(path) != sha[name]:
             return f"FAIL:evidence_sha:{name}"
     sys.path.insert(0, str(REPO / "benchmark"))
     from bench import structured_grade as sg
     lang = str(row.get("id", "")).split("/", 1)[0]
-    reasons = sg.validate_reports(row.get("grade_reports"), lang, row.get("test_modified"))
+    reasons = sg.validate_reports(row.get("grade_reports"), lang, row.get("test_modified"),
+                                  **({"grader": "tg2"} if scaffold == "opencode-v2-web-tg2" else {}))
     if reasons:
         return "FAIL:grade_reports:" + reasons[0]
     for report in row.get("grade_reports") or []:
@@ -173,9 +189,12 @@ def causal(kind, row, notes):
     return None
 
 
-def verify_row(kind, row, manifest, workdir):
+SCAFFOLDS = ("opencode-v2-web-tg1", "opencode-v2-web-tg2")          # M76 B4b-1: the tg2 probe's injected positives too
+
+
+def verify_row(kind, row, manifest, workdir, scaffold="opencode-v2-web-tg1"):
     notes = []
-    label = "opencode-v2-web-tg1-inject:" + kind
+    label = scaffold + "-inject:" + kind
     runtime = (manifest or {}).get("runtime") or {}
     if row.get("scaffold") != label or runtime.get("scaffold") != label or \
             (runtime.get("inject") or {}).get("kind") != kind:
@@ -186,7 +205,7 @@ def verify_row(kind, row, manifest, workdir):
         return "FAIL:run_id", notes
     if row.get("worker_before") != row.get("worker_after") or not row.get("worker_before"):
         return "FAIL:worker_drift", notes
-    bad = check_files(row, manifest, workdir)
+    bad = check_files(row, manifest, workdir, **({"scaffold": scaffold} if scaffold != "opencode-v2-web-tg1" else {}))
     if bad:
         return bad, notes
     gate = row["gate"]
@@ -288,6 +307,8 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
     ap.add_argument("--run", required=True, type=Path)
     ap.add_argument("--kind", choices=KINDS)
     ap.add_argument("--workdir", type=Path)
+    ap.add_argument("--scaffold", choices=SCAFFOLDS, default=SCAFFOLDS[0],
+                    help="the probe's scaffold label (default tg1; tg2: run_tg2_probe.py --tg2-inject)")
     a = ap.parse_args(argv)
     workdir = a.workdir or workdir_default()
     attempts = {}
@@ -316,7 +337,7 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
                 verdict, notes = ("FAIL:transport_abort" if manifest.get("transport_abort") else "FAIL:no_row"), []
             else:
                 try:
-                    verdict, notes = verify_row(kind, rows[0], manifest, workdir)
+                    verdict, notes = verify_row(kind, rows[0], manifest, workdir, scaffold=a.scaffold)
                 except (KeyError, TypeError, ValueError, OSError) as exc:
                     verdict, notes = f"FAIL:malformed:{type(exc).__name__}:{exc}", []
                 for entry in rows[0].get("orphans_unattributed") or []:

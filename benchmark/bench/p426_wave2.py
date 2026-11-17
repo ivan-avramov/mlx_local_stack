@@ -31,6 +31,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from . import chain_ops as co
+from . import datefreeze
 from . import p426_freeze as fz
 from . import p426_hooks as ph
 from . import p426_ids
@@ -150,6 +151,105 @@ def kv_legs(ref, test, sessions=None):
     return dict(run=run, makeup=makeup, rehearsal=rehearsal)
 
 
+TG2_LANGS = ("rust", "javascript", "java", "cpp")
+TG2_CHAIN_ENTRY = ("benchmark", "chains", "c147", "run_tg2_chain.py")
+TG2_NAMESPACE = "wave2.tg2"                              # benchmark/results/m76/wave2.tg2/
+TG2_SESSION_SEED = 1001                                  # the positives' seed (the pilot item at s1's seed)
+RECHECK_GATES = {"s1": ("s1",), "s2": ("s1", "s2")}       # the two nuisance re-checks and the sessions each pools
+POSITIVE_TIMEOUT_S = 2 * 3660.0                          # one inject probe run: twice one P223 maximum item (never retried on time)
+POSITIVE_SEAMS = ("worktree_state", "identity", "positives_session", "positive_grade", "positive_inject", "inject_verify")
+
+
+def positives_plan(draw_doc):
+    """{lang: item}: per tg2 language the pilot item (the draw's first; the pins verified)."""
+    from . import schedules
+    sched = schedules.tg2_p426(draw_doc, "pilot", ENTRY, "mtp")
+    return {lg["lang"]: lg["invocations"][0]["expect"][0] for lg in sched["blocks"][0]["legs"]}
+
+
+def cmd_positives(a, ops, wd, clock=time.time):
+    """§3 "Positives record" (E6): per language the pilot item's stub graded FAIL and its reference PASS (`Tg2Corpus.grade`); on
+    the reference arm, stall / loop / alloc on the pilot item at seed 1001 (12 `run_tg2_probe.py --tg2-inject` runs), each
+    verified by `inject_verify` with that kind's causal predicate, one retry per run only on a transport abort; inside ONE serving
+    session (the lean router, the A4 gate, the worker loaded). Writes one sealed record (any outcome); rc 0 only when all pass."""
+    from . import schedules
+    from . import tg2_grade
+    fz.need(ops, *POSITIVE_SEAMS)
+    (arm, worktree), = a.worktrees.items()
+    out = Path(a.out)
+    if out.exists():
+        raise fz.Refusal(f"--out {out.name} exists (the positives record is exclusive-created, never overwritten)")
+    try:
+        draw = json.loads((Path(__file__).resolve().parents[1] / "m65" / "tg2_draw.json").read_text())
+        plan = positives_plan(draw)
+    except (OSError, ValueError, schedules.TransportAbort) as exc:
+        raise fz.Refusal(f"the tg2 draw: {exc}") from None
+    st, ident = ops.worktree_state(worktree), ops.identity(worktree)
+    if st.get("clean") is not True:
+        raise fz.Refusal(f"the {arm} worktree is not clean")
+    problems, grades, injects = [], [], []
+    for lang in TG2_LANGS:
+        for variant in fz.POSITIVE_VARIANTS:
+            g = dict(ops.positive_grade(lang, plan[lang], variant))
+            grades.append(dict(language=lang, item=plan[lang], variant=variant, **g))
+            if g.get("passed") is not (variant == "reference"):
+                problems.append(f"{lang} {variant}: graded {'PASS' if g.get('passed') else 'FAIL'}, expected "
+                                f"{'PASS' if variant == 'reference' else 'FAIL'}")
+    with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
+        for lang in TG2_LANGS:
+            for kind in fz.POSITIVE_KINDS:
+                verdict, res, n = None, {}, 0
+                for n in (1, 2):                                # one retry per run, only on a transport abort
+                    res = dict(ops.positive_inject(lang, plan[lang], kind, seed=TG2_SESSION_SEED, attempt=n))
+                    if res.get("transport_abort"):
+                        verdict = "TRANSPORT_ABORT"
+                        continue
+                    verdict = ops.inject_verify(res["run"], kind)
+                    break
+                injects.append(dict(language=lang, kind=kind, item=plan[lang], seed=TG2_SESSION_SEED, attempts=n, verdict=verdict,
+                                    row_sha256=res.get("row_sha256"), evidence_sha256=res.get("evidence_sha256")))
+                if verdict != "PASS":
+                    problems.append(f"{lang} {kind}: {verdict}")
+    doc = dict(kind=fz.KIND_POSITIVES, corpus="tg2", arm=arm, **{f"{arm}_commit": st.get("head")},
+               scaffold="opencode-v2-web-tg2", **{k: ident.get(k) for k in fz.IDENTITY_KEYS},
+               draw_sha256=schedules.TG2_DRAW_SHA256, universe_sha256=schedules.TG2_UNIVERSE_SHA256,
+               image_id=tg2_grade.pinned_image_id(), frozen_prompt_date=a.frozen_prompt_date, grades=grades, injects=injects,
+               problems=problems, verdict="PASS" if not problems else "FAIL", created=co.utc_stamp(clock()))
+    try:
+        sealed = ph.write_exclusive(out, doc)
+    except FileExistsError:
+        raise fz.Refusal(f"--out {out.name} exists (exclusive-created)") from None
+    print(f"{fz.KIND_POSITIVES} {sealed['verdict']} {sealed['sha256']}")
+    return 0 if not problems else 1
+
+
+def kv_tg2_legs(ref, test):
+    """M76 B4b-1 (§3, order per pair): the tg2 legs of a KV pair (reference, treatment), every name `tg2-m76-<arm>-<leg>`: the
+    pilot pair (v8 base; ref -> test), s1 (ref -> test), s2 (test -> ref), the reload (test -> ref), and the rehearsals R2 on the
+    treatment (INVALID expected) and R3 on the reference. Each leg is one `run_tg2_chain.py` invocation (`--leg` / `--rehearsal`).
+    No make-up legs (C343 (3))."""
+    from . import p426_plan
+
+    p426_plan.check_kv_pair(ref, test)
+    if (ref, test) != fz.TG2_PAIR:                               # change review L6: the one tg2 pair
+        raise ValueError(f"the tg2 legs run the pair {','.join(fz.TG2_PAIR)} only, not {ref},{test}")
+
+    def leg(n, arm, kind, role, record, head, mode, **kw):
+        spec = _leg(n, f"tg2-m76-{arm}-{kind}" if kind != "rehearsal" else kw.pop("name"), arm, head,
+                    kind, kw.pop("pair", kind), role, record, expect=kw.pop("expect", "VALID"))
+        return dict(spec, corpus="tg2", mode=mode, entry=list(TG2_CHAIN_ENTRY))
+    run = [leg(1, ref, "pilot", "first", "v8", ["--leg", "pilot"], "pilot"),
+           leg(2, test, "pilot", "second", "v8", ["--leg", "pilot"], "pilot")]
+    for s, (first, second) in (("s1", (ref, test)), ("s2", (test, ref)), ("reload", (test, ref))):
+        run += [leg(len(run) + 1, first, s, "first", "amendment", ["--leg", s], "chain"),
+                leg(len(run) + 2, second, s, "second", "amendment", ["--leg", s], "chain")]
+    rehearsal = (leg("R2", test, "rehearsal", None, "manifest", ["--rehearsal", "r2"], "chain", pair=None, expect="INVALID",
+                     name=f"tg2-m76-{test}-rehearsal-r2"),
+                 leg("R3", ref, "rehearsal", None, "manifest", ["--rehearsal", "r3"], "chain", pair=None,
+                     name=f"tg2-m76-{ref}-rehearsal-r3"))
+    return dict(run=tuple(run), makeup=(), rehearsal=rehearsal)
+
+
 def kv_dossier_name(pair, ref, n, test, m):
     return f"{pair}__{ref}-a{n}__{test}-a{m}.json"
 
@@ -183,7 +283,8 @@ def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=Non
     if spec["kind"] == "makeup" and occurrences is None:
         raise ValueError("a make-up leg needs its occurrences file")
     rehearsal = spec["record"] == "manifest"
-    rec = p426_record.load(record_path, mode="pilot" if spec["head"] == ["pilot"] else "chain", rehearsal=rehearsal)
+    mode = spec.get("mode") or ("pilot" if spec["head"] == ["pilot"] else "chain")      # M76 B4b-1: a tg2 spec names its mode
+    rec = p426_record.load(record_path, mode=mode, rehearsal=rehearsal)
     base = dict(rec["base"])
     if rehearsal:
         base.update(identity or {})                          # the manifest records the identity and the date (spec 16.8)
@@ -191,7 +292,8 @@ def leg_argv(leg, attempt, *, worktrees, record_path, out_base, pair_receipt=Non
             raise ValueError("a rehearsal leg needs the probe identity and the frozen date (the manifest carries none)")
     arm = spec["arm"]
     wt = Path(worktrees[arm])
-    argv = [str(wt / ".venv-bench/bin/python"), str(wt.joinpath(*CHAIN_ENTRY)), *spec["head"], "--p426",
+    entry = tuple(spec.get("entry") or CHAIN_ENTRY)            # M76 B4b-1: the tg2 legs run `run_tg2_chain.py`
+    argv = [str(wt / ".venv-bench/bin/python"), str(wt.joinpath(*entry)), *spec["head"], "--p426",
             "--models", ENTRY, "--predictor", predictor_of(lever, arm), "--out-root", str(out_root_of(spec, attempt, out_base)),
             "--probe-code-sha", base["probe_code_sha256"], "--policy-sha", base["scaffold_policy_sha256"],
             "--frozen-prompt-date", base["frozen_prompt_date"], "--campaign-core", base[f"{arm}_commit"],
@@ -299,6 +401,55 @@ def classify_leg(root, rc, *, arm) -> dict:
     return dict(state="VALID", **{"class": "valid"}, reason="")
 
 
+def tg2_strict_rows(leg_roots, session) -> dict:
+    """§3 "Strict rows": `{item: {session: 0/1}}` over the harvested legs' planned slots of `session` (their frozen schedules):
+    1 iff a row has `passed is True and converged is True`; a `p426_dnf` slot is 0; a planned slot with neither a row nor a DNF
+    record refuses (`fz.Refusal`), and so does a row or DNF record of an unplanned slot or a slot with both."""
+    out = {}
+    for root in leg_roots:
+        root = Path(root)
+        chain = fz.read_chain(root)
+        try:
+            sched = json.loads((root / "schedule.json").read_text())
+        except (OSError, ValueError):
+            raise fz.Refusal(f"{root.name}: no readable frozen schedule.json") from None
+        from . import schedules
+        if chain.get("schedule_sha256") != schedules.schedule_sha256(sched):
+            raise fz.Refusal(f"{root.name}: schedule.json is not the schedule chain.json froze")
+        planned = [i for block in sched["blocks"] if block["session"] == session for leg in block["legs"]
+                   for inv in leg["invocations"] for i in inv["expect"]]
+        rows = {}
+        for path in sorted((root / session).glob("*.jsonl")) if (root / session).is_dir() else []:
+            for line in path.read_text().splitlines():
+                if line.strip():
+                    r = json.loads(line)
+                    if r.get("id") in rows:
+                        raise fz.Refusal(f"{root.name}: {r.get('id')} has two rows")
+                    rows[r.get("id")] = r
+        dnf = {f"{d.get('language')}/{d.get('item')}" for d in chain.get("p426_dnf") or [] if d.get("session") == session}
+        # change review L4: rows and DNFs are exactly the planned slots (rows ∪ DNFs == planned, rows ∩ DNFs = ∅)
+        planned_set = set(planned)
+        for what, stray in (("row", set(rows) - planned_set), ("DNF record", dnf - planned_set)):
+            if stray:
+                raise fz.Refusal(f"{root.name}: a {what} for {', '.join(sorted(map(str, stray)))} ({session}), which is not a "
+                                 "planned slot")
+        both = set(rows) & dnf
+        if both:
+            raise fz.Refusal(f"{root.name}: {', '.join(sorted(both))} ({session}) has both a row and a DNF record")
+        for item in planned:
+            if item in rows:
+                r = rows[item]
+                value = int(r.get("passed") is True and r.get("converged") is True)
+            elif item in dnf:
+                value = 0
+            else:
+                raise fz.Refusal(f"{root.name}: the planned slot {item} ({session}) has neither a row nor a DNF record")
+            if session in out.get(item, {}):
+                raise fz.Refusal(f"{item} {session} is planned twice")
+            out.setdefault(item, {})[session] = value
+    return out
+
+
 def pilot_gate(off_root, on_root) -> list:
     """Spec 1: both legs VALID, 5 / 5 items reconciled, zero DNF, ON engagement proven on every eligible request, both speed-valid,
     the pair gate passed. Returns the failed conditions (empty = the gate passes)."""
@@ -311,6 +462,12 @@ def read_sequence(out_base) -> dict:
     doc = json.loads(path.read_text()) if path.is_file() else {}
     for key in ("legs", "pairs", "harvested", "reruns"):
         doc.setdefault(key, [])
+    return doc
+
+
+def tg2_sequence_init(doc):
+    """M76 B4b-1: the tg2 sequence's re-check record (`rechecks.<gate>`)."""
+    doc.setdefault("rechecks", {})
     return doc
 
 
@@ -356,10 +513,11 @@ class Sequencer:
         self.a, self.ops, self.clock, self.sleep, self.wd = a, ops, clock, sleep, Path(wd)
         self.out = Path(a.out_base)
         self.lever = getattr(a, "lever", "mtp")                       # M76 B3: the KV lever names the arms by their KV label
+        self.corpus = getattr(a, "corpus", "tg1")                     # M76 B4b-1: the tg2 legs (lever kv)
         if self.lever == "kv":
             self.arms = tuple(a.arms)
             self.worktrees = {arm: Path(p) for arm, p in a.worktrees.items()}
-            self.table = kv_legs(*self.arms)
+            self.table = kv_tg2_legs(*self.arms) if self.corpus == "tg2" else kv_legs(*self.arms)
         else:
             self.arms = ("off", "on")
             self.worktrees = {"off": Path(a.worktree_off), "on": Path(a.worktree_on)}
@@ -369,6 +527,8 @@ class Sequencer:
         self.pause = Path(a.pause_file) if a.pause_file else self.out / "PAUSE"
         self.record_dir = Path(a.record_dir) if getattr(a, "record_dir", None) else None
         self.seq = read_sequence(self.out)
+        if self.corpus == "tg2":
+            tg2_sequence_init(self.seq)
         self.emails = ()
         self.run_files_done = False
         self.run_files_failed = False
@@ -424,6 +584,10 @@ class Sequencer:
             raise fz.Refusal(f"v8_base.json: {exc}") from None
         if base.get("kind") != fz.KIND_V8:
             raise fz.Refusal(f"v8_base.json: kind {base.get('kind')!r} is not {fz.KIND_V8}")
+        if (base.get("corpus") == "tg2") != (self.corpus == "tg2"):
+            raise fz.Refusal(f"v8_base.json is a {base.get('corpus', 'tg1')} record, the command runs --corpus {self.corpus}")
+        if self.corpus == "tg2":
+            self.verify_positives(base)
         self.base, self.amendment = base, None
         path = self.record_dir / "amendment.json"
         if path.exists():
@@ -433,6 +597,16 @@ class Sequencer:
                 raise fz.Refusal(f"amendment.json: {exc}") from None
         elif a.cmd == "makeup":
             raise fz.Refusal(f"{path.name} is missing: the pilot gate has not written the timeout amendment")
+
+    def verify_positives(self, base):
+        """M76 B4b-1 (§3): at start and on resume, the sealed positives record beside v8 is the one v8 names (`positives_sha256`)."""
+        path = self.record_dir / "positives.json"
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            raise fz.Refusal(f"{path.name} (the tg2 positives record v8 names) is missing or unreadable") from None
+        if not ph.sealed_ok(doc) or doc.get("sha256") != base.get("positives_sha256"):
+            raise fz.Refusal(f"{path.name}: the tg2 positives record is not the sealed record v8 names (positives_sha256)")
 
     def record_path(self, spec):
         if spec["record"] == "manifest":
@@ -568,6 +742,13 @@ class Sequencer:
         self.wait_boundary()
         self.verify_world()
         self.check_power()
+        if self.corpus == "tg2":                       # M76 B4b-1: the deadline exists before the launch (no default wall)
+            try:
+                value = float(self.deadline(spec))
+            except (ValueError, KeyError, TypeError) as exc:
+                raise Stop(1, f"STOP: {spec['name']} has no supervision deadline in its record: {exc} (nothing launched)") from None
+            if not value > 0:
+                raise Stop(1, f"STOP: {spec['name']}'s supervision deadline {value} is not positive (nothing launched)")
         attempt = self.next_attempt(spec)
         name = f"{spec['name']}.a{attempt}"
         root = self.root(spec, attempt)
@@ -702,7 +883,7 @@ class Sequencer:
         else:
             pr.write_kv_dossier(path, pair=spec["pair"], ref=ref, test=test, differences=differences, verdict=verdict,
                                 arms={arm: dict(attempt=attempts[arm], receipt=roots[arm] / "receipt.json", harvest=harvests[arm])
-                                      for arm in (ref, test)})
+                                      for arm in (ref, test)}, **({"corpus": "tg2"} if self.corpus == "tg2" else {}))
         if record is None:
             record = {"pair": spec["pair"], ref: attempts[ref], test: attempts[test], "dossier": f"pairs/{path.name}",
                       "verdict": verdict}
@@ -809,7 +990,8 @@ class Sequencer:
             self.verify_amendment(path, off, on, roots)
             return
         try:                                                  # the pilot gate runs inside `write_amendment`
-            fz.write_amendment(self.record_dir / "v8_base.json", roots[0], roots[1], path, self.ops)
+            fz.write_amendment(self.record_dir / "v8_base.json", roots[0], roots[1], path, self.ops,
+                               **({"corpus": "tg2"} if self.corpus == "tg2" else {}))
         except fz.Refusal as exc:
             raise Stop(1, f"STOP: pilot gate FAILED, the operator decides (no timeout amendment written): {exc}"[:1700]) from None
         self.load_records()
@@ -867,6 +1049,126 @@ class Sequencer:
             self.ensure_dossier(spec)
         if spec["name"] == self.pilots[1]:
             self.ensure_amendment()
+        if self.corpus == "tg2" and spec["role"] == "second" and spec["kind"] in ("s1", "reload"):
+            self.ensure_recheck("s1" if spec["kind"] == "s1" else "s2")      # re-check 1 after s1, re-check 2 after the reload
+
+    # -- M76 B4b-1: the two nuisance re-check gates (E4)
+    def recheck_path(self, gate):
+        return self.out / "run" / f"recheck-{gate}.json"
+
+    def recheck_rows(self, gate):
+        """Per arm the strict rows `{item: {session: 0/1}}` of the harvested legs of the gate's sessions; and their attempts."""
+        rows, attempts = {arm: {} for arm in self.arms}, {}
+        for session in RECHECK_GATES[gate]:
+            for arm in self.arms:
+                name = f"tg2-m76-{arm}-{session}"
+                entry = self.selected(name)
+                if entry is None:
+                    raise Stop(1, f"STOP: re-check {gate}: no VALID harvested attempt of {name}")
+                attempt = f"{name}.a{entry['attempt']}"
+                attempts.setdefault(arm, []).append(attempt)
+                try:
+                    got = tg2_strict_rows([self.ops.harvest_path(attempt)], session)
+                except fz.Refusal as exc:
+                    raise Stop(1, f"STOP: re-check {gate}: {exc}") from None
+                for item, value in got.items():
+                    rows[arm].setdefault(item, {}).update(value)
+        return rows, attempts
+
+    def ensure_recheck(self, gate):
+        """Re-check 1 (`s1`, after both s1 legs are harvested) / re-check 2 (`s2`, over s1 + s2): `m76_sim.recheck("A8", N16, X)`
+        on the strict rows, its record sealed into `<out-base>/run/recheck-<gate>.json` and its sha256 in `sequence.json`
+        (`rechecks.<gate>`). Re-check 1 outside (or `operator_review`) stops with rc 5 until `--recheck-ack <that sha256>`;
+        re-check 2 never stops (B4b-2 labels its verdict). A resume re-verifies the sealed record, never re-runs it (change
+        review L3): a record without its sealed file stops (the operator decides); a sealed file without a record (a stop
+        between the seal and the save) is re-verified and recorded from the file; only when neither exists is it computed."""
+        import tempfile
+        from . import m76_sim
+        path, rechecks = self.recheck_path(gate), self.seq.setdefault("rechecks", {})
+        rec = rechecks.get(gate)
+        if path.exists():
+            try:
+                doc = json.loads(path.read_text())
+            except (OSError, ValueError):
+                doc = None
+            if not ph.sealed_ok(doc):
+                raise Stop(1, f"STOP: {path.name} does not verify as a sealed re-check record (the operator decides)")
+            self.check_recheck_doc(gate, path, doc)              # V1: every resume, against the current selection
+            if rec is None:
+                rec = self.recover_recheck(gate, path, doc)
+            elif rec.get("sha256") != doc["sha256"]:
+                raise Stop(1, f"STOP: {path.name} is not the sealed re-check sequence.json records (the operator decides)")
+        elif rec is not None:
+            raise Stop(1, f"STOP: sequence.json records re-check {gate} (sha256 {str(rec.get('sha256'))[:16]}) but {path.name} "
+                          "is missing; a recorded re-check is never re-run (the operator decides)")
+        else:
+            rows, attempts = self.recheck_rows(gate)
+            ref, test = self.arms
+            self.out.mkdir(parents=True, exist_ok=True)
+            with tempfile.TemporaryDirectory(prefix=f".recheck-{gate}-", dir=self.out) as tmp:
+                m76_sim.recheck("A8", rows[ref], rows[test], out=tmp)
+                result = json.loads((Path(tmp) / "recheck-A8.json").read_text())
+            doc = ph.write_exclusive(path, dict(gate=gate, axis="A8", sessions=list(RECHECK_GATES[gate]), ref=ref, test=test,
+                                                attempts=attempts, recheck=result, at=co.utc_stamp(self.clock())))
+            rec = rechecks[gate] = dict(sha256=doc["sha256"], path=f"run/{path.name}", inside=bool(result.get("inside")),
+                                        operator_review=bool(result.get("operator_review")))
+            self.save()
+            self.log(f"RE-CHECK {gate}: inside={rec['inside']} operator_review={rec['operator_review']} sha256={doc['sha256'][:16]}")
+        if (rec["inside"] and not rec["operator_review"]) or gate != "s1":
+            return
+        ack = getattr(self.a, "recheck_ack", None)
+        if rec.get("ack"):
+            return
+        if ack == rec["sha256"]:
+            rec["ack"] = dict(sha256=ack, at=co.utc_stamp(self.clock()))
+            self.save()
+            self.log(f"RE-CHECK {gate}: outside, acknowledged by the operator ({ack[:16]})")
+            return
+        raise Stop(5, f"STOP: re-check {gate} is outside the committed grid or needs operator review ({path.name}, sha256 "
+                      f"{rec['sha256']}); resume with --recheck-ack <that sha256>")
+
+    def recheck_attempts(self, gate):
+        """Per arm the selected (VALID, harvested) attempts of the gate's sessions, as `recheck_rows` names them."""
+        attempts = {}
+        for session in RECHECK_GATES[gate]:
+            for arm in self.arms:
+                name = f"tg2-m76-{arm}-{session}"
+                entry = self.selected(name)
+                if entry is None:
+                    raise Stop(1, f"STOP: re-check {gate}: no VALID harvested attempt of {name}")
+                attempts.setdefault(arm, []).append(f"{name}.a{entry['attempt']}")
+        return attempts
+
+    def check_recheck_doc(self, gate, path, doc):
+        """A sealed re-check document (recorded or not, verify round 2 V1) is this gate's over the CURRENT selection: its gate,
+        axis, sessions, arms and attempts equal what the sequence selects now; a mismatch (e.g. a rerun selected another
+        attempt) stops with rc 1 — the operator decides; it is never recomputed."""
+        ref, test = self.arms
+        want = dict(gate=gate, axis="A8", sessions=list(RECHECK_GATES[gate]), ref=ref, test=test,
+                    attempts=self.recheck_attempts(gate))
+        bad = [k for k, v in want.items() if doc.get(k) != v]
+        if bad or not isinstance(doc.get("recheck"), dict):
+            raise Stop(1, f"STOP: {path.name}: its {', '.join(bad) or 'recheck'} is not this re-check's over the current "
+                          "selection (a rerun since?); a sealed re-check is never recomputed (the operator decides)")
+
+    def recover_recheck(self, gate, path, doc):
+        """The crash window (change review L3): a sealed re-check file that `sequence.json` never recorded (already checked
+        against the current selection by `check_recheck_doc`); it is recorded from the file (never re-run) and logged."""
+        result = doc["recheck"]
+        rec = self.seq["rechecks"][gate] = dict(sha256=doc["sha256"], path=f"run/{path.name}", inside=bool(result.get("inside")),
+                                                operator_review=bool(result.get("operator_review")))
+        self.save()
+        self.log(f"RE-CHECK {gate}: recorded from the sealed file {path.name} (sealed before a stop, never recorded; not re-run): "
+                 f"inside={rec['inside']} operator_review={rec['operator_review']} sha256={doc['sha256'][:16]}")
+        return rec
+
+    def run_file_paths(self):
+        """The run files published with the sequence: the frozen-record directory's files, the sealed re-checks, `sequence.json`."""
+        paths = sorted(p for p in self.record_dir.iterdir() if p.is_file()) if self.record_dir and self.record_dir.is_dir() else []
+        run = self.out / "run"
+        if self.corpus == "tg2" and run.is_dir():
+            paths += [p for p in sorted(run.glob("recheck-s*.json")) if p not in paths]
+        return paths + [self.out / SEQUENCE_FILE]
 
     def process(self, spec):
         latest = (self.entries(spec["name"]) or [None])[-1]
@@ -946,7 +1248,10 @@ class Sequencer:
     def publish_run_files(self):
         if self.run_files_done or self.a.cmd == "rehearsal" or not self.seq["harvested"]:
             return
-        paths = sorted(p for p in self.record_dir.iterdir() if p.is_file()) + [self.out / SEQUENCE_FILE]
+        if self.corpus == "tg2":
+            paths = self.run_file_paths()
+        else:
+            paths = sorted(p for p in self.record_dir.iterdir() if p.is_file()) + [self.out / SEQUENCE_FILE]
         self.ops.publish_run_files(paths, emails=self.emails)
         self.run_files_done = True
 
@@ -970,11 +1275,14 @@ class BoxSeqOps(fz.BoxOps):
     """The real `ops`: subprocess launch (nothing inherited: `pass_fds=()`, stdin closed, output to a file), start-time identity
     (`ChainOps.create_time`), `pmset` power, and the harvest / publication of `bench.p426_harvest` (s9)."""
 
-    def __init__(self, workdir, *, main_root, evidence_stage, historical_walls=None, build_inputs=None, lever="mtp"):
-        super().__init__(workdir, build_inputs, historical_walls)
+    def __init__(self, workdir, *, main_root, evidence_stage, historical_walls=None, build_inputs=None, lever="mtp", corpus="tg1"):
+        super().__init__(workdir, build_inputs, historical_walls, corpus=corpus)
         self.main_root, self.evidence_stage = Path(main_root), Path(evidence_stage)
         self._procs = {}
+        self._pos = None                                     # the positives' serving session (M76 B4b-1), when one is open
         self.lever = lever                                   # M76 B3: kv publishes below benchmark/results/m76/
+        self.corpus = corpus                                # M76 B4b-1: the tg2 legs publish below benchmark/results/m76/wave2.tg2/
+        self.namespace = TG2_NAMESPACE if corpus == "tg2" else "wave2"
 
     def launch(self, argv, *, cwd, pass_fds):
         if "--out-root" in argv:
@@ -1023,7 +1331,7 @@ class BoxSeqOps(fz.BoxOps):
 
     def harvest_path(self, attempt):
         if self.lever == "kv":
-            return self.main_root / "benchmark/results/m76/wave2" / attempt
+            return self.main_root / "benchmark/results/m76" / getattr(self, "namespace", "wave2") / attempt
         return self.main_root / "benchmark/results/p426/wave2" / attempt                  # the destination directory (spec 16.8)
 
     def harvest(self, root, *, emails):
@@ -1031,6 +1339,8 @@ class BoxSeqOps(fz.BoxOps):
                 "--evidence-stage", str(self.evidence_stage)]
         if self.lever == "kv":
             argv += ["--lever", "kv"]
+        if getattr(self, "corpus", "tg1") == "tg2":
+            argv += ["--namespace", TG2_NAMESPACE]
         for e in emails:
             argv += ["--operator-email", e]
         run = subprocess.run(argv, cwd=str(Path(__file__).resolve().parents[1]), capture_output=True, text=True, timeout=3600,
@@ -1057,12 +1367,98 @@ class BoxSeqOps(fz.BoxOps):
     def publish_dossier(self, path, *, emails):
         mod, scrub = self._scrub(emails, secrets=self._credentials())
         publish = mod.publish_dossier_kv if self.lever == "kv" else mod.publish_dossier
-        return publish(path, main_root=self.main_root, evidence_stage=self.evidence_stage, scrub=scrub)
+        ns = {"namespace": TG2_NAMESPACE} if getattr(self, "corpus", "tg1") == "tg2" else {}
+        return publish(path, main_root=self.main_root, evidence_stage=self.evidence_stage, scrub=scrub, **ns)
 
     def publish_run_files(self, paths, *, emails):
         mod, scrub = self._scrub(emails, secrets=self._credentials())
         publish = mod.publish_run_files_kv if self.lever == "kv" else mod.publish_run_files
-        return publish(paths, main_root=self.main_root, scrub=scrub)
+        ns = {"namespace": TG2_NAMESPACE} if getattr(self, "corpus", "tg1") == "tg2" else {}
+        return publish(paths, main_root=self.main_root, scrub=scrub, **ns)
+
+    # -- M76 B4b-1: the tg2 positives on the box (E6): one lean serving session on the reference arm's worktree
+    def positives_session(self, worktree, *, frozen_prompt_date):
+        """The lean router on `worktree`, the A4 gate under the tg2 scaffold and the worker loaded, as for any leg (`ChainOps`,
+        MTP ON); torn down (unload, own router stopped) on exit."""
+        from contextlib import contextmanager
+
+        @contextmanager
+        def session():
+            wt = Path(worktree)
+            out_root = self.wd / "m65" / "inject" / f"positives-{time.strftime('%Y%m%dT%H%M%S')}"
+            out_root.mkdir(parents=True, exist_ok=False)
+            log = co.RunLog(out_root / "RUNLOG.md")
+            served = wt / "main_models.yaml"
+            ops = co.ChainOps(wt, self.wd, served, log, predictor="mtp", out_root=out_root, registry=served)
+            self._pos = dict(ops=ops, wt=wt, out_root=out_root, date=frozen_prompt_date)
+            try:
+                if ops.listeners():
+                    raise fz.Refusal(":8000 already has a listener: the positives start their own lean router")
+                ops.start_router()
+                ops.load(ENTRY)
+                self._pos["receipt"] = ops.a4_gate(ENTRY, "positives", scaffold="opencode-v2-web-tg2")
+                yield self
+            finally:
+                try:
+                    ops.stop_stack()
+                finally:
+                    self._pos = None
+        return session()
+
+    def positive_grade(self, lang, item, variant):
+        """(a) The pilot item's stub or reference graded through `Tg2Corpus.grade` (docker, no GPU), outside TMPDIR."""
+        import shutil
+        from . import corpus_tg2
+        from . import tg2_materialize as mat
+        corpus = corpus_tg2.Tg2Corpus()
+        slug = item.split("/", 1)[1]
+        base = self.wd / "m65" / "positives" / f"{variant}-{lang}-{os.getpid()}-{int(time.time())}"
+        prepared = corpus.prepare(item, base / "work" / slug)
+        if variant == "reference":
+            mat.apply_reference(corpus.polyglot_root(), mat.read_plan(corpus.polyglot_root(), lang, slug), prepared.work)
+        private = base / "run" / "grading-private"
+        private.mkdir(parents=True)
+        try:
+            with corpus.snapshot(prepared.work, private, 0) as snap:
+                out = corpus.grade(snap, prepared, private, None, base / "keep", 1, 0, True)
+        finally:
+            shutil.rmtree(base / "work", ignore_errors=True)
+        return dict(outcome=out.phases[0]["outcome"], passed=out.passed, failing=out.failing, leaves=len(out.leaves))
+
+    def positive_inject(self, lang, item, kind, *, seed, attempt):
+        """(b) One `run_tg2_probe.py --tg2-inject <kind>` run of the pilot item (out under `$STACK_WORKDIR/m65/inject/`, the
+        file name `inject_verify` reads: `<kind>.attempt<n>.jsonl`)."""
+        pos = self._pos
+        if not pos:
+            raise fz.Refusal("an inject positive runs only inside the positives' serving session")
+        run = pos["out_root"] / lang
+        run.mkdir(parents=True, exist_ok=True)
+        stem = f"{kind}.attempt{attempt}"                     # an inject run's file (as `run_inject.py` names it), not a chain row
+        out = run / (stem + ".jsonl")
+        wt = pos["wt"]
+        argv = [str(wt / ".venv-bench/bin/python"), str(wt / fz.TG2_PROBE_ENTRY), "--model", ENTRY, "--items",
+                item.split("/", 1)[1], "--lang", lang, "--seed-base", str(seed), "--scaffold", "opencode-v2-web-tg2",
+                "--expect-items", item, "--a4-v2-receipt", str(pos["receipt"]), "--sampling-profile", "deployed",
+                "--frozen-prompt-date", pos["date"], "--tg2-inject", kind, "--out", str(out)]
+        done = subprocess.run(argv, cwd=str(wt), env=pos["ops"].env_base(), stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, timeout=POSITIVE_TIMEOUT_S)
+        try:
+            manifest = json.loads(out.with_suffix(".manifest.json").read_text())
+        except (OSError, ValueError):
+            manifest = {}
+        if done.returncode != 0:
+            return dict(transport_abort=bool(manifest.get("transport_abort")) or not out.exists(), run=str(run), rc=done.returncode)
+        sha = lambda p: hashlib.sha256(Path(p).read_bytes()).hexdigest() if Path(p).is_file() else None      # noqa: E731
+        return dict(transport_abort=False, run=str(run), rc=0, row_sha256=sha(out),
+                    evidence_sha256=sha(out.with_suffix(".manifest.json")))
+
+    def inject_verify(self, run, kind):
+        """`m62/inject_verify.py --scaffold opencode-v2-web-tg2 --run <dir> --kind <k>`: the kind's existing causal predicate."""
+        wt = self._pos["wt"] if self._pos else Path(__file__).resolve().parents[2]
+        done = subprocess.run([str(wt / ".venv-bench/bin/python"), str(wt / "benchmark/m62/inject_verify.py"), "--scaffold",
+                               "opencode-v2-web-tg2", "--run", str(run), "--kind", kind, "--workdir", str(self.wd)],
+                              cwd=str(wt), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
+        return "PASS" if done.returncode == 0 else f"FAIL (inject_verify rc {done.returncode})"
 
     def notify(self, message):
         print(message, file=sys.stderr, flush=True)
@@ -1077,8 +1473,20 @@ class RefusingParser(argparse.ArgumentParser):
 def parse_args(argv):
     ap = RefusingParser(prog="bench.p426_wave2", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
+    pos = sub.add_parser("positives", help="M76 B4b-1: the tg2 positives record (on the reference arm)")
+    pos.add_argument("--corpus", required=True, choices=("tg2",))
+    pos.add_argument("--lever", required=True, choices=("kv",))
+    pos.add_argument("--arm-worktree", action="append", default=[], help="<arm>=<worktree> of the reference arm (once)")
+    pos.add_argument("--out", required=True, help="<run>/positives.json (exclusive-created)")
+    pos.add_argument("--frozen-prompt-date", required=True, metavar="'Www Mmm DD YYYY'")
+    pos.add_argument("--main-root", default=None)
     for name in ("run", "makeup", "rehearsal"):
         p = sub.add_parser(name)
+        p.add_argument("--corpus", default="tg1", choices=("tg1", "tg2"),
+                       help="M76 B4b-1 (lever kv): tg2 = the tg2 legs (run / rehearsal; no make-up)")
+        if name == "run":
+            p.add_argument("--recheck-ack", default=None, metavar="SHA256",
+                           help="M76 B4b-1: the sealed re-check 1 record's sha256 the operator acknowledges (resume after rc 5)")
         p.add_argument("--worktree-off", default=None, help="lever mtp (required)")
         p.add_argument("--worktree-on", default=None, help="lever mtp (required)")
         p.add_argument("--lever", default="mtp", choices=("mtp", "kv"), help="M76 B3: kv = a KV pair, both MTP ON")
@@ -1137,11 +1545,32 @@ def _check_lever_args(a):
     a.arms, a.worktrees = pair, trees
 
 
+def check_positives_args(a):
+    """`positives`: lever kv, tg2, exactly one `--arm-worktree <arm>=<path>` of a KV arm."""
+    trees = {}
+    for v in a.arm_worktree:
+        arm, sep, path = v.partition("=")
+        if not sep or arm not in fz.KV_ARMS or arm in trees or not path:
+            raise fz.Refusal(f"--arm-worktree {v!r} is not <arm>=<path> for a KV arm (once)")
+        trees[arm] = Path(path)
+    if len(trees) != 1 or set(trees) != {fz.TG2_PAIR[0]}:        # change review L6: the tg2 pair's reference, N16
+        raise fz.Refusal(f"positives run on the tg2 pair's reference arm {fz.TG2_PAIR[0]} only: give exactly one "
+                         f"--arm-worktree {fz.TG2_PAIR[0]}=<path>")
+    if not datefreeze.valid(a.frozen_prompt_date):
+        raise fz.Refusal("--frozen-prompt-date must be 'Www Mmm DD YYYY'")
+    a.worktrees = trees
+
+
 def check_args(a, wd):
     _check_lever_args(a)
     kv = a.lever == "kv"
+    tg2 = getattr(a, "corpus", "tg1") == "tg2"
+    if tg2 and (not kv or a.cmd == "makeup"):
+        raise fz.Refusal("--corpus tg2 is for `run` / `rehearsal` of lever kv (the tg2 legs have no make-up)")
+    if tg2:
+        fz.check_tg2_pair(a.arms)                                # change review L6
     base = Path(a.out_base).resolve()
-    reh = KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
+    reh = fz.TG2_REHEARSAL_DIR if tg2 else KV_REHEARSAL_DIR if kv else REHEARSAL_DIR
     scratch = KV_WAVE2_DIR.rsplit("/", 1)[0] if kv else "p426"
     rehearsal_dir = (Path(wd) / reh).resolve()
     inside = base == rehearsal_dir or rehearsal_dir in base.parents
@@ -1149,7 +1578,8 @@ def check_args(a, wd):
         raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/{reh}/")
     if a.cmd != "rehearsal" and (inside or (Path(wd) / scratch).resolve() not in base.parents):
         raise fz.Refusal(f"--out-base must lie under $STACK_WORKDIR/{scratch}/ and not in {reh}/")
-    table = kv_legs(*a.arms) if kv else dict(run=RUN_LEGS, makeup=MAKEUP_LEGS, rehearsal=REHEARSAL_LEGS)
+    table = (kv_tg2_legs(*a.arms) if tg2 else kv_legs(*a.arms)) if kv else dict(run=RUN_LEGS, makeup=MAKEUP_LEGS,
+                                                                                 rehearsal=REHEARSAL_LEGS)
     names = [s["name"] for s in table[a.cmd]]
     for flag in a.rerun:
         if flag not in names:
@@ -1187,7 +1617,7 @@ def build_box_ops(a, wd):
     scratch = Path(a.out_base) / "scratch"
     main_root = Path(a.main_root) if a.main_root else (scratch / "main" if a.cmd == "rehearsal" else Path(__file__).resolve().parents[2])
     ops = BoxSeqOps(wd, main_root=main_root, evidence_stage=a.evidence_stage or scratch / "evidence", historical_walls=a.historical_walls,
-                    lever=getattr(a, "lever", "mtp"))
+                    lever=getattr(a, "lever", "mtp"), corpus=getattr(a, "corpus", "tg1"))
     ops.env_files = tuple(frozen_env_files(a, wd))
     return ops
 
@@ -1200,10 +1630,21 @@ def main(argv=None, *, ops=None, clock=None, sleep=None):
         wd = getattr(ops, "wd", None) or os.environ.get("STACK_WORKDIR")
         if not wd:
             raise fz.Refusal("$STACK_WORKDIR is not set")
+        if a.cmd == "positives":                             # M76 B4b-1: the tg2 positives record (its own command)
+            check_positives_args(a)
+            if ops is None:
+                ops = BoxSeqOps(wd, main_root=Path(a.main_root) if a.main_root else Path(__file__).resolve().parents[2],
+                                evidence_stage=Path(wd) / "m65" / "positives" / "evidence", lever="kv", corpus="tg2")
+            try:
+                held = pl.acquire("sequencer", wd)
+            except pl.LockRefused as exc:
+                raise fz.Refusal(str(exc)) from None
+            return cmd_positives(a, ops, wd, clock)
         check_args(a, wd)
         if ops is None:
             ops = build_box_ops(a, wd)
-        fz.need(ops, *SEAMS, *(("historical_walls",) if a.cmd == "run" else ()))      # spec 16.8: a refusal, before the lock
+        walls = a.cmd == "run" and getattr(a, "corpus", "tg1") != "tg2"     # the tg2 amendment takes the pilot walls only
+        fz.need(ops, *SEAMS, *(("historical_walls",) if walls else ()))      # spec 16.8: a refusal, before the lock
         try:
             held = pl.acquire("sequencer", wd)
         except pl.LockRefused as exc:

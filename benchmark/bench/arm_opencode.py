@@ -54,6 +54,11 @@ GENERATION_DATA = (
     "benchmark/opencode_plugins/datefreeze.js",          # P364: the date the model is shown
     "benchmark/opencode_bench_v2_web_tg1.json",
 )
+# M76 B4b-1: the tg2 configuration of the tg1 mode — tg1's carrier (generated as its own target) under the tg2 label.
+TG2_LABEL = "opencode-v2-web-tg2"
+TG2_CARRIER = REPO / "benchmark/opencode_bench_v2_web_tg2.json"
+TG2_GENERATION_DATA = GENERATION_DATA[:3] + ("benchmark/opencode_bench_v2_web_tg2.json",)
+TG1_FAMILY = (TG1_LABEL, TG2_LABEL)                 # the labels that run the tg1 plugin set (`provenance.TG1_FAMILY`)
 # The fields of the pairing composite shared by every arm (spec 4); model-specific identity is separate (arm identity).
 GENERATION_FIELDS = (
     "probe_code_sha256", "scaffold_policy_sha256", "opencode_version", "opencode_exe_sha256",
@@ -228,17 +233,20 @@ class OpencodeArm(aa.ArmAdapter):
     receipt_class_rules = dict(task="required", compaction="required", auxiliary="forbidden")   # 2.0.20 sends tools always
     supports_attempt_header = True          # `providers.<id>.settings.headers` reaches every request (verified on 2.0.20)
 
-    def __init__(self, p=None, *, mode="m64", search=None, p426=False):
+    def __init__(self, p=None, *, mode="m64", search=None, p426=False, scaffold="tg1"):
         if mode not in ("tg1", "m64"):
             raise aa.ArmContractError(f"unknown opencode arm mode {mode!r}")
         if p426 and mode != "tg1":
             raise aa.ArmContractError("p426 is a tg1 mode (the M64 arm already stamps its transport cause)")
+        if scaffold not in ("tg1", "tg2") or (scaffold == "tg2" and mode != "tg1"):
+            raise aa.ArmContractError(f"scaffold {scaffold!r} is not a corpus of the tg1 mode")
         self.p, self.mode = p, mode
         self.p426 = bool(p426)             # B2 spec 2: tg1 under the P426 evidence policy (cause stamp, request evidence on abort)
         self.search = search if search is not None else aa.UnavailableSearchService()
         self.m64 = mode == "m64"
+        self.tg2 = scaffold == "tg2"       # M76 B4b-1: the tg2 carrier and label; everything else is the tg1 mode's
         self.plugin_names = PLUGINS_M64 if self.m64 else PLUGINS
-        self.label = M64_LABEL if self.m64 else TG1_LABEL
+        self.label = M64_LABEL if self.m64 else (TG2_LABEL if self.tg2 else TG1_LABEL)
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
         self.account_compaction = self.m64
         self.scaffold_outcomes = ("compaction_failed",) if self.m64 else ()
@@ -254,14 +262,24 @@ class OpencodeArm(aa.ArmAdapter):
     @property
     def generation_data(self):
         """Non-Python inputs of the generation identity: the tg1 set (plugins, the tg1 carrier = the base the M64
-        carrier derives from); the M64 transform itself is Python and is in the import closure."""
-        return GENERATION_DATA
+        carrier derives from); the M64 transform itself is Python and is in the import closure. tg2: the plugins + its carrier."""
+        return TG2_GENERATION_DATA if self.tg2 else GENERATION_DATA
+
+    @property
+    def carrier(self):
+        """The carrier this configuration runs (read at call time, so a test patching the module constant reaches it)."""
+        return TG2_CARRIER if self.tg2 else CARRIER
+
+    @property
+    def family_label(self):
+        """The plugin-set label the provenance checks take: the tg1 family's own label (tg1 / tg2); M64 keeps tg1's check."""
+        return TG2_LABEL if self.tg2 else TG1_LABEL
 
     # ---------------------------------------------------------------- identity / provenance
     def selection(self, system_file=None):
         p = self.p
         if not self.m64:
-            return p._carrier_selection(self.label, system_file, source=CARRIER)
+            return p._carrier_selection(self.label, system_file, source=self.carrier)
         if self.search_is_offline_test:
             entry = None
         else:
@@ -432,7 +450,7 @@ class OpencodeArm(aa.ArmAdapter):
         p, pin = self.p, self._pinned
         provenance.opencode_v2_env_check(
             env, run_dir, selection["fields"]["opencode_bench_config_sha256"], pin["noretry"], overlay,
-            scaffold=TG1_LABEL, toolbounds_sha=pin["toolbounds"], datefreeze_sha=pin["datefreeze"],
+            scaffold=self.family_label, toolbounds_sha=pin["toolbounds"], datefreeze_sha=pin["datefreeze"],
             toolwindows_sha=pin["toolwindows"])
         if (p._sha_of(pin["source_path"]) != pin["carrier_source"]
                 or (self.m64 and p._sha_of(TOOLWINDOWS_PLUGIN) != pin["toolwindows"])
@@ -455,7 +473,7 @@ class OpencodeArm(aa.ArmAdapter):
         logged = {**env, "OPENCODE_PRINT_LOGS": "1"}
         if not self.m64:
             return version, provenance.opencode_v2_destination(scratch, logged, model, run_dir, binary, overlay,
-                                                               scaffold=TG1_LABEL, runner=runner)
+                                                               scaffold=self.family_label, runner=runner)
         self._check_m64_carrier(run_dir)
         base = provenance.opencode_v2_destination(scratch, env, model, run_dir, binary, overlay, scaffold=None,
                                                   runner=runner)

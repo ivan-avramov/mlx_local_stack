@@ -223,6 +223,11 @@ LEG_MAIN = ("leg.json", "chain.json", "schedule.json", "receipt.json", "watch.js
 RAW_SUFFIXES = (".log", ".txt", ".stdout", ".stderr")
 EVIDENCE_SUFFIXES = (".jsonl", ".json", ".txt", ".log", ".html")     # events, stderr, export, date-freeze / tool-window / web receipts
 PRIVATE_RUN_DIRS = ("home", "data", "state", "cache", "tmp")          # opencode's own state: never copied
+# M76 B4b-1 (H5): the files `tg2_grade` writes per grade into `<item>.grades/seq-NNNN/` (the directory and depth are the boundary)
+TG2_GRADE_SUFFIXES = (".out", ".err", ".stdout", ".stderr", ".inspect", ".inspect.err")
+TG2_SEQ_RE = re.compile(r"seq-\d{4}")
+TG2_GRADES_RE = re.compile(r"(?:rust|javascript|java|cpp)__[A-Za-z0-9][A-Za-z0-9_-]*\.grades")      # a tg2 item's grade directory
+TG2_REGISTRY = ".tg2-registry"
 ROW_REFS = (("events_path", "events"), ("stderr_path", "stderr"), ("transcript_path", "export"), ("datefreeze_path", "datefreeze"),
             ("toolwindows_path", "toolwindows"))
 PORTABLE_ROOT = "$STACK_WORKDIR"        # the portable form of a workdir path: what rows, manifests and records carry
@@ -307,6 +312,8 @@ def classify(kind, rel):
         top = parts[0]
         if top in PRIVATE_RUN_DIRS:
             return "excluded", "private_state"
+        if top == "grading-private" and len(parts) == 3 and parts[1] == TG2_REGISTRY and name.endswith(".json"):
+            return "evidence", None                       # M76 B4b-1: tg2_grade's leftover-storage registry (before .json -> main)
         if top == "grading-private" and len(parts) >= 2:
             if name.endswith((".json", ".diff", ".patch")):
                 return "main", None
@@ -319,6 +326,9 @@ def classify(kind, rel):
         if name == "go.stderr":                           # P587: the Go grader's stderr, exactly `<item>.grades/seq-<NNNN>/go.stderr`
             return ("evidence", None) if (len(parts) == 3 and parts[0].endswith(".grades")
                                           and re.fullmatch(r"seq-\d+", parts[1])) else None
+        if name.endswith(TG2_GRADE_SUFFIXES):             # M76 B4b-1 (H5): tg2_grade's raw step / bookkeeping outputs, ONLY directly
+            return ("evidence", None) if (len(parts) == 3 and TG2_GRADES_RE.fullmatch(parts[0])   # in a tg2 item's
+                                          and TG2_SEQ_RE.fullmatch(parts[1])) else None          # `<item>.grades/seq-NNNN/`
         return ("evidence", None) if name.endswith(EVIDENCE_SUFFIXES + (".xml",)) else None       # flat, or in a per-item directory
     return None
 

@@ -1006,7 +1006,9 @@ def main(p, adapter, a, *, template, evidence, corpus, receipts=None):
     if any(s.split("=", 1)[0] in forbidden for s in sys.argv[1:]):
         sys.exit("REFUSED: tg1 does not accept legacy time-gate flags")
     if a.lang not in template.langs or a.rerun_of or a.rerun_index or a.extra_deny_file:
-        sys.exit("REFUSED: tg1 supports eligible Python/Go single-pass items only")
+        sys.exit("REFUSED: " + getattr(corpus, "refusal", "tg1 supports eligible Python/Go single-pass items only"))
+    inject_flag = getattr(corpus, "inject_flag", "--tg1-inject")          # M76 B4b-1: tg2's flag / out root (tg1's defaults)
+    inject_root = getattr(corpus, "inject_root", "m62/inject")
     names = [s.strip() for s in a.items.split(",") if s.strip()]
     if not names or len(names) != len(set(names)) or any(Path(n).name != n or n in (".", "..") for n in names):
         sys.exit("REFUSED: invalid or duplicate items")
@@ -1028,14 +1030,14 @@ def main(p, adapter, a, *, template, evidence, corpus, receipts=None):
     kind = a.tg1_inject
     if kind:
         if kind not in template.inject_allowed:
-            sys.exit("REFUSED: unknown --tg1-inject kind")
+            sys.exit(f"REFUSED: unknown {inject_flag} kind")
         if len(a.items.split(",")) != 1 or len(names) != 1 or a.limit not in (None, 1):
-            sys.exit("REFUSED: --tg1-inject runs exactly one item")
+            sys.exit(f"REFUSED: {inject_flag} runs exactly one item")
         if not a.expect_items:
-            sys.exit("REFUSED: --tg1-inject requires --expect-items")
+            sys.exit(f"REFUSED: {inject_flag} requires --expect-items")
         workdir = p._stack_workdir().resolve()
-        if not a.out or not Path(a.out).resolve().is_relative_to((workdir / "m62/inject").resolve()):
-            sys.exit("REFUSED: --tg1-inject requires --out under $STACK_WORKDIR/m62/inject/")
+        if not a.out or not Path(a.out).resolve().is_relative_to((workdir / inject_root).resolve()):
+            sys.exit(f"REFUSED: {inject_flag} requires --out under $STACK_WORKDIR/{inject_root}/")
     for flag in ("cancel_file", "manifest_ack"):
         path = getattr(a, flag)
         if path and Path(path).exists():
@@ -1073,7 +1075,7 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
     before = worker_identity(p, a.model, router)
     arm_fp, arm_sha = arm_identity_of(p, a.model, router)       # P16: the effective worker fingerprint; unknown refuses
     limit = validate_worker(model, worker_json("health"), worker_json("metrics"), template.budgets)
-    universe_path = a.universe or DEFAULT_UNIVERSE
+    universe_path = a.universe or getattr(corpus, "default_universe", None) or DEFAULT_UNIVERSE
     _, universe_sha = corpus.load_universe(universe_path)
     known = set(corpus.items(a.lang))
     for name in names:
