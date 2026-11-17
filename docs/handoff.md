@@ -1,6 +1,6 @@
-# Handoff — 2026-11-17 (session 25 → 26: B4b-1, B8 readout, tg2 grader fix built + reviewed + integrated; universe re-frozen; history scrubbed; gate re-run)
+# Handoff — 2026-11-17 (session 25 → 26: B4b-1, B8 readout, tg2 grader fix built, reviewed, gated and pushed; universe re-frozen; history scrubbed)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: S25-P10 … S25-P1,
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C358, S25-P10 … S25-P1,
 C357, C356, then C355 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C356's "proceed on recs, stop only for major calls" was SESSION 25 ONLY — ask again. Label points `S26-P<n>`.
@@ -15,26 +15,20 @@ bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signal
 
 ## FIRST
 
-1. Stack gate run 2 on `c7c6993a` (tip of `m76-s25-integration`), launched from a `main` checkout (S25-P10): result in
-   `$STACK_WORKDIR/gate/s25-c7c6993a-run2.log` + the receipt beside it. Run 1 FAILed only on the S25-P10 branch-name test (14,899 passed).
-2. If PASS: the operator's Accept (one table: B4b-1, tg2 grader, B8, universe re-freeze; the open row **V3** — B4b-1's `inject_verify` now also
-   accepts tg1 rows that record a hash-verified `datefreeze`; designer rec keep). Then S25-P8: fast-forward `main` to `c7c6993a` (+ docs above it)
-   and push `main` at the gated sha (push only on the operator's explicit word in that turn). Fork / mlx-serve unchanged.
-3. Box: nothing running besides the gate; power 140 W / 28 V at session end.
+1. Pushed 2026-11-17 (C358): `origin/main` = `3fc079ca` (gated `c7c6993a`, gate run 2 PASS from `main`, + docs). Fork / mlx-serve unchanged.
+   Local work branches and the three session-25 four-eyes copies removed (outputs harvested in `docs/reviews/`).
+2. Box: nothing running; check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything.
 
 ## State
 
-- `m76-s25-integration` (local; history scrubbed, C357) = `4bcd9af9` B4b-1 (C351; spec v5 + v5a; ledger `docs/reviews/m76-b4b1/`, rounds 1–3)
-  → `c8087c84` merge of `main` → `93c2cb8a` tg2 grader fix (C355 (1); spec v1 + v1a, v1b; ledger `docs/reviews/m65-tg2-timeout/`, rounds
-  1–2) → `f588c617` B8 readout (C354, C355 (2)(3), C356 (1); spec v1.1 + v1.1a; ledger `docs/reviews/m76-b8-kinds/`, rounds 1–2) →
-  `09e23732` tg2 universe re-frozen + draw re-derived + pins (S25-P6 diff: same items / statuses / leaves / permutations) → docs (`c7c6993a`).
-  Old → new shas: `docs/reviews/s25-history-scrub-map.md`.
+- On `main`: B4b-1 (C351; ledger `docs/reviews/m76-b4b1/`), the tg2 grader timeout-evidence fix (C355 (1); `docs/reviews/m65-tg2-timeout/`),
+  the B8 stage-3a readout (C354, C355 (2)(3); `docs/reviews/m76-b8-kinds/`), the tg2 universe `2bf6add4` / draw `82875e1d` under grader
+  `m65-tg2-v3` (C356 (2); S25-P6 diff unchanged; old files archived `$STACK_WORKDIR/archive/tg2-universe-ff76573b/`). V3 kept (C358).
 - B8 real-data acceptance (`docs/reviews/m76-b8-kinds/designer-acceptance-report.md`): 10 / 10 planned Wave 1 pairs, 0 flags; negatives behave.
-  `m76/ids.json` regenerated (S25-P1: the counter now renders `reasoning_effort: medium`; 131,072 = 130,776 served; 196,608 budgets as served).
-- tg2: grader `m65-tg2-v3`; universe `2bf6add4`, draw `82875e1d`; old ones archived `$STACK_WORKDIR/archive/tg2-universe-ff76573b/`.
-- `main` local = `fc0174c0` (docs only above `origin/main` `3c199587`).
+  `m76/ids.json` regenerated (S25-P1; 131,072 = 130,776 served; 196,608 budgets as served).
+- Session-25 history was scrubbed before the push (C357); old → new shas `docs/reviews/s25-history-scrub-map.md`.
 
-## Next, in order (after the push)
+## Next, in order
 
 1. Stage-3a readout: B8 + signals over the real Wave 1 with the merged code (the acceptance run used the four-eyes copy; re-run from `main`,
    `$STACK_WORKDIR/m76/s24-p7-check/run.sh` pattern) → the A1 / A5 / panel steps of stage 3a's readout.
@@ -49,9 +43,8 @@ bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signal
 ## Worktrees and scratch
 
 - Stage-3a arms `$STACK_WORKDIR/worktrees/m76-q-{n16,x}`; stage 1–4 arms `m76-f45-{n16,x,v,xo}` (keep until stage 4 harvest).
-- Four-eyes runs (inputs to the merged work; harvested into `docs/reviews/`): `fe-m76b4b1`, `fe-m76b8k`, `fe-m65grade` — remove after the push;
-  older `fe-*` regenerable, ask before deleting. Freeze cache `$STACK_WORKDIR/m65/freeze-s25/`. B8 acceptance outputs `m76/s25-b8-accept/`.
-- Local branches: `m76-b4b1-tg2-runner` (superseded by the integration branch; delete after the push), `m76-s25-integration` (merge → delete).
+- Session-25 four-eyes copies removed after the push (harvested into `docs/reviews/`); older `fe-*` regenerable, ask before deleting.
+  Freeze cache `$STACK_WORKDIR/m65/freeze-s25/`. B8 acceptance outputs `m76/s25-b8-accept/`. No local work branches open.
 
 ## Rules learned (session 25)
 
