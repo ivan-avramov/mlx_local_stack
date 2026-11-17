@@ -1,4 +1,4 @@
-# M76 — B8 kv: a correct stage-3a readout — SPEC v1.1, 2026-11-16 (four-eyes light; C354, C355 (2)(3), S25-P1, ledger K1–K8)
+# M76 — B8 kv: a correct stage-3a readout — SPEC v1.1 + erratum v1.1a, 2026-11-16 (four-eyes light; C354, C355 (2)(3), S25-P1, ledger K1–K8)
 
 v1.1 widens v1 (planned kinds) to a correct stage-3a readout: fix round 1 on candidate 1 (`fe-m76b8k`). v1 text below §v1 stays
 binding except where v1.1 overrides it.
@@ -31,9 +31,10 @@ v1 files, plus: `benchmark/bench/p426_signals.py` (`compute_kv`, its flags), `be
   server's `to_template_kwargs` semantics) to every `apply_chat_template` call, calibration included; meta gains
   `template_kwargs`. Regenerate `benchmark/results/m76/ids.json` with its generator (`python -m bench.m76_ids`, from `benchmark/`)
   and write `IDS_CHANGES.md`: old / new ids.json sha256, old / new chars-per-token, old / new count and resolved budgets per rung,
-  reason (C355 (3), S25-P1). The diff of ids.json is confined to `axes.longctx.budget` and `budget_inputs.{prompt_tokens,counter}`.
-- **F4 (K2, K5)** — `verify_all_kv(rows_root, repo, pair, build="s3")` has no `kinds`: it always verifies the planned kinds and
-  records `dropped`. Subsets stay on `verify_wave1_kv(kinds=…)` only.
+  reason (C355 (3), S25-P1). The diff of ids.json is confined to `axes.longctx.budget`, `budget_inputs.{prompt_tokens,counter}` and the derived `prompt_deviation` (erratum v1.1a).
+- **F4 (K2, K5; erratum v1.1a)** — `verify_all_kv(..., kinds=None, build="s3")` keeps `kinds` (subsets for tests and fixtures; 18 existing
+  tests use it); `None` = the planned kinds and the CLI never passes another set; `dropped` is recorded either way. K2's hazard (an incomplete
+  planned wave reading clean) is closed at the consumer by F2: every planned pair absent from the record is a blocking `wave1_incomplete`.
 - **F5 (K6)** — `KV_W1_KINDS` lives in `p426_plan`; `p426_verify` imports it (one definition).
 - **K1** — test-only (`test_m76_b3_impl_wave1::test_main_kv_refuses_v…` passes `--axes m1` in its `n16,x` half): the
   test-writer's delivery 3, not the implementer.
