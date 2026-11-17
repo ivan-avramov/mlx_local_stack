@@ -1,59 +1,71 @@
-# Handoff — 2026-11-16 (session 24 → 25: stage-3a Wave 1 DONE; B4b-1 building; B8 readout fix + tg2 grader fix approved)
+# Handoff — 2026-11-17 (session 25 → 26: B4b-1, B8 readout, tg2 grader fix built + reviewed + integrated; universe re-frozen; history scrubbed; gate re-run)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C355 … C343,
-S24-P1 … P24). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
-wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353: decide, record,
-report); all work on this box (C350). Label points `S25-P<n>`.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: S25-P10 … S25-P1,
+C357, C356, then C355 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
+wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
+C356's "proceed on recs, stop only for major calls" was SESSION 25 ONLY — ask again. Label points `S26-P<n>`.
 
-Decisions: session 24 ruled C343–C355 (next **C356**); discussion ids restart at `S25-P1`.
+Decisions: session 25 ruled C356–C357 (next **C358**); discussion ids restart at `S26-P1`.
 
 ## Goal
 
-Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB
-at 256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, stage 3: A1, A5 (incl. per-task gates), A7, A8 decider all PASS (point
-≥ −5 pp, loss bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dropped from stage 3
-(C352; stage 1's matrix certifies memory).
+Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
+256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, stage 3: A1, A5 (incl. per-task gates), A7, A8 decider all PASS (point ≥ −5 pp, loss
+bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dropped from stage 3 (C352).
 
 ## FIRST
 
-1. Box: nothing on the GPU (Wave 1 done 2026-11-16 14:09). Running detached: **B4b-1 four-eyes** helpers
-   (`$STACK_WORKDIR/fe-m76b4b1/`, status `out/status`; test-writer delivery 1 done 16:04, implementer still running, timeout 4 h from
-   15:46). Check `out/status`, PIDs (`pgrep -fl "claude -p"`), power 140 W / 28 V before anything.
-2. Stack `main` pushed at `3c199587` (gate PASS); local above it: docs only (`3c199587..HEAD`). Fork / mlx-serve unchanged.
-3. B8 four-eyes run (`$STACK_WORKDIR/fe-m76b8k/`): candidate 1 reviewed (ledger `docs/reviews/m76-b8-kinds/`); test-writer
-   `0338a205` delivered twice (47 tests, one amended seam test); NEXT = the C355 fix round (below).
+1. Stack gate run 2 on `c7c6993a` (tip of `m76-s25-integration`), launched from a `main` checkout (S25-P10): result in
+   `$STACK_WORKDIR/gate/s25-c7c6993a-run2.log` + the receipt beside it. Run 1 FAILed only on the S25-P10 branch-name test (14,899 passed).
+2. If PASS: the operator's Accept (one table: B4b-1, tg2 grader, B8, universe re-freeze; the open row **V3** — B4b-1's `inject_verify` now also
+   accepts tg1 rows that record a hash-verified `datefreeze`; designer rec keep). Then S25-P8: fast-forward `main` to `c7c6993a` (+ docs above it)
+   and push `main` at the gated sha (push only on the operator's explicit word in that turn). Fork / mlx-serve unchanged.
+3. Box: nothing running besides the gate; power 140 W / 28 V at session end.
 
-## Next, in order (no GPU until 4)
+## State
 
-1. **B8 readout fix round** (C354 + C355 (2)(3); spec `docs/specs/m76-b8-kv-planned-kinds.md` v1 → write v1.1 adding C355 (2)(3) and
-   ledger K1, K2, K4–K6): fresh implementer (Claude Opus `claude -p`) on candidate 1 in `fe-m76b8k/impl/stack`; then test-writer
-   delivery 3 (same session `0338a205`; a test per adopted defect), panel verify (Sol + GLM), Accept to the operator. Acceptance =
-   B8 + signals over the REAL Wave 1 (`$STACK_WORKDIR/m76/s24-p7-check/run.sh` pattern; all 10 planned pairs accepted, no false flag);
-   then the cold panel trace of B8 + signals (S24-P7). Today's candidate result: `$STACK_WORKDIR/m76/s24-p7-check/cand/B8.json` (4 / 10).
-2. **tg2 grader timeout fix** (C355 (1), S24-P22): write a short spec; four-eyes light; red tests from the recorded spin trees
-   (`$STACK_WORKDIR/fe-m76b4b1/inputs/tg2-grade-trees/rust/spin`, + the JS repro in `$STACK_WORKDIR/m76/tg2-record-scratch/js-spin`).
-3. **B4b-1** (C351; spec `docs/specs/m76-b4b-tg2-runner.md` v5): when its helpers finish — freeze delivery 1 (time it), reveal the
-   candidate (delivery 2, resume the test-writer session in `out/testwriter-1.json`), change review Sol + GLM (strict) + verify, Accept.
-   Then its real-output acceptance (positives, R2 on X / R3 on N16, pilot, sizing report vs both budgets S24-P9).
-4. GPU: stage-3a Wave 2 (A7 tg1; build `s3`; arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`; needs its own frozen record /
-   rehearsal flow as tg1's P426) and stage 3b (A8) — order: B4b-1 acceptance first (measures S24-P9). B4b-2 spec + design review during
-   the decider; build after it (C350).
-5. Stage-3a readout once B8 + signals pass; then stage 3b; publish or the operator's call.
+- `m76-s25-integration` (local; history scrubbed, C357) = `4bcd9af9` B4b-1 (C351; spec v5 + v5a; ledger `docs/reviews/m76-b4b1/`, rounds 1–3)
+  → `c8087c84` merge of `main` → `93c2cb8a` tg2 grader fix (C355 (1); spec v1 + v1a, v1b; ledger `docs/reviews/m65-tg2-timeout/`, rounds
+  1–2) → `f588c617` B8 readout (C354, C355 (2)(3), C356 (1); spec v1.1 + v1.1a; ledger `docs/reviews/m76-b8-kinds/`, rounds 1–2) →
+  `09e23732` tg2 universe re-frozen + draw re-derived + pins (S25-P6 diff: same items / statuses / leaves / permutations) → docs (`c7c6993a`).
+  Old → new shas: `docs/reviews/s25-history-scrub-map.md`.
+- B8 real-data acceptance (`docs/reviews/m76-b8-kinds/designer-acceptance-report.md`): 10 / 10 planned Wave 1 pairs, 0 flags; negatives behave.
+  `m76/ids.json` regenerated (S25-P1: the counter now renders `reasoning_effort: medium`; 131,072 = 130,776 served; 196,608 budgets as served).
+- tg2: grader `m65-tg2-v3`; universe `2bf6add4`, draw `82875e1d`; old ones archived `$STACK_WORKDIR/archive/tg2-universe-ff76573b/`.
+- `main` local = `fc0174c0` (docs only above `origin/main` `3c199587`).
 
-## State of M76
+## Next, in order (after the push)
 
-- Stages 0–2 ✔. Stage 3a Wave 1 ✔ all planned legs VALID (`3c199587`; Math500 graded via `run.py grade --benches math500 --tune
-  m76-<arm>-b<k>` — a post-leg step before B8). A5 cost ≈ 2 × plan (≈ 8 h / arm). M1 dropped (C352).
-- Stops fixed in session 24: S24-P17 / C349 (piicheck `/home/` on model-output rows), S24-P18 (refusals never echo matches).
-- Builds: B4 stopped (C343) → B4b split (C347): B4b-1 building; B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`) to write.
+1. Stage-3a readout: B8 + signals over the real Wave 1 with the merged code (the acceptance run used the four-eyes copy; re-run from `main`,
+   `$STACK_WORKDIR/m76/s24-p7-check/run.sh` pattern) → the A1 / A5 / panel steps of stage 3a's readout.
+2. B4b-1 real-output acceptance (criterion 3; ledger L17): positives on the box, R2 on X / R3 on N16, pilot pair, sizing report vs both budgets
+   (S24-P9). GPU.
+3. GPU: stage-3a Wave 2 (A7 tg1; build `s3`; arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`) and stage 3b (A8). B4b-2 spec + design review
+   during the decider (`docs/specs/m76-b4b2-a8-consumers.md`; carry L9: every new tg2 consumer passes `grader="tg2"`; L16 `row_scores.py`).
+4. Small fail-closed fixes (failing test, fix, one cold read): S25-P10 (closure test vs a non-`main` checkout); the PII hook learns the
+   username pattern from the machine config (C357).
 
 ## Worktrees and scratch
 
-- Stage-3a arms: `$STACK_WORKDIR/worktrees/m76-q-{n16,x}`; frozen `$STACK_WORKDIR/m76/p426/frozen.s3.json`; Wave 1 out
-  `$STACK_WORKDIR/m76/p426/wave1-s3/` (archive of the PII stop under `m76/p426/archive/`).
-- Stage 1–4 arms `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (keep until stage 4 harvest).
-- Four-eyes: `fe-m76b4` (stopped, input), `fe-m76b4b` (design panel records), `fe-m76b4b1` (B4b-1 running), `fe-m76b8k` (B8 fix);
-  older `fe-*` regenerable, ask before deleting. Cold reads: `$STACK_WORKDIR/s2{3,4}-p*-coldread/`.
+- Stage-3a arms `$STACK_WORKDIR/worktrees/m76-q-{n16,x}`; stage 1–4 arms `m76-f45-{n16,x,v,xo}` (keep until stage 4 harvest).
+- Four-eyes runs (inputs to the merged work; harvested into `docs/reviews/`): `fe-m76b4b1`, `fe-m76b8k`, `fe-m65grade` — remove after the push;
+  older `fe-*` regenerable, ask before deleting. Freeze cache `$STACK_WORKDIR/m65/freeze-s25/`. B8 acceptance outputs `m76/s25-b8-accept/`.
+- Local branches: `m76-b4b1-tg2-runner` (superseded by the integration branch; delete after the push), `m76-s25-integration` (merge → delete).
+
+## Rules learned (session 25)
+
+- A four-eyes implementer runs named test files only (red tests + files importing changed modules), full output to files, 2 h limit; the
+  full suite runs once, as the designer's gate (C356 (3)). Link `.venv-bench` into every copy; exclude it (and designer-copied docs) from
+  candidate diffs.
+- Allowlist the exact command forms a helper must run (relative and absolute interpreter paths) — a missing form cost a fix round.
+- Read a generator's write contract before a long run (the freezer refuses to overwrite: 75 min, rescued by its cache).
+- A test timeout is a margin over a measured duration, never the measured minimum (S25-P5).
+- "checked" in a record names the check and its result; otherwise write "expected" (S25-P6).
+- Root-cause a counter mismatch across rungs before naming a mechanism: a constant offset and a proportional one have different fixes
+  (S25-P1: the deployed `reasoning_effort` changed the calibration, not a template overhead).
+- Launch the stack gate from a `main` checkout (S25-P10).
+- Sweep new docs for the username before committing; the hook misses it (C357).
+- A history rewrite renames every later commit: commit the old → new map and update designer records forward (S25-P9).
 
 ## Rules learned (session 24)
 
@@ -66,110 +78,21 @@ at 256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, stage 3: A1, A5 (
 - The PII / naming hooks also read your own docs, tests and commit messages: split literal paths / hostnames, use full model names.
 - `bench.*` modules run from `benchmark/` (the gate too).
 
-## Rules learned (session 23)
+## Rules learned (sessions 18–23, condensed; full text in git history of this file)
 
-- A test helper running a real thread beside a fake fast clock needs explicit ordering at every handoff (S23-P93: three gate
-  rounds); margins only move the race.
-- Tests must not read local-only branches; commit sha-pinned fixture copies (a fresh clone would skip, and the gate refuses skips).
-
-- A P369 smoke binds a full run only with `--reviewed-head` (M82 will bind by recorded identity, C333).
-- The P369 orchestrator censuses processes only at launch; `qualify` before every entry — stack-only CPU helpers may overlap untimed
-  GPU stages (C334); clean-clone gates still need a quiet box.
-- Run `bench.*` modules from `benchmark/` (`cd benchmark && ../.venv-bench/bin/python -m bench.<mod>`).
-- A conditional bound on the discordant split (Clopper–Pearson given b + c) is not a safe loss bound; use an exact unconditional test.
-- Simulated safety transfers only if stage 3 calls the simulated statistic: share one function.
-- Per-axis safety settings multiply: check the joint clean-PASS probability before a Go (B7.1).
-- The naming hook flags the model snapshot inventory (a subfolder named after the quantizer) in P369 summaries: main gets a compact verdict + sha256, full files go to `evidence`.
-
-## Rules learned (session 22)
-
-- Any `pytest` (or `mlx-serve` in an argv) on the box refuses P369 / qualify runs; chain legs similarly — GPU stages and four-eyes
-  helpers cannot overlap; batch build windows and GPU runs. Name helper copies of mlx-serve neutrally (`serve/`).
-- Timed legs (prefill / decode) run on a quiet box (S22-P18); untimed GPU work may overlap non-pytest CPU work only.
-- A pre-registered decision rule needs its error simulated, not only its power; percentile bootstraps undercover with few discordant
-  items — prefer exact bounds where they exist.
-- Per-rung decode ratios from one generated sample are confounded by MTP acceptance (content); use many-item estimators for speed.
-- Mocked tests miss real-path facts; ask the panel to trace real call chains (two B2 blockers, M80's PYTEST_ADDOPTS hole).
-- Frozen tests must locate the fork from `__file__`, guard sibling dependencies, survive the fork's isort (`# isort: skip_file`).
-- The fork gate compares skips to `benchmark/gate/mlx-vlm.skips.txt`; a gate-source change invalidates every receipt.
-- `run_capacity` gathers the manifest after the ladder: per-leg route counters are the exit snapshot's absolute values.
-- Push the gated sha itself when docs or code sit above it (the pre-push hook levels the whole range).
-- The router loads the worker on demand: `/health` on :8091 only after a first request.
-
-## Done in session 21 (for reference)
-
-- Post-reboot checks clean; p2s smoke within 2 % of `P2S.md`.
-- **M75** (`9cf651a0`, pushed): `RUNSERVER_PORT_WAIT_S`; the gate keeps a FAIL's full output + JUnit (`failure_artifacts`).
-- **C317 round** (S21-P3): pipe2 0.58 % faster (< 1 %) → per-layer evaluation.
-- **M72 1.3** — spec `docs/specs/m72-1.3-tq4-production.md` (v1.1 + errata a / b / c), cold design review (Sol, GLM, Sonnet), Go
-  (C318 / C319), four-eyes strict (implementer Claude Opus `claude -p`, test-writer Claude Sonnet ×5, panel verify Sol + GLM), two fix
-  rounds (C320), Accept (C321), published. Real-model acceptance `benchmark/results/m72/m72-13/`; ledgers + report block
-  `docs/reviews/m72-1.3-design/`; mechanisms `docs/lab-notebook.md` 2026-11-11; recommendation `docs/campaign-results.md` 2026-11-11.
-- Records: S21-P2 (harness layer 63), S21-P9 → C319 (corrected: seeded MTP never matched OFF sample for sample), S21-P10 (served path
-  = every session-resolved request), S21-P17 (stale mlx-serve golden test).
+- A test helper running a real thread beside a fake fast clock needs explicit ordering at every handoff; tests must not read local-only
+  branches (commit sha-pinned fixture copies).
+- `pytest` (or `mlx-serve` in an argv) on the box refuses P369 / qualify runs; GPU stages and four-eyes helpers cannot overlap; timed legs
+  run on a quiet box; gate power strictly before any GPU launch.
+- A pre-registered decision rule needs its error simulated; prefer exact bounds with few discordant items; a conditional Clopper–Pearson on
+  the discordant split is not a safe loss bound.
+- Mocked tests miss real-path facts; ask the panel to trace real call chains; make the fake reproduce the real-box fact first.
+- Push the gated sha itself when docs sit above it; the pre-push hook needs the machine config sourced.
+- Measure memory per process (OS footprint ledger + MLX allocator), real graph shape, known positives; never memfree.
+- After a reboot start OrbStack before any gate; read a FAIL receipt's `failure_artifacts` before rerunning.
+- Fork changes to upstream-shared files need a `# Fork` marker; run `bench.modelnames` over a fork diff before committing.
 
 ## Archives (local, no push)
 
-- `$STACK_WORKDIR/m72/superseded-instrument-v1/`, `…-v2/` (probe outputs of the superseded instruments; not cited).
-- `$STACK_WORKDIR/archive/p475-base-{1554bfe1,15d90757,9adbae45,35c15d7d}/`; `$STACK_WORKDIR/archive/session18-worktrees/`.
-- Branches: `archive/p475-u4-<arm>-{1554bfe1,15d90757,9adbae45,35c15d7d}`, `archive/c258x-off`; M72 1.3 (cited by
-  `benchmark/results/m72/m72-13/README.md`): stack `archive/m72-13-arm-v1` (`b4b7052c`), `archive/m72-13-arm-exact` (`31625001`), fork and
-  mlx-serve `archive/m72-13-cand3` (`83fc3bc8` / `436fee6`, trees = the merged candidate).
-- `$STACK_WORKDIR/m72/real-s21/a4-*.invalid-unseeded-greedy.json` (the superseded first A4 run; not results).
-- Scrubbed P475 worker / router logs for `evidence`: `$STACK_WORKDIR/archive/p475-base-35c15d7d/p475/evidence-stage/`.
-
-## Rules learned (session 21)
-
-- After a reboot, start OrbStack before any gate; read a FAIL receipt's `failure_artifacts` before rerunning.
-- A docs commit on top of a gated sha: push the gated sha; the pre-push check levels the whole introduced range.
-- Check a harness's cache construction against production's (`maybe_quantize_kv_cache` skips the last cache entry).
-- Memory acceptance bounds compare legs at the same preallocated capacity; production capacity is `max_kv_cache_size`.
-- A kernel serving a sliced state takes the caller's key length, never `cache.offset`.
-- `generate_step(temperature=None)` samples at the checkpoint's generation-config temperature: pass `temperature=0.0` for greedy, and
-  give every exactness instrument a repeat control (the same arm twice) before comparing arms.
-- Speculative sampling preserves the distribution, not the samples: seeded MTP ON never equals MTP OFF token for token.
-- Fork changes to upstream-shared files need a `# Fork` marker on the enclosing definition (`dev/check_fork_markers.py`, gate
-  `audit:3`); run it before the fork gate.
-- A waiter must match a marker unique to the run it waits for (an earlier `END rc=1` line ended one early).
-- Never commit with hooks disabled; temp commits run the hooks too.
-- The worker log does not carry `Request completed` at its level; prove the served path with the route counters.
-- A gitlink bump has stack companions the four-eyes copies cannot see (their `src/` submodules are empty): the P632
-  `LIVE_GITLINKS` pin, `bench.arm_identity` flag classes for any new worker flag (P311), and skip-baseline entries for modules that
-  start running against the bumped fork (`benchmark/gate/stack.skips.txt`). Run those tests with the submodules populated before
-  the stack gate.
-
-## Rules learned (session 20)
-
-- Before projecting a "load once, serve k queries" gain, check the single-query kernel is bandwidth-bound; if not, per-query work
-  stays and only matrix units amortize it.
-- Exactness constraints have a price: state what the bit-identity contract pins (partition, accumulation order) before estimating.
-- Check GPU idle utilization and the tiny-op floor before each measured pass; a stuck-busy GPU can need a reboot.
-- The fork has no commit-time naming hook: run `bench.modelnames` over a fork diff before committing ("the 4-bit …" in a <!-- allow-shorthand: quotes the hook's false positive -->
-  docstring blocked a push of an already-cited commit).
-- Never run GPU or CPU-heavy work during a clean-clone gate: timing-margin tests (runserver cleanup) can fail (S20-P19).
-- Measure a transient's memory per process (OS footprint ledger + MLX allocator), in the real graph shape, with known positives;
-  never memfree, never single-call windows (lazy graphs and the buffer cache change lifetimes).
-- Spec a kernel's cost model with every repetition factor (unpack per threadgroup, not per KV head) before promising a ratio.
-- MLX's steel headers are invisible to the `mx.fast.metal_kernel` JIT: inline them (spike F2) to use the NAX fragment.
-
-## Rules learned (session 19)
-
-- Measure a preallocated cache just below the cap, never at it: at exactly the cap the slice is contiguous and hides the copy that
-  row-contiguous custom kernels make on every call.
-- A byte-ceiling reduction over a sliced view measures a copy; read contiguous copies.
-- An earlier spike with no recorded outcome is not evidence: rerun it (minutes) before building on its premise.
-
-## Rules learned (session 18)
-
-- An approved fix can be incomplete: trace it across every leg that reuses the same state.
-- Make the fake reproduce the real-box fact first; the red test then is the box failure verbatim.
-- A busy check that greps `ps` must not carry its patterns in its own argv — use a script file.
-- `git worktree remove` refuses worktrees with submodules: verify the submodules clean, then `--force`.
-- The pre-push hook needs the machine config sourced in the pushing shell.
-- Names are per run, dossiers per name: archive the previous base's dossiers at each re-prepare (C298).
-- A shared venv's editable install makes a worktree's `import mlx_vlm` resolve to the main checkout: check a worktree-only failure on
-  a pristine baseline worktree before blaming the candidate.
-- Black can change docstrings (AST differs only there); check ASTs when its safety check is skipped.
-- Helper outputs go under `docs/reviews/<item>/` as `*-report.md` / `opinion-*` so the naming hook treats them as data.
-- Gate power strictly before any GPU launch: an empty `pmset -g ac` reading is a stop, not a pass.
-- A ratio-relative instability rule degenerates near a ratio of 1 (S18-P13): pre-register an absolute floor.
+- `$STACK_WORKDIR/archive/tg2-universe-ff76573b/` (session 25), `m72/superseded-instrument-v{1,2}/`, `archive/p475-base-*`,
+  `archive/session18-worktrees/`; branches `archive/*` (M72 1.3 cited by `benchmark/results/m72/m72-13/README.md`).
