@@ -1,61 +1,70 @@
-# Handoff — 2026-11-15 (session 24, in progress: stage-3a Wave 1 running; B4b-1 Go, dispatch after Wave 1)
+# Handoff — 2026-11-16 (session 24 → 25: stage-3a Wave 1 DONE; B4b-1 building; B8 readout fix + tg2 grader fix approved)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C342, S23-P93,
-C341 … C331). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance (C334): guardrails prevent wrong
-data or wasted time, not ceremony; cheap fixes welcome; GPU time is the binding resource; label every point `S24-P<n>`.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C355 … C343,
+S24-P1 … P24). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
+wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353: decide, record,
+report); all work on this box (C350). Label points `S25-P<n>`.
 
-Decisions: session 23 ruled C331–C342; session 24 so far C343–C351 (next **C355**); discussion ids `S24-P<n>` (next S24-P22).
+Decisions: session 24 ruled C343–C355 (next **C356**); discussion ids restart at `S25-P1`.
 
-## Goal (restated for convergence, operator asked)
+## Goal
 
-Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (the gain is
-memory: −13 GB at 256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, and stage 3: A1, A5 (incl. per-task gates, each arm ≥ 0.85),
-A7, A8 decider all PASS (point ≥ −5 pp, loss bound ≤ 10 pp), no tg2 HOLD (any language < −20 pp), no panel / interaction flag; else the
-per-axis signals → the operator. Then publish (registry CERTIFIED, README, gate, push ask). Stage 4 (V) decided at the readout.
+Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB
+at 256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, stage 3: A1, A5 (incl. per-task gates), A7, A8 decider all PASS (point
+≥ −5 pp, loss bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dropped from stage 3
+(C352; stage 1's matrix certifies memory).
 
 ## FIRST
 
-1. **Stage-3a Wave 1 is RUNNING** (C344): sequencer PID in `$STACK_WORKDIR/m76/p426/wave1-s3.pid`, out `$STACK_WORKDIR/m76/p426/wave1-s3/`
-   (36 legs, N16 vs X, build `s3`, arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`, `frozen.s3.json`). Two stops so far, both fixed
-   as lead calls: S24-P17 / C349 (a model-written `/home/<name>/` path in a row → `piicheck` exempts only `/home/` on anchored
-   model-output row paths) and S24-P18 (refusals echoed the match into the published `sequence.log` → no echo; two log lines redacted,
-   original archived). Verify the PID is alive, power 140 W / 28 V, no pytest, before anything else.
-2. Local, unpushed: stack `f5ad8395..HEAD` (docs + the S23-P88, S24-P17, S24-P18 fixes). Push (C345): in the first GPU gap after
-   Wave 1, run the clean-clone stack gate, then push `main` (approved for that push).
+1. Box: nothing on the GPU (Wave 1 done 2026-11-16 14:09). Running detached: **B4b-1 four-eyes** helpers
+   (`$STACK_WORKDIR/fe-m76b4b1/`, status `out/status`; test-writer delivery 1 done 16:04, implementer still running, timeout 4 h from
+   15:46). Check `out/status`, PIDs (`pgrep -fl "claude -p"`), power 140 W / 28 V before anything.
+2. Stack `main` pushed at `3c199587` (gate PASS); local above it: docs only (`3c199587..HEAD`). Fork / mlx-serve unchanged.
+3. B8 four-eyes run (`$STACK_WORKDIR/fe-m76b8k/`): candidate 1 reviewed (ledger `docs/reviews/m76-b8-kinds/`); test-writer
+   `0338a205` delivered twice (47 tests, one amended seam test); NEXT = the C355 fix round (below).
 
-## Next, in order
+## Next, in order (no GPU until 4)
 
-1. **Wave 1 watch:** at the A5 smokes check the timing (pause rule C344: A5 projecting > 1.5 × ≈ 4 h / arm → stop at the next idle
-   boundary, ask); after the first Math500 block pair, run B8 + signals on the partial wave and the cold trace (S24-P7).
-2. **Post-Wave-1 gap:** gate + push (C345); record the real `tg2_grade` output trees (one per language and terminal outcome) into
-   `$STACK_WORKDIR/fe-m76b4b1/inputs/tg2-grade-trees/`; set `BASELINE`, make the copies (`impl/`, `tw/`, forks populated, `fe_test.sh`);
-   dispatch **B4b-1** (C351; spec `docs/specs/m76-b4b-tg2-runner.md` v5; briefs in `$STACK_WORKDIR/fe-m76b4b1/briefs/`; implementer
-   Claude Opus `claude -p`, test-writer Claude Sonnet blind; review Sol + GLM). Then B4b-1's real-output acceptance (positives,
-   rehearsals, pilot, sizing report vs both budgets, S24-P9). In the same gap: the **B8 kv planned-kinds fix** (C354; spec
-   `docs/specs/m76-b8-kv-planned-kinds.md`; briefs `$STACK_WORKDIR/fe-m76b8k/briefs/`; four-eyes light), then B8 + signals over the
-   real stage-3a Wave 1 (`$STACK_WORKDIR/m76/s24-p7-check/run.sh`) and the cold panel trace (S24-P7). Runbook: Math500 legs need
-   `run.py grade --benches math500 --tune m76-<arm>-b<k>` before B8 (done for b1 / b2).
-3. Then Wave 2 (A7, tg1) and stage 3b (A8). B4b-2 (A8 B8 / signals / panel, `docs/specs/m76-b4b2-a8-consumers.md` to write): spec +
-   design review during the decider; build after it, on this box (C350).
+1. **B8 readout fix round** (C354 + C355 (2)(3); spec `docs/specs/m76-b8-kv-planned-kinds.md` v1 → write v1.1 adding C355 (2)(3) and
+   ledger K1, K2, K4–K6): fresh implementer (Claude Opus `claude -p`) on candidate 1 in `fe-m76b8k/impl/stack`; then test-writer
+   delivery 3 (same session `0338a205`; a test per adopted defect), panel verify (Sol + GLM), Accept to the operator. Acceptance =
+   B8 + signals over the REAL Wave 1 (`$STACK_WORKDIR/m76/s24-p7-check/run.sh` pattern; all 10 planned pairs accepted, no false flag);
+   then the cold panel trace of B8 + signals (S24-P7). Today's candidate result: `$STACK_WORKDIR/m76/s24-p7-check/cand/B8.json` (4 / 10).
+2. **tg2 grader timeout fix** (C355 (1), S24-P22): write a short spec; four-eyes light; red tests from the recorded spin trees
+   (`$STACK_WORKDIR/fe-m76b4b1/inputs/tg2-grade-trees/rust/spin`, + the JS repro in `$STACK_WORKDIR/m76/tg2-record-scratch/js-spin`).
+3. **B4b-1** (C351; spec `docs/specs/m76-b4b-tg2-runner.md` v5): when its helpers finish — freeze delivery 1 (time it), reveal the
+   candidate (delivery 2, resume the test-writer session in `out/testwriter-1.json`), change review Sol + GLM (strict) + verify, Accept.
+   Then its real-output acceptance (positives, R2 on X / R3 on N16, pilot, sizing report vs both budgets S24-P9).
+4. GPU: stage-3a Wave 2 (A7 tg1; build `s3`; arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`; needs its own frozen record /
+   rehearsal flow as tg1's P426) and stage 3b (A8) — order: B4b-1 acceptance first (measures S24-P9). B4b-2 spec + design review during
+   the decider; build after it (C350).
+5. Stage-3a readout once B8 + signals pass; then stage 3b; publish or the operator's call.
 
 ## State of M76
 
-- Stage 0 ✔; stage 1 ✔ (`benchmark/results/m76/matrix/`); stage 2 ✔ PASS (`benchmark/results/m76/stage2/`).
-- Accepted builds: B0–B2 (session 22), B7 (C337), B7.1 (C340), B3+B5 (C341; `benchmark/results/m76/ids.json` sha `6c9455a2…`).
-- Stage-3 plan (C337–C339, C342): A1 two looks; A5 two looks 72 → 120 (A5-2L); A7 one look s1–s3 α* 0.001; A8 decider ALWAYS (C338)
-  α* 0.001 + HOLD < −20 pp; clean PASS at no loss ≈ 38 %; ≈ 72 whole-stage GPU h (B7.1 report) — the tg2 part unmeasured.
-- Deferred: stage-4 V workflow (S23-P49).
+- Stages 0–2 ✔. Stage 3a Wave 1 ✔ all planned legs VALID (`3c199587`; Math500 graded via `run.py grade --benches math500 --tune
+  m76-<arm>-b<k>` — a post-leg step before B8). A5 cost ≈ 2 × plan (≈ 8 h / arm). M1 dropped (C352).
+- Stops fixed in session 24: S24-P17 / C349 (piicheck `/home/` on model-output rows), S24-P18 (refusals never echo matches).
+- Builds: B4 stopped (C343) → B4b split (C347): B4b-1 building; B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md`) to write.
 
 ## Worktrees and scratch
 
-- Stage-3a arms (C343; base `1b3dd025`; registries byte-identical to f45's, venvs equal): `$STACK_WORKDIR/worktrees/m76-q-n16`
-  (`1b3dd025`), `m76-q-x` (`d4c44a9d`); frozen record `$STACK_WORKDIR/m76/p426/frozen.s3.json` (designer-written from `arm_state`,
-  passes `kv_record_problems` / `kv_arm_problems` / `kv_arm_commit_problems`); all 36 Wave 1 legs plan (dry).
-- Stack worktrees (M76 stages 1–4; remove after stage 4 harvest): `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (X `ec114753`, V
-  `0795beb1`, XO `b9e6b91e`, N16 base `89205085`).
-- Four-eyes scratch (regenerable; cited records committed): `$STACK_WORKDIR/fe-{m77,m76b1,m76b2,m80,m76b7,m76b3,m76b71,m76b4}/` (B4 stopped (C343), input to B4b; `fe-m76b3/integ` = the B3 integration clone); ask before deleting.
-- P369 runs: `$STACK_WORKDIR/p369/phase2/{m76-x-smoke,m76-x-smoke-rh,m76-x-full,m76-x-full.refused-unbound-smoke}` (only `-rh` and
-  `-full` cited).
+- Stage-3a arms: `$STACK_WORKDIR/worktrees/m76-q-{n16,x}`; frozen `$STACK_WORKDIR/m76/p426/frozen.s3.json`; Wave 1 out
+  `$STACK_WORKDIR/m76/p426/wave1-s3/` (archive of the PII stop under `m76/p426/archive/`).
+- Stage 1–4 arms `$STACK_WORKDIR/worktrees/m76-f45-{n16,x,v,xo}` (keep until stage 4 harvest).
+- Four-eyes: `fe-m76b4` (stopped, input), `fe-m76b4b` (design panel records), `fe-m76b4b1` (B4b-1 running), `fe-m76b8k` (B8 fix);
+  older `fe-*` regenerable, ask before deleting. Cold reads: `$STACK_WORKDIR/s2{3,4}-p*-coldread/`.
+
+## Rules learned (session 24)
+
+- A waiter matches names the code emits — derive them from the planner or count log events; never retype a leg name (S24-P20).
+- Run the real path early: mocked tests hid B8's `m1` KeyError, rule 2d's cross-arm comparisons, the A5 frozen-count offset and the
+  N16 M1 gate — one real run found all four (S24-P19, P21, P23, P24).
+- A refusal message never echoes matched PII: the sequencer log that carries it is published (S24-P18).
+- Recording real tool outputs as fixtures surfaces defects (the tg2 timeout misclassification, S24-P22).
+- A spec that dictates code-level detail converges slowly; fix behaviour + named seams with a deviation rule (C348).
+- The PII / naming hooks also read your own docs, tests and commit messages: split literal paths / hostnames, use full model names.
+- `bench.*` modules run from `benchmark/` (the gate too).
 
 ## Rules learned (session 23)
 
