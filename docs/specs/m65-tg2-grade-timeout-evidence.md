@@ -1,4 +1,4 @@
-# M65 tg2 grader — a timeout kill keeps its start evidence — SPEC v1 + erratum v1a, 2026-11-16 (four-eyes light; C355 (1), S24-P22)
+# M65 tg2 grader — a timeout kill keeps its start evidence — SPEC v1 + errata v1a, v1b, 2026-11-16 (four-eyes light; C355 (1), S24-P22)
 
 ## Goal
 
@@ -58,3 +58,12 @@ that forces it.
 
 Solution code runs after the marker inside the same container and could delete or forge the marker file (it can read the nonce
 from its parent's argv). That is the same exposure as the stdout marker today, and agentic outputs are not adversarial.
+
+## Erratum v1b (2026-11-16, change review G6)
+
+- Collect writes only its marker file, no `.tg2-out-collect-*`: its stdout is the report tar, not `_bounded` output (teeing it would
+  double the report volume's use); its read-back records `out_sha256: null`.
+- The existing `VERSION` pin in `test_tg2_grade.py` follows the bump to `m65-tg2-v3` (the Fix requires it).
+- The read-back cap is a named invariant: `READBACK_CAP` covers the tar of a full `.out` (`OUTPUT_CAP`) plus the marker and tar overhead with
+  margin, asserted at import (G2).
+
