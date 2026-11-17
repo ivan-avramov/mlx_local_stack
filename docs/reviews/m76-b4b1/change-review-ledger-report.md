@@ -33,3 +33,18 @@ Raw: `opinion-change-{sol,glm}.md`. Verified by the designer in the candidate so
 
 Next: fix round 1 (fresh implementer on candidate 1: L1–L6; the designer L7 and L14), test-writer delivery 3 (a test per adopted
 defect, L4's refusal test restored), panel verify (fresh Sol + GLM, round 2 of 3), Accept → operator.
+
+## Round 2 of 3 (verify of candidate 2, fresh Sol + GLM sessions; `verify-change-{sol,glm}.md`)
+
+L1–L7, L14 resolved as dispositioned (both members; L2 placement in `prepare` / the prompt reader accepted). New:
+
+| id | raised by | finding | sev | disposition |
+|---|---|---|---|---|
+| V1 | Sol P2 (+ test-writer delivery-3 residual) | with record AND sealed file, resume compared only the sha: a rerun s1 attempt after re-check 1 kept the stale verdict | major | adopted (fix round 2): every existing sealed re-check is checked against the current gate / axis / sessions / arms / attempts, mismatch → rc 1, never recompute |
+| V2 | Sol P1 | the prompt path verified item inputs, not the checkout sha | minor | adopted (fix round 2): `spec_text` calls `verify_source` |
+| V3 | GLM F1 (+ implementer question, test-writer: keep) | L1's recorded-artifacts rule also accepts a tg1 row that records a hash-verified `datefreeze` (baseline: `FAIL:evidence_sha256_keys`) — touches the request's "tg1 unchanged" | major | → operator at Accept (settled constraint); designer rec: keep (every real v2 tg1 row records `datefreeze`, so the old rule fails every real tg1 inject row; no recorded tg1 result depends on it) |
+
+## Round 3 of 3 (final verify of candidate 3; `verify3-change-{sol,glm}.md`)
+
+V1, V2 resolved (both members; GLM traces all six resume states + outside / ack). Nothing else; GLM: NOTHING OF SUBSTANCE. Open: V3 (operator),
+L17 (acceptance criterion 3, real output on the box).
