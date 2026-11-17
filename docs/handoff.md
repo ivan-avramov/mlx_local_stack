@@ -42,8 +42,9 @@ bound ≤ 10 pp), no tg2 HOLD, no panel / interaction flag; else per-axis signal
    (S24-P9). GPU.
 3. GPU: stage-3a Wave 2 (A7 tg1; build `s3`; arms `m76-q-n16` `1b3dd025` / `m76-q-x` `d4c44a9d`) and stage 3b (A8). B4b-2 spec + design review
    during the decider (`docs/specs/m76-b4b2-a8-consumers.md`; carry L9: every new tg2 consumer passes `grader="tg2"`; L16 `row_scores.py`).
-4. Small fail-closed fixes (failing test, fix, one cold read): S25-P10 (closure test vs a non-`main` checkout); the PII hook learns the
-   username pattern from the machine config (C357).
+4. Small fail-closed fixes (failing test, fix, one cold read): S25-P10 (the tg1-file guard: the gate records + exports the pushed base;
+   today it errors off `main` and passes vacuously from a `main` containing the build); the PII hook learns the username pattern from the
+   machine config (C357). Until S25-P10 lands, gate from a `main` checkout that does NOT yet contain the build.
 
 ## Worktrees and scratch
 
