@@ -33,7 +33,7 @@ import xml.etree.ElementTree as ET
 from .structured_grade import _sha256, _write_index, manifest, protected_manifest, write_receipt
 from .token_turn_gate import TransportAbort
 
-VERSION = "m65-tg2-v2"
+VERSION = "m65-tg2-v3"           # v3: marker + bounded output also written to the report volume (timeout evidence)
 IMAGE_TAG = "tg2-grader:m65-v1"
 REPO = Path(__file__).resolve().parents[2]
 IMAGE_ID_FILE = REPO / "benchmark/m65/tg2_image/IMAGE_ID"
@@ -52,6 +52,8 @@ CREATED_LABEL = "mlxbench.tg2.created"
 NONCE_LABEL = "mlxbench.tg2.nonce"
 REGISTRY_DIR = ".tg2-registry"
 COMPILE_MARKER = "TG2_COMPILE_START"
+READBACK_MARKER = "TG2_READBACK_START"
+READBACK_TIMEOUT = 120
 # Agent-created build outputs: top-level dirs absent from the prepared tree are stripped before tamper and grading.
 STRIP_TOP_LEVEL = ("build", "target", "node_modules", ".gradle")
 # Resource bounds (G15): process count, open files, single-file size, captured output and report size.
@@ -518,9 +520,29 @@ def refuse_tmp_source(path):
             raise TransportAbort("mount source %s is under TMPDIR/var/folders (stale bind-mount attributes, P361)" % path)
 
 
-def _bounded(script):
-    """stdout+stderr of a phase through a size cap; the phase's own exit status is preserved."""
-    return '{ %s; } 2>&1 | head -c %d; exit ${PIPESTATUS[0]}' % (script, OUTPUT_CAP)
+def _bounded(script, evidence=None):
+    """stdout+stderr of a phase through a size cap; the phase's own exit status is preserved. With `evidence` (a
+    report-volume path) the bounded output is also written there, so a killed step keeps its partial output."""
+    if evidence is None:
+        return '{ %s; } 2>&1 | head -c %d; exit ${PIPESTATUS[0]}' % (script, OUTPUT_CAP)
+    # GNU head writes through stdio: into a pipe it holds small output in its buffer, which a kill loses (box: a tee'd
+    # copy behind a plain head stayed empty). The evidence copy is cut by an unbuffered head; the stream keeps a
+    # buffered head as before.
+    return '{ %s; } 2>&1 | stdbuf -o0 head -c %d | tee %s | head -c %d; exit ${PIPESTATUS[0]}' % (
+        script, OUTPUT_CAP, evidence, OUTPUT_CAP)
+
+
+def _marker_file(step, nonce):
+    return ".tg2-marker-%s-%s" % (step, nonce)
+
+
+def _out_file(step, nonce):
+    return ".tg2-out-%s-%s" % (step, nonce)
+
+
+def _marker_write(tag, step, nonce):
+    """The marker line into the step's private report-volume file; survives a kill of the docker CLI."""
+    return 'echo "%s %s" > /report/%s; ' % (tag, nonce, _marker_file(step, nonce))
 
 
 def _raw_commands(lang, slug):
@@ -545,8 +567,10 @@ def _commands(lang, slug, nonce="0"):
     """(compile script, execute script) per the spec's grader table, each printing its own per-grade nonce marker
     immediately before invoking the compiler / test runner, with output bounded."""
     compile_script, execute_script = _raw_commands(lang, slug)
-    return (_bounded('echo "%s %s"; %s' % (COMPILE_MARKER, nonce, compile_script)),
-            _bounded('echo "%s %s"; %s' % (MARKER, nonce, execute_script)))
+    return tuple(_bounded('%secho "%s %s"; %s' % (_marker_write(tag, step, nonce), tag, nonce, script),
+                          "/report/" + _out_file(step, nonce))
+                 for step, tag, script in (("compile", COMPILE_MARKER, compile_script),
+                                           ("execute", MARKER, execute_script)))
 
 
 STAGE_SCRIPT = "# TG2_STAGE\nset -e\ncp -a /src/. .\n"
@@ -558,8 +582,65 @@ def _collect_script(lang, slug, nonce):
         src = "-C /work/%s/build/test-results --exclude=test/binary test" % slug
     else:
         src = "-C /report %s" % ("jest.json" if lang == "javascript" else "cpp.xml")
-    return 'echo "%s %s" >&2; tar -cf - %s 2>/dev/null | head -c %d; exit ${PIPESTATUS[0]}' % (
-        COLLECT_MARKER, nonce, src, REPORT_CAP + 1)
+    return '%secho "%s %s" >&2; tar -cf - %s 2>/dev/null | head -c %d; exit ${PIPESTATUS[0]}' % (
+        _marker_write(COLLECT_MARKER, "collect", nonce), COLLECT_MARKER, nonce, src, REPORT_CAP + 1)
+
+
+def _readback_script(step, nonce, rnonce):
+    """Tar of whichever of the step's two evidence files exist (regular files only), bounded; its own marker on
+    stderr so stdout is the pure tar stream; no file -> empty stdout, exit 0."""
+    names = "%s %s" % (_marker_file(step, nonce), _out_file(step, nonce))
+    return ('echo "%s %s" >&2; cd /report || exit 3; set --; for f in %s; do if [ -f "$f" ] && [ ! -L "$f" ]; then '
+            'set -- "$@" "$f"; fi; done; [ $# -eq 0 ] && exit 0; tar -cf - -- "$@" 2>/dev/null | head -c %d; '
+            'exit ${PIPESTATUS[0]}' % (READBACK_MARKER, rnonce, names, READBACK_CAP + 1))
+
+
+READBACK_CAP = OUTPUT_CAP + (1 << 20)          # the out file is itself capped at OUTPUT_CAP; slack for the marker + tar
+READBACK_MARGIN = 64 << 10
+
+
+def readback_tar_bound(output_cap, marker_bytes=512):
+    """Upper bound of GNU tar's archive of the two evidence files (short names: one 512 B header each, data padded to
+    512 B, 1024 B end marker, the whole padded to 10240 B records) when the `.out` file is full."""
+    def member(n):
+        return 512 + -(-n // 512) * 512
+    raw = member(output_cap) + member(marker_bytes) + 1024
+    return -(-raw // 10240) * 10240
+
+
+def check_readback_cap(readback_cap, output_cap):
+    """G2 invariant: the read-back's `head -c` cap must pass the tar of a full `.out` untouched; otherwise tar takes
+    SIGPIPE (rc 141) and a real timeout becomes TransportAbort."""
+    need = readback_tar_bound(output_cap) + READBACK_MARGIN
+    if readback_cap < need:
+        raise RuntimeError("READBACK_CAP %d < %d (tar of a full %d B .out + marker + margin)"
+                           % (readback_cap, need, output_cap))
+
+
+check_readback_cap(READBACK_CAP, OUTPUT_CAP)    # at import
+
+
+def parse_readback(data, names):
+    """{name: bytes} from the read-back tar: only regular files with exactly the expected names. Any other shape is
+    a read-back failure (ValueError; the caller makes it infrastructure)."""
+    if not data:
+        return {}
+    if len(data) > READBACK_CAP:
+        raise ValueError("read-back archive exceeds the %d byte cap" % READBACK_CAP)
+    try:
+        tf = tarfile.open(fileobj=io.BytesIO(data), mode="r:")
+        members = tf.getmembers()
+    except tarfile.TarError as exc:
+        raise ValueError("unreadable read-back archive: %s" % exc) from None
+    out = {}
+    for m in members:
+        if m.name not in names or m.name in out or not m.isreg():
+            raise ValueError("unexpected, duplicate or non-regular read-back member %r" % m.name)
+        body = tf.extractfile(m).read(m.size)
+        if len(body) != m.size:
+            raise ValueError("read-back member %r is truncated" % m.name)
+        out[m.name] = body
+    return out
 
 
 def parse_collect(lang, data):
@@ -637,7 +718,7 @@ for group, artifact, version in coords:
 def _preflight(lang):
     """Fixed per-language preflight, run before the compile marker: runner executables and the dependency closure
     exist inside the image. Any failure is infrastructure; afterwards compile / execute failures are the model's."""
-    head = "# TG2_PREFLIGHT\nset -e\n"
+    head = "# TG2_PREFLIGHT\nset -e\nstdbuf -o0 true\n"        # the marked steps' evidence copy needs an unbuffered head
     if lang == "rust":
         return (head + "command -v cargo rustc >/dev/null\ngrep -q cargo-vendor /root/.cargo/config.toml\n"
                 "python3 - <<'PY'\n" + _PREFLIGHT_PY_RUST % (list(RUST_VENDORED),) + "PY\n")
@@ -1373,8 +1454,11 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
     compile_script, execute_script = _commands(lang, slug, nonce)
     # The per-grade nonce marker proves the shell reached the compiler / runner invocation; it is checked BEFORE any
     # timeout / OOM / exit-status classification, and its absence is always infrastructure.
+    # The marker may live in the stream or, when the step was killed (its streams lost), in the report-volume file.
+    evidence = dict(result=result, run=run, ops=ops, image_id=image_id, slug=slug, vols=vols, outputs=outputs,
+                    gnonce=gnonce, nonce=nonce)
     comp = _launch(result, "compile", ["bash", "-c", compile_script], run, ops, image_id, slug, vols, outputs, timeout, gnonce)
-    if not _marker_seen(comp, COMPILE_MARKER, nonce):
+    if not _marker_evidence(comp, "compile", COMPILE_MARKER, **evidence):
         raise TransportAbort("tg2 compile: start marker absent (rc=%s): %s" % (comp["rc"], _text(comp)[-300:]))
     kind = _resource(comp)
     if kind:
@@ -1382,7 +1466,7 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
     if comp["rc"] != 0:
         return _all_failed(result, "compile_failure", index)
     exe = _launch(result, "execute", ["bash", "-c", execute_script], run, ops, image_id, slug, vols, outputs, timeout, gnonce)
-    if not _marker_seen(exe, MARKER, nonce):
+    if not _marker_evidence(exe, "execute", MARKER, **evidence):
         raise TransportAbort("tg2 execute: runner-start marker absent (rc=%s): %s" % (exe["rc"], _text(exe)[-300:]))
     kind = _resource(exe)
     if kind:
@@ -1393,7 +1477,7 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
         else:
             col = _launch(result, "collect", ["bash", "-c", _collect_script(lang, slug, nonce)], run, ops, image_id, slug,
                           vols, outputs, timeout, gnonce)
-            if not _marker_seen(col, COLLECT_MARKER, nonce, stream="stderr"):
+            if not _marker_evidence(col, "collect", COLLECT_MARKER, stream="stderr", **evidence):
                 raise TransportAbort("tg2 collect: start marker absent (rc=%s): %s" % (col["rc"], _text(col)[-300:]))
             kind = _resource(col, cap=None)
             if kind:
@@ -1409,6 +1493,37 @@ def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs,
     result.outcome = "parsed"
     result.artifacts = index("parsed")
     return result
+
+
+def _marker_evidence(rec, step, tag, *, result, run, ops, image_id, slug, vols, outputs, gnonce, nonce, stream="stdout"):
+    """Whether the step's exact nonce marker was seen: in its stream, else in its report-volume marker file, read
+    back by one bounded step on the same volumes. The read-back files are stored as `<step>.marker` / `<step>.out`
+    with their sha256 in the step's phase record. A failed read-back is TransportAbort, never a model outcome."""
+    if _marker_seen(rec, tag, nonce, stream=stream):
+        return True
+    names = (_marker_file(step, nonce), _out_file(step, nonce))
+    rnonce = secrets.token_hex(8)
+    back = _launch(result, step + "-readback", ["bash", "-c", _readback_script(step, nonce, rnonce)], run, ops,
+                   image_id, slug, vols, outputs, READBACK_TIMEOUT, gnonce)
+    if back["timed_out"] or back["oom"] or back["mem_kill"] or back["rc"] != 0:
+        raise TransportAbort("tg2 %s read-back failed (rc=%s timeout=%s oom=%s): %s" % (
+            step, back["rc"], back["timed_out"], back["oom"], back["stderr"].read_text(errors="replace")[-300:]))
+    if not _marker_seen(back, READBACK_MARKER, rnonce, stream="stderr"):
+        raise TransportAbort("tg2 %s read-back: its own start marker absent (rc=%s)" % (step, back["rc"]))
+    try:
+        files = parse_readback(back["stdout"].read_bytes(), names)
+    except ValueError as exc:
+        raise TransportAbort("tg2 %s read-back: %s" % (step, exc)) from None
+    phase = next(p for p in reversed(result.phases) if p["step"] == step)
+    for suffix, name in (("marker", names[0]), ("out", names[1])):
+        if name in files:
+            (outputs / ("%s.%s" % (step, suffix))).write_bytes(files[name])
+            phase[suffix + "_sha256"] = hashlib.sha256(files[name]).hexdigest()
+        else:
+            phase[suffix + "_sha256"] = None
+    seen = names[0] in files and ("%s %s" % (tag, nonce)) in files[names[0]].decode(errors="replace").splitlines()
+    phase["marker_source"] = "file" if seen else None
+    return seen
 
 
 def _launch(result, step, inner, run, ops, image_id, slug, mounts, outputs, timeout, nonce):

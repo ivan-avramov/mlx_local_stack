@@ -183,6 +183,8 @@ def step_of(cmd):
         return "ps"
     if cmd[:3] == ["docker", "rm", "-f"]:
         return "rm"
+    if "TG2_READBACK_START" in cmd[-1]:
+        return "readback"
     if "TG2_COLLECT_START" in cmd[-1]:
         return "collect"
     if "TG2_STAGE" in cmd[-1]:
@@ -339,17 +341,30 @@ class FakeGuard:
             self.holder_names[cname] = labels_of(cmd)
         self.calls.append((step, cmd))
         spec = self.plan.get(step)
-        if step in ("compile", "execute", "collect") and spec.get("mem_kill"):
+        if step in ("compile", "execute", "collect", "readback") and spec.get("mem_kill"):
             self.grader_mem_kill = True
-        if step in ("compile", "execute"):
-            tag = "TG2_RUNNER_START" if step == "execute" else "TG2_COMPILE_START"
+        if step == "readback":
+            return self._readback(cmd, kw, self.plan.get("readback"))
+        # Box fact (M65 timeout spec): the script writes its marker / bounded output to the report volume when it
+        # names such files (iff it got past its marker line); a timed-out step's host-side streams stay EMPTY.
+        report_dir = self.vol(mounts(cmd)["/report"]) if "/report" in mounts(cmd) else None
+        marker_file = re.search(r"> /report/(\.tg2-marker-[a-z]+-\w+)", cmd[-1]) if report_dir else None
+        out_file = re.search(r"tee /report/(\.tg2-out-[a-z]+-\w+)", cmd[-1]) if report_dir else None
+        if step in ("compile", "execute", "collect"):
+            tag = dict(execute="TG2_RUNNER_START", compile="TG2_COMPILE_START", collect="TG2_COLLECT_START")[step]
             nonce = re.search(tag + r" (\w+)", cmd[-1]).group(1)
+            line = "%s %s\n" % (tag, nonce)
+            if marker_file and not spec.get("no_marker"):
+                (report_dir / marker_file.group(1)).write_text(spec.get("file_marker", line))
+            if out_file and not spec.get("no_marker"):
+                (report_dir / out_file.group(1)).write_text(line + spec.get("stdout", ""))
+            if spec.get("timeout"):
+                raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
+            stream = kw["stderr"] if step == "collect" else kw["stdout"]
             if spec.get("fake_marker"):
-                kw["stdout"].write(tag + " deadbeef\n")
-            if not spec.get("no_marker"):
-                kw["stdout"].write("%s %s\n" % (tag, nonce))
-        if step == "collect" and not spec.get("no_marker"):
-            kw["stderr"].write("TG2_COLLECT_START %s\n" % re.search(r"TG2_COLLECT_START (\w+)", cmd[-1]).group(1))
+                stream.write(tag + " deadbeef\n")
+            if not spec.get("no_marker") and not spec.get("stream_lost"):        # stream_lost: killed (OOM / guard)
+                stream.write(line)
         if spec.get("timeout"):
             kw["stdout"].write(spec.get("stdout", ""))
             raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
@@ -389,6 +404,24 @@ class FakeGuard:
             return subprocess.CompletedProcess(cmd, spec.get("rc", 0 if data else 2), None, None)
         if step == "image":
             kw["stdout"].write(spec.get("image_id", IMG) + "\n")
+        return subprocess.CompletedProcess(cmd, spec.get("rc", 0), None, None)
+
+    def _readback(self, cmd, kw, spec):
+        """The read-back step: its own stderr marker, then a tar of whichever named report-volume files exist."""
+        if spec.get("raise_os"):
+            raise OSError("docker vanished (fake)")
+        if spec.get("timeout"):
+            raise subprocess.TimeoutExpired(cmd, kw.get("timeout") or 1)
+        if not spec.get("no_marker"):
+            kw["stderr"].write("TG2_READBACK_START %s\n" % re.search(r"TG2_READBACK_START (\w+)", cmd[-1]).group(1))
+        report_dir = self.vol(mounts(cmd)["/report"])
+        names = re.search(r"for f in ([^;]+); do", cmd[-1]).group(1).split()
+        members = [(n, "file", (report_dir / n).read_bytes()) for n in names if (report_dir / n).is_file()]
+        if "tar" in spec:
+            kw["stdout"].buffer.write(spec["tar"])
+        elif members:
+            kw["stdout"].buffer.write(make_tar(members))
+        kw["stdout"].flush()
         return subprocess.CompletedProcess(cmd, spec.get("rc", 0), None, None)
 
 
@@ -645,7 +678,7 @@ def test_raw_outputs_retained_by_sha256_with_phase_records(tree, tmp_path):
     for name, meta in index["artifacts"].items():
         assert hashlib.sha256((keep / meta["path"]).read_bytes()).hexdigest() == meta["sha256"]
     phases = json.loads((d / "phases.json").read_text())
-    assert phases["version"] == tg.VERSION == "m65-tg2-v2" and phases["image_id"] == IMG
+    assert phases["version"] == tg.VERSION == "m65-tg2-v3" and phases["image_id"] == IMG
     names = [p["step"] for p in phases["phases"]]
     assert names == ["setup-image", "setup-launch", "preflight", "compile", "execute", "collect"]
     compile_phase = phases["phases"][3]
