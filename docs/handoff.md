@@ -5,7 +5,7 @@ C357, C356, then C355 …). Model names: FULL registry names only. Review rounds
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C356's "proceed on recs, stop only for major calls" was SESSION 25 ONLY — ask again. Label points `S26-P<n>`.
 
-Decisions: session 25 ruled C356–C357 (next **C358**); discussion ids restart at `S26-P1`.
+Decisions: session 25 ruled C356–C358 (next **C359**); discussion ids restart at `S26-P1`.
 
 ## Goal
 
