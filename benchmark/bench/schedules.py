@@ -50,8 +50,8 @@ TG2_SESSIONS = {"screen": ("s1",), "decider": ("s1", "s2", "reload")}
 TG2_RELOAD_ITEMS = 5
 # M76 B4b-1 (spec m76-b4b-tg2-runner v5): the committed draw / universe the tg2 P426 legs run; the draw file, its sidecar and the
 # draw's universe sha must equal them (a consistent redraw refuses).
-TG2_DRAW_SHA256 = "8eb9d8ef5a436bfaf75bdb473121ca952adb3fd4e5ebf7d182cfd25c6733f2c3"
-TG2_UNIVERSE_SHA256 = "ff76573bf70fbe6d2ad9cf7d4f0e60e35e6ead9ffbbde9b335d94da19f8d7480"
+TG2_DRAW_SHA256 = "82875e1d3da7ce71bd7750ff5729874eefc2e5a40772e1bf4f82e71d3cf444e3"
+TG2_UNIVERSE_SHA256 = "2bf6add47237d2f1f4135013e47eae07f35e1e668b935e18ec2768b7baadc3e9"
 TG2_LANGS = ("rust", "javascript", "java", "cpp")
 # leg -> (session dir, seed base, language order, items per language): the table of spec §2 (rehearsals r2 / r3 run s1's slot)
 TG2_P426_LEGS = {

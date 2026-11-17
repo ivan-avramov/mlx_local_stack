@@ -37,8 +37,8 @@ RECORD = (FIX / ".record").exists()          # a marker file (present only while
 
 DRAW_PATH = BENCH / "m65" / "tg2_draw.json"
 UNIVERSE_PATH = BENCH / "m65" / "tg2_universe.json"
-TG2_DRAW_SHA256 = "8eb9d8ef5a436bfaf75bdb473121ca952adb3fd4e5ebf7d182cfd25c6733f2c3"      # spec §1 "Pins in code"
-TG2_UNIVERSE_SHA256 = "ff76573bf70fbe6d2ad9cf7d4f0e60e35e6ead9ffbbde9b335d94da19f8d7480"
+TG2_DRAW_SHA256 = "82875e1d3da7ce71bd7750ff5729874eefc2e5a40772e1bf4f82e71d3cf444e3"      # spec §1 "Pins in code"
+TG2_UNIVERSE_SHA256 = "2bf6add47237d2f1f4135013e47eae07f35e1e668b935e18ec2768b7baadc3e9"
 POLYGLOT_SHA = "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f"                                  # the universe's fingerprint
 LANGS = ("rust", "javascript", "java", "cpp")
 PILOT = {"rust": "rust/say", "javascript": "javascript/word-search", "java": "java/zipper", "cpp": "cpp/spiral-matrix"}
