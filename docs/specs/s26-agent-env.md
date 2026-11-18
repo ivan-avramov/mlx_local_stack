@@ -1,4 +1,4 @@
-# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1, 2026-11-17 (four-eyes STRICT; v1.1 applies design review round 1, not re-reviewed: `docs/reviews/s26-agent-env/`)
+# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1a, 2026-11-17 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
 
 ## Goal
 
@@ -30,7 +30,8 @@ tg2 Java item finds the same pre-filled Gradle home in one bench-owned folder, w
 
 - (C360, operator) Light: detect and fail closed; never revert, never deny commands; network stays open.
 - (C361, operator) Loop / alloc may be declined by the model (C152 precedent); one bench-owned Gradle home for all tg2 items.
-- (designer) tg1 behaviour, argv, records and identity are byte-unchanged: B4b-1's tg1 golden
+- (designer; v1.1a wording, change r1 Sol P22) tg1's agent env, argv and `scaffold_policy_sha256` are unchanged; its closure-derived
+  `probe_code_sha256` rotates (C178); the Wave 2 sequencer gains the guard for tg1 too. B4b-1's tg1 golden
   (`bench/tests/test_m76_b4b1_impl_golden_tg1.py`) passes unmodified. tg2 identity may change (no tg2 leg has run).
 - (designer) No new third-party dependency. Lazy-import heavy modules. Tests are mocked or use temp trees; no GPU, no network,
   no real Homebrew mutation, no docker except where existing tests already use it.
@@ -159,3 +160,24 @@ Sandboxing or network control; hashing contents of existing directories (residua
 
 None for the operator; implementation deviations follow the deviation rule: satisfy the behaviour, report any interface deviation
 with its reason.
+
+## Erratum v1.1a (change review round 1; ledger `docs/reviews/s26-agent-env/change-ledger-r1.md`)
+
+1. §4 DECLINED (S26-P14, Sol P1 in full): DECLINED iff the inject_verify verdict is `not_observed*` AND the events hold no tool call
+   carrying the marker AND the row records no kill AND the probe exited rc 0 AND `row_sha256` verifies (Sol P17). `FAIL:no_shell_part`
+   and every other `FAIL:*` / `competing_trigger:*` stay failures. v8 `positives_problems` checks the same allowed set.
+2. Scope extension (S26-P14): `benchmark/m62/inject_verify.py` alloc rule counts only EXECUTED shell calls carrying `bytearray(` — a call
+   whose `state.status` is `"error"` and whose `state.metadata.providerCall.executed` is false (the tool-bounds plugin rejected it) is
+   excluded — and requires exactly one, whose part id equals the kill's `tool_call_id`. Every other rule unchanged. Red test: the recorded
+   java alloc row shape (a rejected `background: true` call, then the executed retry, one kill linked to the retry) → PASS; with the
+   retry's id not equal to the kill's → `FAIL:tool_call_id`; two executed marker calls → `FAIL:no_shell_part`.
+3. `BoxSeqOps.inject_verify(run, kind)` returns the retained attempt's verdict string (`PASS`, `not_observed:kill`, `FAIL:…`);
+   `inject_verify_result` may keep the richer record.
+4. `BoxSeqOps.host_env()` calls `host_env.fingerprint_for_run()` with no argument.
+5. `tg2_gradle_home.py`'s bytes enter tg2's generation identity (Sol P18); tg1's closure does not include it.
+6. `check` does not require a self-seal on `PREFILL.json` (Sol P21); its facts are checked as listed, and `prefill_sha256` binds it.
+7. Documented extensions (kept): the fingerprint's `path` section; `PREFILL.json` `kind`, `path`, `properties`, `stop_rc`, per-item `error`;
+   `OpencodeArm(gradle_home=…)` for tests.
+8. A host-changed leg stops the run even where INVALID is expected (rehearsal R2): a host change always fails closed. After the final
+   check's Stop, `main`'s existing `finally` still publishes the run files, as for every Stop; the diff is in `sequence.json`.
+
