@@ -18,9 +18,11 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
 1. `main` is ahead of `origin/main` (`3fc079ca`) by session-26 docs and the S26-P8 fix (`ad1c5533`). Not pushed (no push asked).
 2. Running: Wave 2 tg1 sequencer (`$STACK_WORKDIR/m76/p426/wave2/sequencer.pid`; v8 `611520b5…`; 10 legs: pilot pair → gate → amendment →
    s1, s2, s3 → reload) and its Cellar guard (`wave2/guard.log`; PAUSE on any Homebrew change). Power 140 W / 28 V; `pgrep -fl "claude -p"`.
-3. `git stash list`: `stash@{0}` = the C360 / S26-P9 guard WIP (`bench/host_env.py`, sequencer wiring, tests, bootstrap 5b). Sol r1 fix round
-   to apply (`docs/reviews/s26-p9/cold-read-sol-r1.md`: adopt P2 finally + end-of-run check, P3 hash binaries not `--version`, P4 publish
-   `host_env.json`, P5 class, P1 cheap coverage, P8 tests); pytest only in a GPU gap; then cold read r2, commit.
+3. The C360 / S26-P9 guard WIP lives in worktree `$STACK_WORKDIR/worktrees/s26-p9-guard` (branch `s26-p9-guard`, uncommitted: `bench/host_env.py`,
+   sequencer wiring, tests, bootstrap 5b; `.venv-bench` linked from `main`, keep it out of diffs). Sol r1 fix round to apply there
+   (`docs/reviews/s26-p9/cold-read-sol-r1.md`: P2 finally + end-of-run check, P3 hash binaries not `--version`, P4 publish `host_env.json`,
+   P5 class, P1 cheap coverage, P8 tests); pytest only in a GPU gap; cold read r2; merge to `main` only after Wave 2 ends.
+   **While Wave 2 runs, `main` takes docs commits only** (each harvest re-imports `bench` from `main`'s working tree; `git add` by path).
 
 ## State
 
