@@ -5,7 +5,7 @@ S26-P7, then C358 …). Model names: FULL registry names only. Review rounds: 3 
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" is SESSION 26 ONLY — a later session asks again. Label points `S26-P<n>`.
 
-Decisions: session 26 ruled C359, C360 (next **C361**); discussion ids so far S26-P1 … S26-P12.
+Decisions: session 26 ruled C359, C360, C361 (next **C362**); discussion ids so far S26-P1 … S26-P13.
 
 ## Goal
 
@@ -18,11 +18,16 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
 1. `main` is ahead of `origin/main` (`3fc079ca`) by session-26 docs and the S26-P8 fix (`ad1c5533`). Not pushed (no push asked).
 2. Running: Wave 2 tg1 sequencer (`$STACK_WORKDIR/m76/p426/wave2/sequencer.pid`; v8 `611520b5…`; 10 legs: pilot pair → gate → amendment →
    s1, s2, s3 → reload) and its Cellar guard (`wave2/guard.log`; PAUSE on any Homebrew change). Power 140 W / 28 V; `pgrep -fl "claude -p"`.
-3. The C360 / S26-P9 guard WIP lives in worktree `$STACK_WORKDIR/worktrees/s26-p9-guard` (branch `s26-p9-guard`, uncommitted: `bench/host_env.py`,
-   sequencer wiring, tests, bootstrap 5b; `.venv-bench` linked from `main`, keep it out of diffs). Sol r1 fix round to apply there
-   (`docs/reviews/s26-p9/cold-read-sol-r1.md`: P2 finally + end-of-run check, P3 hash binaries not `--version`, P4 publish `host_env.json`,
-   P5 class, P1 cheap coverage, P8 tests); pytest only in a GPU gap; cold read r2; merge to `main` only after Wave 2 ends.
-   **While Wave 2 runs, `main` takes docs commits only** (each harvest re-imports `bench` from `main`'s working tree; `git add` by path).
+3. Four-eyes STRICT run "S26 agent env" (C360 + C361), spec `docs/specs/s26-agent-env.md` v1.1 (design review r1 Sol + GLM applied,
+   ledger `docs/reviews/s26-agent-env/`). Baseline `7a535a28`. Implementer = fresh Claude Opus 5.5 `claude -p` in
+   `worktrees/fe-s26-impl` (output `m76/s26-impl-1.json`); test-writer = Claude Sonnet 5.5 `claude -p` (resumable) in `worktrees/fe-s26-tw`,
+   tests in `benchmark/bench/tests/s26_frozen/` (output `m76/s26-tw-1.json`). Phase A (write only, `py_compile` only, BUSY strings
+   forbidden) runs beside Wave 2; phase B (resume both: test-writer runs on baseline → freeze → reveal → candidate run; implementer runs
+   its tests) in the GPU gap after Wave 2; then change review (Sol + GLM `verify`), fix round if needed, Accept (C359 / "keep going"),
+   merge, stack gate on the new `main`, tg2 arms rebuilt, `python -m bench.tg2_gradle_home prefill`, tg2 positives. Old draft worktree
+   `worktrees/s26-p9-guard` = starting code only (remove at merge). Review checkout `worktrees/s26-review` (remove at merge).
+   **While Wave 2 runs, `main` takes docs commits only** (each harvest re-imports `bench` from `main`'s working tree; `git add` by path);
+   helpers and my own commands never carry a BUSY marker string (`chain_ops.BUSY`) in argv.
 
 ## State
 
