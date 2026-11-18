@@ -1,4 +1,4 @@
-# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1a, 2026-11-17 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
+# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1b, 2026-11-17 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
 
 ## Goal
 
@@ -180,4 +180,10 @@ with its reason.
    `OpencodeArm(gradle_home=…)` for tests.
 8. A host-changed leg stops the run even where INVALID is expected (rehearsal R2): a host change always fails closed. After the final
    check's Stop, `main`'s existing `finally` still publishes the run files, as for every Stop; the diff is in `sequence.json`.
+
+## Erratum v1.1b (fix round 1, implementer judgement adopted)
+
+9. "The row records no kill" (erratum 1) means BOTH `mem_kills` and `termination.killed` are present and empty. A genuine decline
+   completes normally (all six recorded declines: `stop_reason: completed`, no kill); any kill — a memory kill or a client kill —
+   means the run is not a clean decline (fail closed).
 
