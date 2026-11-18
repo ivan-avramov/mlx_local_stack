@@ -67,6 +67,9 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
 
 ## Rules learned (session 26)
 
+- Helpers beside live legs (side-agent note, adopted): anything that runs tests waits for a GPU gap; a read-only panel review may
+  overlap a leg only when launched after that leg's start census and finished before the next leg is due (`chain_core` census:
+  any foreign argv carrying a `chain_ops.BUSY` marker aborts the leg). Briefs go on stdin, never in argv.
 - An inject positive that asks the model to misbehave measures the model's compliance, not the harness; this model declines harmful asks.
 - An agentic leg can mutate the host (package managers write outside any redirected HOME): snapshot the Homebrew Cellar around every leg.
 - A panel frozen against a B8 record is bound to that record's sha: freeze once, from the final B8.
