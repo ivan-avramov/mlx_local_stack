@@ -1,11 +1,11 @@
-# Handoff — 2026-11-17 (session 26, in progress: Wave 2 tg1 rehearsal running; tg2 blocked on S26-P5 / S26-P6)
+# Handoff — 2026-11-17 (session 26, in progress: Wave 2 tg1 RUNNING; tg2 blocked on S26-P6 / P11 / P12; C360 guard in a stash)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C359, S26-P1 …
 S26-P7, then C358 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" is SESSION 26 ONLY — a later session asks again. Label points `S26-P<n>`.
 
-Decisions: session 26 ruled C359 (next **C360**); discussion ids so far S26-P1 … S26-P7.
+Decisions: session 26 ruled C359, C360 (next **C361**); discussion ids so far S26-P1 … S26-P12.
 
 ## Goal
 
@@ -15,9 +15,12 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
 
 ## FIRST
 
-1. `main` is ahead of `origin/main` (`3fc079ca`) by docs-only commits (session-26 records). Not pushed (no push asked).
-2. Check what is running: the Wave 2 tg1 rehearsal sequencer (`$STACK_WORKDIR/m76/p426/rehearsal/sequencer-20261117a.pid`), its guard
-   (`host_guard.sh`, log `rehearsal/guard-20261117a.log`). Power 140 W / 28 V; `pgrep -fl "claude -p"` before anything.
+1. `main` is ahead of `origin/main` (`3fc079ca`) by session-26 docs and the S26-P8 fix (`ad1c5533`). Not pushed (no push asked).
+2. Running: Wave 2 tg1 sequencer (`$STACK_WORKDIR/m76/p426/wave2/sequencer.pid`; v8 `611520b5…`; 10 legs: pilot pair → gate → amendment →
+   s1, s2, s3 → reload) and its Cellar guard (`wave2/guard.log`; PAUSE on any Homebrew change). Power 140 W / 28 V; `pgrep -fl "claude -p"`.
+3. `git stash list`: `stash@{0}` = the C360 / S26-P9 guard WIP (`bench/host_env.py`, sequencer wiring, tests, bootstrap 5b). Sol r1 fix round
+   to apply (`docs/reviews/s26-p9/cold-read-sol-r1.md`: adopt P2 finally + end-of-run check, P3 hash binaries not `--version`, P4 publish
+   `host_env.json`, P5 class, P1 cheap coverage, P8 tests); pytest only in a GPU gap; then cold read r2, commit.
 
 ## State
 
@@ -30,6 +33,10 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
 - Wave 2 tg1 (A7): arms `m76-w2-{n16,x}` at the gated `3c199587` (S26-P7); rehearsal manifest `01ba1be9…`; rehearsal `20261117a` launched
   2026-11-17 22:13Z (R1 n16 / x, R2 mismatch on x → INVALID expected, R3 kill on n16; ≈ 4.5 h).
 - Panel: runs once after Wave 2, from the B8 that includes A7 (S26-P4).
+- Box toolchains (C360 (3), installed 2026-11-17 16:3x): `rust` 1.100, `openjdk@21` (force-linked; host had no JDK), `cmake` 4.5 (+ deps
+  libgit2, z3, llvm (keg-only, unlinked), pkgconf, giflib, webp, libtiff, little-cms2). The real `~/.gradle` the positives created is archived
+  (`archive/s26-dot-gradle-20261117/`; S26-P12).
+- tg2 waits on the operator: S26-P6 (inject positives harness-side), S26-P11 (per-item fetch caches), S26-P12 (JVM ignores the hermetic HOME).
 
 ## Next, in order
 
