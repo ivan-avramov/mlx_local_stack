@@ -1342,8 +1342,9 @@ def _kv_leaks(text, extra_names=()):
     lowered = text.lower()
     hits = [n for n in list(_leak_names()) + list(extra_names) if n.lower() in lowered]
     hits += [p for p in KV_LEAK_PATTERNS if re.search(p, text, re.I)]
-    if jp._FAMILY_RE.search(text):
-        hits.append("family-token")
+    # S26-P17: no `family-token` check under the KV lever — both arms are ONE registry entry (they differ only in the KV mode),
+    # so a model-family token in an answer (a topic: "Qwen2.5", "NVIDIA") cannot tell a judge which arm wrote it; excluding such  # allow-shorthand: quotes model output
+    # items would select on the arms' outputs. The KV / arm identifiers above, registry names and template tags still refuse.
     if jp._TEMPLATE_TAG_RE.search(text):
         hits.append("template-tag")
     return hits
