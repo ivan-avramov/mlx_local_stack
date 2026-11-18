@@ -375,6 +375,25 @@ def test_harvested_wave2_records_are_DATA_not_prose_P601(path):
                                                "benchmark/results/p426/wave2/make_historical_walls.py"]
 
 
+@pytest.mark.parametrize("path", [
+    "benchmark/results/m76/wave2/tg1-m76-n16-s1.a1/receipt.json",
+    "benchmark/results/m76/wave2/tg1-m76-x-pilot.a2/pilot/x.manifest.json",
+    "benchmark/results/m76/wave2/run/v8_base.json",
+    "benchmark/results/m76/wave2/pairs/pilot__n16-a1__x-a2.json",
+    "benchmark/results/m76/wave2.tg2/tg2-m76-n16-pilot.a1/receipt.json",
+    "benchmark/results/m76/wave2.tg2/run/sequence.json",
+])
+def test_harvested_m76_kv_wave2_records_are_DATA_not_prose_S26_P16(path):
+    """S26-P16: the KV lever's Wave-2 harvest (M76 B3 / B4b-1) publishes the same verbatim records under `benchmark/results/m76/wave2/`
+    and `wave2.tg2/` (attempt directories `tg1-m76-…` / `tg2-m76-…`, run records, pair dossiers); the model directory inventory
+    (`optiq/metadata.json`) in them blocked the first real Wave 2 data commit. Prose beside them stays checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+\"optiq/metadata.json\": \"bfaba2b3\"\n"
+            "+++ b/benchmark/results/m76/wave2/README.md\n@@ -0,0 +1 @@\n+optiq regressed\n"
+            "+++ b/benchmark/results/m76/wave2.tg2/notes.md\n@@ -0,0 +1 @@\n+optiq regressed\n")
+    found = MN.diff_violations(diff)
+    assert sorted({v.path for v in found}) == ["benchmark/results/m76/wave2.tg2/notes.md", "benchmark/results/m76/wave2/README.md"]
+
+
 @pytest.mark.parametrize("text", [
     "--production-ref (default the 7207179b pin) names the production tree",
     "the 0b603d03 head carries B1",
