@@ -23,8 +23,8 @@ HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dr
    `worktrees/fe-s26-impl` (output `m76/s26-impl-1.json`); test-writer = Claude Sonnet 5.5 `claude -p` (resumable) in `worktrees/fe-s26-tw`,
    tests in `benchmark/bench/tests/s26_frozen/` (output `m76/s26-tw-1.json`). Phase A (write only, `py_compile` only, BUSY strings
    forbidden) runs beside Wave 2; phase B (resume both: test-writer runs on baseline → freeze → reveal → candidate run; implementer runs
-   its tests) in the GPU gap after Wave 2; then change review (Sol + GLM `verify`), fix round if needed, Accept (C359 / "keep going"),
-   merge, stack gate on the new `main`, tg2 arms rebuilt, `python -m bench.tg2_gradle_home prefill`, tg2 positives. Old draft worktree
+   its tests) in the GPU gap after Wave 2; then change review (Sol + GLM `verify`), fix round if needed, then **Accept = an explicit
+   operator ask with the final diff, findings and test results (NOT covered by C359 / "keep going", which covered Go only)**; then merge, stack gate on the new `main`, tg2 arms rebuilt, `python -m bench.tg2_gradle_home prefill`, tg2 positives. Old draft worktree
    `worktrees/s26-p9-guard` = starting code only (remove at merge). Review checkout `worktrees/s26-review` (remove at merge).
    **While Wave 2 runs, `main` takes docs commits only** (each harvest re-imports `bench` from `main`'s working tree; `git add` by path);
    helpers and my own commands never carry a BUSY marker string (`chain_ops.BUSY`) in argv.
