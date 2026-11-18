@@ -489,14 +489,41 @@ def _commit_reasons(v8, arm, att):
     return []
 
 
-def _sequence_pair(seq, session):
+PAIR_RECORD_META = ("pair", "dossier", "published", "verdict")
+
+
+def _pair_arms(record):
+    """{arm: attempt name} of one sequence.json pair record (every non-meta string field)."""
+    return {k: v for k, v in record.items() if k not in PAIR_RECORD_META and isinstance(v, str) and ".a" in v}
+
+
+def _sequence_pair_and_superseded(seq, session):
+    """S26-P15: (the pair record of `session` whose attempts are, per arm, the highest-numbered attempt of that leg in sequence.json's
+    legs; the superseded records' arms). A labelled rerun adds a record per attempt; exactly one record must name the latest attempts,
+    else refuse (never fall back to an earlier attempt)."""
     pairs = seq.get("pairs") if isinstance(seq, dict) else None
     if not isinstance(pairs, list):
         raise RefusalError("wave2/run/sequence.json has no pairs list")
     hits = [p for p in pairs if isinstance(p, dict) and p.get("pair") == session]
-    if len(hits) != 1:
-        raise RefusalError(f"wave2/run/sequence.json names {len(hits)} pair records for {session} (need exactly 1)")
-    return hits[0]
+    if not hits:
+        raise RefusalError(f"wave2/run/sequence.json names 0 pair records for {session} (need exactly 1)")
+    latest = {}
+    for leg in seq.get("legs") or []:
+        if isinstance(leg, dict) and isinstance(leg.get("leg"), str) and isinstance(leg.get("attempt"), int):
+            latest[leg["leg"]] = max(latest.get(leg["leg"], 0), leg["attempt"])
+
+    def is_latest(record):
+        arms = _pair_arms(record)
+        try:
+            return bool(arms) and all(attempt_no(a) == latest.get(leg_name(a)) for a in arms.values())
+        except (ValueError, IndexError):
+            return False
+    chosen = [p for p in hits if is_latest(p)]
+    if len(chosen) != 1:
+        raise RefusalError(f"wave2/run/sequence.json names {len(chosen)} pair records of the latest attempts for {session} "
+                           f"(need exactly 1; {len(hits)} record(s) for {session})")
+    return chosen[0], [_pair_arms(p) for p in hits if p is not chosen[0]]
+
 
 
 def _sequence_leg_reasons(seq, arm, name):
@@ -519,7 +546,7 @@ def verify_a7(results_root):
     v8_reasons = [] if self_hash_ok(v8) else [f"rule 2: v8_base.json self-hash {v8.get('sha256')!r} != {_canon_sha(v8)}"]
     out_pairs = []
     for session in SESSIONS:
-        sp = _sequence_pair(seq, session)
+        sp, superseded = _sequence_pair_and_superseded(seq, session)
         names = {}
         for arm in ("off", "on"):
             name = sp.get(arm)
@@ -548,7 +575,8 @@ def verify_a7(results_root):
         keys, keys_rejected = pair_keys(session, off, on)
         speed_valid = off["leg"].get("speed_valid") is True and on["leg"].get("speed_valid") is True
         labels = [] if speed_valid else ["power-invalid"]
-        rec = dict(pair=session, off=names["off"], on=names["on"], accepted=not reasons, reasons=reasons,
+        rec = dict(pair=session, off=names["off"], on=names["on"], **({"superseded": superseded} if superseded else {}),
+                   accepted=not reasons, reasons=reasons,
                    keys_accepted=len(keys), keys_rejected=keys_rejected, keys=keys,
                    identical=sum(1 for k in keys if k["identical"]), speed_valid=speed_valid, labels=labels,
                    dossier=f"{WAVE}/{dossier_rel}",
@@ -2072,7 +2100,7 @@ def verify_a7_kv(results_root, pair):
     out_pairs = []
     paired = kv_sessions()           # erratum v1.2: the sessions of B7's A7 plan; a missing planned session refuses
     for session in paired + SESSIONS_DIAGNOSTIC:
-        sp = _sequence_pair(seq, session)
+        sp, superseded = _sequence_pair_and_superseded(seq, session)
         names, atts = {}, {}
         for arm in (ref, test):
             m = _kv_check_member(sp.get(arm), f"pair {session} {arm}", (ref, test))
@@ -2105,7 +2133,7 @@ def verify_a7_kv(results_root, pair):
             reasons.append(f"rule 3: {len(keys_rejected)} planned key(s) rejected — the session pair is incomplete: "
                            + "; ".join(f"{k['key'][1]}: {k['reason']}" for k in keys_rejected[:5]))
         speed_valid = all(atts[a]["leg"].get("speed_valid") is True for a in (ref, test))
-        out_pairs.append(dict(pair=session, arms=[ref, test], attempts=names, accepted=not reasons, reasons=reasons,
+        out_pairs.append(dict(pair=session, arms=[ref, test], attempts=names, **({"superseded": superseded} if superseded else {}), accepted=not reasons, reasons=reasons,
                               keys_accepted=len(keys), keys_rejected=keys_rejected, keys=keys,
                               identical=sum(1 for k in keys if k["identical"]), speed_valid=speed_valid,
                               labels=[] if speed_valid else ["power-invalid"], dossier=f"{WAVE}/{dossier_rel}",
