@@ -1,0 +1,65 @@
+package dominoes
+
+// Domino is a pair of dots, e.g. {2, 3}.
+type Domino [2]int
+
+// MakeChain orders the given dominoes so that adjacent halves match and the
+// first and last halves match each other. It returns the chain and true if
+// such an ordering exists, or nil and false otherwise.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+	if len(input) == 1 {
+		if input[0][0] == input[0][1] {
+			return []Domino{input[0]}, true
+		}
+		return nil, false
+	}
+
+	chain := make([]Domino, 0, len(input))
+	used := make([]bool, len(input))
+
+	var search func() bool
+	search = func() bool {
+		if len(chain) == len(input) {
+			return chain[0][0] == chain[len(chain)-1][1]
+		}
+		end := chain[len(chain)-1][1]
+		for i := range input {
+			if used[i] {
+				continue
+			}
+			if input[i][0] == end {
+				chain = append(chain, input[i])
+				used[i] = true
+				if search() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+			if input[i][1] == end {
+				chain = append(chain, Domino{input[i][1], input[i][0]})
+				used[i] = true
+				if search() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+		}
+		return false
+	}
+
+	for i := range input {
+		chain = append(chain, input[i])
+		used[i] = true
+		if search() {
+			return chain, true
+		}
+		chain = chain[:0]
+		used[i] = false
+	}
+	return nil, false
+}

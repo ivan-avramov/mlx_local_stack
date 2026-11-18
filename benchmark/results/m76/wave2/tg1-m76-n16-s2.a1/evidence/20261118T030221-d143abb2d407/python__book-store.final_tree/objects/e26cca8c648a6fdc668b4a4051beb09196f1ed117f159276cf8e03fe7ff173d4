@@ -1,0 +1,30 @@
+from functools import lru_cache
+
+# Price (in cents) of a group of `n` distinct books.
+GROUP_PRICES = {1: 800, 2: 1520, 3: 2160, 4: 2560, 5: 3000}
+
+
+@lru_cache(maxsize=None)
+def _cost(counts):
+    """Minimum cost for the books described by `counts`.
+
+    `counts` is a tuple of the five book counts sorted in ascending order.
+    A group is formed from some of the books that still have copies left;
+    it is never worse to build a group from the books with the most copies,
+    so we only consider taking the `group_size` tallest books.
+    """
+    if not any(counts):
+        return 0
+    available = sum(1 for count in counts if count > 0)
+    best = float("inf")
+    for group_size in range(1, available + 1):
+        remaining = list(counts)
+        for index in range(5 - group_size, 5):
+            remaining[index] -= 1
+        best = min(best, GROUP_PRICES[group_size] + _cost(tuple(sorted(remaining))))
+    return best
+
+
+def total(basket):
+    counts = tuple(sorted(basket.count(book) for book in range(1, 6)))
+    return _cost(counts)

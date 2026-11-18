@@ -1,0 +1,57 @@
+# Game status categories
+# Change the values as you see fit
+STATUS_WIN = 'win'
+STATUS_LOSE = 'lose'
+STATUS_ONGOING = 'ongoing'
+
+MAX_FAILURES = 9
+
+
+class Hangman:
+    """A hangman game whose state is derived from the stream of guesses.
+
+    In the spirit of functional reactive programming, nothing is mutated
+    on each guess except the guess stream itself. The masked word, the
+    remaining guesses and the game status are all computed as pure
+    functions of the secret word and the history of guesses.
+    """
+
+    def __init__(self, word):
+        self._word = word.lower()
+        # The "signal": the stream of guesses made so far.
+        self._guesses = []
+
+    def guess(self, char):
+        if self.get_status() != STATUS_ONGOING:
+            raise ValueError("The game has already ended.")
+        self._guesses.append(char.lower())
+
+    def get_masked_word(self):
+        guessed = set(self._guesses)
+        return ''.join(c if c in guessed else '_' for c in self._word)
+
+    def get_status(self):
+        if self._is_win():
+            return STATUS_WIN
+        if self.remaining_guesses < 0:
+            return STATUS_LOSE
+        return STATUS_ONGOING
+
+    @property
+    def remaining_guesses(self):
+        return MAX_FAILURES - self._failure_count()
+
+    def _failure_count(self):
+        # A guess is a failure when the letter is not in the word,
+        # or when it has already been guessed.
+        seen = set()
+        failures = 0
+        for char in self._guesses:
+            if char in seen or char not in self._word:
+                failures += 1
+            seen.add(char)
+        return failures
+
+    def _is_win(self):
+        guessed = set(self._guesses)
+        return all(c in guessed for c in self._word)

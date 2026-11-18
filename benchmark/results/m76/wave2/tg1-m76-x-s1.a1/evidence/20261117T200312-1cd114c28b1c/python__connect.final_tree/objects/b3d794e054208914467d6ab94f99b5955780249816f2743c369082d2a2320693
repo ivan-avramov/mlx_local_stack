@@ -1,0 +1,46 @@
+class ConnectGame:
+    def __init__(self, board):
+        self.board = [line.strip().split() for line in board.strip().splitlines()]
+
+    def get_winner(self):
+        height = len(self.board)
+        if height == 0:
+            return ""
+        width = len(self.board[0])
+        if self._reaches(
+            "X",
+            {(r, 0) for r in range(height)},
+            {(r, width - 1) for r in range(height)},
+        ):
+            return "X"
+        if self._reaches(
+            "O",
+            {(0, c) for c in range(width)},
+            {(height - 1, c) for c in range(width)},
+        ):
+            return "O"
+        return ""
+
+    def _reaches(self, player, start, goal):
+        height = len(self.board)
+        width = len(self.board[0])
+        seen = set()
+        stack = [pos for pos in start if self.board[pos[0]][pos[1]] == player]
+        while stack:
+            pos = stack.pop()
+            if pos in seen:
+                continue
+            seen.add(pos)
+            if pos in goal:
+                return True
+            r, c = pos
+            for dr, dc in ((-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0)):
+                nr, nc = r + dr, c + dc
+                if (
+                    0 <= nr < height
+                    and 0 <= nc < width
+                    and self.board[nr][nc] == player
+                    and (nr, nc) not in seen
+                ):
+                    stack.append((nr, nc))
+        return False

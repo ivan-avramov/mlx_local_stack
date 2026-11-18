@@ -1,0 +1,73 @@
+package kindergarten
+
+import (
+	"errors"
+	"sort"
+	"strings"
+)
+
+// Garden holds the plants assigned to each child in the class.
+type Garden struct {
+	plants map[string][]string
+}
+
+var plantNames = map[rune]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// NewGarden parses a two-row diagram and assigns each child's four cups.
+// The diagram argument starts each row with a '\n'.
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	if !strings.HasPrefix(diagram, "\n") {
+		return nil, errors.New("diagram must start each row with a newline")
+	}
+	rows := strings.Split(diagram[1:], "\n")
+	if len(rows) != 2 {
+		return nil, errors.New("diagram must have exactly two rows")
+	}
+	if len(rows[0]) != len(rows[1]) {
+		return nil, errors.New("rows must be the same length")
+	}
+	if len(rows[0])%2 != 0 {
+		return nil, errors.New("rows must contain an even number of cups")
+	}
+	for _, row := range rows {
+		for _, code := range row {
+			if _, ok := plantNames[code]; !ok {
+				return nil, errors.New("invalid cup code")
+			}
+		}
+	}
+
+	// Sort a copy so the caller's slice is not modified.
+	names := make([]string, len(children))
+	copy(names, children)
+	sort.Strings(names)
+
+	plants := make(map[string][]string, len(names))
+	for i, name := range names {
+		if _, ok := plants[name]; ok {
+			return nil, errors.New("duplicate child name")
+		}
+		if 2*i+1 >= len(rows[0]) {
+			return nil, errors.New("too many children for the diagram")
+		}
+		plants[name] = []string{
+			plantNames[rune(rows[0][2*i])],
+			plantNames[rune(rows[0][2*i+1])],
+			plantNames[rune(rows[1][2*i])],
+			plantNames[rune(rows[1][2*i+1])],
+		}
+	}
+	return &Garden{plants: plants}, nil
+}
+
+// Plants returns the four plants assigned to the given child.
+// ok is false if the child is not in the garden.
+func (g *Garden) Plants(child string) ([]string, bool) {
+	p, ok := g.plants[child]
+	return p, ok
+}

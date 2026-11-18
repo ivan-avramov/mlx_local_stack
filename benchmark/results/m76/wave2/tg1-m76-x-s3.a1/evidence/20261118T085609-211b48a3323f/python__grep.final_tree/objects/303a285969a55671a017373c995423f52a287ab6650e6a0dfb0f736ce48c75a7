@@ -1,0 +1,42 @@
+def grep(pattern, flags, files):
+    flags = flags.split()
+    line_number = "-n" in flags
+    file_name = "-l" in flags
+    ignore_case = "-i" in flags
+    invert = "-v" in flags
+    entire_line = "-x" in flags
+
+    output = []
+
+    for file in files:
+        with open(file) as f:
+            lines = f.readlines()
+
+        if file_name:
+            matched = False
+            for line in lines:
+                if _match(pattern, line, ignore_case, entire_line):
+                    matched = True
+                    break
+            if matched:
+                output.append(file + "\n")
+        else:
+            for i, line in enumerate(lines, 1):
+                if _match(pattern, line, ignore_case, entire_line) != invert:
+                    prefix = ""
+                    if len(files) > 1:
+                        prefix = file + ":"
+                    if line_number:
+                        prefix += str(i) + ":"
+                    output.append(prefix + line)
+
+    return "".join(output)
+
+
+def _match(pattern, line, ignore_case, entire_line):
+    line = line.rstrip("\n")
+    if ignore_case:
+        pattern, line = pattern.lower(), line.lower()
+    if entire_line:
+        return pattern == line
+    return pattern in line

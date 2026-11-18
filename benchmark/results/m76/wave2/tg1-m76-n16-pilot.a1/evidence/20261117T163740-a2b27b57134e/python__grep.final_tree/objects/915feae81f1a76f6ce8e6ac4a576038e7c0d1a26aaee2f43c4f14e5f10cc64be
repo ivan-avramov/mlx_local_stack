@@ -1,0 +1,37 @@
+def grep(pattern, flags, files):
+    flag_set = set(flags.split())
+    case_insensitive = "-i" in flag_set
+    invert = "-v" in flag_set
+    entire_line = "-x" in flag_set
+    line_numbers = "-n" in flag_set
+    file_names = "-l" in flag_set
+
+    multi_file = len(files) > 1
+    output = []
+
+    for fname in files:
+        with open(fname) as f:
+            content = f.read()
+
+        lines = content.split("\n")
+        if lines and lines[-1] == "":
+            lines.pop()
+
+        for lineno, line in enumerate(lines, start=1):
+            haystack = line.lower() if case_insensitive else line
+            needle = pattern.lower() if case_insensitive else pattern
+            matches = haystack == needle if entire_line else needle in haystack
+
+            if matches != invert:
+                if file_names:
+                    output.append(fname + "\n")
+                    break
+
+                prefix = ""
+                if multi_file:
+                    prefix += fname + ":"
+                if line_numbers:
+                    prefix += str(lineno) + ":"
+                output.append(prefix + line + "\n")
+
+    return "".join(output)

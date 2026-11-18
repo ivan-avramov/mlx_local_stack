@@ -1,0 +1,187 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+var (
+	errStack     = errors.New("stack underflow")
+	errDivZero   = errors.New("divide by zero")
+	errUndefined = errors.New("undefined operation")
+	errIllegal   = errors.New("illegal operation")
+)
+
+// A word is a function that transforms the stack.
+type word func(s []int) ([]int, error)
+
+// isNumber reports whether t is a signed integer literal:
+// an optional '-' followed by one or more ASCII digits.
+func isNumber(t string) bool {
+	i := 0
+	if t[0] == '-' {
+		i = 1
+	}
+	if i == len(t) {
+		return false
+	}
+	for ; i < len(t); i++ {
+		if t[i] < '0' || t[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func push(s []int, v ...int) []int {
+	return append(s, v...)
+}
+
+func two(s []int) (int, int, error) {
+	if len(s) < 2 {
+		return 0, 0, errStack
+	}
+	return s[len(s)-2], s[len(s)-1], nil
+}
+
+func one(s []int) (int, error) {
+	if len(s) == 0 {
+		return 0, errStack
+	}
+	return s[len(s)-1], nil
+}
+
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	words := map[string]word{
+		"+": func(s []int) ([]int, error) {
+			a, b, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s[:len(s)-2], a+b), nil
+		},
+		"-": func(s []int) ([]int, error) {
+			a, b, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s[:len(s)-2], a-b), nil
+		},
+		"*": func(s []int) ([]int, error) {
+			a, b, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s[:len(s)-2], a*b), nil
+		},
+		"/": func(s []int) ([]int, error) {
+			a, b, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			if b == 0 {
+				return nil, errDivZero
+			}
+			return push(s[:len(s)-2], a/b), nil
+		},
+		"dup": func(s []int) ([]int, error) {
+			v, err := one(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s, v), nil
+		},
+		"drop": func(s []int) ([]int, error) {
+			if len(s) == 0 {
+				return nil, errStack
+			}
+			return s[:len(s)-1], nil
+		},
+		"swap": func(s []int) ([]int, error) {
+			a, b, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s[:len(s)-2], b, a), nil
+		},
+		"over": func(s []int) ([]int, error) {
+			a, _, err := two(s)
+			if err != nil {
+				return nil, err
+			}
+			return push(s, a), nil
+		},
+	}
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		for i := 0; i < len(tokens); i++ {
+			tok := strings.ToLower(tokens[i])
+			switch {
+			case tok == ":":
+				if i+1 >= len(tokens) {
+					return nil, errIllegal
+				}
+				name := strings.ToLower(tokens[i+1])
+				if isNumber(name) {
+					return nil, errIllegal
+				}
+				end := -1
+				for j := i + 2; j < len(tokens); j++ {
+					if strings.ToLower(tokens[j]) == ";" {
+						end = j
+						break
+					}
+				}
+				if end == -1 {
+					return nil, errIllegal
+				}
+				// Resolve each token against the dictionary as it is now,
+				// so a redefinition refers to the previous meaning.
+				def := make([]word, 0, end-i-2)
+				for _, t := range tokens[i+2 : end] {
+					t = strings.ToLower(t)
+					if isNumber(t) {
+						n, _ := strconv.Atoi(t)
+						def = append(def, func(s []int) ([]int, error) {
+							return push(s, n), nil
+						})
+						continue
+					}
+					w, ok := words[t]
+					if !ok {
+						return nil, errUndefined
+					}
+					def = append(def, w)
+				}
+				words[name] = func(s []int) ([]int, error) {
+					for _, w := range def {
+						var err error
+						s, err = w(s)
+						if err != nil {
+							return nil, err
+						}
+					}
+					return s, nil
+				}
+				i = end
+			case isNumber(tok):
+				n, _ := strconv.Atoi(tok)
+				stack = push(stack, n)
+			default:
+				w, ok := words[tok]
+				if !ok {
+					return nil, errUndefined
+				}
+				var err error
+				stack, err = w(stack)
+				if err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	return stack, nil
+}

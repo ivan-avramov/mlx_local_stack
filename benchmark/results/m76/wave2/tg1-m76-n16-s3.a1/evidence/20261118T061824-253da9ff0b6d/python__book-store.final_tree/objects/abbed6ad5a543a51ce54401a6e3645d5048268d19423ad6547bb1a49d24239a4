@@ -1,0 +1,38 @@
+from collections import Counter
+from functools import lru_cache
+
+PRICE = {0: 0, 1: 800, 2: 1520, 3: 2160, 4: 2560, 5: 3000}
+
+
+@lru_cache(maxsize=None)
+def _best(counts):
+    """Minimum price for the remaining books.
+
+    ``counts`` is a tuple of the five book counts, sorted in descending
+    order. Each step picks a group of distinct titles (one copy of each)
+    of any size from 1 to 5.
+    """
+    if not any(counts):
+        return 0
+    best = float("inf")
+    for mask in range(1, 1 << len(counts)):
+        new = []
+        valid = True
+        for i, c in enumerate(counts):
+            c -= mask >> i & 1
+            if c < 0:
+                valid = False
+                break
+            new.append(c)
+        if not valid:
+            continue
+        size = bin(mask).count("1")
+        best = min(best, PRICE[size] + _best(tuple(sorted(new, reverse=True))))
+    return best
+
+
+def total(basket):
+    counts = Counter(basket)
+    c = tuple(sorted(counts.values(), reverse=True))
+    c += (0,) * (5 - len(c))
+    return _best(c)

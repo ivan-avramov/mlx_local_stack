@@ -1,0 +1,33 @@
+def can_chain(dominoes):
+    """Return a chain of dominoes whose ends match, or None if impossible.
+
+    Each domino may be used as given or flipped. The first half of each
+    domino must match the second half of its predecessor, and the first
+    half of the first domino must match the second half of the last one.
+    """
+    if not dominoes:
+        return []
+
+    def backtrack(remaining, chain, right):
+        if not remaining:
+            if chain[0][0] == right:
+                return chain
+            return None
+        for i, (a, b) in enumerate(remaining):
+            rest = remaining[:i] + remaining[i + 1:]
+            if a == right:
+                result = backtrack(rest, chain + [(a, b)], b)
+                if result:
+                    return result
+            elif b == right:
+                result = backtrack(rest, chain + [(b, a)], a)
+                if result:
+                    return result
+        return None
+
+    for i, (a, b) in enumerate(dominoes):
+        rest = dominoes[:i] + dominoes[i + 1:]
+        result = backtrack(rest, [(a, b)], b)
+        if result:
+            return result
+    return None

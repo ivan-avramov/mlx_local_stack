@@ -1,0 +1,209 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form
+// "WORD1 + WORD2 + ... + WORDN == RESULT", returning a mapping of each
+// letter to a distinct digit such that the sum is valid. Letters that start
+// a multi-letter word may not map to zero. An error is returned when the
+// puzzle has no solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, " == ")
+	if len(eq) != 2 {
+		return nil, errors.New("invalid puzzle")
+	}
+	addends := strings.Split(eq[0], " + ")
+	result := eq[1]
+
+	// Index each distinct letter and mark letters that may not be zero.
+	idx := map[string]int{}
+	letters := []string{}
+	noZero := []bool{}
+	addLetter := func(l string) int {
+		if i, ok := idx[l]; ok {
+			return i
+		}
+		idx[l] = len(letters)
+		letters = append(letters, l)
+		noZero = append(noZero, false)
+		return idx[l]
+	}
+	markLeading := func(w string) {
+		if len(w) > 1 {
+			noZero[idx[w[:1]]] = true
+		}
+	}
+	for _, w := range addends {
+		for i := 0; i < len(w); i++ {
+			addLetter(w[i : i+1])
+		}
+		markLeading(w)
+	}
+	for i := 0; i < len(result); i++ {
+		addLetter(result[i : i+1])
+	}
+	markLeading(result)
+
+	if len(letters) > 10 {
+		return nil, errors.New("no solution")
+	}
+
+	// Build the columns right-to-left as letter indices (-1 = word is
+	// shorter than this column). The last entry of each column is the
+	// result letter.
+	maxLen := len(result)
+	for _, w := range addends {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+	cols := make([][]int, maxLen)
+	for c := 0; c < maxLen; c++ {
+		col := make([]int, len(addends)+1)
+		for i := range col {
+			col[i] = -1
+		}
+		for i, w := range addends {
+			if c < len(w) {
+				col[i] = idx[w[len(w)-1-c : len(w)-c]]
+			}
+		}
+		if c < len(result) {
+			col[len(addends)] = idx[result[len(result)-1-c : len(result)-c]]
+		}
+		cols[c] = col
+	}
+
+	assign := make([]int, len(letters))
+	for i := range assign {
+		assign[i] = -1
+	}
+	used := [10]bool{}
+
+	if search(cols, 0, 0, assign, noZero, &used) {
+		out := make(map[string]int, len(letters))
+		for i, l := range letters {
+			out[l] = assign[i]
+		}
+		return out, nil
+	}
+	return nil, errors.New("no solution")
+}
+
+// search satisfies the column equations from cols[i] onward, given the carry
+// into column i. A column is valid when the sum of its addend digits plus
+// the incoming carry equals the result digit plus ten times the outgoing
+// carry.
+func search(cols [][]int, i, carry int, assign []int, noZero []bool, used *[10]bool) bool {
+	if i == len(cols) {
+		return carry == 0
+	}
+	col := cols[i]
+	res := col[len(col)-1]
+
+	// Sum the digits of this column's addends that are already assigned,
+	// and collect the letters that are not yet assigned along with how many
+	// times each occurs in the column.
+	sum := 0
+	var unassigned, count []int
+	pos := make([]int, len(assign))
+	for i := range pos {
+		pos[i] = -1
+	}
+	for _, l := range col[:len(col)-1] {
+		switch {
+		case l < 0:
+		case assign[l] >= 0:
+			sum += assign[l]
+		case pos[l] >= 0:
+			count[pos[l]]++
+		default:
+			pos[l] = len(unassigned)
+			unassigned = append(unassigned, l)
+			count = append(count, 1)
+		}
+	}
+
+	// When the result digit is already fixed (assigned, or the result word
+	// is shorter than this column), the column equation determines the last
+	// unassigned addend letter modulo 10, so derive it instead of permuting.
+	derive := -1
+	if len(unassigned) > 0 && count[len(count)-1] == 1 && (res < 0 || assign[res] >= 0) {
+		derive = unassigned[len(unassigned)-1]
+		unassigned = unassigned[:len(unassigned)-1]
+		count = count[:len(count)-1]
+	}
+
+	var permute func(k, sum int) bool
+	permute = func(k, sum int) bool {
+		if k == len(unassigned) {
+			total := sum + carry
+			switch {
+			case derive >= 0:
+				required := 0
+				if res >= 0 {
+					required = assign[res]
+				}
+				d := (required - total) % 10
+				if d < 0 {
+					d += 10
+				}
+				if used[d] || (noZero[derive] && d == 0) {
+					return false
+				}
+				assign[derive] = d
+				used[d] = true
+				ok := search(cols, i+1, (total+d-required)/10, assign, noZero, used)
+				if !ok {
+					assign[derive] = -1
+					used[d] = false
+				}
+				return ok
+			case res < 0:
+				// No result digit in this column: the total must end in zero.
+				if total%10 != 0 {
+					return false
+				}
+				return search(cols, i+1, total/10, assign, noZero, used)
+			case assign[res] < 0:
+				// The result letter is new: it must equal the total mod 10.
+				d := total % 10
+				if used[d] || (noZero[res] && d == 0) {
+					return false
+				}
+				assign[res] = d
+				used[d] = true
+				ok := search(cols, i+1, total/10, assign, noZero, used)
+				if !ok {
+					assign[res] = -1
+					used[d] = false
+				}
+				return ok
+			default:
+				if total%10 != assign[res] {
+					return false
+				}
+				return search(cols, i+1, total/10, assign, noZero, used)
+			}
+		}
+		l := unassigned[k]
+		for d := 0; d < 10; d++ {
+			if used[d] || (noZero[l] && d == 0) {
+				continue
+			}
+			assign[l] = d
+			used[d] = true
+			if permute(k+1, sum+count[k]*d) {
+				return true
+			}
+			assign[l] = -1
+			used[d] = false
+		}
+		return false
+	}
+
+	return permute(0, sum)
+}

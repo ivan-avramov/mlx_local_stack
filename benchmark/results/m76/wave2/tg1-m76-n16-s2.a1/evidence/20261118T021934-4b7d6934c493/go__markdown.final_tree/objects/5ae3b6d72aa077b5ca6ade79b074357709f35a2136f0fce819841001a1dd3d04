@@ -1,0 +1,159 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//
+// The original implementation was a single character-by-character scanner
+// with several intertwined state variables (header level, list count,
+// booleans) and special cases such as treating a 7th '#' as the start of a
+// paragraph, or wrapping the whole document in <p> at the end.
+//
+// The rewrite splits the work into two passes:
+//  1. replaceEmphasis converts the first __...__ pair to <strong> and the
+//     first _..._ pair to <em>, matching the original global behaviour.
+//  2. A line-based pass renders each line as a header, a list item, or
+//     plain paragraph text, closing any open element when the line type
+//     changes.
+//
+// State is held in a small renderer struct, so the main loop only decides
+// what kind of line it is.
+func Render(markdown string) string {
+	markdown = replaceEmphasis(markdown)
+
+	var b strings.Builder
+	r := &renderer{}
+
+	for _, line := range strings.Split(markdown, "\n") {
+		r.renderLine(line, &b)
+	}
+	r.close(&b)
+	return b.String()
+}
+
+// replaceEmphasis converts the first "__" pair to <strong> tags and the
+// first "_" pair to <em> tags, as in the original implementation.
+func replaceEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// renderer tracks which HTML element is currently open while lines are
+// rendered, so elements can be closed when the content type changes.
+type renderer struct {
+	headerLevel int  // > 0 while a header is open
+	inList      bool // true while a <ul> is open
+	inItem      bool // true while a <li> is open
+	inParagraph bool // true while a <p> is open
+}
+
+// renderLine renders a single line of markdown, closing any open element
+// that does not continue on this line.
+func (r *renderer) renderLine(line string, b *strings.Builder) {
+	if level, rest, ok := headerLine(line); ok {
+		r.closeList(b)
+		r.closeParagraph(b)
+		b.WriteString(fmt.Sprintf("<h%d>", level))
+		r.headerLevel = level
+		b.WriteString(rest)
+		return
+	}
+
+	if rest, ok := listItemLine(line); ok {
+		r.closeHeader(b)
+		r.closeParagraph(b)
+		r.closeItem(b)
+		if !r.inList {
+			b.WriteString("<ul>")
+			r.inList = true
+		}
+		b.WriteString("<li>")
+		r.inItem = true
+		b.WriteString(rest)
+		return
+	}
+
+	// Anything else is plain paragraph text.
+	r.closeHeader(b)
+	r.closeList(b)
+	if !r.inParagraph {
+		b.WriteString("<p>")
+		r.inParagraph = true
+	}
+	b.WriteString(line)
+}
+
+// close closes every element still open at the end of the document.
+func (r *renderer) close(b *strings.Builder) {
+	r.closeHeader(b)
+	r.closeList(b)
+	r.closeParagraph(b)
+}
+
+func (r *renderer) closeHeader(b *strings.Builder) {
+	if r.headerLevel > 0 {
+		b.WriteString(fmt.Sprintf("</h%d>", r.headerLevel))
+		r.headerLevel = 0
+	}
+}
+
+func (r *renderer) closeList(b *strings.Builder) {
+	r.closeItem(b)
+	if r.inList {
+		b.WriteString("</ul>")
+		r.inList = false
+	}
+}
+
+func (r *renderer) closeItem(b *strings.Builder) {
+	if r.inItem {
+		b.WriteString("</li>")
+		r.inItem = false
+	}
+}
+
+func (r *renderer) closeParagraph(b *strings.Builder) {
+	if r.inParagraph {
+		b.WriteString("</p>")
+		r.inParagraph = false
+	}
+}
+
+// headerLine reports whether line is a header, i.e. it starts with 1 to 6
+// '#' characters, and returns the header level and the header text. Seven
+// or more leading '#' characters are not a header and are treated as plain
+// paragraph text.
+func headerLine(line string) (level int, rest string, ok bool) {
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 {
+		return 0, "", false
+	}
+	rest = line[level:]
+	if strings.HasPrefix(rest, " ") {
+		rest = rest[1:]
+	}
+	return level, rest, true
+}
+
+// listItemLine reports whether line is a list item, i.e. it starts with
+// '*', and returns the item text.
+func listItemLine(line string) (string, bool) {
+	if !strings.HasPrefix(line, "*") {
+		return "", false
+	}
+	rest := line[1:]
+	if strings.HasPrefix(rest, " ") {
+		rest = rest[1:]
+	}
+	return rest, true
+}

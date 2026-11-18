@@ -1,0 +1,93 @@
+package connect
+
+import "strings"
+
+// ResultOf determines the winner of a game of Hex (Polygon / CON-TAC-TIX).
+//
+// Each line of lines is one row of the parallelogram board. Leading spaces
+// are only for readability and are ignored. Player "X" plays from left to
+// right, player "O" plays from top to bottom. It returns "X" or "O" if that
+// player has connected their two assigned sides, or "" if nobody has won.
+func ResultOf(lines []string) (string, error) {
+	board := make([][]rune, len(lines))
+	width := 0
+	for i, line := range lines {
+		row := []rune(strings.ReplaceAll(line, " ", ""))
+		board[i] = row
+		if len(row) > width {
+			width = len(row)
+		}
+	}
+
+	if win(board, 'X', width) {
+		return "X", nil
+	}
+	if win(board, 'O', width) {
+		return "O", nil
+	}
+	return "", nil
+}
+
+// win reports whether player p has a connected chain of stones from one side
+// of the board to the opposite side. Player 'X' must connect the left and
+// right sides; player 'O' must connect the top and bottom sides.
+func win(board [][]rune, p rune, width int) bool {
+	height := len(board)
+	if height == 0 || width == 0 {
+		return false
+	}
+
+	// Each row is shifted half a cell to the right relative to the row above,
+	// so the six neighbours of cell (r, c) are:
+	neighbours := [6][2]int{
+		{0, -1}, {0, 1}, // same row
+		{-1, 0}, {-1, 1}, // row above
+		{1, -1}, {1, 0}, // row below
+	}
+
+	var start, goal func(r, c int) bool
+	if p == 'X' {
+		start = func(r, c int) bool { return c == 0 }
+		goal = func(r, c int) bool { return c == width-1 }
+	} else {
+		start = func(r, c int) bool { return r == 0 }
+		goal = func(r, c int) bool { return r == height-1 }
+	}
+
+	visited := make([][]bool, height)
+	for r := range visited {
+		visited[r] = make([]bool, len(board[r]))
+	}
+
+	var stack [][2]int
+	for r := 0; r < height; r++ {
+		for c := 0; c < len(board[r]); c++ {
+			if board[r][c] == p && start(r, c) {
+				visited[r][c] = true
+				stack = append(stack, [2]int{r, c})
+			}
+		}
+	}
+
+	for len(stack) > 0 {
+		cell := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		r, c := cell[0], cell[1]
+		if goal(r, c) {
+			return true
+		}
+		for _, d := range neighbours {
+			nr, nc := r+d[0], c+d[1]
+			if nr < 0 || nr >= height || nc < 0 || nc >= len(board[nr]) {
+				continue
+			}
+			if board[nr][nc] != p || visited[nr][nc] {
+				continue
+			}
+			visited[nr][nc] = true
+			stack = append(stack, [2]int{nr, nc})
+		}
+	}
+
+	return false
+}

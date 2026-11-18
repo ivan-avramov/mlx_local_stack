@@ -1,0 +1,97 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//
+// The original implementation scanned the input one byte at a time while
+// juggling several flags (header level, list depth, "list opened",
+// "header ended") and special-cased things like a second run of '#'
+// mid-header. It worked, but the state machine was hard to follow.
+//
+// The rewrite keeps the same overall strategy — emphasis markers are
+// substituted up front, then the document is parsed — but parses line by
+// line instead of byte by byte. Each line is independently one of:
+//
+//   - a header:    one to six leading '#' characters
+//   - a list item: a leading '* '
+//   - plain text:  wrapped in a <p> element
+//
+// A non-list line closes an open list, and a header is opened and closed
+// within its own line, so the only state carried across lines is whether
+// we are inside a list.
+func Render(markdown string) string {
+	var html strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(applyEmphasis(markdown), "\n") {
+		if level, ok := headerLevel(line); ok {
+			if inList {
+				html.WriteString("</ul>")
+				inList = false
+			}
+			html.WriteString(fmt.Sprintf("<h%d>%s</h%d>", level, headerText(line, level), level))
+			continue
+		}
+
+		if strings.HasPrefix(line, "* ") {
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + line[2:] + "</li>")
+			continue
+		}
+
+		if inList {
+			html.WriteString("</ul>")
+			inList = false
+		}
+		html.WriteString("<p>" + line + "</p>")
+	}
+
+	if inList {
+		html.WriteString("</ul>")
+	}
+	return html.String()
+}
+
+// applyEmphasis converts the first pair of emphasis markers to HTML tags.
+// Only the first occurrence of each marker is converted, matching the
+// original implementation's use of strings.Replace with n=1.
+func applyEmphasis(markdown string) string {
+	markdown = strings.Replace(markdown, "__", "<strong>", 1)
+	markdown = strings.Replace(markdown, "__", "</strong>", 1)
+	markdown = strings.Replace(markdown, "_", "<em>", 1)
+	markdown = strings.Replace(markdown, "_", "</em>", 1)
+	return markdown
+}
+
+// headerLevel reports whether line starts a header and, if so, its level.
+// Seven or more leading '#' characters are not a header; they are plain
+// paragraph text.
+func headerLevel(line string) (int, bool) {
+	level := 0
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 {
+		return 0, false
+	}
+	return level, true
+}
+
+// headerText returns the header's text: everything after the leading '#'
+// characters, dropping a single separating space if there is one.
+func headerText(line string, level int) string {
+	text := line[level:]
+	if strings.HasPrefix(text, " ") {
+		text = text[1:]
+	}
+	return text
+}

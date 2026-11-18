@@ -1,0 +1,114 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll    = errors.New("Negative roll is invalid")
+	errPinCountExceeds = errors.New("Pin count exceeds pins on the lane")
+	errGameOver        = errors.New("Cannot roll after game is over")
+	errIncompleteGame  = errors.New("Score cannot be taken until the end of the game")
+)
+
+// Game keeps track of a game of bowling.
+type Game struct {
+	rolls []int
+
+	frame      int // 0-based current frame (0-9)
+	pinsFrame  int // pins knocked down in the current frame (frames 1-9)
+	frameRolls int // rolls made in the current frame (frames 1-9)
+
+	// Frame 10 state.
+	tenthRolls int // rolls made in the tenth frame
+	tenthPins  int // pins knocked down in the current lane state of the tenth frame
+	tenthMax   int // number of rolls allowed in the tenth frame (2 or 3)
+
+	over bool
+}
+
+// NewGame returns a new, empty Game.
+func NewGame() *Game {
+	return &Game{tenthMax: 2}
+}
+
+// Roll records a ball throw that knocked down pins pins.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errPinCountExceeds
+	}
+	if g.over {
+		return errGameOver
+	}
+
+	if g.frame < 9 {
+		// Frames 1-9: at most two rolls, never exceeding 10 pins.
+		if g.pinsFrame+pins > 10 {
+			return errPinCountExceeds
+		}
+		g.pinsFrame += pins
+		g.frameRolls++
+		g.rolls = append(g.rolls, pins)
+		if g.pinsFrame == 10 || g.frameRolls == 2 {
+			g.frame++
+			g.pinsFrame = 0
+			g.frameRolls = 0
+		}
+		return nil
+	}
+
+	// Tenth frame: fill balls for strikes and spares.
+	if g.tenthPins+pins > 10 {
+		return errPinCountExceeds
+	}
+	g.tenthPins += pins
+	g.tenthRolls++
+	g.rolls = append(g.rolls, pins)
+
+	switch g.tenthRolls {
+	case 1:
+		if pins == 10 { // strike: two fill balls
+			g.tenthMax = 3
+			g.tenthPins = 0
+		}
+	case 2:
+		if g.tenthPins == 10 { // spare: one fill ball
+			g.tenthMax = 3
+			g.tenthPins = 0
+		}
+	}
+
+	if g.tenthRolls >= g.tenthMax {
+		g.over = true
+	}
+	return nil
+}
+
+// Score returns the total score for a completed game.
+func (g *Game) Score() (int, error) {
+	if !g.over {
+		return 0, errIncompleteGame
+	}
+	return scoreGame(g.rolls), nil
+}
+
+// scoreGame computes the total score from a complete sequence of rolls.
+func scoreGame(rolls []int) int {
+	score := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case rolls[i] == 10: // strike
+			score += 10 + rolls[i+1] + rolls[i+2]
+			i++
+		case rolls[i]+rolls[i+1] == 10: // spare
+			score += 10 + rolls[i+2]
+			i += 2
+		default: // open frame
+			score += rolls[i] + rolls[i+1]
+			i += 2
+		}
+	}
+	return score
+}

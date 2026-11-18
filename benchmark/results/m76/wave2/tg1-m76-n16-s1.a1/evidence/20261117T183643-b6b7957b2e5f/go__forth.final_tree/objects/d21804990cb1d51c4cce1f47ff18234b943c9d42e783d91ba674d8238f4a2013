@@ -1,0 +1,164 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Forth evaluates a sequence of Forth source lines and returns the final
+// contents of the stack.
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	dict := map[string][]string{}
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		for i := 0; i < len(tokens); {
+			if strings.EqualFold(tokens[i], ":") {
+				name, body, next, err := parseDefinition(tokens, i)
+				if err != nil {
+					return nil, err
+				}
+				dict[name] = expand(body, dict)
+				i = next
+				continue
+			}
+			if err := exec(tokens[i], dict, &stack); err != nil {
+				return nil, err
+			}
+			i++
+		}
+	}
+	return stack, nil
+}
+
+// parseDefinition parses a ": name body ;" definition starting at tokens[i].
+// It returns the word name, the definition body, and the index of the token
+// following the terminating ";".
+func parseDefinition(tokens []string, i int) (string, []string, int, error) {
+	if i+2 >= len(tokens) {
+		return "", nil, 0, errors.New("malformed definition")
+	}
+	name := strings.ToLower(tokens[i+1])
+	if isNumber(name) {
+		return "", nil, 0, errors.New("illegal operation")
+	}
+	for j := i + 2; j < len(tokens); j++ {
+		if strings.EqualFold(tokens[j], ";") {
+			return name, tokens[i+2 : j], j + 1, nil
+		}
+	}
+	return "", nil, 0, errors.New("malformed definition")
+}
+
+// expand resolves each token of a definition body against the dictionary as
+// it stands at definition time, so that later redefinitions of a word do not
+// change the behavior of words defined earlier.
+func expand(tokens []string, dict map[string][]string) []string {
+	body := make([]string, 0, len(tokens))
+	for _, tok := range tokens {
+		if def, ok := dict[strings.ToLower(tok)]; ok {
+			body = append(body, def...)
+		} else {
+			body = append(body, tok)
+		}
+	}
+	return body
+}
+
+// exec executes a single token against the stack.
+func exec(tok string, dict map[string][]string, stack *[]int) error {
+	key := strings.ToLower(tok)
+	if def, ok := dict[key]; ok {
+		for _, t := range def {
+			if err := exec(t, dict, stack); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if isNumber(tok) {
+		n, err := strconv.Atoi(tok)
+		if err != nil {
+			return errors.New("undefined operation")
+		}
+		*stack = append(*stack, n)
+		return nil
+	}
+	switch key {
+	case "+", "-", "*", "/":
+		if len(*stack) < 2 {
+			return errors.New("stack underflow")
+		}
+		b := (*stack)[len(*stack)-1]
+		a := (*stack)[len(*stack)-2]
+		*stack = (*stack)[:len(*stack)-2]
+		var r int
+		switch key {
+		case "+":
+			r = a + b
+		case "-":
+			r = a - b
+		case "*":
+			r = a * b
+		default:
+			if b == 0 {
+				return errors.New("divide by zero")
+			}
+			r = a / b
+		}
+		*stack = append(*stack, r)
+		return nil
+	case "dup":
+		if len(*stack) < 1 {
+			return errors.New("stack underflow")
+		}
+		top := (*stack)[len(*stack)-1]
+		*stack = append(*stack, top)
+		return nil
+	case "drop":
+		if len(*stack) < 1 {
+			return errors.New("stack underflow")
+		}
+		*stack = (*stack)[:len(*stack)-1]
+		return nil
+	case "swap":
+		if len(*stack) < 2 {
+			return errors.New("stack underflow")
+		}
+		top := (*stack)[len(*stack)-1]
+		(*stack)[len(*stack)-1] = (*stack)[len(*stack)-2]
+		(*stack)[len(*stack)-2] = top
+		return nil
+	case "over":
+		if len(*stack) < 2 {
+			return errors.New("stack underflow")
+		}
+		second := (*stack)[len(*stack)-2]
+		*stack = append(*stack, second)
+		return nil
+	}
+	return errors.New("undefined operation")
+}
+
+// isNumber reports whether tok is a number: an optional "-" followed by one
+// or more ASCII digits.
+func isNumber(tok string) bool {
+	if tok == "" {
+		return false
+	}
+	start := 0
+	if tok[0] == '-' {
+		start = 1
+	}
+	if start == len(tok) {
+		return false
+	}
+	for _, c := range tok[start:] {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}

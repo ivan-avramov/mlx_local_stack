@@ -1,0 +1,111 @@
+package alphametics
+
+import (
+	"errors"
+	"sort"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form "WORD + WORD == WORD".
+// It returns a mapping of each letter to a distinct digit, or an error if
+// no valid assignment exists.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, errors.New("invalid puzzle: expected exactly one '=='")
+	}
+
+	addends := strings.Split(eq[0], "+")
+	for i := range addends {
+		addends[i] = strings.TrimSpace(addends[i])
+	}
+	result := strings.TrimSpace(eq[1])
+
+	// coeff[r] is the net place-value weight of letter r: positive for
+	// occurrences in the addends, negative for occurrences in the result.
+	// A valid assignment satisfies sum(coeff[r] * digit[r]) == 0.
+	coeff := map[rune]int{}
+	leading := map[rune]bool{}
+	for _, w := range addends {
+		markLeading(w, leading)
+		accumulate(w, 1, coeff)
+	}
+	markLeading(result, leading)
+	accumulate(result, -1, coeff)
+
+	// Try the letters with the largest absolute weight first so the
+	// running-sum bound prunes the search tree early.
+	letters := make([]rune, 0, len(coeff))
+	for r := range coeff {
+		letters = append(letters, r)
+	}
+	sort.Slice(letters, func(i, j int) bool {
+		return abs(coeff[letters[i]]) > abs(coeff[letters[j]])
+	})
+
+	// bound[i] is the maximum magnitude the unassigned letters
+	// letters[i:] can still contribute.
+	bound := make([]int, len(letters)+1)
+	for i := len(letters) - 1; i >= 0; i-- {
+		bound[i] = bound[i+1] + 9*abs(coeff[letters[i]])
+	}
+
+	assign := make(map[string]int, len(letters))
+	used := [10]bool{}
+
+	var solve func(i, sum int) bool
+	solve = func(i, sum int) bool {
+		if i == len(letters) {
+			return sum == 0
+		}
+		if abs(sum) > bound[i] {
+			return false
+		}
+		r := letters[i]
+		for d := 0; d <= 9; d++ {
+			if used[d] || (d == 0 && leading[r]) {
+				continue
+			}
+			used[d] = true
+			assign[string(r)] = d
+			if solve(i+1, sum+coeff[r]*d) {
+				return true
+			}
+			used[d] = false
+			delete(assign, string(r))
+		}
+		return false
+	}
+
+	if !solve(0, 0) {
+		return nil, errors.New("no solution found")
+	}
+	return assign, nil
+}
+
+// markLeading records the first letter of w as a leading letter when w has
+// more than one digit.
+func markLeading(w string, leading map[rune]bool) {
+	if len(w) > 1 {
+		leading[rune(w[0])] = true
+	}
+}
+
+// accumulate adds sign * 10^(position from the right) to coeff for every
+// letter of w.
+func accumulate(w string, sign int, coeff map[rune]int) {
+	for i, r := range w {
+		pow := 1
+		for j := i + 1; j < len(w); j++ {
+			pow *= 10
+		}
+		coeff[r] += sign * pow
+	}
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}

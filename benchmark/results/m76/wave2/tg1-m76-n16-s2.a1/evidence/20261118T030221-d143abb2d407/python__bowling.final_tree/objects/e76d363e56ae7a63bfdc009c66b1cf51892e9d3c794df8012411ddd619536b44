@@ -1,0 +1,57 @@
+class BowlingGame:
+    def __init__(self):
+        self.frames = []
+        self.frame_rolls = []
+
+    def roll(self, pins):
+        if pins < 0:
+            raise ValueError("Roll cannot score negative points")
+        if pins > 10:
+            raise ValueError("Roll cannot score more than 10 points")
+        if len(self.frames) == 10:
+            raise ValueError("Cannot roll if game already has ten frames")
+
+        if len(self.frames) < 9:
+            self._roll_in_regular_frame(pins)
+        else:
+            self._roll_in_tenth_frame(pins)
+
+    def _roll_in_regular_frame(self, pins):
+        frame = self.frame_rolls
+        if len(frame) == 1 and pins > 10 - frame[0]:
+            raise ValueError("Two rolls in a frame cannot score more than 10 points")
+        frame.append(pins)
+        if len(frame) == 2 or frame[0] == 10:
+            self._complete_frame()
+
+    def _roll_in_tenth_frame(self, pins):
+        frame = self.frame_rolls
+        if len(frame) == 1 and frame[0] != 10 and pins > 10 - frame[0]:
+            raise ValueError("Two rolls in a frame cannot score more than 10 points")
+        if len(frame) == 2 and frame[0] == 10 and frame[1] != 10 and pins > 10 - frame[1]:
+            raise ValueError("Two rolls in a frame cannot score more than 10 points")
+        frame.append(pins)
+        if len(frame) == 3 or (len(frame) == 2 and frame[0] + frame[1] < 10):
+            self._complete_frame()
+
+    def _complete_frame(self):
+        self.frames.append(self.frame_rolls)
+        self.frame_rolls = []
+
+    def score(self):
+        if len(self.frames) < 10:
+            raise ValueError("Game is not complete")
+        rolls = [roll for frame in self.frames for roll in frame]
+        total = 0
+        i = 0
+        for _ in range(10):
+            if rolls[i] == 10:
+                total += 10 + rolls[i + 1] + rolls[i + 2]
+                i += 1
+            elif rolls[i] + rolls[i + 1] == 10:
+                total += 10 + rolls[i + 2]
+                i += 2
+            else:
+                total += rolls[i] + rolls[i + 1]
+                i += 2
+        return total

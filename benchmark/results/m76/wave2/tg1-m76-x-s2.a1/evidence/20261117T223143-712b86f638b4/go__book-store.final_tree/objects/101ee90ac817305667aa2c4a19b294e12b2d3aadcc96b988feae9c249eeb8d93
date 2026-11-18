@@ -1,0 +1,31 @@
+package bookstore
+
+import "sort"
+
+// groupPrices is the cost, in cents, of a group of n distinct books.
+// A single book costs 800; groups of 2, 3, 4 and 5 distinct books get
+// 5%, 10%, 20% and 25% discounts respectively.
+var groupPrices = []int{800, 1520, 2160, 2560, 3000}
+
+// Cost returns the minimum total cost, in cents, of the books in the
+// basket. Books are identified by title 1-5.
+func Cost(books []int) int {
+	counts := [5]int{}
+	for _, book := range books {
+		counts[book-1]++
+	}
+
+	// Sort the per-title counts so the least-represented titles come first.
+	c := counts[:]
+	sort.Ints(c)
+
+	// Peel groups off from the top of the sorted counts: as many groups of
+	// 5 as possible, then 4, then 4, then 3, then 2, then single books.
+	// This avoids suboptimal splits such as a group of 5 plus a group of 3
+	// where two groups of 4 would be cheaper.
+	return c[4]*groupPrices[4] +
+		(c[3]-c[4])*groupPrices[3] +
+		(c[2]-c[3])*groupPrices[3] +
+		(c[1]-c[2])*groupPrices[2] +
+		c[0]*groupPrices[1]
+}

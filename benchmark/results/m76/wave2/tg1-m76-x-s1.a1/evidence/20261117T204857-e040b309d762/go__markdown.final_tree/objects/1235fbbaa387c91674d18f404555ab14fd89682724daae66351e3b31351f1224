@@ -1,0 +1,89 @@
+package markdown
+
+import (
+	"fmt"
+	"strings"
+)
+
+// Render translates markdown to HTML.
+//
+// Refactoring notes:
+//   - The original implementation scanned the input one character at a time
+//     while juggling a header level, a list counter, an "item open" flag and
+//     a "header emitted" flag, which made the control flow hard to follow.
+//     The rewrite processes the document line by line, so each rule (header,
+//     list item, paragraph) is handled in one obvious place.
+//   - Emphasis conversion ("__" -> <strong>, "_" -> <em>) is still applied to
+//     the whole document before structural parsing, exactly as before.
+func Render(markdown string) string {
+	markdown = applyEmphasis(markdown)
+
+	var html strings.Builder
+	inList := false
+
+	for _, line := range strings.Split(markdown, "\n") {
+		if inList && !isListItem(line) {
+			html.WriteString("</ul>")
+			inList = false
+		}
+
+		switch {
+		case isHeader(line):
+			level, text, _ := headerLevel(line)
+			html.WriteString(fmt.Sprintf("<h%d>%s</h%d>", level, text, level))
+		case isListItem(line):
+			if !inList {
+				html.WriteString("<ul>")
+				inList = true
+			}
+			html.WriteString("<li>" + strings.TrimPrefix(line, "* ") + "</li>")
+		default:
+			html.WriteString("<p>" + line + "</p>")
+		}
+	}
+
+	if inList {
+		html.WriteString("</ul>")
+	}
+
+	return html.String()
+}
+
+// applyEmphasis converts the first "__" pair to <strong> and the first
+// remaining "_" pair to <em>, matching the original implementation.
+func applyEmphasis(s string) string {
+	s = strings.Replace(s, "__", "<strong>", 1)
+	s = strings.Replace(s, "__", "</strong>", 1)
+	s = strings.Replace(s, "_", "<em>", 1)
+	s = strings.Replace(s, "_", "</em>", 1)
+	return s
+}
+
+// isHeader reports whether line is a header: 1 to 6 leading '#' characters.
+// Seven or more '#' characters are not a header and stay paragraph text.
+func isHeader(line string) bool {
+	_, _, ok := headerLevel(line)
+	return ok
+}
+
+// headerLevel returns the level and text of a header line. The text is the
+// rest of the line after the hashes and the single character that follows
+// them (usually a space); the original parser skipped exactly one character
+// after the hashes, and this preserves that behavior.
+func headerLevel(line string) (level int, text string, ok bool) {
+	for level < len(line) && line[level] == '#' {
+		level++
+	}
+	if level == 0 || level > 6 {
+		return 0, "", false
+	}
+	if level >= len(line) {
+		return level, "", true
+	}
+	return level, line[level+1:], true
+}
+
+// isListItem reports whether line is an unordered list item ("* " prefix).
+func isListItem(line string) bool {
+	return strings.HasPrefix(line, "* ")
+}

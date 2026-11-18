@@ -1,0 +1,54 @@
+package dominoes
+
+// Domino represents a single domino stone with two halves.
+type Domino [2]int
+
+// MakeChain orders the given dominoes into a closed chain, where the dots on
+// one half of each stone match the neighboring half of an adjacent stone and
+// the two open ends (first and last stones) match each other. It returns the
+// chain and true on success, or nil and false if no such chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	chain, ok := makeChain(input, make([]Domino, 0, len(input)))
+	if !ok {
+		return nil, false
+	}
+	return chain, true
+}
+
+// makeChain builds a closed chain by appending dominoes from remaining onto
+// chain. It backtracks when a choice leads to a dead end and returns the
+// completed chain and true on success.
+func makeChain(remaining, chain []Domino) ([]Domino, bool) {
+	if len(remaining) == 0 {
+		// An empty chain is valid; otherwise the two open ends must match.
+		if len(chain) == 0 || chain[0][0] == chain[len(chain)-1][1] {
+			return chain, true
+		}
+		return nil, false
+	}
+
+	for i, d := range remaining {
+		rest := append(append([]Domino{}, remaining[:i]...), remaining[i+1:]...)
+
+		if len(chain) == 0 {
+			// Any domino can start the chain.
+			if c, ok := makeChain(rest, append(chain, d)); ok {
+				return c, true
+			}
+			continue
+		}
+
+		// Try the domino in both orientations if it connects to the tail.
+		tail := chain[len(chain)-1][1]
+		for _, orientation := range [][2]int{{d[0], d[1]}, {d[1], d[0]}} {
+			if orientation[0] != tail {
+				continue
+			}
+			if c, ok := makeChain(rest, append(chain, Domino(orientation))); ok {
+				return c, true
+			}
+		}
+	}
+
+	return nil, false
+}

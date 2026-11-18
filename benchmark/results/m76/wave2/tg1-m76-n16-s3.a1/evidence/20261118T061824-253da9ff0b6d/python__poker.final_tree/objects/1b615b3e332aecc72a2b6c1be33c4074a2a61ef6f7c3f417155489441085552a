@@ -1,0 +1,55 @@
+_RANKS = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
+
+
+def _score(hand):
+    cards = hand.split()
+    ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+    flush = len({card[-1] for card in cards}) == 1
+
+    unique = sorted(set(ranks), reverse=True)
+    if len(unique) == 5:
+        # A straight: consecutive ranks, except the wheel (A-2-3-4-5).
+        if unique[0] - unique[4] == 4:
+            return (8 if flush else 4, unique[0])
+        if unique == [14, 5, 4, 3, 2]:
+            return (8 if flush else 4, 5)
+
+    counts = {r: ranks.count(r) for r in set(ranks)}
+    # Tiebreakers: ranks ordered by count, then by rank, both descending.
+    tiebreak = [r for r, c in sorted(counts.items(), key=lambda kv: (kv[1], kv[0]), reverse=True)]
+
+    if flush:
+        return (5, *ranks)
+    if len(tiebreak) == 4:
+        return (1, *tiebreak)  # one pair
+    if len(tiebreak) == 3:
+        # full house (3,2), three of a kind (3,1,1), or two pair (2,2,1)
+        if counts[tiebreak[0]] == 3:
+            category = 6 if counts[tiebreak[1]] == 2 else 3
+        else:
+            category = 2
+        return (category, *tiebreak)
+    if len(tiebreak) == 2:
+        category = 7 if counts[tiebreak[0]] == 4 else 6  # four of a kind or full house
+        return (category, *tiebreak)
+    return (0, *ranks)  # high card
+
+
+def best_hands(hands):
+    scored = [(_score(hand), hand) for hand in hands]
+    best = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == best]

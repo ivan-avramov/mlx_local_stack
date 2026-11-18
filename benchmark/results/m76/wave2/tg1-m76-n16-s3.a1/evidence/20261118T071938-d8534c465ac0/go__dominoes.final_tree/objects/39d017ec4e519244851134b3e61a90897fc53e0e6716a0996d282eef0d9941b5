@@ -1,0 +1,109 @@
+package dominoes
+
+// Domino is a single stone: two halves, each carrying a number of dots.
+type Domino [2]int
+
+// MakeChain tries to arrange the given dominoes into a closed chain, i.e. an
+// ordering of all the stones such that neighbouring halves match and the two
+// free ends (first and last stone) match each other. It returns the chain and
+// true on success, or nil and false when no such chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	n := len(input)
+	if n == 0 {
+		return []Domino{}, true
+	}
+
+	// Model the problem as a multigraph: vertices are the dot counts and each
+	// domino is an undirected edge between its two halves. A closed chain is
+	// exactly an Eulerian circuit of this graph.
+	adj := make(map[int][]int) // vertex -> incident edge indices
+	for i, d := range input {
+		adj[d[0]] = append(adj[d[0]], i)
+		adj[d[1]] = append(adj[d[1]], i)
+	}
+
+	// Necessary condition: every vertex must have even degree.
+	for _, edges := range adj {
+		if len(edges)%2 != 0 {
+			return nil, false
+		}
+	}
+
+	// Necessary condition: all vertices with at least one edge must lie in a
+	// single connected component.
+	start := 0
+	for v := range adj {
+		start = v
+		break
+	}
+	visited := make(map[int]bool)
+	queue := []int{start}
+	visited[start] = true
+	for len(queue) > 0 {
+		v := queue[0]
+		queue = queue[1:]
+		for _, ei := range adj[v] {
+			other := otherHalf(input[ei], v)
+			if !visited[other] {
+				visited[other] = true
+				queue = append(queue, other)
+			}
+		}
+	}
+	for v := range adj {
+		if !visited[v] {
+			return nil, false
+		}
+	}
+
+	// Hierholzer's algorithm to extract the Eulerian circuit.
+	used := make([]bool, n)
+	stack := []int{start}
+	var circuit []int
+	for len(stack) > 0 {
+		v := stack[len(stack)-1]
+		// Drop edges already consumed from this vertex's list.
+		kept := make([]int, 0, len(adj[v]))
+		for _, ei := range adj[v] {
+			if !used[ei] {
+				kept = append(kept, ei)
+			}
+		}
+		adj[v] = kept
+		if len(kept) == 0 {
+			circuit = append(circuit, v)
+			stack = stack[:len(stack)-1]
+		} else {
+			ei := kept[0]
+			used[ei] = true
+			adj[v] = kept[1:]
+			stack = append(stack, otherHalf(input[ei], v))
+		}
+	}
+
+	// The pre-checks guarantee every edge is used; verify as a safety net.
+	for _, ok := range used {
+		if !ok {
+			return nil, false
+		}
+	}
+
+	// circuit holds the vertices in reverse order; reverse it.
+	for i, j := 0, len(circuit)-1; i < j; i, j = i+1, j-1 {
+		circuit[i], circuit[j] = circuit[j], circuit[i]
+	}
+
+	chain := make([]Domino, n)
+	for i := 0; i < n; i++ {
+		chain[i] = Domino{circuit[i], circuit[i+1]}
+	}
+	return chain, true
+}
+
+// otherHalf returns the endpoint of edge d that is not v.
+func otherHalf(d Domino, v int) int {
+	if d[0] == v {
+		return d[1]
+	}
+	return d[0]
+}

@@ -1,0 +1,180 @@
+package forth
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// stack is the Forth data stack; the top of the stack is the last element.
+type stack []int
+
+func (s *stack) push(values ...int) error {
+	*s = append(*s, values...)
+	return nil
+}
+
+func (s *stack) pop() (int, error) {
+	if len(*s) == 0 {
+		return 0, errors.New("empty stack")
+	}
+	v := (*s)[len(*s)-1]
+	*s = (*s)[:len(*s)-1]
+	return v, nil
+}
+
+// pop2 returns the top two values; a is the second from the top, b the top.
+func (s *stack) pop2() (a, b int, err error) {
+	switch len(*s) {
+	case 0:
+		return 0, 0, errors.New("empty stack")
+	case 1:
+		return 0, 0, errors.New("only one value on the stack")
+	}
+	b = (*s)[len(*s)-1]
+	a = (*s)[len(*s)-2]
+	*s = (*s)[:len(*s)-2]
+	return a, b, nil
+}
+
+// op is a single compiled Forth operation.
+type op func(s *stack) error
+
+var builtins = map[string]op{
+	"+": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		return s.push(a + b)
+	},
+	"-": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		return s.push(a - b)
+	},
+	"*": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		return s.push(a * b)
+	},
+	"/": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		if b == 0 {
+			return errors.New("divide by zero")
+		}
+		return s.push(a / b)
+	},
+	"dup": func(s *stack) error {
+		v, err := s.pop()
+		if err != nil {
+			return err
+		}
+		return s.push(v, v)
+	},
+	"drop": func(s *stack) error {
+		_, err := s.pop()
+		return err
+	},
+	"swap": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		return s.push(b, a)
+	},
+	"over": func(s *stack) error {
+		a, b, err := s.pop2()
+		if err != nil {
+			return err
+		}
+		return s.push(a, b, a)
+	},
+}
+
+// resolve converts a token into its compiled body. Numbers become a push
+// operation; words are looked up in the user-defined words, then the
+// builtins. Resolution happens at definition time so that a word always
+// refers to the definition that existed when it was compiled.
+func resolve(token string, words map[string][]op) ([]op, error) {
+	if n, err := strconv.Atoi(token); err == nil {
+		return []op{func(s *stack) error { return s.push(n) }}, nil
+	}
+	if body, ok := words[token]; ok {
+		return body, nil
+	}
+	if builtin, ok := builtins[token]; ok {
+		return []op{builtin}, nil
+	}
+	return nil, fmt.Errorf("undefined operation %q", token)
+}
+
+// Forth evaluates a sequence of Forth input lines and returns the final
+// contents of the data stack.
+func Forth(input []string) ([]int, error) {
+	s := stack{}
+	words := map[string][]op{}
+
+	defining := false
+	var defName string
+	var defBody []op
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		for i := 0; i < len(tokens); i++ {
+			token := strings.ToLower(tokens[i])
+
+			if defining {
+				if token == ";" {
+					words[defName] = defBody
+					defining = false
+					continue
+				}
+				body, err := resolve(token, words)
+				if err != nil {
+					return nil, err
+				}
+				defBody = append(defBody, body...)
+				continue
+			}
+
+			if token == ":" {
+				if i+1 >= len(tokens) {
+					return nil, errors.New("incomplete definition")
+				}
+				name := strings.ToLower(tokens[i+1])
+				if _, err := strconv.Atoi(name); err == nil {
+					return nil, errors.New("cannot redefine a number")
+				}
+				defining = true
+				defName = name
+				defBody = nil
+				i++
+				continue
+			}
+
+			body, err := resolve(token, words)
+			if err != nil {
+				return nil, err
+			}
+			for _, o := range body {
+				if err := o(&s); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+
+	if defining {
+		return nil, errors.New("incomplete definition")
+	}
+	return s, nil
+}

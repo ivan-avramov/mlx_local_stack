@@ -1,0 +1,320 @@
+.......F....F....F.......F.F...F.....                                    [100%]
+=================================== FAILURES ===================================
+_____ PokerTest.test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3 ______
+
+self = <poker_test.PokerTest testMethod=test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3>
+
+    def test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3(self):
+        self.assertEqual(
+>           best_hands(["2C 3D 7H 5H 2S", "QS KH AC 2D 3S"]), ["2C 3D 7H 5H 2S"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:132: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:13: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2C 3D 7H 5H 2S'
+
+    def score_hand(hand):
+        """Return a tuple that ranks a hand; higher tuples are better."""
+        cards = hand.split()
+        ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+        is_flush = len({card[-1] for card in cards}) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+    
+        is_wheel = ranks == [14, 5, 4, 3, 2]  # ace-low straight
+        is_straight = len(set(ranks)) == 5 and (ranks[0] - ranks[4] == 4 or is_wheel)
+        # The ace-low straight (A-2-3-4-5) scores as a 5-high straight.
+        straight_high = 5 if is_wheel else (ranks[0] if is_straight else 0)
+    
+        if is_straight and is_flush:
+            return (_STRAIGHT_FLUSH, straight_high)
+        if 4 in counts.values():
+            quad = next(r for r, c in counts.items() if c == 4)
+            kicker = next(r for r, c in counts.items() if c == 1)
+            return (_FOUR_KIND, quad, kicker)
+        if is_flush:
+            return (_FLUSH, *ranks)
+        if 3 in counts.values() and 2 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            pair = next(r for r, c in counts.items() if c == 2)
+            return (_FULL_HOUSE, trip, pair)
+        if 3 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            kickers = sorted((r for r, c in counts.items() if c == 1), reverse=True)
+            return (_THREE_KIND, trip, *kickers)
+        if len(counts) == 4 and 2 in counts.values():
+            pairs = sorted((r for r, c in counts.items() if c == 2), reverse=True)
+            kicker = next(r for r, c in counts.items() if c == 1)
+>           return (_TWO_PAIR, pairs[0], pairs[1], kicker)
+                                         ^^^^^^^^
+E           IndexError: list index out of range
+
+poker.py:52: IndexError
+_________ PokerTest.test_both_hands_have_the_same_pair_high_card_wins __________
+
+self = <poker_test.PokerTest testMethod=test_both_hands_have_the_same_pair_high_card_wins>
+
+    def test_both_hands_have_the_same_pair_high_card_wins(self):
+        self.assertEqual(
+>           best_hands(["4H 4S AH JC 3D", "4C 4D AS 5D 6C"]), ["4H 4S AH JC 3D"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:59: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:13: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4H 4S AH JC 3D'
+
+    def score_hand(hand):
+        """Return a tuple that ranks a hand; higher tuples are better."""
+        cards = hand.split()
+        ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+        is_flush = len({card[-1] for card in cards}) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+    
+        is_wheel = ranks == [14, 5, 4, 3, 2]  # ace-low straight
+        is_straight = len(set(ranks)) == 5 and (ranks[0] - ranks[4] == 4 or is_wheel)
+        # The ace-low straight (A-2-3-4-5) scores as a 5-high straight.
+        straight_high = 5 if is_wheel else (ranks[0] if is_straight else 0)
+    
+        if is_straight and is_flush:
+            return (_STRAIGHT_FLUSH, straight_high)
+        if 4 in counts.values():
+            quad = next(r for r, c in counts.items() if c == 4)
+            kicker = next(r for r, c in counts.items() if c == 1)
+            return (_FOUR_KIND, quad, kicker)
+        if is_flush:
+            return (_FLUSH, *ranks)
+        if 3 in counts.values() and 2 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            pair = next(r for r, c in counts.items() if c == 2)
+            return (_FULL_HOUSE, trip, pair)
+        if 3 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            kickers = sorted((r for r, c in counts.items() if c == 1), reverse=True)
+            return (_THREE_KIND, trip, *kickers)
+        if len(counts) == 4 and 2 in counts.values():
+            pairs = sorted((r for r, c in counts.items() if c == 2), reverse=True)
+            kicker = next(r for r, c in counts.items() if c == 1)
+>           return (_TWO_PAIR, pairs[0], pairs[1], kicker)
+                                         ^^^^^^^^
+E           IndexError: list index out of range
+
+poker.py:52: IndexError
+_ PokerTest.test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair _
+
+self = <poker_test.PokerTest testMethod=test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair>
+
+    def test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair(
+        self,
+    ):
+>       self.assertEqual(
+            best_hands(["2S QS 2C QD JH", "JD QH JS 8D QC"]), ["JD QH JS 8D QC"]
+        )
+E       AssertionError: Lists differ: ['2S QS 2C QD JH'] != ['JD QH JS 8D QC']
+E       
+E       First differing element 0:
+E       '2S QS 2C QD JH'
+E       'JD QH JS 8D QC'
+E       
+E       - ['2S QS 2C QD JH']
+E       + ['JD QH JS 8D QC']
+
+poker_test.py:75: AssertionError
+_______________________ PokerTest.test_highest_pair_wins _______________________
+
+self = <poker_test.PokerTest testMethod=test_highest_pair_wins>
+
+    def test_highest_pair_wins(self):
+        self.assertEqual(
+>           best_hands(["4S 2H 6S 2D JH", "2S 4H 6C 4D JD"]), ["2S 4H 6C 4D JD"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:54: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:13: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '4S 2H 6S 2D JH'
+
+    def score_hand(hand):
+        """Return a tuple that ranks a hand; higher tuples are better."""
+        cards = hand.split()
+        ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+        is_flush = len({card[-1] for card in cards}) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+    
+        is_wheel = ranks == [14, 5, 4, 3, 2]  # ace-low straight
+        is_straight = len(set(ranks)) == 5 and (ranks[0] - ranks[4] == 4 or is_wheel)
+        # The ace-low straight (A-2-3-4-5) scores as a 5-high straight.
+        straight_high = 5 if is_wheel else (ranks[0] if is_straight else 0)
+    
+        if is_straight and is_flush:
+            return (_STRAIGHT_FLUSH, straight_high)
+        if 4 in counts.values():
+            quad = next(r for r, c in counts.items() if c == 4)
+            kicker = next(r for r, c in counts.items() if c == 1)
+            return (_FOUR_KIND, quad, kicker)
+        if is_flush:
+            return (_FLUSH, *ranks)
+        if 3 in counts.values() and 2 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            pair = next(r for r, c in counts.items() if c == 2)
+            return (_FULL_HOUSE, trip, pair)
+        if 3 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            kickers = sorted((r for r, c in counts.items() if c == 1), reverse=True)
+            return (_THREE_KIND, trip, *kickers)
+        if len(counts) == 4 and 2 in counts.values():
+            pairs = sorted((r for r, c in counts.items() if c == 2), reverse=True)
+            kicker = next(r for r, c in counts.items() if c == 1)
+>           return (_TWO_PAIR, pairs[0], pairs[1], kicker)
+                                         ^^^^^^^^
+E           IndexError: list index out of range
+
+poker.py:52: IndexError
+___________________ PokerTest.test_one_pair_beats_high_card ____________________
+
+self = <poker_test.PokerTest testMethod=test_one_pair_beats_high_card>
+
+    def test_one_pair_beats_high_card(self):
+        self.assertEqual(
+>           best_hands(["4S 5H 6C 8D KH", "2S 4H 6S 4D JH"]), ["2S 4H 6S 4D JH"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:49: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:13: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 4H 6S 4D JH'
+
+    def score_hand(hand):
+        """Return a tuple that ranks a hand; higher tuples are better."""
+        cards = hand.split()
+        ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+        is_flush = len({card[-1] for card in cards}) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+    
+        is_wheel = ranks == [14, 5, 4, 3, 2]  # ace-low straight
+        is_straight = len(set(ranks)) == 5 and (ranks[0] - ranks[4] == 4 or is_wheel)
+        # The ace-low straight (A-2-3-4-5) scores as a 5-high straight.
+        straight_high = 5 if is_wheel else (ranks[0] if is_straight else 0)
+    
+        if is_straight and is_flush:
+            return (_STRAIGHT_FLUSH, straight_high)
+        if 4 in counts.values():
+            quad = next(r for r, c in counts.items() if c == 4)
+            kicker = next(r for r, c in counts.items() if c == 1)
+            return (_FOUR_KIND, quad, kicker)
+        if is_flush:
+            return (_FLUSH, *ranks)
+        if 3 in counts.values() and 2 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            pair = next(r for r, c in counts.items() if c == 2)
+            return (_FULL_HOUSE, trip, pair)
+        if 3 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            kickers = sorted((r for r, c in counts.items() if c == 1), reverse=True)
+            return (_THREE_KIND, trip, *kickers)
+        if len(counts) == 4 and 2 in counts.values():
+            pairs = sorted((r for r, c in counts.items() if c == 2), reverse=True)
+            kicker = next(r for r, c in counts.items() if c == 1)
+>           return (_TWO_PAIR, pairs[0], pairs[1], kicker)
+                                         ^^^^^^^^
+E           IndexError: list index out of range
+
+poker.py:52: IndexError
+___________________ PokerTest.test_two_pairs_beats_one_pair ____________________
+
+self = <poker_test.PokerTest testMethod=test_two_pairs_beats_one_pair>
+
+    def test_two_pairs_beats_one_pair(self):
+        self.assertEqual(
+>           best_hands(["2S 8H 6S 8D JH", "4S 5H 4C 8C 5C"]), ["4S 5H 4C 8C 5C"]
+            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+        )
+
+poker_test.py:64: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+poker.py:13: in best_hands
+    scored = [(score_hand(hand), hand) for hand in hands]
+               ^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+hand = '2S 8H 6S 8D JH'
+
+    def score_hand(hand):
+        """Return a tuple that ranks a hand; higher tuples are better."""
+        cards = hand.split()
+        ranks = sorted((_RANKS[card[:-1]] for card in cards), reverse=True)
+        is_flush = len({card[-1] for card in cards}) == 1
+    
+        counts = {}
+        for rank in ranks:
+            counts[rank] = counts.get(rank, 0) + 1
+    
+        is_wheel = ranks == [14, 5, 4, 3, 2]  # ace-low straight
+        is_straight = len(set(ranks)) == 5 and (ranks[0] - ranks[4] == 4 or is_wheel)
+        # The ace-low straight (A-2-3-4-5) scores as a 5-high straight.
+        straight_high = 5 if is_wheel else (ranks[0] if is_straight else 0)
+    
+        if is_straight and is_flush:
+            return (_STRAIGHT_FLUSH, straight_high)
+        if 4 in counts.values():
+            quad = next(r for r, c in counts.items() if c == 4)
+            kicker = next(r for r, c in counts.items() if c == 1)
+            return (_FOUR_KIND, quad, kicker)
+        if is_flush:
+            return (_FLUSH, *ranks)
+        if 3 in counts.values() and 2 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            pair = next(r for r, c in counts.items() if c == 2)
+            return (_FULL_HOUSE, trip, pair)
+        if 3 in counts.values():
+            trip = next(r for r, c in counts.items() if c == 3)
+            kickers = sorted((r for r, c in counts.items() if c == 1), reverse=True)
+            return (_THREE_KIND, trip, *kickers)
+        if len(counts) == 4 and 2 in counts.values():
+            pairs = sorted((r for r, c in counts.items() if c == 2), reverse=True)
+            kicker = next(r for r, c in counts.items() if c == 1)
+>           return (_TWO_PAIR, pairs[0], pairs[1], kicker)
+                                         ^^^^^^^^
+E           IndexError: list index out of range
+
+poker.py:52: IndexError
+=========================== short test summary info ============================
+FAILED poker_test.py::PokerTest::test_aces_cannot_be_in_the_middle_of_a_straight_q_k_a_2_3
+FAILED poker_test.py::PokerTest::test_both_hands_have_the_same_pair_high_card_wins
+FAILED poker_test.py::PokerTest::test_both_hands_have_two_pairs_with_the_same_highest_ranked_pair_tie_goes_to_low_pair
+FAILED poker_test.py::PokerTest::test_highest_pair_wins - IndexError: list in...
+FAILED poker_test.py::PokerTest::test_one_pair_beats_high_card - IndexError: ...
+FAILED poker_test.py::PokerTest::test_two_pairs_beats_one_pair - IndexError: ...
+6 failed, 31 passed in 0.06s

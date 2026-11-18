@@ -1,0 +1,113 @@
+package connect
+
+// ResultOf computes the winner of a Hex / Polygon (CON-TAC-TIX) game.
+//
+// Player "O" connects the top edge to the bottom edge, while player "X"
+// connects the left edge to the right edge. The board is a parallelogram of
+// hexagonal cells: each row is shifted one cell to the right relative to the
+// row above it, so after the leading spaces are stripped every row has the
+// same length.
+//
+// It returns "O", "X", or "" (no winner) along with a nil error.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	board := make([][]rune, len(lines))
+	for i, line := range lines {
+		board[i] = []rune(line)
+	}
+
+	// Player O connects top to bottom; player X connects left to right.
+	if hasPath(board, 'O', true) {
+		return "O", nil
+	}
+	if hasPath(board, 'X', false) {
+		return "X", nil
+	}
+	return "", nil
+}
+
+// hasPath reports whether the given player has a connected chain of stones
+// spanning the board. When vertical is true the chain must run from the top
+// edge to the bottom edge (player O); otherwise it must run from the left
+// edge to the right edge (player X).
+func hasPath(board [][]rune, player rune, vertical bool) bool {
+	rows := len(board)
+	if rows == 0 {
+		return false
+	}
+
+	// Collect the player's stones on the starting edge.
+	var start [][2]int
+	if vertical {
+		for c := 0; c < len(board[0]); c++ {
+			if board[0][c] == player {
+				start = append(start, [2]int{0, c})
+			}
+		}
+	} else {
+		for r := 0; r < rows; r++ {
+			if board[r][0] == player {
+				start = append(start, [2]int{r, 0})
+			}
+		}
+	}
+	if len(start) == 0 {
+		return false
+	}
+
+	visited := make([][]bool, rows)
+	for r := range visited {
+		visited[r] = make([]bool, len(board[r]))
+	}
+
+	queue := make([][2]int, len(start))
+	copy(queue, start)
+	for _, s := range start {
+		visited[s[0]][s[1]] = true
+	}
+
+	for len(queue) > 0 {
+		r, c := queue[0][0], queue[0][1]
+		queue = queue[1:]
+
+		// Reached the opposite edge?
+		if (vertical && r == rows-1) || (!vertical && c == len(board[r])-1) {
+			return true
+		}
+
+		for _, n := range neighbors(board, r, c) {
+			nr, nc := n[0], n[1]
+			if !visited[nr][nc] && board[nr][nc] == player {
+				visited[nr][nc] = true
+				queue = append(queue, [2]int{nr, nc})
+			}
+		}
+	}
+	return false
+}
+
+// neighbors returns the six hexagonal neighbours of cell (r, c). Because each
+// row is shifted one cell to the right relative to the row above it, the
+// neighbours are:
+//
+//	same row:   (r, c-1) and (r, c+1)
+//	row above:  (r-1, c) and (r-1, c+1)
+//	row below:  (r+1, c) and (r+1, c-1)
+func neighbors(board [][]rune, r, c int) [][2]int {
+	var out [][2]int
+	add := func(nr, nc int) {
+		if nr >= 0 && nr < len(board) && nc >= 0 && nc < len(board[nr]) {
+			out = append(out, [2]int{nr, nc})
+		}
+	}
+	add(r, c-1)
+	add(r, c+1)
+	add(r-1, c)
+	add(r-1, c+1)
+	add(r+1, c)
+	add(r+1, c-1)
+	return out
+}

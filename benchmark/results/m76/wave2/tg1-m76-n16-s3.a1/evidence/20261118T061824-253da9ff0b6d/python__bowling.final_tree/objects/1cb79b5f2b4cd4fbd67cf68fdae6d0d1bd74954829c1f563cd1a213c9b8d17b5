@@ -1,0 +1,81 @@
+class BowlingGame:
+    def __init__(self):
+        self._rolls = []
+
+    def roll(self, pins):
+        if pins < 0 or pins > 10:
+            raise ValueError(f"Cannot roll {pins} pins")
+
+        completed, current_frame = self._frame_state()
+        if completed == 10:
+            raise ValueError("Cannot roll after the game is over")
+
+        # A roll is only limited by the previous roll if that roll left pins
+        # standing in the same frame. After a spare in the tenth frame the
+        # pins are reset, so the bonus roll may knock down up to 10.
+        if len(current_frame) == 1 and current_frame[0] != 10:
+            if pins > 10 - current_frame[0]:
+                raise ValueError(
+                    "Two rolls in a frame cannot score more than 10 points"
+                )
+        elif (
+            len(current_frame) == 2
+            and current_frame[0] == 10
+            and current_frame[1] != 10
+        ):
+            # Third roll of the tenth frame after a strike followed by a
+            # non-strike: only the pins left by the second roll may fall.
+            if pins > 10 - current_frame[1]:
+                raise ValueError(
+                    "Two rolls in a frame cannot score more than 10 points"
+                )
+
+        self._rolls.append(pins)
+
+    def score(self):
+        completed, _ = self._frame_state()
+        if completed < 10:
+            raise ValueError("Cannot score an incomplete game")
+
+        rolls = self._rolls
+        total = 0
+        i = 0
+        for _ in range(10):
+            if rolls[i] == 10:
+                total += 10 + rolls[i + 1] + rolls[i + 2]
+                i += 1
+            elif rolls[i] + rolls[i + 1] == 10:
+                total += 10 + rolls[i + 2]
+                i += 2
+            else:
+                total += rolls[i] + rolls[i + 1]
+                i += 2
+        return total
+
+    def _frame_state(self):
+        """Return (completed_frames, rolls of the current, unfinished frame)."""
+        rolls = self._rolls
+        n = len(rolls)
+        i = 0
+        frame = 0
+        while i < n and frame < 10:
+            if frame < 9:
+                if rolls[i] == 10:
+                    step = 1
+                elif i + 1 >= n:
+                    return frame, rolls[i:]
+                else:
+                    step = 2
+            else:
+                # Tenth frame: a strike or a spare earns a bonus roll.
+                if i + 1 >= n:
+                    return frame, rolls[i:]
+                if rolls[i] == 10 or rolls[i] + rolls[i + 1] == 10:
+                    step = 3
+                else:
+                    step = 2
+                if i + step > n:
+                    return frame, rolls[i:]
+            i += step
+            frame += 1
+        return frame, []

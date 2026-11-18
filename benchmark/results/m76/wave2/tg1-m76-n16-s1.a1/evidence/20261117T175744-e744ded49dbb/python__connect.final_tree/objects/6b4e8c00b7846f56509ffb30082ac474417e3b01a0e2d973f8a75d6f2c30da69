@@ -1,0 +1,52 @@
+from collections import deque
+
+
+class ConnectGame:
+    def __init__(self, board):
+        self.board = [line.split() for line in board.splitlines() if line.strip()]
+
+    def get_winner(self):
+        if self._connects("X"):
+            return "X"
+        if self._connects("O"):
+            return "O"
+        return ""
+
+    def _connects(self, player):
+        """Return True if `player` has a path of stones from one of their
+        assigned sides to the opposite side."""
+        rows = len(self.board)
+        cols = len(self.board[0]) if rows else 0
+        if rows == 0:
+            return False
+
+        if player == "X":
+            # X connects left to right.
+            start = {(r, 0) for r in range(rows)}
+            goal = {(r, cols - 1) for r in range(rows)}
+        else:
+            # O connects top to bottom.
+            start = {(0, c) for c in range(cols)}
+            goal = {(rows - 1, c) for c in range(cols)}
+
+        start = {cell for cell in start if self.board[cell[0]][cell[1]] == player}
+        if not start:
+            return False
+
+        seen = set(start)
+        queue = deque(start)
+        while queue:
+            r, c = queue.popleft()
+            if (r, c) in goal:
+                return True
+            for dr, dc in ((-1, 0), (-1, 1), (0, -1), (0, 1), (1, 0), (1, -1)):
+                nr, nc = r + dr, c + dc
+                if (
+                    0 <= nr < rows
+                    and 0 <= nc < cols
+                    and (nr, nc) not in seen
+                    and self.board[nr][nc] == player
+                ):
+                    seen.add((nr, nc))
+                    queue.append((nr, nc))
+        return False

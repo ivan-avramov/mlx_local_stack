@@ -1,0 +1,74 @@
+from json import dumps
+
+
+class Tree:
+    def __init__(self, label, children=None):
+        self.label = label
+        self.children = children if children is not None else []
+
+    def __dict__(self):
+        return {self.label: [c.__dict__() for c in sorted(self.children)]}
+
+    def __str__(self, indent=None):
+        return dumps(self.__dict__(), indent=indent)
+
+    def __lt__(self, other):
+        return self.label < other.label
+
+    def __eq__(self, other):
+        return self.__dict__() == other.__dict__()
+
+    def from_pov(self, from_node):
+        # Find the path of nodes from the current root down to `from_node`.
+        path = []
+
+        def _find(node):
+            path.append(node)
+            if node.label == from_node:
+                return True
+            for child in node.children:
+                if _find(child):
+                    return True
+            path.pop()
+            return False
+
+        if not _find(self):
+            raise ValueError("Tree could not be reoriented")
+
+        # Rebuild the tree along the path, reversing parent/child direction.
+        # path[0] is the original root, path[-1] is the new root (`from_node`).
+        # Each rebuilt node keeps its off-path children and gains its former
+        # parent (the previous node on the path) as a child.
+        n = len(path)
+        new_nodes = [None] * n
+        for i in range(n):
+            node = path[i]
+            if i + 1 < n:
+                path_child = path[i + 1]
+                other = [c for c in node.children if c is not path_child]
+            else:
+                other = list(node.children)
+            if i > 0:
+                new_children = other + [new_nodes[i - 1]]
+            else:
+                new_children = other
+            new_nodes[i] = Tree(node.label, new_children)
+
+        return new_nodes[-1]
+
+    def path_to(self, from_node, to_node):
+        reoriented = self.from_pov(from_node)
+
+        def _find(node):
+            if node.label == to_node:
+                return [node.label]
+            for child in node.children:
+                result = _find(child)
+                if result is not None:
+                    return [node.label] + result
+            return None
+
+        result = _find(reoriented)
+        if result is None:
+            raise ValueError("No path found")
+        return result

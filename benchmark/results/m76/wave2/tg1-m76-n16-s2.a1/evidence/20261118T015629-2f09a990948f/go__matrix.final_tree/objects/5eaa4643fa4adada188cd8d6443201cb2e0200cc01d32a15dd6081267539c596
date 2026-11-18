@@ -1,0 +1,73 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Matrix is a rectangular grid of integers.
+type Matrix [][]int
+
+// New parses s as a matrix of integers. Rows are separated by newlines and
+// elements within a row by whitespace. All rows must be non-empty and have
+// the same number of elements.
+func New(s string) (Matrix, error) {
+	lines := strings.Split(s, "\n")
+	rows := make([][]int, len(lines))
+	width := -1
+	for i, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix: empty row")
+		}
+		if width == -1 {
+			width = len(fields)
+		} else if len(fields) != width {
+			return nil, errors.New("matrix: uneven rows")
+		}
+		row := make([]int, len(fields))
+		for j, f := range fields {
+			v, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, err
+			}
+			row[j] = v
+		}
+		rows[i] = row
+	}
+	return Matrix(rows), nil
+}
+
+// Cols returns the columns of the matrix, each as a copy of the element data.
+func (m Matrix) Cols() [][]int {
+	cols := make([][]int, len(m[0]))
+	for c := range cols {
+		cols[c] = make([]int, len(m))
+	}
+	for r, row := range m {
+		for c, v := range row {
+			cols[c][r] = v
+		}
+	}
+	return cols
+}
+
+// Rows returns the rows of the matrix, each as a copy of the element data.
+func (m Matrix) Rows() [][]int {
+	rows := make([][]int, len(m))
+	for i, row := range m {
+		rows[i] = append([]int(nil), row...)
+	}
+	return rows
+}
+
+// Set sets the element at row, col to val. It reports whether the index was
+// in range.
+func (m Matrix) Set(row, col, val int) bool {
+	if row < 0 || row >= len(m) || col < 0 || col >= len(m[row]) {
+		return false
+	}
+	m[row][col] = val
+	return true
+}

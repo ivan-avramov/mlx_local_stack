@@ -1,0 +1,62 @@
+class InputCell:
+    def __init__(self, initial_value):
+        self._value = initial_value
+        self._dependents = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._value = new_value
+        self._propagate()
+
+    def _propagate(self):
+        cells = self._collect_dependents()
+        old_values = {id(cell): cell.value for cell in cells}
+        for cell in reversed(cells):
+            cell._recompute()
+        for cell in cells:
+            if cell.value != old_values[id(cell)]:
+                for callback in cell._callbacks:
+                    callback(cell.value)
+
+    def _collect_dependents(self):
+        cells = []
+        visited = set()
+
+        def visit(node):
+            for dependent in node._dependents:
+                if id(dependent) not in visited:
+                    visited.add(id(dependent))
+                    visit(dependent)
+                    cells.append(dependent)
+
+        visit(self)
+        return cells
+
+
+class ComputeCell:
+    def __init__(self, inputs, compute_function):
+        self._inputs = list(inputs)
+        self._compute_function = compute_function
+        self._callbacks = []
+        self._dependents = []
+        for input_cell in self._inputs:
+            input_cell._dependents.append(self)
+        self._value = self._compute_function([cell.value for cell in self._inputs])
+
+    @property
+    def value(self):
+        return self._value
+
+    def _recompute(self):
+        self._value = self._compute_function([cell.value for cell in self._inputs])
+
+    def add_callback(self, callback):
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)

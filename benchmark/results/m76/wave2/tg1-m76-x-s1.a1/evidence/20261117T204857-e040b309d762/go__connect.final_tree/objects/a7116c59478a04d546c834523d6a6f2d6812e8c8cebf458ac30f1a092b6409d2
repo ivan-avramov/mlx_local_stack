@@ -1,0 +1,95 @@
+package connect
+
+// ResultOf computes the winner of a game of Hex / Polygon.
+//
+// Player "X" plays from left to right: X wins when its stones form a
+// path connecting the left edge (column 0) to the right edge.
+// Player "O" plays from top to bottom: O wins when its stones form a
+// path connecting the top edge (row 0) to the bottom edge.
+// If neither player has made such a connection, the empty string is
+// returned.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	if connects(lines, 'X') {
+		return "X", nil
+	}
+	if connects(lines, 'O') {
+		return "O", nil
+	}
+	return "", nil
+}
+
+// connects reports whether the given player has a path of stones
+// linking their two assigned sides.
+func connects(lines []string, player byte) bool {
+	rows := len(lines)
+
+	// startSide reports whether a cell lies on the player's starting
+	// edge, and goalSide whether it lies on the opposite edge.
+	startSide := func(r, c int) bool {
+		if player == 'X' {
+			return c == 0
+		}
+		return r == 0
+	}
+	goalSide := func(r, c int) bool {
+		if player == 'X' {
+			return c == len(lines[r])-1
+		}
+		return r == rows-1
+	}
+
+	visited := make([][]bool, rows)
+	for r := range lines {
+		visited[r] = make([]bool, len(lines[r]))
+	}
+
+	// Seed the search with every one of the player's stones sitting on
+	// their starting edge.
+	var stack [][2]int
+	for r := 0; r < rows; r++ {
+		for c := 0; c < len(lines[r]); c++ {
+			if lines[r][c] == player && startSide(r, c) {
+				visited[r][c] = true
+				stack = append(stack, [2]int{r, c})
+			}
+		}
+	}
+
+	// Depth-first search over the player's connected stones.
+	for len(stack) > 0 {
+		cell := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		r, c := cell[0], cell[1]
+
+		if goalSide(r, c) {
+			return true
+		}
+
+		for _, d := range neighbors {
+			nr, nc := r+d[0], c+d[1]
+			if nr < 0 || nr >= rows || nc < 0 || nc >= len(lines[nr]) {
+				continue
+			}
+			if visited[nr][nc] || lines[nr][nc] != player {
+				continue
+			}
+			visited[nr][nc] = true
+			stack = append(stack, [2]int{nr, nc})
+		}
+	}
+
+	return false
+}
+
+// neighbors are the six directions a hexagonal field can be reached
+// from in this parallelogram representation, where each row is
+// shifted right by half a field.
+var neighbors = [][2]int{
+	{-1, 0}, {-1, 1},
+	{0, -1}, {0, 1},
+	{1, -1}, {1, 0},
+}

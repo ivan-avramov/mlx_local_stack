@@ -1,0 +1,79 @@
+"""Hangman implemented with functional reactive programming.
+
+Instead of mutating a game object, the game is modeled as a pure
+reducer: a stateless function that maps (state, event) to a new
+immutable state.  The `Hangman` class is a thin wrapper that replays
+the stream of guess events through the reducer and exposes the
+resulting state.
+"""
+
+from dataclasses import dataclass
+
+# Game status categories
+# Change the values as you see fit
+STATUS_WIN = 'win'
+STATUS_LOSE = 'lose'
+STATUS_ONGOING = 'ongoing'
+
+MAX_FAILURES = 9
+
+
+@dataclass(frozen=True)
+class GameState:
+    """Immutable snapshot of the game after a sequence of guesses."""
+
+    word: str
+    guesses: tuple = ()
+
+    @property
+    def guessed(self):
+        """Letters that have been guessed at least once."""
+        return frozenset(self.guesses)
+
+    @property
+    def failures(self):
+        """Guesses that were not a first-time hit on a letter of the word."""
+        successes = len(self.guessed & set(self.word))
+        return len(self.guesses) - successes
+
+    @property
+    def remaining_guesses(self):
+        return max(0, MAX_FAILURES - self.failures)
+
+    @property
+    def status(self):
+        if all(ch in self.guessed for ch in self.word):
+            return STATUS_WIN
+        if self.failures > MAX_FAILURES:
+            return STATUS_LOSE
+        return STATUS_ONGOING
+
+    def masked_word(self):
+        return ''.join(
+            ch if ch in self.guessed else '_' for ch in self.word
+        )
+
+
+def reduce(state, char):
+    """Pure reducer: derive the next state from the current state and a guess."""
+    if state.status != STATUS_ONGOING:
+        raise ValueError("The game has already ended.")
+    return GameState(state.word, state.guesses + (char,))
+
+
+class Hangman:
+    def __init__(self, word):
+        self._state = GameState(word)
+
+    def guess(self, char):
+        self._state = reduce(self._state, char)
+
+    def get_masked_word(self):
+        return self._state.masked_word()
+
+    def get_status(self):
+        return self._state.status
+
+    @property
+    def remaining_guesses(self):
+        return self._state.remaining_guesses

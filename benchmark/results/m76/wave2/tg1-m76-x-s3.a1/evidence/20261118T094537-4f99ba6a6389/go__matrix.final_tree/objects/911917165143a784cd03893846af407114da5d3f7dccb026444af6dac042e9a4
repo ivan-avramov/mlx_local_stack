@@ -1,0 +1,74 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+type Matrix = *matrix
+
+type matrix struct {
+	rows [][]int
+}
+
+func New(s string) (Matrix, error) {
+	lines := strings.Split(s, "\n")
+	m := &matrix{}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix: empty row")
+		}
+		row := make([]int, len(fields))
+		for i, f := range fields {
+			v, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, err
+			}
+			row[i] = v
+		}
+		if len(m.rows) > 0 && len(row) != len(m.rows[0]) {
+			return nil, errors.New("matrix: uneven rows")
+		}
+		m.rows = append(m.rows, row)
+	}
+	return m, nil
+}
+
+// Cols and Rows must return the results without affecting the matrix.
+func (m Matrix) Cols() [][]int {
+	if m == nil || len(m.rows) == 0 {
+		return nil
+	}
+	cols := make([][]int, len(m.rows[0]))
+	for c := range cols {
+		cols[c] = make([]int, len(m.rows))
+	}
+	for r, row := range m.rows {
+		for c, v := range row {
+			cols[c][r] = v
+		}
+	}
+	return cols
+}
+
+func (m Matrix) Rows() [][]int {
+	if m == nil {
+		return nil
+	}
+	rows := make([][]int, len(m.rows))
+	for i, row := range m.rows {
+		rows[i] = make([]int, len(row))
+		copy(rows[i], row)
+	}
+	return rows
+}
+
+func (m Matrix) Set(row, col, val int) bool {
+	if m == nil || row < 0 || row >= len(m.rows) || col < 0 || col >= len(m.rows[row]) {
+		return false
+	}
+	m.rows[row][col] = val
+	return true
+}

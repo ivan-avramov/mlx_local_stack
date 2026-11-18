@@ -1,0 +1,162 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+	"unicode"
+)
+
+// isSep reports whether r is a separator between words in the puzzle.
+func isSep(r rune) bool {
+	return r == '+' || unicode.IsSpace(r)
+}
+
+// Solve solves an alphametics puzzle of the form "WORD1 + WORD2 + ... == RESULT".
+// It returns a map from each letter to its digit, or an error if the puzzle
+// has no valid solution.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(strings.TrimSpace(puzzle), "==")
+	if len(eq) != 2 {
+		return nil, fmt.Errorf("invalid puzzle %q", puzzle)
+	}
+	addends := strings.FieldsFunc(eq[0], isSep)
+	results := strings.FieldsFunc(eq[1], isSep)
+	if len(addends) == 0 || len(results) != 1 {
+		return nil, fmt.Errorf("invalid puzzle %q", puzzle)
+	}
+	words := append(append([]string{}, addends...), results[0])
+
+	// Collect the distinct letters in order of first appearance.
+	letterIdx := make(map[string]int)
+	var letters []string
+	for _, w := range words {
+		for _, ch := range w {
+			key := string(ch)
+			if _, ok := letterIdx[key]; !ok {
+				letterIdx[key] = len(letters)
+				letters = append(letters, key)
+			}
+		}
+	}
+	n := len(letters)
+	if n > 10 {
+		return nil, errors.New("no solution: more than ten distinct letters")
+	}
+
+	// Leading letters of multi-letter words may not be zero.
+	noZero := make([]bool, n)
+	for _, w := range words {
+		if len(w) > 1 {
+			noZero[letterIdx[string(w[0])]] = true
+		}
+	}
+
+	// maxLen is the longest word; column c is the c-th digit from the right.
+	maxLen := 0
+	for _, w := range words {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+
+	assign := make([]int, n)
+	for i := range assign {
+		assign[i] = -1
+	}
+	used := make([]bool, 10)
+
+	var solve func(col, carry int) bool
+	solve = func(col, carry int) bool {
+		if col == maxLen {
+			return carry == 0
+		}
+		result := words[len(words)-1]
+
+		// Sum the digits of the already-assigned addend letters in this
+		// column; remember the unassigned ones (with their multiplicity) so
+		// we can try digits for them.
+		var pending []int
+		counts := make([]int, n)
+		sum := carry
+		for _, w := range words[:len(words)-1] {
+			idx := len(w) - 1 - col
+			if idx < 0 {
+				continue
+			}
+			li := letterIdx[string(w[idx])]
+			if assign[li] == -1 {
+				if counts[li] == 0 {
+					pending = append(pending, li)
+				}
+				counts[li]++
+			} else {
+				sum += assign[li]
+			}
+		}
+
+		// The result letter for this column, if any.
+		resIdx := len(result) - 1 - col
+		resLetter := -1
+		if resIdx >= 0 {
+			resLetter = letterIdx[string(result[resIdx])]
+		}
+
+		var assignPending func(i, s int) bool
+		assignPending = func(i, s int) bool {
+			if i == len(pending) {
+				// All addends in this column are assigned; check the result
+				// digit, then continue with the next column.
+				if resLetter == -1 {
+					if s%10 != 0 {
+						return false
+					}
+					return solve(col+1, s/10)
+				}
+				if assign[resLetter] != -1 {
+					if assign[resLetter] != s%10 {
+						return false
+					}
+					return solve(col+1, s/10)
+				}
+				d := s % 10
+				if used[d] || (noZero[resLetter] && d == 0) {
+					return false
+				}
+				assign[resLetter] = d
+				used[d] = true
+				if solve(col+1, s/10) {
+					return true
+				}
+				assign[resLetter] = -1
+				used[d] = false
+				return false
+			}
+			li := pending[i]
+			for d := 0; d <= 9; d++ {
+				if used[d] || (noZero[li] && d == 0) {
+					continue
+				}
+				assign[li] = d
+				used[d] = true
+				if assignPending(i+1, s+d*counts[li]) {
+					return true
+				}
+				assign[li] = -1
+				used[d] = false
+			}
+			return false
+		}
+		return assignPending(0, sum)
+	}
+
+	if !solve(0, 0) {
+		return nil, errors.New("no solution")
+	}
+
+	out := make(map[string]int, n)
+	for i, l := range letters {
+		out[l] = assign[i]
+	}
+	return out, nil
+}

@@ -1,0 +1,84 @@
+package dominoes
+
+// Domino is a tile with a value on each half.
+type Domino [2]int
+
+// MakeChain returns an ordering of the given dominoes that forms a closed
+// chain: the dots on one half of each stone match the neighboring half of
+// the adjacent stone, and the two halves without a neighbor (the first and
+// last stone) match each other. Each input domino is used exactly once,
+// possibly flipped. It reports false if no such chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	n := len(input)
+	if n == 0 {
+		return []Domino{}, true
+	}
+	if n == 1 {
+		if input[0][0] == input[0][1] {
+			return []Domino{input[0]}, true
+		}
+		return nil, false
+	}
+
+	used := make([]bool, n)
+	chain := make([]Domino, 0, n)
+
+	// extend tries to complete the chain from the current end by placing
+	// any unused domino whose matching half meets the open end.
+	var extend func() bool
+	extend = func() bool {
+		if len(chain) == n {
+			return chain[0][0] == chain[len(chain)-1][1]
+		}
+		end := chain[len(chain)-1][1]
+		for i := 0; i < n; i++ {
+			if used[i] {
+				continue
+			}
+			d := input[i]
+			if d[0] == end {
+				used[i] = true
+				chain = append(chain, d)
+				if extend() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+			if d[1] == end && d[0] != d[1] {
+				used[i] = true
+				chain = append(chain, Domino{d[1], d[0]})
+				if extend() {
+					return true
+				}
+				chain = chain[:len(chain)-1]
+				used[i] = false
+			}
+		}
+		return false
+	}
+
+	// Try each domino, in both orientations, as the starting stone.
+	for i := 0; i < n; i++ {
+		d := input[i]
+		used[i] = true
+		chain = append(chain, d)
+		if extend() {
+			return chain, true
+		}
+		chain = chain[:0]
+		used[i] = false
+
+		if d[0] != d[1] {
+			used[i] = true
+			chain = append(chain, Domino{d[1], d[0]})
+			if extend() {
+				return chain, true
+			}
+			chain = chain[:0]
+			used[i] = false
+		}
+	}
+
+	return nil, false
+}

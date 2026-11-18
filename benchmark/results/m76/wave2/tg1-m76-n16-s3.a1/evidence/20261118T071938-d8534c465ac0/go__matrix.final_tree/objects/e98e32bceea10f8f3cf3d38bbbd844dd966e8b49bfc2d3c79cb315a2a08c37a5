@@ -1,0 +1,82 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Matrix is a pointer to an internal matrix so that it can be compared
+// against nil.
+type Matrix = *matrix
+
+type matrix struct {
+	rows [][]int
+}
+
+// New parses s as a matrix of integers. Rows are separated by newlines and
+// elements within a row by whitespace. It returns an error if any row is
+// empty, any element is not an integer, or the rows have unequal lengths.
+func New(s string) (Matrix, error) {
+	if s == "" {
+		return &matrix{}, nil
+	}
+	lines := strings.Split(s, "\n")
+	m := &matrix{rows: make([][]int, 0, len(lines))}
+	for _, line := range lines {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix: empty row")
+		}
+		row := make([]int, 0, len(fields))
+		for _, f := range fields {
+			n, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, errors.New("matrix: element is not an integer")
+			}
+			row = append(row, n)
+		}
+		if len(m.rows) > 0 && len(row) != len(m.rows[0]) {
+			return nil, errors.New("matrix: uneven rows")
+		}
+		m.rows = append(m.rows, row)
+	}
+	return m, nil
+}
+
+// Cols returns the columns of the matrix, each as an independent copy.
+func (m Matrix) Cols() [][]int {
+	if len(m.rows) == 0 {
+		return [][]int{}
+	}
+	cols := make([][]int, len(m.rows[0]))
+	for c := range cols {
+		cols[c] = make([]int, len(m.rows))
+	}
+	for r, row := range m.rows {
+		for c, v := range row {
+			cols[c][r] = v
+		}
+	}
+	return cols
+}
+
+// Rows returns the rows of the matrix as an independent copy of the data.
+func (m Matrix) Rows() [][]int {
+	rows := make([][]int, len(m.rows))
+	for r, row := range m.rows {
+		rows[r] = make([]int, len(row))
+		copy(rows[r], row)
+	}
+	return rows
+}
+
+// Set sets the element at row, col to val. It returns false if the
+// coordinates are out of range, in which case the matrix is unchanged.
+func (m Matrix) Set(row, col, val int) bool {
+	if row < 0 || row >= len(m.rows) || col < 0 || col >= len(m.rows[row]) {
+		return false
+	}
+	m.rows[row][col] = val
+	return true
+}

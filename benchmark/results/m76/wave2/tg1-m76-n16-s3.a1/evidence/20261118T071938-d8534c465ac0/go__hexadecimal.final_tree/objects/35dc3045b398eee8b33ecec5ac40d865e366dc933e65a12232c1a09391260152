@@ -1,0 +1,57 @@
+package hexadecimal
+
+import "errors"
+
+// Sentinel errors returned by ParseHex.
+var (
+	errSyntax = errors.New("syntax error: invalid hexadecimal input")
+	errRange  = errors.New("range error: value out of range for int64")
+)
+
+// ParseHex converts a hexadecimal string to its decimal equivalent,
+// computed from first principles without any conversion library.
+func ParseHex(in string) (int64, error) {
+	if len(in) == 0 {
+		return 0, errSyntax
+	}
+
+	var out int64
+	for _, c := range in {
+		var digit int64
+		switch {
+		case c >= '0' && c <= '9':
+			digit = int64(c - '0')
+		case c >= 'a' && c <= 'f':
+			digit = int64(c-'a') + 10
+		case c >= 'A' && c <= 'F':
+			digit = int64(c-'A') + 10
+		default:
+			return 0, errSyntax
+		}
+
+		// Check that out*16+digit fits in an int64 before accumulating.
+		if out > (0x7FFFFFFFFFFFFFFF-digit)/16 {
+			return 0, errRange
+		}
+		out = out*16 + digit
+	}
+	return out, nil
+}
+
+// HandleErrors takes a list of inputs for ParseHex and returns a matching list
+// of error cases: "none", "syntax", or "range".
+func HandleErrors(inputs []string) []string {
+	results := make([]string, len(inputs))
+	for i, in := range inputs {
+		_, err := ParseHex(in)
+		switch {
+		case err == nil:
+			results[i] = "none"
+		case errors.Is(err, errSyntax):
+			results[i] = "syntax"
+		default:
+			results[i] = "range"
+		}
+	}
+	return results
+}

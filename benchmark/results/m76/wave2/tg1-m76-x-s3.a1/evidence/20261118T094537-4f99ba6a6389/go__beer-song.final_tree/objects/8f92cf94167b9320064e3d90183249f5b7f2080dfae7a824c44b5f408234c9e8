@@ -1,0 +1,56 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+)
+
+// bottles returns the properly singularized phrase for a bottle count.
+func bottles(n int) string {
+	if n == 1 {
+		return "1 bottle of beer"
+	}
+	return fmt.Sprintf("%d bottles of beer", n)
+}
+
+// Verse returns the verse for the given number of bottles,
+// from 99 down to 0.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", fmt.Errorf("verse %d is out of range", n)
+	}
+	switch n {
+	case 0:
+		return "No more bottles of beer on the wall, no more bottles of beer.\n" +
+			"Go to the store and buy some more, 99 bottles of beer on the wall.\n", nil
+	case 1:
+		return "1 bottle of beer on the wall, 1 bottle of beer.\n" +
+			"Take it down and pass it around, no more bottles of beer on the wall.\n", nil
+	default:
+		return fmt.Sprintf("%s on the wall, %s.\n"+
+			"Take one down and pass it around, %s on the wall.\n", bottles(n), bottles(n), bottles(n-1)), nil
+	}
+}
+
+// Verses returns the verses from start down to stop, inclusive,
+// separated by blank lines.
+func Verses(start, stop int) (string, error) {
+	if start < 0 || start > 99 || stop < 0 || stop > 99 || start < stop {
+		return "", errors.New("invalid verse range")
+	}
+	var song string
+	for n := start; n >= stop; n-- {
+		v, err := Verse(n)
+		if err != nil {
+			return "", err
+		}
+		song += v + "\n"
+	}
+	return song, nil
+}
+
+// Song returns the entire song, from 99 bottles down to 0.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}

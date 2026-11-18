@@ -1,0 +1,123 @@
+package alphametics
+
+import (
+	"errors"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form
+// "WORD + WORD + ... == WORD" and returns the digit assigned to each
+// letter. Every letter maps to a distinct digit, and the leading letter
+// of a multi-letter word may not be zero.
+func Solve(puzzle string) (map[string]int, error) {
+	parts := strings.Split(puzzle, " == ")
+	if len(parts) != 2 {
+		return nil, errors.New(`puzzle must be of the form "addends == result"`)
+	}
+	addends := strings.Split(parts[0], " + ")
+	result := parts[1]
+
+	assignment := make(map[rune]int)
+	used := make([]bool, 10)
+	leading := make(map[rune]bool)
+
+	// Precompute, for each column (0 = rightmost), the letters of the
+	// addends in that column, with multiplicity, and the letter of the
+	// result, if the result reaches that column.
+	maxLen := len(result)
+	for _, w := range addends {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+	columns := make([][]rune, maxLen)
+	resultLetters := make([]rune, maxLen)
+	for col := 0; col < maxLen; col++ {
+		for _, w := range addends {
+			if col < len(w) {
+				columns[col] = append(columns[col], rune(w[len(w)-1-col]))
+			}
+		}
+		if col < len(result) {
+			resultLetters[col] = rune(result[len(result)-1-col])
+		}
+	}
+	for _, w := range append(addends, result) {
+		if len(w) > 1 {
+			leading[rune(w[0])] = true
+		}
+	}
+
+	// Backtrack column by column, from the rightmost, carrying the
+	// overflow into the next column.
+	var solve func(col, carry int) bool
+	solve = func(col, carry int) bool {
+		if col == maxLen {
+			return carry == 0
+		}
+		hasResult := col < len(result)
+
+		// The distinct letters that appear in this column.
+		var distinct []rune
+		seen := make(map[rune]bool)
+		for _, r := range columns[col] {
+			if !seen[r] {
+				seen[r] = true
+				distinct = append(distinct, r)
+			}
+		}
+		if hasResult && !seen[resultLetters[col]] {
+			seen[resultLetters[col]] = true
+			distinct = append(distinct, resultLetters[col])
+		}
+
+		var assign func(i int) bool
+		assign = func(i int) bool {
+			if i == len(distinct) {
+				sum := carry
+				for _, r := range columns[col] {
+					sum += assignment[r]
+				}
+				digit, nextCarry := sum%10, sum/10
+				if hasResult {
+					if digit != assignment[resultLetters[col]] {
+						return false
+					}
+				} else if digit != 0 || nextCarry != 0 {
+					// The result has no digit in this column, so the
+					// column sum must not produce one.
+					return false
+				}
+				return solve(col+1, nextCarry)
+			}
+			r := distinct[i]
+			if _, ok := assignment[r]; ok {
+				return assign(i + 1)
+			}
+			for d := 0; d <= 9; d++ {
+				if used[d] || (leading[r] && d == 0) {
+					continue
+				}
+				used[d] = true
+				assignment[r] = d
+				if assign(i + 1) {
+					return true
+				}
+				delete(assignment, r)
+				used[d] = false
+			}
+			return false
+		}
+		return assign(0)
+	}
+
+	if !solve(0, 0) {
+		return nil, errors.New("puzzle has no solution")
+	}
+
+	out := make(map[string]int, len(assignment))
+	for r, d := range assignment {
+		out[string(r)] = d
+	}
+	return out, nil
+}

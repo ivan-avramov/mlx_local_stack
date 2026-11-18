@@ -1,0 +1,150 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll = errors.New("Negative roll is invalid")
+	errTooManyPins  = errors.New("Pin count exceeds pins on the lane")
+	errGameComplete = errors.New("Cannot roll after game is over")
+	errIncomplete   = errors.New("Score cannot be taken until the end of the game")
+)
+
+// Game keeps track of the rolls of a bowling game.
+type Game struct {
+	rolls []int
+}
+
+// NewGame returns a new, unstarted Game.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// frameState walks the rolls and reports the state of the game: the
+// 1-based frame number the next roll belongs to, the pins already knocked
+// down in that frame since the last strike or spare, and whether the game
+// is complete.
+func (g *Game) frameState() (frame, pinsInFrame int, complete bool) {
+	frame = 1
+	rolls := g.rolls
+	for frame < 10 && len(rolls) > 0 {
+		if rolls[0] == 10 {
+			rolls = rolls[1:]
+			frame++
+			continue
+		}
+		if len(rolls) < 2 {
+			break // a frame in progress
+		}
+		rolls = rolls[2:]
+		frame++
+	}
+	if frame < 10 {
+		if len(rolls) > 0 {
+			pinsInFrame = rolls[0]
+		}
+		return
+	}
+
+	// Tenth frame: a strike or a spare earns one or two fill balls.
+	if len(rolls) == 0 {
+		return
+	}
+	if rolls[0] == 10 {
+		rolls = rolls[1:]
+		pinsInFrame = 0
+		fills := 0
+		for len(rolls) > 0 && fills < 2 {
+			fills++
+			if rolls[0] == 10 {
+				rolls = rolls[1:]
+				pinsInFrame = 0
+			} else {
+				pinsInFrame = rolls[0]
+				rolls = rolls[1:]
+			}
+		}
+		complete = fills == 2
+		return
+	}
+
+	if len(rolls) < 2 {
+		// only the first roll of the frame has been made
+		pinsInFrame = rolls[0]
+		return
+	}
+
+	first, second := rolls[0], rolls[1]
+	rolls = rolls[2:]
+	if first+second == 10 {
+		// spare: one fill ball
+		if len(rolls) > 0 {
+			pinsInFrame = rolls[0]
+			rolls = nil
+			complete = true
+		} else {
+			pinsInFrame = 0
+		}
+		return
+	}
+
+	// open frame
+	pinsInFrame = first + second
+	complete = true
+	return
+}
+
+// Roll records a ball throw that knocks down pins pins.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errTooManyPins
+	}
+	_, pinsInFrame, complete := g.frameState()
+	if complete {
+		return errGameComplete
+	}
+	if pinsInFrame+pins > 10 {
+		return errTooManyPins
+	}
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+// Score returns the total score of the game.
+func (g *Game) Score() (int, error) {
+	_, _, complete := g.frameState()
+	if !complete {
+		return 0, errIncomplete
+	}
+
+	total := 0
+	i := 0
+	for frame := 1; frame <= 10; frame++ {
+		if g.rolls[i] == 10 {
+			if frame < 10 {
+				total += 10 + g.rolls[i+1] + g.rolls[i+2]
+				i++
+			} else {
+				total += g.rolls[i] + g.rolls[i+1] + g.rolls[i+2]
+				i += 3
+			}
+		} else {
+			if frame < 10 {
+				if g.rolls[i]+g.rolls[i+1] == 10 {
+					total += 10 + g.rolls[i+2]
+				} else {
+					total += g.rolls[i] + g.rolls[i+1]
+				}
+				i += 2
+			} else {
+				// tenth frame: the total value is the pins knocked down
+				for _, r := range g.rolls[i:] {
+					total += r
+				}
+			}
+		}
+	}
+	return total, nil
+}

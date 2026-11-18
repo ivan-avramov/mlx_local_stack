@@ -1,0 +1,77 @@
+class StackUnderflowError(Exception):
+    pass
+
+
+def _is_number(token):
+    return token.isdigit() or (
+        len(token) > 1 and token[0] == "-" and token[1:].isdigit()
+    )
+
+
+def evaluate(input_data):
+    stack = []
+    definitions = {}
+
+    def pop():
+        if not stack:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        return stack.pop()
+
+    def execute(tokens):
+        for token in tokens:
+            if _is_number(token):
+                stack.append(int(token))
+                continue
+            name = token.lower()
+            if name in definitions:
+                execute(definitions[name])
+            elif name == "+":
+                b = pop()
+                a = pop()
+                stack.append(a + b)
+            elif name == "-":
+                b = pop()
+                a = pop()
+                stack.append(a - b)
+            elif name == "*":
+                b = pop()
+                a = pop()
+                stack.append(a * b)
+            elif name == "/":
+                b = pop()
+                a = pop()
+                if b == 0:
+                    raise ZeroDivisionError("divide by zero")
+                quotient = abs(a) // abs(b)
+                if (a < 0) != (b < 0):
+                    quotient = -quotient
+                stack.append(quotient)
+            elif name == "dup":
+                stack.append(pop())
+            elif name == "drop":
+                pop()
+            elif name == "swap":
+                b = pop()
+                a = pop()
+                stack.append(b)
+                stack.append(a)
+            elif name == "over":
+                if len(stack) < 2:
+                    raise StackUnderflowError(
+                        "Insufficient number of items in stack"
+                    )
+                stack.append(stack[-2])
+            else:
+                raise ValueError("undefined operation")
+
+    for line in input_data:
+        tokens = line.split()
+        if tokens and tokens[0] == ":":
+            name = tokens[1].lower()
+            if _is_number(tokens[1]):
+                raise ValueError("illegal operation")
+            definitions[name] = tokens[2:-1]
+        else:
+            execute(tokens)
+
+    return stack

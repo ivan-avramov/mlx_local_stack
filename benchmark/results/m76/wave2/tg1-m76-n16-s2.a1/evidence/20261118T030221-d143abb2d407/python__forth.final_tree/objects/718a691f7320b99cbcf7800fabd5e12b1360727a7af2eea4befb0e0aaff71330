@@ -1,0 +1,100 @@
+import operator
+import re
+
+_NUMBER_RE = re.compile(r"^-?\d+$")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def evaluate(input_data):
+    stack = []
+
+    def _pop(count):
+        if len(stack) < count:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        return [stack.pop() for _ in range(count)]
+
+    def _binary(fn):
+        def action():
+            b, a = _pop(2)
+            stack.append(fn(a, b))
+
+        return action
+
+    def _div(a, b):
+        if b == 0:
+            raise ZeroDivisionError("divide by zero")
+        q = a // b
+        if a % b != 0 and (a < 0) != (b < 0):
+            q += 1
+        return q
+
+    def _dup():
+        if not stack:
+            raise StackUnderflowError("Insufficient number of items in stack")
+        stack.append(stack[-1])
+
+    def _drop():
+        _pop(1)
+
+    def _swap():
+        b, a = _pop(2)
+        stack.extend((b, a))
+
+    def _over():
+        b, a = _pop(2)
+        stack.extend((a, b, a))
+
+    # Each word maps to a list of actions: ints are pushed, callables run.
+    words = {
+        "+": [_binary(operator.add)],
+        "-": [_binary(operator.sub)],
+        "*": [_binary(operator.mul)],
+        "/": [_binary(_div)],
+        "dup": [_dup],
+        "drop": [_drop],
+        "swap": [_swap],
+        "over": [_over],
+    }
+
+    for line in input_data:
+        tokens = line.split()
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if _NUMBER_RE.match(token):
+                stack.append(int(token))
+            elif token == ":":
+                i += 1
+                name = tokens[i].lower()
+                if _NUMBER_RE.match(tokens[i]):
+                    raise ValueError("illegal operation")
+                # Expand the body at definition time so that words inside
+                # refer to the definitions as they exist now.
+                body = []
+                i += 1
+                while tokens[i] != ";":
+                    t = tokens[i]
+                    if _NUMBER_RE.match(t):
+                        body.append(int(t))
+                    else:
+                        key = t.lower()
+                        if key not in words:
+                            raise ValueError("undefined operation")
+                        body.extend(words[key])
+                    i += 1
+                words[name] = body
+            else:
+                key = token.lower()
+                if key not in words:
+                    raise ValueError("undefined operation")
+                for action in words[key]:
+                    if callable(action):
+                        action()
+                    else:
+                        stack.append(action)
+            i += 1
+
+    return stack

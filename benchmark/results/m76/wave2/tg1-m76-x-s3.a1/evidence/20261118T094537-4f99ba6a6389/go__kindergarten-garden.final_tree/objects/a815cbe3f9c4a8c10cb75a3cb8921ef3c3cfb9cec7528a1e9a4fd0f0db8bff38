@@ -1,0 +1,77 @@
+package kindergarten
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Garden holds the plant assignments for a kindergarten class.
+type Garden struct {
+	plants map[string][]string
+}
+
+var plantNames = map[byte]string{
+	'G': "grass",
+	'C': "clover",
+	'R': "radishes",
+	'V': "violets",
+}
+
+// NewGarden parses the diagram and assigns each child's four cups.
+// Cups are assigned to the children in alphabetical order, two per
+// row; the first row is the one nearest the windows.
+func NewGarden(diagram string, children []string) (*Garden, error) {
+	rows := strings.Split(diagram, "\n")
+	if len(rows) != 3 || rows[0] != "" {
+		return nil, errors.New("diagram must start with a newline and have two rows")
+	}
+	row1, row2 := rows[1], rows[2]
+	if len(row1) != len(row2) {
+		return nil, errors.New("diagram rows must be the same length")
+	}
+	if len(row1)%2 != 0 {
+		return nil, errors.New("diagram must contain an even number of cups")
+	}
+	for _, cup := range []byte(row1 + row2) {
+		if _, ok := plantNames[cup]; !ok {
+			return nil, fmt.Errorf("invalid cup code %q", cup)
+		}
+	}
+
+	// Sort a copy of the names so the caller's slice is not modified.
+	names := make([]string, len(children))
+	copy(names, children)
+	sort.Strings(names)
+	seen := make(map[string]bool, len(names))
+	for _, name := range names {
+		if seen[name] {
+			return nil, fmt.Errorf("duplicate child name %q", name)
+		}
+		seen[name] = true
+	}
+
+	g := &Garden{plants: make(map[string][]string, len(names))}
+	pairs := len(row1) / 2
+	for i, name := range names {
+		if i >= pairs {
+			// More children than cups; the child has no assignment.
+			continue
+		}
+		plants := make([]string, 4)
+		plants[0] = plantNames[row1[2*i]]
+		plants[1] = plantNames[row1[2*i+1]]
+		plants[2] = plantNames[row2[2*i]]
+		plants[3] = plantNames[row2[2*i+1]]
+		g.plants[name] = plants
+	}
+	return g, nil
+}
+
+// Plants returns the four plants (first row, then second row) that
+// belong to child. ok is false if the child is not in the garden.
+func (g *Garden) Plants(child string) ([]string, bool) {
+	plants, ok := g.plants[child]
+	return plants, ok
+}

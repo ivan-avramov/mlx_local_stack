@@ -1,0 +1,45 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode normalizes the input (lower-casing and removing spaces and
+// punctuation), lays the characters out in a rectangle as square as
+// possible, and reads the ciphertext down the columns, left to right,
+// outputting c chunks of r characters separated by spaces. Short chunks
+// are padded with a single trailing space.
+func Encode(pt string) string {
+	var norm []rune
+	for _, r := range strings.ToLower(pt) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			norm = append(norm, r)
+		}
+	}
+	n := len(norm)
+	if n == 0 {
+		return ""
+	}
+
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := int(math.Ceil(float64(n) / float64(c)))
+
+	// Pad with spaces up to a full r x c rectangle so that reading down
+	// the columns naturally pads the short chunks.
+	for len(norm) < r*c {
+		norm = append(norm, ' ')
+	}
+
+	var out strings.Builder
+	for j := 0; j < c; j++ {
+		if j > 0 {
+			out.WriteByte(' ')
+		}
+		for i := 0; i < r; i++ {
+			out.WriteRune(norm[i*c+j])
+		}
+	}
+	return out.String()
+}

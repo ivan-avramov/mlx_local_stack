@@ -1,0 +1,49 @@
+from collections import Counter
+
+RANK_VALUES = {
+    "2": 2,
+    "3": 3,
+    "4": 4,
+    "5": 5,
+    "6": 6,
+    "7": 7,
+    "8": 8,
+    "9": 9,
+    "10": 10,
+    "J": 11,
+    "Q": 12,
+    "K": 13,
+    "A": 14,
+}
+
+
+def _score(hand):
+    cards = hand.split()
+    ranks = sorted((RANK_VALUES[card[:-1]] for card in cards), reverse=True)
+    flush = len({card[-1] for card in cards}) == 1
+    straight = len(set(ranks)) == 5 and (
+        ranks[0] - ranks[-1] == 4 or ranks == [14, 5, 4, 3, 2]
+    )
+    if straight:
+        high = 5 if ranks[0] == 14 else ranks[0]
+        if flush:
+            return (8, high)
+        return (4, high)
+    if flush:
+        return (5, *ranks)
+    groups = sorted(Counter(ranks).items(), key=lambda cr: (cr[1], cr[0]), reverse=True)
+    category = (
+        7 if groups[0][1] == 4
+        else 6 if groups[0][1] == 3 and groups[1][1] == 2
+        else 3 if groups[0][1] == 3
+        else 2 if groups[0][1] == 2 and groups[1][1] == 2
+        else 1 if groups[0][1] == 2
+        else 0
+    )
+    return (category, *groups)
+
+
+def best_hands(hands):
+    scored = [(_score(hand), hand) for hand in hands]
+    best = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == best]

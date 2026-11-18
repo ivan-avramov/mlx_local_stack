@@ -1,0 +1,123 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll = errors.New("negative roll is invalid")
+	errTooManyPins  = errors.New("pin count exceeds pins on the lane")
+	errGameComplete = errors.New("cannot roll after game is over")
+	errIncomplete   = errors.New("score cannot be taken until the end of the game")
+)
+
+// Game keeps track of the rolls in a bowling game and the current
+// state of play.
+type Game struct {
+	rolls []int
+
+	frame int // 0-based index of the current frame (0-9)
+
+	// pinsRemaining is the number of pins still standing in the
+	// current frame. In the tenth frame it also tracks the pins
+	// available for the current bonus roll.
+	pinsRemaining int
+
+	// rollsInFrame counts the rolls taken in the current frame
+	// for frames 0-8.
+	rollsInFrame int
+
+	// tenthRolls counts the regular (non-bonus) rolls taken in
+	// the tenth frame.
+	tenthRolls int
+
+	// bonusLeft is the number of bonus rolls remaining in the
+	// tenth frame.
+	bonusLeft int
+
+	gameOver bool
+}
+
+func NewGame() *Game {
+	return &Game{pinsRemaining: 10}
+}
+
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errTooManyPins
+	}
+	if g.gameOver {
+		return errGameComplete
+	}
+	if pins > g.pinsRemaining {
+		return errTooManyPins
+	}
+
+	g.rolls = append(g.rolls, pins)
+	g.pinsRemaining -= pins
+
+	if g.frame < 9 {
+		g.rollsInFrame++
+		if g.pinsRemaining == 0 || g.rollsInFrame == 2 {
+			g.frame++
+			g.pinsRemaining = 10
+			g.rollsInFrame = 0
+		}
+		return nil
+	}
+
+	// Tenth frame.
+	if g.bonusLeft > 0 {
+		g.bonusLeft--
+		if g.bonusLeft > 0 {
+			// A strike as a bonus roll resets the pin count;
+			// otherwise the remaining pins carry over to the
+			// final bonus roll.
+			if g.pinsRemaining == 0 {
+				g.pinsRemaining = 10
+			}
+		} else {
+			g.gameOver = true
+		}
+		return nil
+	}
+
+	g.tenthRolls++
+	if g.pinsRemaining == 0 {
+		if g.tenthRolls == 1 {
+			// Strike: two bonus rolls.
+			g.bonusLeft = 2
+		} else {
+			// Spare: one bonus roll.
+			g.bonusLeft = 1
+		}
+		g.pinsRemaining = 10
+	} else if g.tenthRolls == 2 {
+		g.gameOver = true
+	}
+	return nil
+}
+
+func (g *Game) Score() (int, error) {
+	if !g.gameOver {
+		return 0, errIncomplete
+	}
+
+	total := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case g.rolls[i] == 10:
+			total += 10 + g.rolls[i+1] + g.rolls[i+2]
+			i++
+		case g.rolls[i]+g.rolls[i+1] == 10:
+			total += 10 + g.rolls[i+2]
+			i += 2
+		default:
+			total += g.rolls[i] + g.rolls[i+1]
+			i += 2
+		}
+	}
+	return total, nil
+}

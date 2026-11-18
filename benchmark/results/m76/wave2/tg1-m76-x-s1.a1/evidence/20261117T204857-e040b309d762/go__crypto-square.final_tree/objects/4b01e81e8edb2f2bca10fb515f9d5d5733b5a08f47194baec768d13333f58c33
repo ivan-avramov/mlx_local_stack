@@ -1,0 +1,41 @@
+package cryptosquare
+
+import (
+	"strings"
+	"unicode"
+)
+
+func Encode(pt string) string {
+	var normalized strings.Builder
+	for _, r := range strings.ToLower(pt) {
+		if unicode.IsLetter(r) || unicode.IsNumber(r) {
+			normalized.WriteRune(r)
+		}
+	}
+	msg := normalized.String()
+	n := len(msg)
+	if n == 0 {
+		return ""
+	}
+
+	c := 1
+	for c*c < n {
+		c++
+	}
+	r := (n + c - 1) / c
+
+	var sb strings.Builder
+	for col := 0; col < c; col++ {
+		if col > 0 {
+			sb.WriteByte(' ')
+		}
+		for row := 0; row < r; row++ {
+			if i := row*c + col; i < n {
+				sb.WriteByte(msg[i])
+			} else {
+				sb.WriteByte(' ')
+			}
+		}
+	}
+	return sb.String()
+}

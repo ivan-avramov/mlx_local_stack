@@ -1,0 +1,81 @@
+package connect
+
+// neighborOffsets are the six relative positions of a cell's neighbours in the
+// sheared (parallelogram) board representation. Each row is shifted one cell to
+// the right relative to the row above it, so a cell's neighbours sit at these
+// offsets in (row, column) space.
+var neighborOffsets = [][2]int{
+	{-1, 0},
+	{-1, 1},
+	{0, -1},
+	{0, 1},
+	{1, -1},
+	{1, 0},
+}
+
+// ResultOf computes the winner of a game of Hex / Polygon.
+//
+// Player "X" plays from left to right and wins by connecting the left side of
+// the board to the right side. Player "O" plays from top to bottom and wins by
+// connecting the top side to the bottom side. If neither player has made such a
+// connection the result is the empty string.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	height := len(lines)
+	width := len(lines[0])
+
+	// connected reports whether the given player has a path of stones from
+	// startEdge to endEdge.
+	connected := func(player byte, startEdge, endEdge func(r, c int) bool) bool {
+		visited := make([][]bool, height)
+		for r := range visited {
+			visited[r] = make([]bool, width)
+		}
+
+		var stack [][2]int
+		for r := 0; r < height; r++ {
+			for c := 0; c < width; c++ {
+				if lines[r][c] == player && startEdge(r, c) {
+					visited[r][c] = true
+					stack = append(stack, [2]int{r, c})
+				}
+			}
+		}
+
+		for len(stack) > 0 {
+			cell := stack[len(stack)-1]
+			stack = stack[:len(stack)-1]
+			r, c := cell[0], cell[1]
+			if endEdge(r, c) {
+				return true
+			}
+			for _, off := range neighborOffsets {
+				nr, nc := r+off[0], c+off[1]
+				if nr < 0 || nr >= height || nc < 0 || nc >= width {
+					continue
+				}
+				if visited[nr][nc] || lines[nr][nc] != player {
+					continue
+				}
+				visited[nr][nc] = true
+				stack = append(stack, [2]int{nr, nc})
+			}
+		}
+		return false
+	}
+
+	// X connects the left side (column 0) to the right side (last column).
+	if connected('X', func(r, c int) bool { return c == 0 }, func(r, c int) bool { return c == width-1 }) {
+		return "X", nil
+	}
+
+	// O connects the top side (row 0) to the bottom side (last row).
+	if connected('O', func(r, c int) bool { return r == 0 }, func(r, c int) bool { return r == height-1 }) {
+		return "O", nil
+	}
+
+	return "", nil
+}

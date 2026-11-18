@@ -1,0 +1,32 @@
+def can_chain(dominoes):
+    """Return a circular chain of the given dominoes, or None if impossible.
+
+    A valid chain uses every stone exactly once, may reverse any stone,
+    joins adjacent stones on matching halves, and matches the free ends
+    of the first and last stone.
+    """
+    if not dominoes:
+        return []
+
+    def search(remaining, end, chain):
+        if not remaining:
+            return chain if chain[0][0] == end else None
+        for i, stone in enumerate(remaining):
+            rest = remaining[:i] + remaining[i + 1:]
+            if stone[0] == end:
+                result = search(rest, stone[1], chain + [stone])
+            elif stone[1] == end:
+                result = search(rest, stone[0], chain + [(stone[1], stone[0])])
+            else:
+                continue
+            if result is not None:
+                return result
+        return None
+
+    for i, stone in enumerate(dominoes):
+        rest = dominoes[:i] + dominoes[i + 1:]
+        for first, end in ((stone, stone[1]), ((stone[1], stone[0]), stone[0])):
+            result = search(rest, end, [first])
+            if result is not None:
+                return result
+    return None

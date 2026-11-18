@@ -1,0 +1,200 @@
+.FF..F..F......                                                          [100%]
+=================================== FAILURES ===================================
+________________ PovTest.test_can_find_path_not_involving_root _________________
+
+self = <pov_test.PovTest testMethod=test_can_find_path_not_involving_root>
+
+    def test_can_find_path_not_involving_root(self):
+        tree = Tree(
+            "grandparent",
+            [Tree("parent", [Tree("x"), Tree("sibling-0"), Tree("sibling-1")])],
+        )
+        expected = ["x", "parent", "sibling-1"]
+>       self.assertEqual(tree.path_to("x", "sibling-1"), expected)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pov_test.py:134: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov.py:56: in path_to
+    tree = self.from_pov(from_node)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pov.Tree object at 0x107294050>, from_node = 'x'
+
+    def from_pov(self, from_node):
+        if self.label == from_node:
+            return self
+    
+        # Walk down from the root to the new root, recording the chain of
+        # ancestors in between.
+        chain = []
+        node = self
+        while True:
+            chain.append(node)
+            node = next(
+                (c for c in node.children if c.label == from_node), None
+            )
+            if node is None:
+>               raise ValueError("Tree could not be reoriented")
+E               ValueError: Tree could not be reoriented
+
+pov.py:35: ValueError
+_____________________ PovTest.test_can_find_path_to_cousin _____________________
+
+self = <pov_test.PovTest testMethod=test_can_find_path_to_cousin>
+
+    def test_can_find_path_to_cousin(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = ["x", "parent", "grandparent", "uncle", "cousin-1"]
+>       self.assertEqual(tree.path_to("x", "cousin-1"), expected)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+pov_test.py:126: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+pov.py:56: in path_to
+    tree = self.from_pov(from_node)
+           ^^^^^^^^^^^^^^^^^^^^^^^^
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pov.Tree object at 0x107252cc0>, from_node = 'x'
+
+    def from_pov(self, from_node):
+        if self.label == from_node:
+            return self
+    
+        # Walk down from the root to the new root, recording the chain of
+        # ancestors in between.
+        chain = []
+        node = self
+        while True:
+            chain.append(node)
+            node = next(
+                (c for c in node.children if c.label == from_node), None
+            )
+            if node is None:
+>               raise ValueError("Tree could not be reoriented")
+E               ValueError: Tree could not be reoriented
+
+pov.py:35: ValueError
+_____________ PovTest.test_can_reroot_a_complex_tree_with_cousins ______________
+
+self = <pov_test.PovTest testMethod=test_can_reroot_a_complex_tree_with_cousins>
+
+    def test_can_reroot_a_complex_tree_with_cousins(self):
+        tree = Tree(
+            "grandparent",
+            [
+                Tree(
+                    "parent",
+                    [
+                        Tree("x", [Tree("kid-0"), Tree("kid-1")]),
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                    ],
+                ),
+                Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")]),
+            ],
+        )
+        expected = Tree(
+            "x",
+            [
+                Tree("kid-1"),
+                Tree("kid-0"),
+                Tree(
+                    "parent",
+                    [
+                        Tree("sibling-0"),
+                        Tree("sibling-1"),
+                        Tree(
+                            "grandparent",
+                            [Tree("uncle", [Tree("cousin-0"), Tree("cousin-1")])],
+                        ),
+                    ],
+                ),
+            ],
+        )
+>       self.assertTreeEquals(tree.from_pov("x"), expected)
+                              ^^^^^^^^^^^^^^^^^^
+
+pov_test.py:77: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pov.Tree object at 0x1072947a0>, from_node = 'x'
+
+    def from_pov(self, from_node):
+        if self.label == from_node:
+            return self
+    
+        # Walk down from the root to the new root, recording the chain of
+        # ancestors in between.
+        chain = []
+        node = self
+        while True:
+            chain.append(node)
+            node = next(
+                (c for c in node.children if c.label == from_node), None
+            )
+            if node is None:
+>               raise ValueError("Tree could not be reoriented")
+E               ValueError: Tree could not be reoriented
+
+pov.py:35: ValueError
+______ PovTest.test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree ______
+
+self = <pov_test.PovTest testMethod=test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree>
+
+    def test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree(self):
+        tree = Tree(
+            "level-0",
+            [Tree("level-1", [Tree("level-2", [Tree("level-3", [Tree("x")])])])],
+        )
+        expected = Tree(
+            "x",
+            [Tree("level-3", [Tree("level-2", [Tree("level-1", [Tree("level-0")])])])],
+        )
+>       self.assertTreeEquals(tree.from_pov("x"), expected)
+                              ^^^^^^^^^^^^^^^^^^
+
+pov_test.py:37: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <pov.Tree object at 0x107297050>, from_node = 'x'
+
+    def from_pov(self, from_node):
+        if self.label == from_node:
+            return self
+    
+        # Walk down from the root to the new root, recording the chain of
+        # ancestors in between.
+        chain = []
+        node = self
+        while True:
+            chain.append(node)
+            node = next(
+                (c for c in node.children if c.label == from_node), None
+            )
+            if node is None:
+>               raise ValueError("Tree could not be reoriented")
+E               ValueError: Tree could not be reoriented
+
+pov.py:35: ValueError
+=========================== short test summary info ============================
+FAILED pov_test.py::PovTest::test_can_find_path_not_involving_root - ValueErr...
+FAILED pov_test.py::PovTest::test_can_find_path_to_cousin - ValueError: Tree ...
+FAILED pov_test.py::PovTest::test_can_reroot_a_complex_tree_with_cousins - Va...
+FAILED pov_test.py::PovTest::test_can_reroot_a_tree_with_new_root_deeply_nested_in_tree
+4 failed, 11 passed in 0.04s

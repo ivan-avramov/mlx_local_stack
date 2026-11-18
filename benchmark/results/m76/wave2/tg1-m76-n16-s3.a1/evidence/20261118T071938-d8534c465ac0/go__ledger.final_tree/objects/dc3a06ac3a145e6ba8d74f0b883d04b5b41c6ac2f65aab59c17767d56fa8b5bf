@@ -1,0 +1,173 @@
+// Package ledger prints a nicely formatted ledger given a locale
+// (American or Dutch) and a currency (US dollar or euro).
+//
+// Refactoring log:
+//  1. Replaced the hand-rolled bubble sort with sort.Slice and an explicit
+//     comparator (date, then description, then change, all ascending).
+//  2. Replaced the goroutine/channel fan-out with a plain sequential loop;
+//     the concurrency bought nothing but complexity.
+//  3. Split the one 200-line function into small helpers: header, formatDate,
+//     truncate, formatChange, groupThousands.
+//  4. Validated currency and locale up front instead of the recursive
+//     FormatLedger call used to probe the currency for empty input.
+//  5. Used fmt's width padding for the change column (it pads by rune count,
+//     matching the original's rune-based padding) and kept byte-based
+//     padding/truncation for the description column, as in the original.
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Entry is a single ledger line.
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+var currencySymbols = map[string]string{
+	"USD": "$",
+	"EUR": "€",
+}
+
+const (
+	dateWidth        = 10
+	descriptionWidth = 25
+	changeWidth      = 13
+)
+
+// FormatLedger returns the ledger as a formatted string, or an error if the
+// currency, locale, or any entry's date is invalid. The input entries are not
+// modified.
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if _, ok := currencySymbols[currency]; !ok {
+		return "", errInvalidCurrency
+	}
+	if locale != "en-US" && locale != "nl-NL" {
+		return "", errInvalidLocale
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		return lessEntry(sorted[i], sorted[j])
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, entry := range sorted {
+		line, err := formatEntry(currency, locale, entry)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+// lessEntry orders entries by date, then description, then change.
+func lessEntry(a, b Entry) bool {
+	if a.Date != b.Date {
+		return a.Date < b.Date
+	}
+	if a.Description != b.Description {
+		return a.Description < b.Description
+	}
+	return a.Change < b.Change
+}
+
+func header(locale string) string {
+	if locale == "nl-NL" {
+		return pad("Datum", dateWidth) + " | " + pad("Omschrijving", descriptionWidth) + " | Verandering\n"
+	}
+	return pad("Date", dateWidth) + " | " + pad("Description", descriptionWidth) + " | Change\n"
+}
+
+func formatEntry(currency, locale string, entry Entry) (string, error) {
+	date, err := formatDate(locale, entry.Date)
+	if err != nil {
+		return "", err
+	}
+	change := fmt.Sprintf("%*s", changeWidth, formatChange(currency, locale, entry.Change))
+	return date + " | " + truncate(entry.Description, descriptionWidth) + " | " + change + "\n", nil
+}
+
+// formatDate validates a "Y-m-d" date and renders it in the locale's format.
+func formatDate(locale, date string) (string, error) {
+	if len(date) != 10 || date[4] != '-' || date[7] != '-' {
+		return "", errInvalidDate
+	}
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year, nil
+	}
+	return month + "/" + day + "/" + year, nil
+}
+
+// truncate pads s with spaces to width, or cuts it to width-3 characters and
+// appends an ellipsis. Lengths are measured in bytes, as in the original.
+func truncate(s string, width int) string {
+	if len(s) > width {
+		return s[:width-3] + "..."
+	}
+	return s + strings.Repeat(" ", width-len(s))
+}
+
+// formatChange renders a change in cents in the locale's number format.
+// Negative amounts are shown as "( $10.00)" in en-US and "$ 10.00-" in nl-NL;
+// positive amounts end in a trailing space.
+func formatChange(currency, locale string, change int) string {
+	symbol := currencySymbols[currency]
+	negative := change < 0
+	if negative {
+		change = -change
+	}
+	whole, cents := change/100, change%100
+	centStr := fmt.Sprintf("%02d", cents)
+
+	if locale == "nl-NL" {
+		return symbol + " " + groupThousands(whole, '.') + "," + centStr + signSuffix(negative)
+	}
+	if negative {
+		return "(" + symbol + groupThousands(whole, ',') + "." + centStr + ")"
+	}
+	return symbol + groupThousands(whole, ',') + "." + centStr + " "
+}
+
+// groupThousands inserts sep between every group of three digits of n.
+func groupThousands(n int, sep rune) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i, c := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteRune(sep)
+		}
+		b.WriteRune(c)
+	}
+	return b.String()
+}
+
+func signSuffix(negative bool) string {
+	if negative {
+		return "-"
+	}
+	return " "
+}
+
+func pad(s string, width int) string {
+	return s + strings.Repeat(" ", width-len(s))
+}

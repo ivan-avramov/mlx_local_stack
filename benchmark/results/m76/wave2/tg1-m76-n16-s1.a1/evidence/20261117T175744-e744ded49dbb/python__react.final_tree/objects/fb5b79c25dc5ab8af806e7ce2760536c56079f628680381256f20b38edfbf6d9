@@ -1,0 +1,58 @@
+class InputCell:
+    def __init__(self, initial_value):
+        self._value = initial_value
+        self._observers = []
+
+    @property
+    def value(self):
+        return self._value
+
+    @value.setter
+    def value(self, new_value):
+        self._value = new_value
+        _propagate(self)
+
+
+class ComputeCell:
+    def __init__(self, inputs, compute_function):
+        self._inputs = inputs
+        self._compute_function = compute_function
+        self._callbacks = []
+        self._observers = []
+        self.value = self._compute()
+        for cell in inputs:
+            cell._observers.append(self)
+
+    def _compute(self):
+        return self._compute_function([cell.value for cell in self._inputs])
+
+    def add_callback(self, callback):
+        self._callbacks.append(callback)
+
+    def remove_callback(self, callback):
+        if callback in self._callbacks:
+            self._callbacks.remove(callback)
+
+
+def _propagate(source):
+    """Recompute affected cells until stable, then fire callbacks for the
+    cells whose values changed."""
+    original_values = {}
+    dirty = set(source._observers)
+    worklist = list(source._observers)
+    while worklist:
+        cell = worklist.pop()
+        dirty.discard(cell)
+        original_values.setdefault(cell, cell.value)
+        new_value = cell._compute()
+        if new_value != cell.value:
+            cell.value = new_value
+            for observer in cell._observers:
+                if observer not in dirty:
+                    dirty.add(observer)
+                    worklist.append(observer)
+
+    for cell, original in original_values.items():
+        if cell.value != original:
+            for callback in cell._callbacks:
+                callback(cell.value)

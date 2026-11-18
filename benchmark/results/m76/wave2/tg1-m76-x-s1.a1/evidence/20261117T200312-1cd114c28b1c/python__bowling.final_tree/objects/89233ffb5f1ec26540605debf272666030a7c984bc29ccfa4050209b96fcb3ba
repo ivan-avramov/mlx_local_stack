@@ -1,0 +1,59 @@
+class BowlingGame:
+    def __init__(self):
+        self.rolls = []
+        self._frame = 1
+        self._roll_in_frame = 0
+        self._pins_down = 0
+
+    def roll(self, pins):
+        if not 0 <= pins <= 10:
+            raise ValueError(f"Cannot knock down {pins} pins in a single roll")
+        if self._frame > 10:
+            raise ValueError("Cannot roll after the game is complete")
+        if self._frame < 10:
+            if self._roll_in_frame == 1 and pins > 10 - self._pins_down:
+                raise ValueError("Roll exceeds the pins still standing")
+            self.rolls.append(pins)
+            self._pins_down += pins
+            self._roll_in_frame += 1
+            if self._pins_down == 10 or self._roll_in_frame == 2:
+                self._next_frame()
+        else:
+            self._roll_tenth_frame(pins)
+
+    def _roll_tenth_frame(self, pins):
+        if self._roll_in_frame == 1:
+            if self.rolls[-1] != 10 and pins > 10 - self.rolls[-1]:
+                raise ValueError("Roll exceeds the pins still standing")
+        elif self._roll_in_frame == 2:
+            if self.rolls[-2] != 10 and pins > 10 - self.rolls[-1]:
+                raise ValueError("Roll exceeds the pins still standing")
+        self.rolls.append(pins)
+        self._pins_down += pins
+        self._roll_in_frame += 1
+        if self._roll_in_frame == 3 or (
+            self._roll_in_frame == 2 and self._pins_down < 10
+        ):
+            self._next_frame()
+
+    def _next_frame(self):
+        self._frame += 1
+        self._roll_in_frame = 0
+        self._pins_down = 0
+
+    def score(self):
+        if self._frame <= 10:
+            raise ValueError("Cannot score an incomplete game")
+        total = 0
+        i = 0
+        for _ in range(10):
+            if self.rolls[i] == 10:
+                total += 10 + self.rolls[i + 1] + self.rolls[i + 2]
+                i += 1
+            elif self.rolls[i] + self.rolls[i + 1] == 10:
+                total += 10 + self.rolls[i + 2]
+                i += 2
+            else:
+                total += self.rolls[i] + self.rolls[i + 1]
+                i += 2
+        return total

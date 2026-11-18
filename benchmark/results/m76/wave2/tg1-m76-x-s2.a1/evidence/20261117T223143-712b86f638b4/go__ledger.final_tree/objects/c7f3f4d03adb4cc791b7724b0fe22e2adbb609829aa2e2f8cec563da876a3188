@@ -1,0 +1,185 @@
+package ledger
+
+import (
+	"errors"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// Refactoring log:
+//   - Replaced the recursive empty-input validation hack with explicit
+//     up-front validation of the currency and locale.
+//   - Replaced the hand-rolled selection sort (with its boolean-to-sign
+//     lookup maps) with sort.Slice over a copy of the entries, so the
+//     caller's slice is never mutated.
+//   - Replaced the goroutine-per-entry channel fan-out with a simple
+//     sequential loop; the work is trivial and ordering is required.
+//   - Extracted header, date, description, and amount formatting into
+//     small focused helpers, removing the duplicated en-US/nl-NL logic.
+//   - Date validation now uses time.Parse, which also rejects impossible
+//     dates such as month 13.
+
+// Entry represents a single ledger entry.
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+const (
+	dateColumnWidth        = 10
+	descriptionColumnWidth = 25
+	changeColumnWidth      = 13
+)
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+// FormatLedger renders the given entries as a formatted ledger for the
+// given currency ("USD" or "EUR") and locale ("en-US" or "nl-NL").
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if currency != "USD" && currency != "EUR" {
+		return "", errInvalidCurrency
+	}
+	if locale != "en-US" && locale != "nl-NL" {
+		return "", errInvalidLocale
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(header(locale))
+	for _, entry := range sorted {
+		line, err := formatEntry(entry, currency, locale)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+// header returns the column header line for the given locale.
+func header(locale string) string {
+	dateLabel, descriptionLabel, changeLabel := "Date", "Description", "Change"
+	if locale == "nl-NL" {
+		dateLabel, descriptionLabel, changeLabel = "Datum", "Omschrijving", "Verandering"
+	}
+	return padRight(dateLabel, dateColumnWidth) + " | " +
+		padRight(descriptionLabel, descriptionColumnWidth) + " | " +
+		changeLabel + "\n"
+}
+
+// formatEntry renders a single ledger row.
+func formatEntry(entry Entry, currency, locale string) (string, error) {
+	date, err := formatDate(entry.Date, locale)
+	if err != nil {
+		return "", err
+	}
+	return padRight(date, dateColumnWidth) + " | " +
+		padRight(truncate(entry.Description, descriptionColumnWidth), descriptionColumnWidth) + " | " +
+		padLeft(formatChange(entry.Change, currency, locale), changeColumnWidth) + "\n", nil
+}
+
+// formatDate validates the "Y-m-d" date and renders it in the locale's
+// display format.
+func formatDate(date, locale string) (string, error) {
+	t, err := time.Parse("2006-01-02", date)
+	if err != nil {
+		return "", errInvalidDate
+	}
+	if locale == "nl-NL" {
+		return t.Format("02-01-2006"), nil
+	}
+	return t.Format("01/02/2006"), nil
+}
+
+// truncate shortens s to fit within width runes, eliding the middle
+// with an ellipsis when it is too long.
+func truncate(s string, width int) string {
+	if utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:width-3]) + "..."
+}
+
+// formatChange renders the amount in cents with the locale's number
+// formatting conventions.
+func formatChange(cents int, currency, locale string) string {
+	symbol := "$"
+	if currency == "EUR" {
+		symbol = "€"
+	}
+	negative := cents < 0
+	if negative {
+		cents = -cents
+	}
+
+	thousandSep, decimalSep, suffix := ",", ".", " "
+	if locale == "nl-NL" {
+		thousandSep, decimalSep = ".", ","
+	}
+	amount := formatAmount(cents, thousandSep, decimalSep)
+
+	if locale == "nl-NL" {
+		if negative {
+			suffix = "-"
+		}
+		return symbol + " " + amount + suffix
+	}
+	if negative {
+		return "(" + symbol + amount + ")"
+	}
+	return symbol + amount + suffix
+}
+
+// formatAmount renders cents with grouping separators, e.g. 123456 ->
+// "1,234.56" (with the separators supplied by the caller).
+func formatAmount(cents int, thousandSep, decimalSep string) string {
+	digits := strconv.Itoa(cents)
+	for len(digits) < 2 {
+		digits = "0" + digits
+	}
+	intPart := digits[:len(digits)-2]
+	centsPart := digits[len(digits)-2:]
+	if intPart == "" {
+		intPart = "0"
+	}
+	var b strings.Builder
+	for len(intPart) > 3 {
+		b.WriteString(intPart[:len(intPart)-3])
+		b.WriteString(thousandSep)
+		intPart = intPart[len(intPart)-3:]
+	}
+	b.WriteString(intPart)
+	b.WriteString(decimalSep)
+	b.WriteString(centsPart)
+	return b.String()
+}
+
+// padRight pads s with trailing spaces to reach width runes.
+func padRight(s string, width int) string {
+	return s + strings.Repeat(" ", width-utf8.RuneCountInString(s))
+}
+
+// padLeft pads s with leading spaces to reach width runes.
+func padLeft(s string, width int) string {
+	return strings.Repeat(" ", width-utf8.RuneCountInString(s)) + s
+}

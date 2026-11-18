@@ -1,0 +1,82 @@
+package connect
+
+// ResultOf determines the winner of a Hex / Polygon game.
+//
+// The board is given as a slice of strings, one per row, where each cell is
+// one of 'X', 'O' or '.'. The rows form a parallelogram: every row holds the
+// same number of cells, and each successive row is shifted one cell to the
+// right. Player 'X' plays from left to right and player 'O' plays from top to
+// bottom.
+//
+// A player wins when their stones form a connected path between the two sides
+// they are assigned. The function returns the winning player ("X" or "O"), or
+// an empty string when nobody has won yet.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+
+	if connects(lines, 'X',
+		func(r, c int) bool { return c == 0 },
+		func(r, c int) bool { return c == len(lines[r])-1 }) {
+		return "X", nil
+	}
+
+	if connects(lines, 'O',
+		func(r, c int) bool { return r == 0 },
+		func(r, c int) bool { return r == len(lines)-1 }) {
+		return "O", nil
+	}
+
+	return "", nil
+}
+
+// neighborOffsets are the six cells adjacent to a given cell in the slanted
+// parallelogram representation.
+var neighborOffsets = [][2]int{
+	{0, -1}, {0, 1}, // left, right
+	{1, -1}, {1, 0}, // lower-left, lower-right
+	{-1, 0}, {-1, 1}, // upper-right, upper-left
+}
+
+// connects reports whether the given player's stones form a connected path
+// from the start side to the end side.
+func connects(lines []string, player byte, start, end func(r, c int) bool) bool {
+	visited := make([][]bool, len(lines))
+	for r, line := range lines {
+		visited[r] = make([]bool, len(line))
+	}
+
+	seen := make([][2]int, 0, len(lines))
+	for r, line := range lines {
+		for c := range line {
+			if lines[r][c] == player && start(r, c) {
+				visited[r][c] = true
+				seen = append(seen, [2]int{r, c})
+			}
+		}
+	}
+
+	for len(seen) > 0 {
+		r, c := seen[len(seen)-1][0], seen[len(seen)-1][1]
+		seen = seen[:len(seen)-1]
+
+		if end(r, c) {
+			return true
+		}
+
+		for _, off := range neighborOffsets {
+			nr, nc := r+off[0], c+off[1]
+			if nr < 0 || nr >= len(lines) || nc < 0 || nc >= len(lines[nr]) {
+				continue
+			}
+			if visited[nr][nc] || lines[nr][nc] != player {
+				continue
+			}
+			visited[nr][nc] = true
+			seen = append(seen, [2]int{nr, nc})
+		}
+	}
+
+	return false
+}

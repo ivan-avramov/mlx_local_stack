@@ -1,0 +1,116 @@
+import re
+
+_NUMBER = re.compile(r"^-?\d+$")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _pop(stack, count):
+    if len(stack) < count:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return [stack.pop() for _ in range(count)]
+
+
+def _add(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a + b)
+
+
+def _sub(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a - b)
+
+
+def _mul(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a * b)
+
+
+def _div(stack):
+    b, a = _pop(stack, 2)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    stack.append(a // b)
+
+
+def _dup(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    stack.append(stack[-1])
+
+
+def _drop(stack):
+    _pop(stack, 1)
+
+
+def _swap(stack):
+    b, a = _pop(stack, 2)
+    stack.extend((b, a))
+
+
+def _over(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    stack.append(stack[-2])
+
+
+_BUILTINS = {
+    "+": _add,
+    "-": _sub,
+    "*": _mul,
+    "/": _div,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def _tokenize(line):
+    tokens = []
+    for token in line.split():
+        if _NUMBER.match(token):
+            tokens.append(int(token))
+        else:
+            tokens.append(token.lower())
+    return tokens
+
+
+def evaluate(input_data):
+    stack = []
+    definitions = {}
+
+    for line in input_data:
+        tokens = _tokenize(line)
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token == ":":
+                i += 1
+                name = tokens[i]
+                if isinstance(name, int):
+                    raise ValueError("illegal operation")
+                i += 1
+                body = []
+                while tokens[i] != ";":
+                    tok = tokens[i]
+                    if isinstance(tok, int) or tok not in definitions:
+                        body.append(tok)
+                    else:
+                        body.extend(definitions[tok])
+                    i += 1
+                definitions[name] = body
+            elif isinstance(token, int):
+                stack.append(token)
+            elif token in definitions:
+                tokens = tokens[:i] + definitions[token] + tokens[i + 1:]
+                continue
+            elif token in _BUILTINS:
+                _BUILTINS[token](stack)
+            else:
+                raise ValueError("undefined operation")
+            i += 1
+
+    return stack

@@ -1,0 +1,112 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll   = errors.New("Negative roll is invalid")
+	errPinCountExceeds = errors.New("Pin count exceeds pins on the lane")
+	errGameAlreadyOver = errors.New("Cannot roll after game is over")
+	errGameIncomplete  = errors.New("Score cannot be taken until the end of the game")
+)
+
+// Game keeps track of a bowling game's rolls and the current frame state.
+type Game struct {
+	rolls       []int // every roll, in order
+	frame       int   // 0-based index of the current frame (10 once the game is over)
+	rollInFrame int   // 0 or 1 in frames 1-9; 0, 1, or 2 in the tenth frame
+	pinsDown    int   // pins knocked down by the first roll of the current pair
+}
+
+// NewGame returns a Game ready to accept rolls.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// Roll records a throw of the given number of pins. It returns an error if the
+// roll is invalid (negative, more than 10 pins, or more pins than remain in
+// the frame) or if the game is already over.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errPinCountExceeds
+	}
+	if g.frame >= 10 {
+		return errGameAlreadyOver
+	}
+	if g.pinsDown != 10 && g.pinsDown+pins > 10 {
+		return errPinCountExceeds
+	}
+
+	g.rolls = append(g.rolls, pins)
+
+	if g.frame < 9 {
+		if g.rollInFrame == 0 && pins != 10 {
+			// First roll of an open frame: wait for the second roll.
+			g.rollInFrame = 1
+			g.pinsDown = pins
+		} else {
+			g.advanceFrame()
+		}
+		return nil
+	}
+
+	// Tenth frame: a strike or spare earns one or two bonus rolls.
+	switch g.rollInFrame {
+	case 0:
+		g.rollInFrame = 1
+		g.pinsDown = pins
+	case 1:
+		if g.pinsDown == 10 {
+			// Second roll after a strike: the third roll is a fresh frame
+			// unless the second roll was also a strike.
+			g.rollInFrame = 2
+			if pins == 10 {
+				g.pinsDown = 0
+			} else {
+				g.pinsDown = pins
+			}
+		} else if g.pinsDown+pins == 10 {
+			// Spare: the bonus roll is a fresh frame.
+			g.rollInFrame = 2
+			g.pinsDown = 0
+		} else {
+			g.advanceFrame()
+		}
+	case 2:
+		g.advanceFrame()
+	}
+	return nil
+}
+
+func (g *Game) advanceFrame() {
+	g.frame++
+	g.rollInFrame = 0
+	g.pinsDown = 0
+}
+
+// Score returns the total score of a completed game, or an error if the game
+// is not yet finished.
+func (g *Game) Score() (int, error) {
+	if g.frame < 10 {
+		return 0, errGameIncomplete
+	}
+
+	total := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case g.rolls[i] == 10:
+			total += 10 + g.rolls[i+1] + g.rolls[i+2]
+			i++
+		case g.rolls[i]+g.rolls[i+1] == 10:
+			total += 10 + g.rolls[i+2]
+			i += 2
+		default:
+			total += g.rolls[i] + g.rolls[i+1]
+			i += 2
+		}
+	}
+	return total, nil
+}

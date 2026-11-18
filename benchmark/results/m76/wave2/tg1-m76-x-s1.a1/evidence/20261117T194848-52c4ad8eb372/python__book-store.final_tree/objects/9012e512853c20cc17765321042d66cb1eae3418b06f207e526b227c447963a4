@@ -1,0 +1,46 @@
+"""Calculate the price of a basket of books from a 5-book series.
+
+One copy of any book costs $8. A group of books of *different* titles
+buys together for a discount: 5% off 2, 10% off 3, 20% off 4 and 25% off
+5. The basket is split into such groups of distinct titles so that the
+total price is as low as possible.
+
+Prices are returned in cents.
+"""
+
+from collections import Counter
+from functools import lru_cache
+
+_PRICE = 800  # cents per book
+_DISCOUNT = {1: 0, 2: 5, 3: 10, 4: 20, 5: 25}
+_GROUP_COST = {
+    size: _PRICE * size * (100 - _DISCOUNT[size]) // 100 for size in range(1, 6)
+}
+
+
+@lru_cache(maxsize=None)
+def _min_cost(counts):
+    """Minimum cost for the remaining books.
+
+    ``counts`` is a sorted tuple with the number of copies left of each
+    of the five titles (titles are interchangeable apart from how many
+    copies remain, so the sorted tuple is a canonical state).
+    """
+    if not any(counts):
+        return 0
+    best = float("inf")
+    for mask in range(1, 1 << 5):
+        group = [c - 1 if mask >> i & 1 else c for i, c in enumerate(counts)]
+        if any(g < 0 for g in group):
+            continue  # group would repeat a title
+        size = bin(mask).count("1")
+        rest = tuple(sorted(group, reverse=True))
+        best = min(best, _GROUP_COST[size] + _min_cost(rest))
+    return best
+
+
+def total(basket):
+    """Return the cheapest total price (in cents) for the given basket."""
+    counts = sorted(Counter(basket).values(), reverse=True)
+    counts += [0] * (5 - len(counts))
+    return _min_cost(tuple(counts))

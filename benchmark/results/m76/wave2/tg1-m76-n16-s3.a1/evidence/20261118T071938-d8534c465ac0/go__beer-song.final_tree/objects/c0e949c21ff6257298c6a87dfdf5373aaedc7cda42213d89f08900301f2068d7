@@ -1,0 +1,71 @@
+package beer
+
+import (
+	"fmt"
+	"strings"
+)
+
+// bottlePhrase returns the phrase for a bottle count in lowercase, e.g.
+// "8 bottles", "1 bottle", or "no more bottles".
+func bottlePhrase(n int) string {
+	switch {
+	case n == 0:
+		return "no more bottles"
+	case n == 1:
+		return "1 bottle"
+	default:
+		return fmt.Sprintf("%d bottles", n)
+	}
+}
+
+// capitalize returns s with its first rune upper-cased.
+func capitalize(s string) string {
+	return strings.ToUpper(s[:1]) + s[1:]
+}
+
+// Verse returns the verse for the given bottle count.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", fmt.Errorf("invalid verse number %d", n)
+	}
+
+	line1 := fmt.Sprintf("%s of beer on the wall, %s of beer.\n",
+		capitalize(bottlePhrase(n)), bottlePhrase(n))
+
+	var line2 string
+	switch {
+	case n == 0:
+		line2 = "Go to the store and buy some more, 99 bottles of beer on the wall.\n"
+	case n == 1:
+		line2 = "Take it down and pass it around, no more bottles of beer on the wall.\n"
+	default:
+		line2 = fmt.Sprintf("Take one down and pass it around, %s of beer on the wall.\n",
+			bottlePhrase(n-1))
+	}
+
+	return line1 + line2, nil
+}
+
+// Verses returns the verses from start down to and including stop.
+func Verses(start, stop int) (string, error) {
+	if start < 0 || start > 99 || stop < 0 || stop > 99 {
+		return "", fmt.Errorf("invalid verse range %d to %d", start, stop)
+	}
+	if start < stop {
+		return "", fmt.Errorf("start %d must be greater than or equal to stop %d", start, stop)
+	}
+
+	var sb strings.Builder
+	for n := start; n >= stop; n-- {
+		v, _ := Verse(n)
+		sb.WriteString(v)
+		sb.WriteString("\n")
+	}
+	return sb.String(), nil
+}
+
+// Song returns the entire song.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}

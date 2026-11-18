@@ -1,0 +1,221 @@
+package forth
+
+import (
+	"errors"
+	"fmt"
+	"strconv"
+	"strings"
+)
+
+// stack is the Forth data stack, with the top of the stack at the end.
+type stack []int
+
+func (s *stack) push(v ...int) { *s = append(*s, v...) }
+
+func (s *stack) pop() (int, error) {
+	if len(*s) == 0 {
+		return 0, errors.New("empty stack")
+	}
+	v := (*s)[len(*s)-1]
+	*s = (*s)[:len(*s)-1]
+	return v, nil
+}
+
+// word is a compiled Forth word: a function that operates on the stack.
+type word func(*stack) error
+
+// isNumber reports whether tok is a (possibly negative) integer literal.
+func isNumber(tok string) bool {
+	_, err := strconv.Atoi(tok)
+	return err == nil
+}
+
+func builtin(name string) word {
+	switch name {
+	case "+":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a + b)
+			return nil
+		}
+	case "-":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a - b)
+			return nil
+		}
+	case "*":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a * b)
+			return nil
+		}
+	case "/":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			if b == 0 {
+				return errors.New("divide by zero")
+			}
+			s.push(a / b)
+			return nil
+		}
+	case "dup":
+		return func(s *stack) error {
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a, a)
+			return nil
+		}
+	case "drop":
+		return func(s *stack) error {
+			_, err := s.pop()
+			return err
+		}
+	case "swap":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(b, a)
+			return nil
+		}
+	case "over":
+		return func(s *stack) error {
+			b, err := s.pop()
+			if err != nil {
+				return err
+			}
+			a, err := s.pop()
+			if err != nil {
+				return err
+			}
+			s.push(a, b, a)
+			return nil
+		}
+	}
+	return nil
+}
+
+// Forth evaluates the given lines of Forth source and returns the final
+// data stack.
+func Forth(input []string) ([]int, error) {
+	var st stack
+	dict := map[string]word{
+		"+":    builtin("+"),
+		"-":    builtin("-"),
+		"*":    builtin("*"),
+		"/":    builtin("/"),
+		"dup":  builtin("dup"),
+		"drop": builtin("drop"),
+		"swap": builtin("swap"),
+		"over": builtin("over"),
+	}
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		if len(tokens) == 0 {
+			continue
+		}
+
+		// A definition line: ": name definition ;"
+		if tokens[0] == ":" {
+			end := -1
+			for i, tok := range tokens {
+				if tok == ";" {
+					end = i
+					break
+				}
+			}
+			if end < 2 {
+				return nil, errors.New("illegal operation: malformed definition")
+			}
+			name := strings.ToLower(tokens[1])
+			if isNumber(name) {
+				return nil, errors.New("illegal operation: cannot redefine a number")
+			}
+			def := make([]word, 0, end-2)
+			for _, tok := range tokens[2:end] {
+				if v, err := strconv.Atoi(tok); err == nil {
+					v := v
+					def = append(def, func(s *stack) error {
+						s.push(v)
+						return nil
+					})
+				} else if w, ok := dict[strings.ToLower(tok)]; ok {
+					// Resolve the word now so that a later redefinition
+					// of the same name does not change this definition.
+					def = append(def, w)
+				} else {
+					// Not defined yet; resolve when the word is executed.
+					key := strings.ToLower(tok)
+					def = append(def, func(s *stack) error {
+						w, ok := dict[key]
+						if !ok {
+							return fmt.Errorf("undefined operation %q", tok)
+						}
+						return w(s)
+					})
+				}
+			}
+			dict[name] = func(s *stack) error {
+				for _, w := range def {
+					if err := w(s); err != nil {
+						return err
+					}
+				}
+				return nil
+			}
+			continue
+		}
+
+		for _, tok := range tokens {
+			if v, err := strconv.Atoi(tok); err == nil {
+				st.push(v)
+				continue
+			}
+			w, ok := dict[strings.ToLower(tok)]
+			if !ok {
+				return nil, fmt.Errorf("undefined operation %q", tok)
+			}
+			if err := w(&st); err != nil {
+				return nil, err
+			}
+		}
+	}
+	return []int(st), nil
+}

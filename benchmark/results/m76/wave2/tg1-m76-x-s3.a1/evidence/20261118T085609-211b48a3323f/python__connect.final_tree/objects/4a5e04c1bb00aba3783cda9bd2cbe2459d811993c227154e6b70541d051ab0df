@@ -1,0 +1,56 @@
+class ConnectGame:
+    """Play Hex / Polygon / CON-TAC-TIX on a staggered hex board.
+
+    Player X connects the left and right edges; player O connects
+    the top and bottom edges.
+    """
+
+    NEIGHBOR_OFFSETS = (
+        (0, -1),  # left
+        (0, 1),  # right
+        (-1, 0),  # upper left
+        (-1, 1),  # upper right
+        (1, -1),  # lower left
+        (1, 0),  # lower right
+    )
+
+    def __init__(self, board):
+        self.board = [line.split() for line in board.splitlines()]
+
+    def get_winner(self):
+        if not self.board:
+            return ""
+        for player in ("X", "O"):
+            if self._reaches_opposite_edge(player):
+                return player
+        return ""
+
+    def _reaches_opposite_edge(self, player):
+        height = len(self.board)
+        width = len(self.board[0])
+        if player == "X":
+            start = [(row, 0) for row in range(height)]
+            goal = lambda row, col: col == width - 1
+        else:
+            start = [(0, col) for col in range(width)]
+            goal = lambda row, col: row == height - 1
+
+        seen = set()
+        stack = [cell for cell in start if self.board[cell[0]][cell[1]] == player]
+        while stack:
+            row, col = stack.pop()
+            if (row, col) in seen:
+                continue
+            seen.add((row, col))
+            if goal(row, col):
+                return True
+            for drow, dcol in self.NEIGHBOR_OFFSETS:
+                nrow, ncol = row + drow, col + dcol
+                if (
+                    0 <= nrow < height
+                    and 0 <= ncol < width
+                    and (nrow, ncol) not in seen
+                    and self.board[nrow][ncol] == player
+                ):
+                    stack.append((nrow, ncol))
+        return False

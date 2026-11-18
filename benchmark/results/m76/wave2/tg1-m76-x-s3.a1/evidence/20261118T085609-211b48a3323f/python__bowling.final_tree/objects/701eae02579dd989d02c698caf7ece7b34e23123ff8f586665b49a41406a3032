@@ -1,0 +1,71 @@
+class BowlingGame:
+    def __init__(self):
+        self._rolls = []
+        self._frame = 1
+        self._frame_pins = 0
+        self._frame_rolls = 0
+        self._tenth_rolls = 0
+        self._tenth_pins = 0
+        self._tenth_first_strike = False
+
+    def _game_over(self):
+        if self._frame > 10:
+            return True
+        # Tenth frame: complete after two open rolls, or after three rolls
+        # when the frame was a strike or spare (bonus rolls).
+        return self._tenth_rolls == 3 or (self._tenth_rolls == 2 and self._tenth_pins < 10)
+
+    def roll(self, pins):
+        if pins < 0 or pins > 10:
+            raise ValueError(f"pins must be between 0 and 10, got {pins}")
+        if self._game_over():
+            raise ValueError("cannot roll after the game is over")
+        if self._frame < 10:
+            if self._frame_pins + pins > 10:
+                raise ValueError(
+                    "two rolls in a frame cannot score more than 10 points"
+                )
+            self._rolls.append(pins)
+            self._frame_pins += pins
+            self._frame_rolls += 1
+            if self._frame_pins == 10 or self._frame_rolls == 2:
+                self._frame += 1
+                self._frame_pins = 0
+                self._frame_rolls = 0
+        else:
+            if self._tenth_rolls == 1 and self._tenth_pins < 10:
+                if self._tenth_pins + pins > 10:
+                    raise ValueError(
+                        "two rolls in a frame cannot score more than 10 points"
+                    )
+            elif self._tenth_rolls == 2 and self._tenth_first_strike:
+                # Third roll: second bonus after a strike in the tenth frame.
+                first_bonus = self._rolls[-1]
+                if first_bonus != 10 and first_bonus + pins > 10:
+                    raise ValueError(
+                        "second bonus roll cannot score more than 10 points "
+                        "if the first one is not a strike"
+                    )
+            if self._tenth_rolls == 0:
+                self._tenth_first_strike = pins == 10
+            self._rolls.append(pins)
+            self._tenth_pins += pins
+            self._tenth_rolls += 1
+
+    def score(self):
+        if not self._game_over():
+            raise ValueError("cannot score an incomplete game")
+        total = 0
+        i = 0
+        for _ in range(9):
+            if self._rolls[i] == 10:
+                total += 10 + self._rolls[i + 1] + self._rolls[i + 2]
+                i += 1
+            elif self._rolls[i] + self._rolls[i + 1] == 10:
+                total += 10 + self._rolls[i + 2]
+                i += 2
+            else:
+                total += self._rolls[i] + self._rolls[i + 1]
+                i += 2
+        total += sum(self._rolls[i:])
+        return total

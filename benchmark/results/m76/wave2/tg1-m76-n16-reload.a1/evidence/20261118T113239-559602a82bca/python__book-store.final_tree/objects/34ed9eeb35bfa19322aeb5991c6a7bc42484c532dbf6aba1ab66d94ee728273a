@@ -1,0 +1,31 @@
+from collections import Counter
+from functools import lru_cache
+from itertools import combinations
+
+PRICE = 800
+DISCOUNTS = {1: 0, 2: 5, 3: 10, 4: 20, 5: 25}
+
+
+@lru_cache(maxsize=None)
+def _best(counts):
+    """Minimum cost for a basket whose per-title counts are `counts` (sorted, nonzero)."""
+    if not counts:
+        return 0
+    best_cost = float("inf")
+    for size in range(1, min(5, len(counts)) + 1):
+        for indices in combinations(range(len(counts)), size):
+            remaining = []
+            for i, c in enumerate(counts):
+                c -= 1 if i in indices else 0
+                if c > 0:
+                    remaining.append(c)
+            remaining = tuple(sorted(remaining, reverse=True))
+            cost = size * PRICE * (100 - DISCOUNTS[size]) // 100 + _best(remaining)
+            if cost < best_cost:
+                best_cost = cost
+    return best_cost
+
+
+def total(basket):
+    counts = tuple(sorted(Counter(basket).values(), reverse=True))
+    return _best(counts)

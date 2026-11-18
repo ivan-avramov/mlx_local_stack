@@ -1,0 +1,117 @@
+package bowling
+
+import "errors"
+
+var (
+	errNegativeRoll = errors.New("Negative roll is invalid")
+	errPinsExceeded = errors.New("Pin count exceeds pins on the lane")
+	errGameOver     = errors.New("Cannot roll after game is over")
+	errIncomplete   = errors.New("Score cannot be taken until the end of the game")
+)
+
+// Game keeps track of the rolls of a bowling game.
+type Game struct {
+	rolls []int
+}
+
+// NewGame returns a Game ready to accept rolls.
+func NewGame() *Game {
+	return &Game{}
+}
+
+// state reports the frame (1-based) and the number of rolls already made in
+// that frame for the next roll, and whether the game is complete.
+func (g *Game) state() (frame, rollInFrame int, done bool) {
+	frame, rollInFrame = 1, 0
+	for _, pins := range g.rolls {
+		if frame < 10 {
+			if rollInFrame == 0 {
+				if pins == 10 {
+					frame++
+				} else {
+					rollInFrame = 1
+				}
+			} else {
+				frame++
+				rollInFrame = 0
+			}
+		} else {
+			rollInFrame++
+			switch rollInFrame {
+			case 2:
+				first := g.rolls[len(g.rolls)-2]
+				if first != 10 && first+pins != 10 {
+					done = true
+				}
+			case 3:
+				done = true
+			}
+		}
+	}
+	if frame < 10 {
+		done = false
+	}
+	return frame, rollInFrame, done
+}
+
+// Roll records a throw of the given number of pins.
+func (g *Game) Roll(pins int) error {
+	if pins < 0 {
+		return errNegativeRoll
+	}
+	if pins > 10 {
+		return errPinsExceeded
+	}
+	frame, rollInFrame, done := g.state()
+	if done {
+		return errGameOver
+	}
+	switch {
+	case frame < 10 && rollInFrame == 1:
+		if pins+g.rolls[len(g.rolls)-1] > 10 {
+			return errPinsExceeded
+		}
+	case frame == 10 && rollInFrame == 1:
+		first := g.rolls[len(g.rolls)-1]
+		if first != 10 && first+pins > 10 {
+			return errPinsExceeded
+		}
+	case frame == 10 && rollInFrame == 2:
+		// The frame's first roll was a strike, so this is the second
+		// bonus roll; otherwise it is the spare's bonus roll and is free.
+		if firstOfFrame := g.rolls[len(g.rolls)-2]; firstOfFrame == 10 {
+			firstBonus := g.rolls[len(g.rolls)-1]
+			if firstBonus != 10 && firstBonus+pins > 10 {
+				return errPinsExceeded
+			}
+		}
+	}
+	g.rolls = append(g.rolls, pins)
+	return nil
+}
+
+// Score returns the total score of a completed game.
+func (g *Game) Score() (int, error) {
+	_, _, done := g.state()
+	if !done {
+		return 0, errIncomplete
+	}
+
+	rolls := g.rolls
+	total := 0
+	i := 0
+	for frame := 0; frame < 10; frame++ {
+		switch {
+		case rolls[i] == 10:
+			total += 10 + rolls[i+1] + rolls[i+2]
+			i++
+		case rolls[i]+rolls[i+1] == 10:
+			total += 10 + rolls[i+2]
+			i += 2
+		default:
+			total += rolls[i] + rolls[i+1]
+			i += 2
+		}
+	}
+	return total, nil
+}

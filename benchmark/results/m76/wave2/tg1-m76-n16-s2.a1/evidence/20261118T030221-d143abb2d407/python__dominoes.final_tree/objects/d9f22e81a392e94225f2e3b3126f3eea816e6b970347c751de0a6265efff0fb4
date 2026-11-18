@@ -1,0 +1,54 @@
+def can_chain(dominoes):
+    if not dominoes:
+        return []
+
+    if not _is_chainable(dominoes):
+        return None
+
+    return _search(dominoes, [])
+
+
+def _is_chainable(dominoes):
+    # A closed chain is an Eulerian circuit: every vertex must have an
+    # even degree, and the graph must be connected.
+    degrees = {}
+    adjacency = {}
+    for a, b in dominoes:
+        degrees[a] = degrees.get(a, 0) + 1
+        degrees[b] = degrees.get(b, 0) + 1
+        adjacency.setdefault(a, set()).add(b)
+        adjacency.setdefault(b, set()).add(a)
+
+    if any(count % 2 for count in degrees.values()):
+        return False
+
+    start = next(iter(adjacency))
+    seen = {start}
+    stack = [start]
+    while stack:
+        vertex = stack.pop()
+        for neighbor in adjacency[vertex]:
+            if neighbor not in seen:
+                seen.add(neighbor)
+                stack.append(neighbor)
+
+    return seen == set(adjacency)
+
+
+def _search(remaining, chain):
+    if not remaining:
+        if chain[0][0] == chain[-1][1]:
+            return chain
+        return None
+
+    current = chain[-1][1] if chain else None
+    for i, (a, b) in enumerate(remaining):
+        for domino in ((a, b), (b, a)):
+            if current is None or domino[0] == current:
+                result = _search(
+                    remaining[:i] + remaining[i + 1:], chain + [domino]
+                )
+                if result is not None:
+                    return result
+
+    return None

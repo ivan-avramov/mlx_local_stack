@@ -1,0 +1,140 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strings"
+)
+
+// Solve solves an alphametics puzzle of the form
+// "WORD1 + WORD2 + ... + WORDn == RESULT".
+//
+// It returns a mapping from each letter to a distinct digit such that the
+// translated words form a valid sum, or an error if no such assignment exists.
+// The leading digit of any multi-digit word must not be zero.
+func Solve(puzzle string) (map[string]int, error) {
+	puzzle = strings.ReplaceAll(puzzle, " ", "")
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, fmt.Errorf("invalid puzzle: %q", puzzle)
+	}
+
+	coeff := map[string]int{}
+	leading := map[string]bool{}
+
+	for _, word := range strings.Split(eq[0], "+") {
+		addWord(word, +1, coeff, leading)
+	}
+	addWord(eq[1], -1, coeff, leading)
+
+	if len(coeff) > 10 {
+		return nil, errors.New("no solution")
+	}
+
+	// Assign letters with the largest magnitude coefficient first so that the
+	// bound pruning below cuts the search space quickly.
+	letters := make([]string, 0, len(coeff))
+	for l := range coeff {
+		letters = append(letters, l)
+	}
+	sort.Slice(letters, func(i, j int) bool {
+		return abs(coeff[letters[i]]) > abs(coeff[letters[j]])
+	})
+
+	assignment := map[string]int{}
+	used := make([]bool, 10)
+
+	var backtrack func(idx, sum int) bool
+	backtrack = func(idx, sum int) bool {
+		if idx == len(letters) {
+			return sum == 0
+		}
+		if !boundsOK(letters[idx:], coeff, sum, used) {
+			return false
+		}
+		l := letters[idx]
+		for d := 0; d <= 9; d++ {
+			if used[d] {
+				continue
+			}
+			if d == 0 && leading[l] {
+				continue
+			}
+			used[d] = true
+			assignment[l] = d
+			if backtrack(idx+1, sum+coeff[l]*d) {
+				return true
+			}
+			used[d] = false
+			delete(assignment, l)
+		}
+		return false
+	}
+
+	if !backtrack(0, 0) {
+		return nil, errors.New("no solution")
+	}
+	return assignment, nil
+}
+
+// addWord adds the contribution of one word to the per-letter coefficients.
+// sign is +1 for addends and -1 for the result.
+func addWord(word string, sign int, coeff map[string]int, leading map[string]bool) {
+	if len(word) > 1 {
+		leading[word[0:1]] = true
+	}
+	place := 1
+	for i := len(word) - 1; i >= 0; i-- {
+		coeff[word[i:i+1]] += sign * place
+		place *= 10
+	}
+}
+
+// boundsOK reports whether the remaining letters (rem) can still be assigned
+// distinct, unused digits such that the total coefficient sum reaches -sum.
+//
+// It bounds the achievable range by relaxing the distinctness constraint: each
+// remaining letter is allowed to pick any single available digit. For a
+// non-negative coefficient the contribution is minimized by the smallest digit
+// and maximized by the largest; for a negative coefficient the reverse holds.
+// Summing these per-letter ranges yields a range guaranteed to contain every
+// genuine assignment, so a valid solution is never pruned.
+func boundsOK(rem []string, coeff map[string]int, sum int, used []bool) bool {
+	target := -sum
+
+	minAvail, maxAvail, available := -1, -1, 0
+	for d := 0; d <= 9; d++ {
+		if !used[d] {
+			if minAvail < 0 {
+				minAvail = d
+			}
+			maxAvail = d
+			available++
+		}
+	}
+	if available < len(rem) {
+		return false
+	}
+
+	minSum, maxSum := 0, 0
+	for _, l := range rem {
+		c := coeff[l]
+		if c >= 0 {
+			minSum += c * minAvail
+			maxSum += c * maxAvail
+		} else {
+			minSum += c * maxAvail
+			maxSum += c * minAvail
+		}
+	}
+
+	return target >= minSum && target <= maxSum
+}
+
+func abs(x int) int {
+	if x < 0 {
+		return -x
+	}
+	return x
+}

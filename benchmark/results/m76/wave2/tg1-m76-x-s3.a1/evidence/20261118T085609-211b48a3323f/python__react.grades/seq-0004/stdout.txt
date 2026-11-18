@@ -1,0 +1,82 @@
+.....F.......F                                                           [100%]
+=================================== FAILURES ===================================
+_ ReactTest.test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change _
+
+self = <react_test.ReactTest testMethod=test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change>
+
+    def test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change(
+        self,
+    ):
+        input = InputCell(1)
+        plus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        minus_one = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] - 1,
+        )
+        always_two = ComputeCell(
+            [
+                plus_one,
+                minus_one,
+            ],
+            lambda inputs: inputs[0] - inputs[1],
+        )
+        cb1_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        always_two.add_callback(callback1)
+        input.value = 2
+>       self.assertEqual(cb1_observer, [])
+E       AssertionError: Lists differ: [3, 2] != []
+E       
+E       First list contains 2 additional elements.
+E       First extra element 0:
+E       3
+E       
+E       - [3, 2]
+E       + []
+
+react_test.py:258: AssertionError
+_ ReactTest.test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks _
+
+self = <react_test.ReactTest testMethod=test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks>
+
+    def test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks(
+        self,
+    ):
+        input = InputCell(1)
+        output = ComputeCell(
+            [
+                input,
+            ],
+            lambda inputs: inputs[0] + 1,
+        )
+        cb1_observer = []
+        cb2_observer = []
+        callback1 = self.callback_factory(cb1_observer)
+        callback2 = self.callback_factory(cb2_observer)
+        output.add_callback(callback1)
+        output.add_callback(callback2)
+        output.remove_callback(callback1)
+>       output.remove_callback(callback1)
+
+react_test.py:190: 
+_ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ 
+
+self = <react.ComputeCell object at 0x10afa47d0>
+callback = functools.partial(<function ReactTest.callback_factory.<locals>.callback at 0x10b1a5080>, [])
+
+    def remove_callback(self, callback):
+>       self._callbacks.remove(callback)
+E       ValueError: list.remove(x): x not in list
+
+react.py:52: ValueError
+=========================== short test summary info ============================
+FAILED react_test.py::ReactTest::test_callbacks_should_not_be_called_if_dependencies_change_but_output_value_doesn_t_change
+FAILED react_test.py::ReactTest::test_removing_a_callback_multiple_times_doesn_t_interfere_with_other_callbacks
+2 failed, 12 passed in 0.03s

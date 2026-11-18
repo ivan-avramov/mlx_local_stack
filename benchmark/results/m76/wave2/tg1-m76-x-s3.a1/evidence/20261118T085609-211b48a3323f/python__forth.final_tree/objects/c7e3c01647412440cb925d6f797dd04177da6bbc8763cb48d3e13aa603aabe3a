@@ -1,0 +1,118 @@
+"""A very simple evaluator for a small subset of Forth.
+
+Supports integer arithmetic (+, -, *, /), stack manipulation
+(DUP, DROP, SWAP, OVER), and user-defined words via
+`: word-name definition ;`. Words are case-insensitive.
+"""
+
+import re
+
+NUMBER_RE = re.compile(r"^-?\d+$")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _pop(stack, count):
+    if len(stack) < count:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return [stack.pop() for _ in range(count)]
+
+
+def _add(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a + b)
+
+
+def _sub(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a - b)
+
+
+def _mul(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a * b)
+
+
+def _div(stack):
+    b, a = _pop(stack, 2)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    quotient = abs(a) // abs(b)
+    if (a < 0) != (b < 0):
+        quotient = -quotient
+    stack.append(quotient)
+
+
+def _dup(stack):
+    (a,) = _pop(stack, 1)
+    stack.append(a)
+    stack.append(a)
+
+
+def _drop(stack):
+    _pop(stack, 1)
+
+
+def _swap(stack):
+    b, a = _pop(stack, 2)
+    stack.append(b)
+    stack.append(a)
+
+
+def _over(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a)
+    stack.append(b)
+    stack.append(a)
+
+
+BUILTINS = {
+    "+": _add,
+    "-": _sub,
+    "*": _mul,
+    "/": _div,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    def execute(tokens):
+        for token in tokens:
+            if NUMBER_RE.match(token):
+                stack.append(int(token))
+            elif token in words:
+                execute(words[token])
+            elif token in BUILTINS:
+                BUILTINS[token](stack)
+            else:
+                raise ValueError("undefined operation")
+
+    for line in input_data:
+        tokens = [token.lower() for token in line.split()]
+        if tokens and tokens[0] == ":":
+            name = tokens[1]
+            if NUMBER_RE.match(name):
+                raise ValueError("illegal operation")
+            end = tokens.index(";") if ";" in tokens else len(tokens)
+            body = tokens[2:end]
+            # Compile the definition: expand any user words to their current
+            # bodies so later redefinitions do not affect this word.
+            compiled = []
+            for token in body:
+                if token in words:
+                    compiled.extend(words[token])
+                else:
+                    compiled.append(token)
+            words[name] = compiled
+        else:
+            execute(tokens)
+
+    return stack

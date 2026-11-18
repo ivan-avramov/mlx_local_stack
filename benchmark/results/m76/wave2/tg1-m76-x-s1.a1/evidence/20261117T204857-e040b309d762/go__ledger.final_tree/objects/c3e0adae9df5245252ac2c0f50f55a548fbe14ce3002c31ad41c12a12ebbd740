@@ -1,0 +1,176 @@
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+// Refactoring log (see .docs/instructions.md):
+//
+//  1. Extracted the input validation (currency, locale, date) out of the
+//     per-row goroutines into a single up-front pass. The original validated
+//     everything inside the goroutines and, for an empty ledger, validated
+//     currency/locale by recursively calling FormatLedger with a throwaway
+//     entry. That hack is gone.
+//  2. Replaced the hand-rolled bubble sort with sort.Slice and a clear
+//     less-than comparator that orders by Date, then Description, then Change.
+//  3. Broke row rendering into small helpers: formatDate, formatDescription,
+//     formatAmount, groupThousands. Each locale's quirks (symbol placement,
+//     thousands/decimal separators, negative marker) live in formatAmount.
+//  4. Dropped the goroutine-per-row fan-out. The work is trivially cheap and
+//     the channel round-trip only added complexity and a race-prone ordering
+//     shim; a plain strings.Builder is faster and easier to reason about.
+//  5. The input slice is copied before sorting, so callers' entries are never
+//     mutated (TestFormatLedgerNotChangeInput).
+
+// Entry is a single ledger line.
+type Entry struct {
+	Date        string // "YYYY-MM-DD"
+	Description string
+	Change      int // in cents
+}
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+// currencySymbols maps a supported currency code to its symbol.
+var currencySymbols = map[string]string{
+	"USD": "$",
+	"EUR": "€",
+}
+
+// locale describes the column headers for a supported locale.
+type locale struct {
+	dateHeader   string
+	descHeader   string
+	changeHeader string
+}
+
+var locales = map[string]locale{
+	"en-US": {"Date", "Description", "Change"},
+	"nl-NL": {"Datum", "Omschrijving", "Verandering"},
+}
+
+// FormatLedger renders entries as a formatted ledger for the given currency
+// and locale. It returns an error if the currency, locale, or any entry date
+// is invalid. The input slice is not modified.
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if _, ok := currencySymbols[currency]; !ok {
+		return "", errInvalidCurrency
+	}
+	loc, ok := locales[locale]
+	if !ok {
+		return "", errInvalidLocale
+	}
+	for _, e := range entries {
+		if err := validateDate(e.Date); err != nil {
+			return "", err
+		}
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		return less(sorted[i], sorted[j])
+	})
+
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("%-10s | %-25s | %s\n", loc.dateHeader, loc.descHeader, loc.changeHeader))
+	for _, e := range sorted {
+		b.WriteString(fmt.Sprintf("%-10s | %-25s | %13s\n",
+			formatDate(locale, e.Date),
+			formatDescription(e.Description),
+			formatAmount(locale, currency, e.Change),
+		))
+	}
+	return b.String(), nil
+}
+
+// less reports whether a sorts before b: by Date, then Description, then Change.
+func less(a, b Entry) bool {
+	if a.Date != b.Date {
+		return a.Date < b.Date
+	}
+	if a.Description != b.Description {
+		return a.Description < b.Description
+	}
+	return a.Change < b.Change
+}
+
+func validateDate(date string) error {
+	if len(date) != 10 || date[4] != '-' || date[7] != '-' {
+		return errInvalidDate
+	}
+	return nil
+}
+
+// formatDate renders an ISO date in the locale's display format.
+func formatDate(locale, date string) string {
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return fmt.Sprintf("%s-%s-%s", day, month, year)
+	}
+	return fmt.Sprintf("%s/%s/%s", month, day, year)
+}
+
+// formatDescription truncates descriptions longer than 25 characters.
+func formatDescription(desc string) string {
+	if len(desc) > 25 {
+		return desc[:22] + "..."
+	}
+	return desc
+}
+
+// formatAmount renders the change in the locale's currency format. The field is
+// right-aligned by the caller, so positive values carry a trailing space and
+// negative values are wrapped in parentheses (en-US) or suffixed with '-'
+// (nl-NL) to keep the column width constant.
+func formatAmount(locale, currency string, change int) string {
+	symbol := currencySymbols[currency]
+	negative := change < 0
+	if negative {
+		change = -change
+	}
+	whole := change / 100
+	cents := change % 100
+
+	var amount string
+	if locale == "nl-NL" {
+		amount = fmt.Sprintf("%s %s,%02d", symbol, groupThousands(whole, "."), cents)
+		if negative {
+			amount += "-"
+		} else {
+			amount += " "
+		}
+	} else {
+		amount = fmt.Sprintf("%s%s.%02d", symbol, groupThousands(whole, ","), cents)
+		if negative {
+			amount = "(" + amount + ")"
+		} else {
+			amount += " "
+		}
+	}
+	return amount
+}
+
+// groupThousands inserts sep between every group of three digits of n.
+func groupThousands(n int, sep string) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteString(sep)
+		}
+		b.WriteByte(s[i])
+	}
+	return b.String()
+}

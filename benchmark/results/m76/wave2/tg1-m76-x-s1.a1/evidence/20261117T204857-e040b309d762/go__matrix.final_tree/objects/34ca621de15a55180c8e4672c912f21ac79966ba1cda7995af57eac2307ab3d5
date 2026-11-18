@@ -1,0 +1,87 @@
+package matrix
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// Matrix is a rectangular grid of integers.
+type Matrix interface {
+	// Rows returns the matrix's rows, top to bottom.
+	Rows() [][]int
+	// Cols returns the matrix's columns, left to right.
+	Cols() [][]int
+	// Set sets the element at (row, col) to val, reporting whether the
+	// coordinates are in bounds.
+	Set(row, col, val int) bool
+}
+
+// matrix is the concrete implementation of Matrix.
+type matrix struct {
+	rows [][]int
+	cols int
+}
+
+// New parses s as a matrix of integers. Rows are separated by newlines and
+// elements within a row by runs of whitespace. It returns an error if any row
+// is empty, any element is not an integer, or the rows have unequal lengths.
+func New(s string) (Matrix, error) {
+	m := &matrix{}
+	for _, line := range strings.Split(s, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) == 0 {
+			return nil, errors.New("matrix: empty row")
+		}
+		row := make([]int, len(fields))
+		for i, f := range fields {
+			n, err := strconv.Atoi(f)
+			if err != nil {
+				return nil, err
+			}
+			row[i] = n
+		}
+		if m.cols == 0 {
+			m.cols = len(row)
+		} else if len(row) != m.cols {
+			return nil, errors.New("matrix: rows have unequal lengths")
+		}
+		m.rows = append(m.rows, row)
+	}
+	return m, nil
+}
+
+// Rows returns a copy of the matrix's rows, so callers cannot mutate the
+// underlying matrix through the returned slice.
+func (m *matrix) Rows() [][]int {
+	rows := make([][]int, len(m.rows))
+	for i, row := range m.rows {
+		rows[i] = make([]int, len(row))
+		copy(rows[i], row)
+	}
+	return rows
+}
+
+// Cols returns a copy of the matrix's columns, so callers cannot mutate the
+// underlying matrix through the returned slice.
+func (m *matrix) Cols() [][]int {
+	cols := make([][]int, m.cols)
+	for c := 0; c < m.cols; c++ {
+		col := make([]int, len(m.rows))
+		for r, row := range m.rows {
+			col[r] = row[c]
+		}
+		cols[c] = col
+	}
+	return cols
+}
+
+// Set sets the element at (row, col) to val, reporting whether the
+// coordinates are within the matrix.
+func (m *matrix) Set(row, col, val int) bool {
+	if row < 0 || row >= len(m.rows) || col < 0 || col >= m.cols {
+		return false
+	}
+	m.rows[row][col] = val
+	return true
+}

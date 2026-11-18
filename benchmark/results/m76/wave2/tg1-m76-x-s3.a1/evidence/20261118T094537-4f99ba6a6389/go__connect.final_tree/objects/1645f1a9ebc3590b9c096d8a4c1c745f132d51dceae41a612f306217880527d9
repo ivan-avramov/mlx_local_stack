@@ -1,0 +1,92 @@
+package connect
+
+import "errors"
+
+// ResultOf determines the winner of a game of Hex (Polygon / CON-TAC-TIX).
+//
+// The board is a parallelogram of hexagonal cells given as rows of
+// characters: 'X' and 'O' are stones and '.' is an empty cell.
+//
+// Player X plays from left to right and wins when a chain of X stones
+// connects the left edge to the right edge. Player O plays from top to
+// bottom and wins when a chain of O stones connects the top edge to the
+// bottom edge. The result is "" when nobody has won.
+func ResultOf(lines []string) (string, error) {
+	if len(lines) == 0 {
+		return "", nil
+	}
+	for _, line := range lines {
+		for _, c := range line {
+			if c != 'X' && c != 'O' && c != '.' {
+				return "", errors.New("connect: board contains an invalid cell")
+			}
+		}
+	}
+
+	if connects(lines, 'X', true) {
+		return "X", nil
+	}
+	if connects(lines, 'O', false) {
+		return "O", nil
+	}
+	return "", nil
+}
+
+// connects reports whether the given player has a chain of stones running
+// from one edge of the board to the opposite edge. When horizontal is true
+// the chain must run from the left edge to the right edge; otherwise it must
+// run from the top edge to the bottom edge.
+func connects(lines []string, player rune, horizontal bool) bool {
+	rows := len(lines)
+	visited := make([][]bool, rows)
+	for i, line := range lines {
+		visited[i] = make([]bool, len(line))
+	}
+
+	// Seed the search with every stone of the player on the starting edge.
+	var queue [][2]int
+	for r, line := range lines {
+		for c, cell := range line {
+			onStart := horizontal && c == 0 || !horizontal && r == 0
+			if onStart && cell == player {
+				visited[r][c] = true
+				queue = append(queue, [2]int{r, c})
+			}
+		}
+	}
+
+	// Breadth-first search over the connected stones.
+	for len(queue) > 0 {
+		r, c := queue[0][0], queue[0][1]
+		queue = queue[1:]
+
+		// A stone on the opposite edge completes a winning connection.
+		onEnd := horizontal && c == len(lines[r])-1 || !horizontal && r == rows-1
+		if onEnd {
+			return true
+		}
+
+		for _, n := range neighbors(r, c) {
+			nr, nc := n[0], n[1]
+			if nr < 0 || nr >= rows || nc < 0 || nc >= len(lines[nr]) {
+				continue
+			}
+			if visited[nr][nc] || rune(lines[nr][nc]) != player {
+				continue
+			}
+			visited[nr][nc] = true
+			queue = append(queue, [2]int{nr, nc})
+		}
+	}
+	return false
+}
+
+// neighbors returns the six cells adjacent to (r, c) on the parallelogram
+// board: up, up-right, left, right, down and down-left.
+func neighbors(r, c int) [][2]int {
+	return [][2]int{
+		{r - 1, c}, {r - 1, c + 1},
+		{r, c - 1}, {r, c + 1},
+		{r + 1, c}, {r + 1, c - 1},
+	}
+}

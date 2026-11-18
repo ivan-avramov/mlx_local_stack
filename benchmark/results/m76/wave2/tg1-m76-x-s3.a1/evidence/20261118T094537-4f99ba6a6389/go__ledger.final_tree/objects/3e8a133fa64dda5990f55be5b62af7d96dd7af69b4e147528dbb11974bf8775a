@@ -1,0 +1,168 @@
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
+	"unicode/utf8"
+)
+
+// Entry is a single ledger entry. Change is expressed in cents.
+type Entry struct {
+	Date        string // "YYYY-MM-DD"
+	Description string
+	Change      int // in cents
+}
+
+const (
+	dateColumnWidth   = 10
+	descriptionWidth  = 25
+	amountColumnWidth = 13
+	entryDateLayout   = "2006-01-02"
+	ellipsis          = "..."
+)
+
+var (
+	errInvalidCurrency = errors.New("invalid currency")
+	errInvalidLocale   = errors.New("invalid locale")
+	errInvalidDate     = errors.New("invalid date")
+)
+
+// FormatLedger renders the entries as a formatted ledger for the given
+// currency and locale. The entries slice is not modified.
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	symbol, err := currencySymbol(currency)
+	if err != nil {
+		return "", err
+	}
+	l, ok := locales[locale]
+	if !ok {
+		return "", errInvalidLocale
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(l.header)
+	for _, entry := range sorted {
+		line, err := formatEntry(entry, symbol, l)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+// currencySymbol maps a currency code to its symbol.
+func currencySymbol(currency string) (string, error) {
+	switch currency {
+	case "USD":
+		return "$", nil
+	case "EUR":
+		return "€", nil
+	default:
+		return "", errInvalidCurrency
+	}
+}
+
+// locale describes how dates, amounts and column titles are rendered.
+type locale struct {
+	header       string
+	dateLayout   string
+	formatAmount func(symbol string, cents int) string
+}
+
+var locales = map[string]locale{
+	"en-US": {
+		header:     padRight("Date", dateColumnWidth) + " | " + padRight("Description", descriptionWidth) + " | Change\n",
+		dateLayout: "01/02/2006",
+		formatAmount: func(symbol string, cents int) string {
+			if cents < 0 {
+				return "(" + symbol + formatNumber(-cents, ",", ".") + ")"
+			}
+			return symbol + formatNumber(cents, ",", ".") + " "
+		},
+	},
+	"nl-NL": {
+		header:     padRight("Datum", dateColumnWidth) + " | " + padRight("Omschrijving", descriptionWidth) + " | Verandering\n",
+		dateLayout: "02-01-2006",
+		formatAmount: func(symbol string, cents int) string {
+			if cents < 0 {
+				return symbol + " " + formatNumber(-cents, ".", ",") + "-"
+			}
+			return symbol + " " + formatNumber(cents, ".", ",") + " "
+		},
+	},
+}
+
+// formatEntry renders a single ledger line for the given entry.
+func formatEntry(entry Entry, symbol string, l locale) (string, error) {
+	date, err := formatDate(entry.Date, l.dateLayout)
+	if err != nil {
+		return "", err
+	}
+	amount := padLeft(l.formatAmount(symbol, entry.Change), amountColumnWidth)
+	return date + " | " +
+		padRight(truncate(entry.Description, descriptionWidth), descriptionWidth) + " | " +
+		amount + "\n", nil
+}
+
+// formatDate parses an entry date and renders it with the given layout.
+func formatDate(date, layout string) (string, error) {
+	t, err := time.Parse(entryDateLayout, date)
+	if err != nil {
+		return "", errInvalidDate
+	}
+	return padRight(t.Format(layout), dateColumnWidth), nil
+}
+
+// formatNumber formats a non-negative amount in cents with the given
+// thousands and decimal separators, e.g. formatNumber(123456, ",", ".")
+// returns "1,234.56".
+func formatNumber(cents int, thousandsSep, decimalSep string) string {
+	dollars := strconv.Itoa(cents / 100)
+	var grouped strings.Builder
+	for i, r := range dollars {
+		// Insert a separator before a digit that starts a new group of
+		// three, counting from the right.
+		if i > 0 && (len(dollars)-i)%3 == 0 {
+			grouped.WriteString(thousandsSep)
+		}
+		grouped.WriteRune(r)
+	}
+	return grouped.String() + decimalSep + fmt.Sprintf("%02d", cents%100)
+}
+
+// truncate shortens s to at most width runes, replacing the omitted
+// characters with an ellipsis.
+func truncate(s string, width int) string {
+	if utf8.RuneCountInString(s) <= width {
+		return s
+	}
+	runes := []rune(s)
+	return string(runes[:width-len(ellipsis)]) + ellipsis
+}
+
+// padRight pads s with spaces on the right until it is width runes long.
+func padRight(s string, width int) string {
+	return s + strings.Repeat(" ", width-utf8.RuneCountInString(s))
+}
+
+// padLeft pads s with spaces on the left until it is width runes long.
+func padLeft(s string, width int) string {
+	return strings.Repeat(" ", width-utf8.RuneCountInString(s)) + s
+}

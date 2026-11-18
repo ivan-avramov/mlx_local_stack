@@ -1,0 +1,86 @@
+package bottlesong
+
+import (
+	"fmt"
+	"unicode"
+	"unicode/utf8"
+)
+
+// Recite returns the lyrics of the "Ten Green Bottles" song, starting from
+// startBottles and singing takeDown verses. Verses are separated by a blank
+// line.
+func Recite(startBottles, takeDown int) []string {
+	var lines []string
+	for i := 0; i < takeDown; i++ {
+		if i > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, verse(startBottles-i)...)
+	}
+	return lines
+}
+
+// verse returns the four lines of the verse for the given number of bottles.
+func verse(n int) []string {
+	line := capitalize(fmt.Sprintf("%s hanging on the wall,", bottlePhrase(n)))
+	return []string{
+		line,
+		line,
+		"And if one green bottle should accidentally fall,",
+		fmt.Sprintf("There'll be %s hanging on the wall.", bottlePhrase(n-1)),
+	}
+}
+
+// bottlePhrase returns the count, color, and singular/plural form of "bottle",
+// e.g. "ten green bottles" or "one green bottle".
+func bottlePhrase(n int) string {
+	return fmt.Sprintf("%s green bottle%s", numberWord(n), plural(n))
+}
+
+// plural returns "" for a single bottle and "s" otherwise.
+func plural(n int) string {
+	if n == 1 {
+		return ""
+	}
+	return "s"
+}
+
+// numberWord returns the English word for a number from 0 to 10,
+// e.g. "no", "one", "ten".
+func numberWord(n int) string {
+	switch n {
+	case 0:
+		return "no"
+	case 1:
+		return "one"
+	case 2:
+		return "two"
+	case 3:
+		return "three"
+	case 4:
+		return "four"
+	case 5:
+		return "five"
+	case 6:
+		return "six"
+	case 7:
+		return "seven"
+	case 8:
+		return "eight"
+	case 9:
+		return "nine"
+	case 10:
+		return "ten"
+	default:
+		return fmt.Sprintf("%d", n)
+	}
+}
+
+// capitalize returns s with its first rune upper-cased.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	r, size := utf8.DecodeRuneInString(s)
+	return string(unicode.ToUpper(r)) + s[size:]
+}

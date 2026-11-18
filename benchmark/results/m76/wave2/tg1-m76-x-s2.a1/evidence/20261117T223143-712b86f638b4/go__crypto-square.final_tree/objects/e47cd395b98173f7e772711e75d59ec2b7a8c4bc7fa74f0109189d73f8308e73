@@ -1,0 +1,42 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode encodes the given plaintext using the square code.
+func Encode(pt string) string {
+	// Normalize: lowercase and keep only alphanumeric characters.
+	var msg []rune
+	for _, r := range pt {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			msg = append(msg, unicode.ToLower(r))
+		}
+	}
+	n := len(msg)
+	if n == 0 {
+		return ""
+	}
+
+	// Choose the rectangle size: smallest c with c*c >= n, then r = ceil(n/c).
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := int(math.Ceil(float64(n) / float64(c)))
+
+	// Read down the columns, left to right.
+	chunks := make([]string, c)
+	for j := 0; j < c; j++ {
+		chunk := make([]rune, r)
+		for i := 0; i < r; i++ {
+			pos := i*c + j
+			if pos < n {
+				chunk[i] = msg[pos]
+			} else {
+				chunk[i] = ' '
+			}
+		}
+		chunks[j] = string(chunk)
+	}
+	return strings.Join(chunks, " ")
+}

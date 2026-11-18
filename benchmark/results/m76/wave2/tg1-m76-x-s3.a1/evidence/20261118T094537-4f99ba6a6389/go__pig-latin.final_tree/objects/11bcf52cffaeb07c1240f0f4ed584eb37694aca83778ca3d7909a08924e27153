@@ -1,0 +1,42 @@
+package piglatin
+
+import "strings"
+
+func Sentence(sentence string) string {
+	words := strings.Fields(sentence)
+	for i, word := range words {
+		words[i] = translate(word)
+	}
+	return strings.Join(words, " ")
+}
+
+func translate(word string) string {
+	// Rule 1: vowel start, or the special "xr" and "yt" prefixes.
+	if isVowel(word[0]) || strings.HasPrefix(word, "xr") || strings.HasPrefix(word, "yt") {
+		return word + "ay"
+	}
+
+	i := 0
+	for i < len(word) {
+		c := word[i]
+		if c == 'q' && i+1 < len(word) && word[i+1] == 'u' {
+			// Rule 3: "qu" moves together with the preceding consonants.
+			i += 2
+			continue
+		}
+		if isVowel(c) || (c == 'y' && i > 0) {
+			// Rule 2/4: stop at the first vowel, or a "y" after consonants.
+			return word[i:] + word[:i] + "ay"
+		}
+		i++
+	}
+	return word + "ay"
+}
+
+func isVowel(c byte) bool {
+	switch c {
+	case 'a', 'e', 'i', 'o', 'u':
+		return true
+	}
+	return false
+}

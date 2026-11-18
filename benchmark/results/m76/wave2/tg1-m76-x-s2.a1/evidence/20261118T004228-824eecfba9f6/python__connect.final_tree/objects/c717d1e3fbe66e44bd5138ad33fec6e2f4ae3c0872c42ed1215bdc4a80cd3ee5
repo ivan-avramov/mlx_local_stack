@@ -1,0 +1,62 @@
+class ConnectGame:
+    """Compute the winner of a game of Hex / Polygon (CON-TAC-TIX).
+
+    The board is a parallelogram of hexagonal fields represented as text
+    rows, each indented one extra space per row.  Player X plays from
+    left to right and player O plays from top to bottom; the first player
+    to connect their two assigned sides wins.
+    """
+
+    def __init__(self, board):
+        self.board = [
+            line.strip().split()
+            for line in board.splitlines()
+            if line.strip()
+        ]
+        self.rows = len(self.board)
+        self.cols = len(self.board[0]) if self.board else 0
+
+    def get_winner(self):
+        if self._connects("X", "left", "right"):
+            return "X"
+        if self._connects("O", "top", "bottom"):
+            return "O"
+        return ""
+
+    def _connects(self, player, start_edge, end_edge):
+        start = (
+            [(r, 0) for r in range(self.rows)]
+            if start_edge == "left"
+            else [(0, c) for c in range(self.cols)]
+        )
+
+        def on_end_edge(r, c):
+            return c == self.cols - 1 if end_edge == "right" else r == self.rows - 1
+
+        seen = set()
+        queue = []
+        for r, c in start:
+            if self.board[r][c] == player:
+                seen.add((r, c))
+                queue.append((r, c))
+
+        while queue:
+            r, c = queue.pop()
+            if on_end_edge(r, c):
+                return True
+            for neighbor in self._neighbors(r, c):
+                if neighbor not in seen and self.board[neighbor[0]][neighbor[1]] == player:
+                    seen.add(neighbor)
+                    queue.append(neighbor)
+        return False
+
+    def _neighbors(self, r, c):
+        # Each row is shifted half a cell to the right, so a cell's
+        # six hexagonal neighbors are:
+        for nr, nc in (
+            (r, c - 1), (r, c + 1),
+            (r - 1, c), (r - 1, c + 1),
+            (r + 1, c - 1), (r + 1, c),
+        ):
+            if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                yield nr, nc

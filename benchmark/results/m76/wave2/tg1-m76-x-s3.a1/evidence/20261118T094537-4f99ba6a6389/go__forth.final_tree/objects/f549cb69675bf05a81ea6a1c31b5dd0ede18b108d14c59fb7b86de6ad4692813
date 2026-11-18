@@ -1,0 +1,161 @@
+package forth
+
+import (
+	"errors"
+	"strconv"
+	"strings"
+)
+
+// word is a compiled Forth word: it transforms the value stack.
+type word func([]int) ([]int, error)
+
+// Forth evaluates the given lines of Forth source and returns the
+// resulting value stack.
+func Forth(input []string) ([]int, error) {
+	stack := []int{}
+	words := map[string]word{
+		"+":  binop(func(a, b int) (int, error) { return a + b, nil }),
+		"-":  binop(func(a, b int) (int, error) { return a - b, nil }),
+		"*":  binop(func(a, b int) (int, error) { return a * b, nil }),
+		"/":  binop(func(a, b int) (int, error) {
+			if b == 0 {
+				return 0, errors.New("divide by zero")
+			}
+			return a / b, nil
+		}),
+		"dup": func(s []int) ([]int, error) {
+			if len(s) < 1 {
+				return nil, errors.New("empty stack")
+			}
+			return append(s, s[len(s)-1]), nil
+		},
+		"drop": func(s []int) ([]int, error) {
+			if len(s) < 1 {
+				return nil, errors.New("empty stack")
+			}
+			return s[:len(s)-1], nil
+		},
+		"swap": func(s []int) ([]int, error) {
+			if len(s) < 2 {
+				return nil, errors.New("only one value on the stack")
+			}
+			s[len(s)-1], s[len(s)-2] = s[len(s)-2], s[len(s)-1]
+			return s, nil
+		},
+		"over": func(s []int) ([]int, error) {
+			if len(s) < 2 {
+				return nil, errors.New("only one value on the stack")
+			}
+			return append(s, s[len(s)-2]), nil
+		},
+	}
+
+	for _, line := range input {
+		tokens := strings.Fields(line)
+		for i := 0; i < len(tokens); {
+			if tokens[i] == ":" {
+				// A definition: ": name body... ;"
+				end := -1
+				for j := i + 1; j < len(tokens); j++ {
+					if tokens[j] == ";" {
+						end = j
+						break
+					}
+				}
+				if end < i+2 {
+					return nil, errors.New("illegal operation")
+				}
+				name := strings.ToLower(tokens[i+1])
+				if _, isNumber := parseNumber(tokens[i+1]); isNumber {
+					return nil, errors.New("illegal operation")
+				}
+				body, err := compile(words, tokens[i+2:end])
+				if err != nil {
+					return nil, err
+				}
+				words[name] = func(s []int) ([]int, error) {
+					for _, w := range body {
+						var err error
+						s, err = w(s)
+						if err != nil {
+							return nil, err
+						}
+					}
+					return s, nil
+				}
+				i = end + 1
+				continue
+			}
+
+			if n, isNumber := parseNumber(tokens[i]); isNumber {
+				stack = append(stack, n)
+			} else {
+				w, ok := words[strings.ToLower(tokens[i])]
+				if !ok {
+					return nil, errors.New("undefined operation")
+				}
+				var err error
+				stack, err = w(stack)
+				if err != nil {
+					return nil, err
+				}
+			}
+			i++
+		}
+	}
+
+	return stack, nil
+}
+
+// compile resolves each token of a definition body to a word. Words are
+// resolved at definition time, so a definition captures the words as they
+// were defined when the definition was made.
+func compile(words map[string]word, tokens []string) ([]word, error) {
+	body := make([]word, 0, len(tokens))
+	for _, tok := range tokens {
+		if n, isNumber := parseNumber(tok); isNumber {
+			n := n
+			body = append(body, func(s []int) ([]int, error) {
+				return append(s, n), nil
+			})
+			continue
+		}
+		w, ok := words[strings.ToLower(tok)]
+		if !ok {
+			return nil, errors.New("undefined operation")
+		}
+		body = append(body, w)
+	}
+	return body, nil
+}
+
+// parseNumber reports whether tok is a number (optionally signed) and
+// returns its value. A lone "-" is the subtraction operator, not a number.
+func parseNumber(tok string) (int, bool) {
+	if tok == "" || tok == "-" {
+		return 0, false
+	}
+	if n, err := strconv.Atoi(tok); err == nil {
+		return n, true
+	}
+	return 0, false
+}
+
+// binop builds a word that applies f to the top two stack values.
+func binop(f func(a, b int) (int, error)) word {
+	return func(s []int) ([]int, error) {
+		if len(s) < 2 {
+			msg := "empty stack"
+			if len(s) == 1 {
+				msg = "only one value on the stack"
+			}
+			return nil, errors.New(msg)
+		}
+		a, b := s[len(s)-2], s[len(s)-1]
+		r, err := f(a, b)
+		if err != nil {
+			return nil, err
+		}
+		return append(s[:len(s)-2], r), nil
+	}
+}

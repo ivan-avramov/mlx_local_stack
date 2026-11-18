@@ -1,0 +1,74 @@
+from json import dumps
+
+
+class Tree:
+    def __init__(self, label, children=None):
+        self.label = label
+        self.children = children if children is not None else []
+
+    def __dict__(self):
+        return {self.label: [c.__dict__() for c in sorted(self.children)]}
+
+    def __str__(self, indent=None):
+        return dumps(self.__dict__(), indent=indent)
+
+    def __lt__(self, other):
+        return self.label < other.label
+
+    def __eq__(self, other):
+        return self.__dict__() == other.__dict__()
+
+    def from_pov(self, from_node):
+        if self.label == from_node:
+            return self
+
+        path = self._find_path(from_node)
+        if path is None:
+            raise ValueError("Tree could not be reoriented")
+
+        new_root = path[-1]
+        ancestors = path[:-1]
+
+        # Rebuild each ancestor without the child that lies on the path to
+        # the new root, working from the new root's parent up to the root.
+        built = []
+        prev = new_root
+        for ancestor in reversed(ancestors):
+            children = [c for c in ancestor.children if c is not prev]
+            built.append(Tree(ancestor.label, children))
+            prev = ancestor
+
+        # Link the rebuilt ancestors: each one adopts the next one up the
+        # chain as a child.
+        for i in range(len(built) - 1):
+            built[i].children.append(built[i + 1])
+
+        return Tree(new_root.label, list(new_root.children) + [built[0]])
+
+    def _find_path(self, from_node):
+        """Return the chain of nodes from self to from_node, or None."""
+        if self.label == from_node:
+            return [self]
+        for child in self.children:
+            sub = child._find_path(from_node)
+            if sub is not None:
+                return [self] + sub
+        return None
+
+    def path_to(self, from_node, to_node):
+        tree = self.from_pov(from_node)
+        path = []
+
+        def walk(node):
+            path.append(node.label)
+            if node.label == to_node:
+                return True
+            for child in node.children:
+                if walk(child):
+                    return True
+            path.pop()
+            return False
+
+        if not walk(tree):
+            raise ValueError("No path found")
+        return path

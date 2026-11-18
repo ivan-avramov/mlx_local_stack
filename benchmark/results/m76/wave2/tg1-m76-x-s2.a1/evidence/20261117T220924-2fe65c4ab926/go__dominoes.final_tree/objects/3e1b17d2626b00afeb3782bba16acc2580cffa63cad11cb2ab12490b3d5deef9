@@ -1,0 +1,70 @@
+package dominoes
+
+// Domino represents a single domino tile with two halves.
+type Domino [2]int
+
+// MakeChain attempts to order the given dominoes into a closed chain,
+// where the dots on adjacent halves match and the two open ends match.
+// It returns the chain and true on success, or nil and false if no
+// such chain exists.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+
+	// Index the dominoes by the value on each half.
+	byValue := make(map[int][]int)
+	for i, d := range input {
+		byValue[d[0]] = append(byValue[d[0]], i)
+		byValue[d[1]] = append(byValue[d[1]], i)
+	}
+
+	used := make([]bool, len(input))
+	chain := make([]Domino, 0, len(input))
+
+	// search extends the chain from the current open end value.
+	var search func(current int) bool
+	search = func(current int) bool {
+		if len(chain) == len(input) {
+			// Chain is complete; it is valid only if the ends match.
+			return chain[0][0] == current
+		}
+		for _, idx := range byValue[current] {
+			if used[idx] {
+				continue
+			}
+			d := input[idx]
+			used[idx] = true
+			var next int
+			if d[0] == current {
+				chain = append(chain, d)
+				next = d[1]
+			} else {
+				chain = append(chain, Domino{d[1], d[0]})
+				next = d[0]
+			}
+			if search(next) {
+				return true
+			}
+			chain = chain[:len(chain)-1]
+			used[idx] = false
+		}
+		return false
+	}
+
+	// Try each domino as the starting stone. Trying every domino in its
+	// given orientation is sufficient: any closed chain can be rotated
+	// and traversed in either direction, so every domino appears in
+	// both orientations across the valid linearizations.
+	for start := range input {
+		d := input[start]
+		used[start] = true
+		chain = append(chain, d)
+		if search(d[1]) {
+			return chain, true
+		}
+		chain = chain[:0]
+		used[start] = false
+	}
+	return nil, false
+}

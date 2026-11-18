@@ -1,0 +1,44 @@
+import math
+
+
+M = 26
+
+
+def _check_coprime(a):
+    if math.gcd(a, M) != 1:
+        raise ValueError("a and m must be coprime.")
+
+
+def _modular_inverse(a):
+    for x in range(1, M):
+        if (a * x) % M == 1:
+            return x
+    raise ValueError("a and m must be coprime.")
+
+
+def encode(plain_text, a, b):
+    _check_coprime(a)
+    encrypted = []
+    for char in plain_text.lower():
+        if char.isalnum():
+            if char.isdigit():
+                encrypted.append(char)
+            else:
+                i = ord(char) - ord("a")
+                encrypted.append(chr((a * i + b) % M + ord("a")))
+    encrypted = "".join(encrypted)
+    return " ".join(encrypted[i:i + 5] for i in range(0, len(encrypted), 5))
+
+
+def decode(ciphered_text, a, b):
+    _check_coprime(a)
+    a_inv = _modular_inverse(a)
+    decrypted = []
+    for char in ciphered_text:
+        if char.isalnum():
+            if char.isdigit():
+                decrypted.append(char)
+            else:
+                y = ord(char) - ord("a")
+                decrypted.append(chr(a_inv * (y - b) % M + ord("a")))
+    return "".join(decrypted)

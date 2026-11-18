@@ -1,0 +1,43 @@
+package piglatin
+
+import "strings"
+
+func Sentence(sentence string) string {
+	words := strings.Fields(sentence)
+	for i, w := range words {
+		words[i] = word(w)
+	}
+	return strings.Join(words, " ")
+}
+
+func word(w string) string {
+	if w == "" {
+		return w
+	}
+	// Rule 1: vowel start, or "xr"/"yt" prefix.
+	if isVowel(w[0]) || strings.HasPrefix(w, "xr") || strings.HasPrefix(w, "yt") {
+		return w + "ay"
+	}
+	// Rules 2-4: find where the leading consonant cluster ends.
+	for i := 1; i < len(w); i++ {
+		c := w[i]
+		// Rule 3: a "qu" pair is moved along with the consonants before it.
+		if c == 'u' && w[i-1] == 'q' {
+			return w[i+1:] + w[:i+1] + "ay"
+		}
+		// Rule 2/4: the cluster ends at the first vowel, or at a "y"
+		// that follows at least one consonant.
+		if c == 'y' || isVowel(c) {
+			return w[i:] + w[:i] + "ay"
+		}
+	}
+	return w + "ay"
+}
+
+func isVowel(c byte) bool {
+	switch c {
+	case 'a', 'e', 'i', 'o', 'u':
+		return true
+	}
+	return false
+}

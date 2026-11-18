@@ -1,0 +1,69 @@
+package dominoes
+
+// Domino represents a single domino stone, holding the value of each of its
+// two halves.
+type Domino [2]int
+
+// MakeChain arranges the given dominoes into a closed chain: adjacent halves
+// match, and the two unpaired halves (the first and last of the chain) match
+// each other. It returns the chain and true when such an arrangement exists,
+// otherwise nil and false.
+func MakeChain(input []Domino) ([]Domino, bool) {
+	if len(input) == 0 {
+		return []Domino{}, true
+	}
+
+	used := make([]bool, len(input))
+	if chain, ok := search(input, used, nil, -1); ok {
+		return chain, true
+	}
+	return nil, false
+}
+
+// search extends the current chain by appending a not-yet-used domino whose
+// left half matches currentEnd (flipping it when necessary). currentEnd is the
+// value on the open end of the chain; it is -1 while the chain is empty. It
+// returns the completed chain and true when every domino has been placed and
+// the chain closes, otherwise nil and false.
+func search(input []Domino, used []bool, chain []Domino, currentEnd int) ([]Domino, bool) {
+	if len(chain) == len(input) {
+		// Every domino is placed; the chain is valid only if it closes.
+		if chain[0][0] == chain[len(chain)-1][1] {
+			return chain, true
+		}
+		return nil, false
+	}
+
+	for i := range input {
+		if used[i] {
+			continue
+		}
+		d := input[i]
+
+		var next []Domino
+		var nextEnd int
+		switch {
+		case len(chain) == 0:
+			// Start the chain with this domino.
+			next = append(chain, d)
+			nextEnd = d[1]
+		case d[0] == currentEnd:
+			// Place it as-is.
+			next = append(chain, d)
+			nextEnd = d[1]
+		case d[1] == currentEnd:
+			// Place it flipped.
+			next = append(chain, Domino{d[1], d[0]})
+			nextEnd = d[0]
+		default:
+			continue
+		}
+
+		used[i] = true
+		if result, ok := search(input, used, next, nextEnd); ok {
+			return result, true
+		}
+		used[i] = false
+	}
+	return nil, false
+}

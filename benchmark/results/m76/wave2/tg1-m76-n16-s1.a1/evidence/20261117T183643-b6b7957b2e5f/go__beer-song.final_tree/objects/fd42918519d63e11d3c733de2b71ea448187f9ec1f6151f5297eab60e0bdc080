@@ -1,0 +1,69 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// Song returns the entire song, verses 99 down to 0.
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}
+
+// Verses returns the verses from start down to stop, inclusive.
+func Verses(start, stop int) (string, error) {
+	if start < stop || start > 99 || stop < 0 {
+		return "", errors.New("invalid verse range")
+	}
+	var b strings.Builder
+	for n := start; n >= stop; n-- {
+		verse, _ := Verse(n)
+		b.WriteString(verse)
+		b.WriteString("\n")
+	}
+	return b.String(), nil
+}
+
+// Verse returns the verse for the given number of bottles.
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", errors.New("invalid verse")
+	}
+	first := phrase(n)
+	if n == 0 {
+		first = strings.ToUpper(first[:1]) + first[1:]
+	}
+	next := n - 1
+	if next < 0 {
+		next = 99
+	}
+	return fmt.Sprintf("%s of beer on the wall, %s of beer.\n%s, %s of beer on the wall.\n",
+		first, phrase(n), action(n), phrase(next)), nil
+}
+
+// phrase returns the phrase for a count of bottles, e.g. "99 bottles" or
+// "no more bottles".
+func phrase(n int) string {
+	switch {
+	case n == 0:
+		return "no more bottles"
+	case n == 1:
+		return "1 bottle"
+	default:
+		return fmt.Sprintf("%d bottles", n)
+	}
+}
+
+// action returns the action line for a verse, e.g. "Take one down and pass
+// it around" or "Go to the store and buy some more".
+func action(n int) string {
+	if n == 0 {
+		return "Go to the store and buy some more"
+	}
+	if n == 1 {
+		return "Take it down and pass it around"
+	}
+	return "Take one down and pass it around"
+}

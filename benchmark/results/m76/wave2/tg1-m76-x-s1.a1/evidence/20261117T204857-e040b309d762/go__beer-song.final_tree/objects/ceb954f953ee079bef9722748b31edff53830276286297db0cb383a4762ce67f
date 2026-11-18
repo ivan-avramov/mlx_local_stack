@@ -1,0 +1,71 @@
+package beer
+
+import (
+	"errors"
+	"fmt"
+)
+
+func Song() string {
+	song, _ := Verses(99, 0)
+	return song
+}
+
+func Verses(start, stop int) (string, error) {
+	if start > 99 || stop < 0 || start < stop {
+		return "", errors.New("invalid verse range")
+	}
+	song := ""
+	for n := start; n >= stop; n-- {
+		verse, err := Verse(n)
+		if err != nil {
+			return "", err
+		}
+		song += verse + "\n"
+	}
+	return song, nil
+}
+
+func Verse(n int) (string, error) {
+	if n < 0 || n > 99 {
+		return "", errors.New("invalid verse number")
+	}
+	next := n - 1
+	if n == 0 {
+		next = 99
+	}
+	return fmt.Sprintf("%s on the wall, %s.\n%s, %s on the wall.\n",
+		firstLine(n), bottles(n), action(n), bottles(next)), nil
+}
+
+func bottles(n int) string {
+	switch {
+	case n == 0:
+		return "no more bottles of beer"
+	case n == 1:
+		return "1 bottle of beer"
+	default:
+		return fmt.Sprintf("%d bottles of beer", n)
+	}
+}
+
+func firstLine(n int) string {
+	switch n {
+	case 0:
+		return "No more bottles of beer"
+	case 1:
+		return "1 bottle of beer"
+	default:
+		return fmt.Sprintf("%d bottles of beer", n)
+	}
+}
+
+func action(n int) string {
+	switch n {
+	case 0:
+		return "Go to the store and buy some more"
+	case 1:
+		return "Take it down and pass it around"
+	default:
+		return "Take one down and pass it around"
+	}
+}

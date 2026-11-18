@@ -1,0 +1,51 @@
+package erratum
+
+import (
+	"errors"
+	"fmt"
+)
+
+func Use(opener ResourceOpener, input string) (err error) {
+	var resource Resource
+
+	// Keep trying to open the resource while the opener reports a
+	// TransientError; any other error is fatal.
+	for {
+		resource, err = opener()
+		if err == nil {
+			break
+		}
+		var transient TransientError
+		if !errors.As(err, &transient) {
+			return err
+		}
+	}
+
+	// Close exactly once, no matter what happens afterwards.
+	defer resource.Close()
+
+	// Recover from panics raised by Frob. Recovering first (it is the
+	// last deferred call registered, so it runs before Close) lets us
+	// call Defrob before Close, as required.
+	defer func() {
+		if r := recover(); r != nil {
+			switch e := r.(type) {
+			case FrobError:
+				resource.Defrob(e.defrobTag)
+				err = e
+			case *FrobError:
+				resource.Defrob(e.defrobTag)
+				err = e
+			default:
+				if e, ok := r.(error); ok {
+					err = e
+				} else {
+					err = errors.New(fmt.Sprint(r))
+				}
+			}
+		}
+	}()
+
+	resource.Frob(input)
+	return err
+}

@@ -1,0 +1,38 @@
+class ConnectGame:
+    def __init__(self, board):
+        self.board = [
+            list(line.replace(" ", "")) for line in board.strip().splitlines()
+        ]
+
+    def get_winner(self):
+        if not self.board:
+            return ""
+        for player in ("X", "O"):
+            if self._connects(player):
+                return player
+        return ""
+
+    def _connects(self, player):
+        rows = len(self.board)
+        cols = len(self.board[0])
+        if player == "X":
+            start = [(r, 0) for r in range(rows)]
+            goal = {(r, cols - 1) for r in range(rows)}
+        else:
+            start = [(0, c) for c in range(cols)]
+            goal = {(rows - 1, c) for c in range(cols)}
+
+        visited = set()
+        stack = list(start)
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in visited or self.board[r][c] != player:
+                continue
+            visited.add((r, c))
+            if (r, c) in goal:
+                return True
+            for dr, dc in ((0, -1), (0, 1), (-1, 0), (-1, 1), (1, -1), (1, 0)):
+                nr, nc = r + dr, c + dc
+                if 0 <= nr < rows and 0 <= nc < cols and (nr, nc) not in visited:
+                    stack.append((nr, nc))
+        return False

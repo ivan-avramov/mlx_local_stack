@@ -1,0 +1,45 @@
+package erratum
+
+import "errors"
+
+// Use opens a resource via the given opener, calls Frob(input) on it, and
+// guarantees the resource is closed exactly once.
+//
+// TransientError values returned by the opener cause a retry; any other
+// error is returned. If Frob panics with a FrobError, Defrob is called with
+// the FrobError's defrobTag before the resource is closed, and the panic
+// value is returned as an error.
+func Use(opener ResourceOpener, input string) (err error) {
+	var resource Resource
+	for {
+		resource, err = opener()
+		if err == nil {
+			break
+		}
+		var transientErr TransientError
+		if !errors.As(err, &transientErr) {
+			return err
+		}
+	}
+
+	// Close runs last (LIFO), after any Defrob performed by the recover below.
+	defer func() {
+		// Ignore any error from Close; the error from the open/Frob
+		// handling above is the one we want to report.
+		_ = resource.Close()
+	}()
+
+	defer func() {
+		if r := recover(); r != nil {
+			if fe, ok := r.(FrobError); ok {
+				resource.Defrob(fe.defrobTag)
+			}
+			if e, ok := r.(error); ok {
+				err = e
+			}
+		}
+	}()
+
+	resource.Frob(input)
+	return err
+}

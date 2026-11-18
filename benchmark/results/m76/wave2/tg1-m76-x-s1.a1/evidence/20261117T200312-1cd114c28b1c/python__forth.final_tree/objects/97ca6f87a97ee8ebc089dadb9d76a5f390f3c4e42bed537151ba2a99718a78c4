@@ -1,0 +1,132 @@
+import re
+
+_NUMBER_RE = re.compile(r"-?\d+")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _pop(stack, count):
+    if len(stack) < count:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    return [stack.pop() for _ in range(count)]
+
+
+def _add(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a + b)
+
+
+def _sub(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a - b)
+
+
+def _mul(stack):
+    b, a = _pop(stack, 2)
+    stack.append(a * b)
+
+
+def _div(stack):
+    b, a = _pop(stack, 2)
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    quotient = a // b
+    if a % b != 0 and (a < 0) != (b < 0):
+        quotient += 1  # truncate toward zero
+    stack.append(quotient)
+
+
+def _dup(stack):
+    if not stack:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    stack.append(stack[-1])
+
+
+def _drop(stack):
+    _pop(stack, 1)
+
+
+def _swap(stack):
+    b, a = _pop(stack, 2)
+    stack.extend([b, a])
+
+
+def _over(stack):
+    if len(stack) < 2:
+        raise StackUnderflowError("Insufficient number of items in stack")
+    stack.append(stack[-2])
+
+
+BUILTINS = {
+    "+": _add,
+    "-": _sub,
+    "*": _mul,
+    "/": _div,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def _compile(tokens, words):
+    """Compile a definition body into a list of executable instructions."""
+    body = []
+    for token in tokens:
+        if _NUMBER_RE.fullmatch(token):
+            body.append(("push", int(token)))
+        else:
+            name = token.lower()
+            if name in words:
+                # Snapshot the referenced word's body so later
+                # redefinitions do not affect already compiled words.
+                body.append(("exec", words[name]))
+            elif name in BUILTINS:
+                body.append(("builtin", name))
+            else:
+                raise ValueError("undefined operation")
+    return body
+
+
+def _execute(body, stack):
+    for instruction in body:
+        if instruction[0] == "push":
+            stack.append(instruction[1])
+        elif instruction[0] == "builtin":
+            BUILTINS[instruction[1]](stack)
+        else:
+            _execute(instruction[1], stack)
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+    for line in input_data:
+        tokens = line.split()
+        i = 0
+        while i < len(tokens):
+            token = tokens[i]
+            if token == ":":
+                name = tokens[i + 1].lower()
+                if _NUMBER_RE.fullmatch(name):
+                    raise ValueError("illegal operation")
+                body_tokens = []
+                i += 2
+                while tokens[i] != ";":
+                    body_tokens.append(tokens[i])
+                    i += 1
+                words[name] = _compile(body_tokens, words)
+            elif _NUMBER_RE.fullmatch(token):
+                stack.append(int(token))
+            else:
+                name = token.lower()
+                if name in words:
+                    _execute(words[name], stack)
+                elif name in BUILTINS:
+                    BUILTINS[name](stack)
+                else:
+                    raise ValueError("undefined operation")
+            i += 1
+    return stack

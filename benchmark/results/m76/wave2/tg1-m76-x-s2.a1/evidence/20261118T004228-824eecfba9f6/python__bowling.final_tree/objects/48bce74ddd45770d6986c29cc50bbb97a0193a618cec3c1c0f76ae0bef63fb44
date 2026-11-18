@@ -1,0 +1,71 @@
+class BowlingGame:
+    def __init__(self):
+        self._frames = []
+        self._frame = []
+
+    def roll(self, pins):
+        if len(self._frames) == 10:
+            raise Exception("Cannot roll after the game already has ten frames")
+        if pins < 0 or pins > 10:
+            raise Exception("Roll cannot score negative or more than 10 points")
+
+        if len(self._frames) == 9:
+            self._roll_tenth_frame(pins)
+        else:
+            self._roll_frame(pins)
+
+    def score(self):
+        if len(self._frames) != 10:
+            raise Exception("Cannot score an unstarted or incomplete game")
+
+        rolls = [pins for frame in self._frames for pins in frame]
+        total = 0
+        idx = 0
+        for frame in range(10):
+            if frame < 9:
+                if rolls[idx] == 10:
+                    total += 10 + rolls[idx + 1] + rolls[idx + 2]
+                    idx += 1
+                else:
+                    if rolls[idx] + rolls[idx + 1] == 10:
+                        total += 10 + rolls[idx + 2]
+                    else:
+                        total += rolls[idx] + rolls[idx + 1]
+                    idx += 2
+            else:
+                total += sum(rolls[idx:])
+        return total
+
+    def _roll_frame(self, pins):
+        self._frame.append(pins)
+        if len(self._frame) == 1 and pins == 10:
+            self._end_frame()
+        elif len(self._frame) == 2:
+            if sum(self._frame) > 10:
+                raise Exception(
+                    "Two rolls in a frame cannot score more than 10 points"
+                )
+            self._end_frame()
+
+    def _roll_tenth_frame(self, pins):
+        self._frame.append(pins)
+        first, second = self._frame[0], self._frame[1] if len(self._frame) > 1 else None
+
+        if len(self._frame) == 2:
+            if first != 10 and first + second > 10:
+                raise Exception(
+                    "Two rolls in a frame cannot score more than 10 points"
+                )
+            if first == 10 or first + second == 10:
+                return  # one or two bonus rolls still to come
+            self._end_frame()
+        elif len(self._frame) == 3:
+            if first == 10 and second != 10 and second + pins > 10:
+                raise Exception(
+                    "Second bonus roll cannot score more than the pins left standing"
+                )
+            self._end_frame()
+
+    def _end_frame(self):
+        self._frames.append(self._frame)
+        self._frame = []

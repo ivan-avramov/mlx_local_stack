@@ -1,0 +1,59 @@
+"""Pick the best hand(s) from a list of poker hands."""
+
+_FACE_RANKS = {"J": 11, "Q": 12, "K": 13, "A": 14}
+
+
+def _rank_value(card):
+    """Return the numeric value of a card's rank (2-14)."""
+    rank = card[:-1]
+    return _FACE_RANKS[rank] if rank in _FACE_RANKS else int(rank)
+
+
+def _score_hand(hand):
+    """Return a tuple that compares hands by poker ranking.
+
+    The first element is the category (higher is better); the remaining
+    elements break ties, highest first.
+    """
+    cards = hand.split()
+    ranks = sorted((_rank_value(card) for card in cards), reverse=True)
+    is_flush = len({card[-1] for card in cards}) == 1
+
+    straight_high = None
+    if len(set(ranks)) == 5:
+        if ranks[0] - ranks[-1] == 4:
+            straight_high = ranks[0]
+        elif ranks == [14, 5, 4, 3, 2]:
+            straight_high = 5  # ace-low ("wheel") straight
+
+    if straight_high is not None:
+        if is_flush:
+            return (9, straight_high)
+        return (5, straight_high)
+
+    counts = {}
+    for rank in ranks:
+        counts[rank] = counts.get(rank, 0) + 1
+
+    # Group ranks by count, then by rank, both descending.
+    grouped = sorted(counts.items(), key=lambda item: (item[1], item[0]), reverse=True)
+    tiebreak = [rank for rank, _ in grouped]
+
+    if is_flush:
+        return (6, *ranks)
+    if len(grouped) == 2:
+        category = 8 if grouped[0][1] == 4 else 7  # four of a kind / full house
+    elif len(grouped) == 3:
+        category = 4 if grouped[0][1] == 3 else 3  # three of a kind / two pair
+    elif len(grouped) == 4:
+        category = 2  # one pair
+    else:
+        return (1, *ranks)  # high card
+    return (category, *tiebreak)
+
+
+def best_hands(hands):
+    """Return the winning hand(s) from a list of poker hands."""
+    scored = [(_score_hand(hand), hand) for hand in hands]
+    top = max(score for score, _ in scored)
+    return [hand for score, hand in scored if score == top]

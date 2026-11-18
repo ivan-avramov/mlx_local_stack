@@ -1,0 +1,37 @@
+def can_chain(dominoes):
+    """Return a closed chain of dominoes, or None if none exists.
+
+    A chain is a list of (left, right) tuples using every input domino
+    exactly once (each may be reversed) such that the right end of each
+    domino matches the left end of the next, and the left end of the
+    first domino matches the right end of the last.
+    """
+    if not dominoes:
+        return []
+
+    # In a closed chain every value appears an even number of times,
+    # so any value with an odd count makes chaining impossible.
+    counts = {}
+    for a, b in dominoes:
+        counts[a] = counts.get(a, 0) + 1
+        counts[b] = counts.get(b, 0) + 1
+    if any(count % 2 for count in counts.values()):
+        return None
+
+    def backtrack(remaining, chain, end):
+        if not remaining:
+            return chain if chain[0][0] == end else None
+        for i, (a, b) in enumerate(remaining):
+            rest = remaining[:i] + remaining[i + 1:]
+            if a == end:
+                result = backtrack(rest, chain + [(a, b)], b)
+                if result is not None:
+                    return result
+            if b == end:
+                result = backtrack(rest, chain + [(b, a)], a)
+                if result is not None:
+                    return result
+        return None
+
+    first = dominoes[0]
+    return backtrack(dominoes[1:], [first], first[1])

@@ -1,0 +1,33 @@
+import math
+
+M = 26
+
+
+def _check_coprime(a):
+    if math.gcd(a, M) != 1:
+        raise ValueError("a and m must be coprime.")
+
+
+def encode(plain_text, a, b):
+    _check_coprime(a)
+    chars = []
+    for ch in plain_text:
+        if ch.isalpha():
+            i = ord(ch.lower()) - ord("a")
+            chars.append(chr((a * i + b) % M + ord("a")))
+        elif ch.isdigit():
+            chars.append(ch)
+    return " ".join("".join(chars)[i:i + 5] for i in range(0, len(chars), 5))
+
+
+def decode(ciphered_text, a, b):
+    _check_coprime(a)
+    a_inv = pow(a, -1, M)
+    chars = []
+    for ch in ciphered_text:
+        if ch.isalpha():
+            y = ord(ch.lower()) - ord("a")
+            chars.append(chr((a_inv * (y - b)) % M + ord("a")))
+        elif ch.isdigit():
+            chars.append(ch)
+    return "".join(chars)

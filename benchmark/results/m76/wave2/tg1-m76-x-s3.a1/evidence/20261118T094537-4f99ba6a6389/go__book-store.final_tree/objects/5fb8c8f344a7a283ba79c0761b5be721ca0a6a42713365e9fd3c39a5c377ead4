@@ -1,0 +1,43 @@
+package bookstore
+
+import "sort"
+
+// groupPrices holds the cost, in cents, of a group of each size (1-5 books).
+var groupPrices = [5]int{800, 1520, 2160, 2560, 3000}
+
+// Cost calculates the price, in cents, of a basket of books, grouping the
+// books to get the biggest possible discount.
+func Cost(books []int) int {
+	counts := [5]int{}
+	for _, b := range books {
+		if b >= 1 && b <= 5 {
+			counts[b-1]++
+		}
+	}
+
+	// Sort the per-title counts from most to least copies. The trailing
+	// zero acts as a sentinel so differences are well defined.
+	c := [6]int{counts[0], counts[1], counts[2], counts[3], counts[4], 0}
+	sort.Sort(sort.Reverse(sort.IntSlice(c[:5])))
+
+	// g[i] is the number of groups of size i+1: the difference between
+	// consecutive counts tells how many groups of that size are needed.
+	g := [5]int{}
+	for i := 0; i < 5; i++ {
+		g[i] = c[i] - c[i+1]
+	}
+
+	// Two groups of four (5120) are cheaper than a group of five plus a
+	// group of three (5160), so trade them whenever possible.
+	for g[2] > 0 && g[4] > 0 {
+		g[2]--
+		g[4]--
+		g[3] += 2
+	}
+
+	total := 0
+	for i, price := range groupPrices {
+		total += g[i] * price
+	}
+	return total
+}

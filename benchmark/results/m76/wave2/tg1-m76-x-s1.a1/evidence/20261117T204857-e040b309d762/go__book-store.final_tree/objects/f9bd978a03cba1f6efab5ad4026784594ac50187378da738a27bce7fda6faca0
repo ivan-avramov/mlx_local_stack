@@ -1,0 +1,51 @@
+package bookstore
+
+import "sort"
+
+// groupPrice is the total price of a group of n distinct books,
+// indexed by group size. A single book costs 800 (cents).
+var groupPrice = [6]int{0, 800, 1520, 2160, 2560, 3000}
+
+// Cost returns the cheapest total price, in cents, for the given basket.
+func Cost(books []int) int {
+	counts := [5]int{}
+	for _, book := range books {
+		counts[book-1]++
+	}
+
+	c := counts[:]
+	sort.Sort(sort.Reverse(sort.IntSlice(c)))
+	// c is now sorted descending: c[0] >= c[1] >= ... >= c[4].
+
+	// Form groups "layer by layer": layer k holds one copy of every
+	// title that has at least k copies. This yields the group counts:
+	g5 := c[4]
+	g4 := c[3] - c[4]
+	g3 := c[2] - c[3]
+	g2 := c[1] - c[2]
+	g1 := c[0] - c[1]
+
+	// Two groups of four (5120) beat a group of five plus a group of
+	// three (5160), so trade them whenever possible.
+	m := min(g5, g3)
+	g5 -= m
+	g3 -= m
+	g4 += 2 * m
+
+	// A group of four (2560) beats a group of three plus a group of
+	// one (3680), so trade them whenever possible.
+	m = min(g3, g1)
+	g3 -= m
+	g1 -= m
+	g4 += m
+
+	return g5*groupPrice[5] + g4*groupPrice[4] + g3*groupPrice[3] +
+		g2*groupPrice[2] + g1*groupPrice[1]
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}

@@ -1,0 +1,58 @@
+package bottlesong
+
+import (
+	"fmt"
+	"unicode"
+)
+
+// capitalize uppercases only the first rune of s.
+func capitalize(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	r[0] = unicode.ToUpper(r[0])
+	return string(r)
+}
+
+var numberWords = map[int]string{
+	0: "no",
+	1: "one",
+	2: "two",
+	3: "three",
+	4: "four",
+	5: "five",
+	6: "six",
+	7: "seven",
+	8: "eight",
+	9: "nine",
+	10: "ten",
+}
+
+// bottlePhrase renders the bottle count in the song's phrasing:
+// "no green bottles", "one green bottle", "two green bottles", etc.
+func bottlePhrase(n int) string {
+	if n == 1 {
+		return "one green bottle"
+	}
+	return fmt.Sprintf("%s green bottles", numberWords[n])
+}
+
+// Recite returns the lines of the song for the given number of
+// consecutive verses, starting with startBottles bottles.
+func Recite(startBottles, takeDown int) []string {
+	var lines []string
+	for i := startBottles; i > startBottles-takeDown; i-- {
+		phrase := capitalize(bottlePhrase(i))
+		lines = append(lines,
+			fmt.Sprintf("%s hanging on the wall,", phrase),
+			fmt.Sprintf("%s hanging on the wall,", phrase),
+			"And if one green bottle should accidentally fall,",
+			fmt.Sprintf("There'll be %s hanging on the wall.", bottlePhrase(i-1)),
+		)
+		if i-1 > startBottles-takeDown {
+			lines = append(lines, "")
+		}
+	}
+	return lines
+}

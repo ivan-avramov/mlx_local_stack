@@ -1,0 +1,153 @@
+package ledger
+
+import (
+	"errors"
+	"fmt"
+	"sort"
+	"strconv"
+	"strings"
+)
+
+type Entry struct {
+	Date        string // "Y-m-d"
+	Description string
+	Change      int // in cents
+}
+
+// FormatLedger renders a formatted ledger for the given entries, sorted by
+// date, then description, then change. It does not modify entries.
+//
+// Refactoring log (per .docs/instructions.md):
+//  1. Validate the currency and locale up front, instead of relying on a
+//     recursive call with a dummy entry to surface errors for empty input.
+//  2. Replace the hand-rolled bubble sort built from boolean-indexed maps
+//     with sort.Slice and a plain less function.
+//  3. Replace the goroutine-per-entry channel fan-out with a simple sequential
+//     loop that builds the result in a strings.Builder.
+//  4. Extract the header, date, description, and amount formatting into small
+//     helpers and drop the duplicated thousands-grouping logic.
+
+func FormatLedger(currency string, locale string, entries []Entry) (string, error) {
+	if _, err := currencySymbol(currency); err != nil {
+		return "", err
+	}
+	if locale != "en-US" && locale != "nl-NL" {
+		return "", errors.New("invalid locale")
+	}
+
+	sorted := make([]Entry, len(entries))
+	copy(sorted, entries)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].Date != sorted[j].Date {
+			return sorted[i].Date < sorted[j].Date
+		}
+		if sorted[i].Description != sorted[j].Description {
+			return sorted[i].Description < sorted[j].Description
+		}
+		return sorted[i].Change < sorted[j].Change
+	})
+
+	var b strings.Builder
+	b.WriteString(headerLine(locale))
+	for _, entry := range sorted {
+		line, err := formatLine(locale, currency, entry)
+		if err != nil {
+			return "", err
+		}
+		b.WriteString(line)
+	}
+	return b.String(), nil
+}
+
+func headerLine(locale string) string {
+	date, description, change := "Date", "Description", "Change"
+	if locale == "nl-NL" {
+		date, description, change = "Datum", "Omschrijving", "Verandering"
+	}
+	return fmt.Sprintf("%-10s | %-25s | %s\n", date, description, change)
+}
+
+func formatLine(locale, currency string, entry Entry) (string, error) {
+	date, err := formatDate(locale, entry.Date)
+	if err != nil {
+		return "", err
+	}
+	amount, err := formatAmount(locale, currency, entry.Change)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%-10s | %-25s | %13s\n", date, truncateDescription(entry.Description), amount), nil
+}
+
+func formatDate(locale, date string) (string, error) {
+	if len(date) != 10 || date[4] != '-' || date[7] != '-' {
+		return "", errors.New("invalid date")
+	}
+	year, month, day := date[0:4], date[5:7], date[8:10]
+	if locale == "nl-NL" {
+		return day + "-" + month + "-" + year, nil
+	}
+	return month + "/" + day + "/" + year, nil
+}
+
+func truncateDescription(description string) string {
+	if len(description) > 25 {
+		return description[:22] + "..."
+	}
+	return description
+}
+
+func formatAmount(locale, currency string, change int) (string, error) {
+	symbol, err := currencySymbol(currency)
+	if err != nil {
+		return "", err
+	}
+	negative := change < 0
+	if negative {
+		change = -change
+	}
+	intPart, cents := change/100, change%100
+	separator, decimal := ",", "."
+	if locale == "nl-NL" {
+		separator, decimal = ".", ","
+	}
+	grouped := groupThousands(intPart, separator)
+
+	if locale == "nl-NL" {
+		suffix := " "
+		if negative {
+			suffix = "-"
+		}
+		return fmt.Sprintf("%s %s%s%02d%s", symbol, grouped, decimal, cents, suffix), nil
+	}
+	if negative {
+		return fmt.Sprintf("(%s%s%s%02d)", symbol, grouped, decimal, cents), nil
+	}
+	return fmt.Sprintf("%s%s%s%02d ", symbol, grouped, decimal, cents), nil
+}
+
+func groupThousands(n int, separator string) string {
+	s := strconv.Itoa(n)
+	if len(s) <= 3 {
+		return s
+	}
+	var b strings.Builder
+	for i, r := range s {
+		if i > 0 && (len(s)-i)%3 == 0 {
+			b.WriteString(separator)
+		}
+		b.WriteRune(r)
+	}
+	return b.String()
+}
+
+func currencySymbol(currency string) (string, error) {
+	switch currency {
+	case "USD":
+		return "$", nil
+	case "EUR":
+		return "€", nil
+	default:
+		return "", errors.New("invalid currency")
+	}
+}

@@ -1,0 +1,54 @@
+package bookstore
+
+import "sort"
+
+// Cost returns the total price (in cents) of the books in the basket, applying
+// the largest possible discount.
+//
+// Books are grouped into sets of distinct titles. A set of k distinct books
+// gets a discount of [0, 5, 10, 20, 25]% for k = [1, 2, 3, 4, 5], so a set of
+// k books costs groupCost[k-1] cents.
+func Cost(books []int) int {
+	// groupCost[k-1] = total price of a group of k distinct books.
+	groupCost := [5]int{800, 1520, 2160, 2560, 3000}
+
+	// counts[i] = number of copies of book i+1.
+	counts := [5]int{}
+	for _, b := range books {
+		counts[b-1]++
+	}
+
+	// Sort the counts ascending: c[0] <= c[1] <= ... <= c[4].
+	c := counts[:]
+	sort.IntSlice(c).Sort()
+
+	// Decompose the basket into "layers". The least common book (c[0]) appears
+	// in c[0] groups, and each of those groups contains all five titles, giving
+	// c[0] five-groups. Peeling that layer off, the next least common book
+	// contributes c[1]-c[0] four-groups, and so on. groups[k-1] = number of
+	// k-groups.
+	groups := [5]int{
+		c[4] - c[3], // 1-groups
+		c[3] - c[2], // 2-groups
+		c[2] - c[1], // 3-groups
+		c[1] - c[0], // 4-groups
+		c[0],        // 5-groups
+	}
+
+	// A five-group plus a three-group costs 3000 + 2160 = 5160, while two
+	// four-groups cost 2 * 2560 = 5120. So convert as many (five, three) pairs
+	// as possible into two four-groups.
+	conversions := groups[4]
+	if groups[2] < conversions {
+		conversions = groups[2]
+	}
+	groups[4] -= conversions
+	groups[2] -= conversions
+	groups[3] += 2 * conversions
+
+	cost := 0
+	for k := 1; k <= 5; k++ {
+		cost += groups[k-1] * groupCost[k-1]
+	}
+	return cost
+}

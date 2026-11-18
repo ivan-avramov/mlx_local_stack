@@ -1,0 +1,53 @@
+class ConnectGame:
+    def __init__(self, board):
+        self.board = [
+            line.strip().split()
+            for line in board.splitlines()
+            if line.strip()
+        ]
+        self.rows = len(self.board)
+        self.cols = len(self.board[0]) if self.rows else 0
+
+    def get_winner(self):
+        # Player X connects the left side to the right side.
+        if self._has_path(
+            "X",
+            [(r, 0) for r in range(self.rows)],
+            [(r, self.cols - 1) for r in range(self.rows)],
+        ):
+            return "X"
+        # Player O connects the top side to the bottom side.
+        if self._has_path(
+            "O",
+            [(0, c) for c in range(self.cols)],
+            [(self.rows - 1, c) for c in range(self.cols)],
+        ):
+            return "O"
+        return ""
+
+    def _has_path(self, player, start_edges, end_edges):
+        end_set = set(end_edges)
+        visited = set()
+        stack = []
+        for pos in start_edges:
+            if self.board[pos[0]][pos[1]] == player:
+                visited.add(pos)
+                stack.append(pos)
+        while stack:
+            r, c = stack.pop()
+            if (r, c) in end_set:
+                return True
+            for nr, nc in self._neighbors(r, c):
+                if (nr, nc) not in visited and self.board[nr][nc] == player:
+                    visited.add((nr, nc))
+                    stack.append((nr, nc))
+        return False
+
+    def _neighbors(self, r, c):
+        # Each row is shifted one cell to the right, so the six neighbours
+        # of a hexagonal field are:
+        #   left, right, upper-left, upper-right, lower-left, lower-right
+        for dr, dc in ((0, -1), (0, 1), (-1, 0), (-1, 1), (1, -1), (1, 0)):
+            nr, nc = r + dr, c + dc
+            if 0 <= nr < self.rows and 0 <= nc < self.cols:
+                yield nr, nc

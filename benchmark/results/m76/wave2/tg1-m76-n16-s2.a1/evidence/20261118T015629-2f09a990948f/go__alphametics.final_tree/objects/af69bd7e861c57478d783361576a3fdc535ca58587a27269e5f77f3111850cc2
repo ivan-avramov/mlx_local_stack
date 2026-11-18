@@ -1,0 +1,197 @@
+package alphametics
+
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// errNoSolution is returned when a puzzle has no valid assignment.
+var errNoSolution = errors.New("no solution")
+
+var debugSolve = false
+
+// Solve solves an alphametics puzzle of the form "WORD + WORD + ... == WORD".
+// It returns a mapping of each letter to a distinct digit such that the
+// equation holds, or an error if no such assignment exists.
+func Solve(puzzle string) (map[string]int, error) {
+	eq := strings.Split(puzzle, "==")
+	if len(eq) != 2 {
+		return nil, fmt.Errorf("invalid puzzle %q: expected exactly one '=='", puzzle)
+	}
+	addends := strings.Split(eq[0], "+")
+	for i := range addends {
+		addends[i] = strings.TrimSpace(addends[i])
+	}
+	result := strings.TrimSpace(eq[1])
+
+	seen := make(map[rune]struct{})
+	leading := make(map[rune]struct{})
+	for _, w := range append(addends, result) {
+		for i, r := range w {
+			seen[r] = struct{}{}
+			if i == 0 && len(w) > 1 {
+				leading[r] = struct{}{}
+			}
+		}
+	}
+	if len(seen) > 10 {
+		return nil, errNoSolution
+	}
+
+	maxLen := len(result)
+	for _, w := range addends {
+		if len(w) > maxLen {
+			maxLen = len(w)
+		}
+	}
+
+	// For each column (counted from the rightmost), record how many times
+	// each letter appears among the addends and the result letter.
+	type column struct {
+		counts map[rune]int
+		result rune // 0 if the result has no letter in this column
+	}
+	columns := make([]column, maxLen)
+	for c := 0; c < maxLen; c++ {
+		col := column{counts: make(map[rune]int)}
+		for _, w := range addends {
+			if c < len(w) {
+				col.counts[rune(w[len(w)-1-c])]++
+			}
+		}
+		if c < len(result) {
+			col.result = rune(result[len(result)-1-c])
+		}
+		columns[c] = col
+	}
+
+	assign := make(map[rune]int)
+	used := [10]bool{}
+
+	var (
+		// assignColumn tries digits for the unassigned letters of one column,
+		// accumulating the column sum, and checks the column equation once all
+		// of them have a digit.
+		assignColumn func(letters []rune, i, c int, col column, sum int) bool
+		// search processes one column at a time, propagating the carry.
+		search func(c, carry int) bool
+	)
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	if debugSolve {
+		fmt.Printf("DEBUG columns: ")
+		for _, col := range columns {
+			fmt.Printf("{counts=%v result=%q} ", col.counts, col.result)
+		}
+		fmt.Printf("leading=%v\n", leading)
+	}
+	assignColumn = func(letters []rune, i, c int, col column, sum int) bool {
+		if i == len(letters) {
+			target := 0
+			if col.result != 0 {
+				target = assign[col.result]
+			}
+			if debugSolve {
+				fmt.Printf("LEAF c=%d sum=%d target=%d assign=%v\n", c, sum, target, assign)
+			}
+			return sum%10 == target && search(c+1, sum/10)
+		}
+		l := letters[i]
+		_, isLeading := leading[l]
+		for d := 0; d <= 9; d++ {
+			if used[d] {
+				continue
+			}
+			if isLeading && d == 0 {
+				continue
+			}
+			assign[l] = d
+			used[d] = true
+			if assignColumn(letters, i+1, c, col, sum+col.counts[l]*d) {
+				return true
+			}
+			used[d] = false
+			delete(assign, l)
+		}
+		return false
+	}
+
+	search = func(c, carry int) bool {
+		if c == maxLen {
+			return carry == 0
+		}
+		col := columns[c]
+		unassigned := make([]rune, 0, len(col.counts)+1)
+		for l := range col.counts {
+			if _, ok := assign[l]; !ok {
+				unassigned = append(unassigned, l)
+			}
+		}
+		if col.result != 0 {
+			if _, ok := assign[col.result]; !ok {
+				// Assign the result letter last so its digit is only
+				// checked once the column sum is complete.
+				unassigned = append(unassigned, col.result)
+			}
+		}
+		return assignColumn(unassigned, 0, c, col, carry)
+	}
+
+	if !search(0, 0) {
+		return nil, errNoSolution
+	}
+
+	out := make(map[string]int, len(assign))
+	for l, d := range assign {
+		out[string(l)] = d
+	}
+	return out, nil
+}

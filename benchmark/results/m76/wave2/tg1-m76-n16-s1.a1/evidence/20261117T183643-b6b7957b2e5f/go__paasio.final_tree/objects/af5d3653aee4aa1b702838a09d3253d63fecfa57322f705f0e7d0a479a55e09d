@@ -1,0 +1,70 @@
+package paasio
+
+import (
+	"io"
+	"sync"
+)
+
+type readCounter struct {
+	mu  sync.Mutex
+	r   io.Reader
+	n   int64
+	ops int
+}
+
+func NewReadCounter(r io.Reader) ReadCounter {
+	return &readCounter{r: r}
+}
+
+func (rc *readCounter) Read(p []byte) (int, error) {
+	n, err := rc.r.Read(p)
+	rc.mu.Lock()
+	rc.n += int64(n)
+	rc.ops++
+	rc.mu.Unlock()
+	return n, err
+}
+
+func (rc *readCounter) ReadCount() (int64, int) {
+	rc.mu.Lock()
+	defer rc.mu.Unlock()
+	return rc.n, rc.ops
+}
+
+type writeCounter struct {
+	mu  sync.Mutex
+	w   io.Writer
+	n   int64
+	ops int
+}
+
+func NewWriteCounter(w io.Writer) WriteCounter {
+	return &writeCounter{w: w}
+}
+
+func (wc *writeCounter) Write(p []byte) (int, error) {
+	n, err := wc.w.Write(p)
+	wc.mu.Lock()
+	wc.n += int64(n)
+	wc.ops++
+	wc.mu.Unlock()
+	return n, err
+}
+
+func (wc *writeCounter) WriteCount() (int64, int) {
+	wc.mu.Lock()
+	defer wc.mu.Unlock()
+	return wc.n, wc.ops
+}
+
+type readWriteCounter struct {
+	readCounter
+	writeCounter
+}
+
+func NewReadWriteCounter(rw io.ReadWriter) ReadWriteCounter {
+	return &readWriteCounter{
+		readCounter:  readCounter{r: rw},
+		writeCounter: writeCounter{w: rw},
+	}
+}

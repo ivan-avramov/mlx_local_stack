@@ -1,0 +1,43 @@
+package cryptosquare
+
+import (
+	"math"
+	"strings"
+	"unicode"
+)
+
+// Encode normalizes the plaintext (lower-casing and removing spaces and
+// punctuation), lays it out in a rectangle as square as possible, and reads
+// it back down the columns, left to right. The result is emitted as c chunks
+// of r characters separated by spaces, with short chunks space-padded.
+func Encode(pt string) string {
+	var msg []rune
+	for _, r := range strings.ToLower(pt) {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			msg = append(msg, r)
+		}
+	}
+	n := len(msg)
+	if n == 0 {
+		return ""
+	}
+
+	c := int(math.Ceil(math.Sqrt(float64(n))))
+	r := int(math.Ceil(float64(n) / float64(c)))
+
+	padded := append(msg, make([]rune, r*c-n)...)
+	for i := range padded[n:] {
+		padded[n+i] = ' '
+	}
+
+	var sb strings.Builder
+	for col := 0; col < c; col++ {
+		if col > 0 {
+			sb.WriteByte(' ')
+		}
+		for row := 0; row < r; row++ {
+			sb.WriteRune(padded[row*c+col])
+		}
+	}
+	return sb.String()
+}

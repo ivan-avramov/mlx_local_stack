@@ -1,0 +1,26 @@
+- 2026-11-18T00:36:22Z campaign core 3c199587aeae38addad52f0d6b0d9cc545245027 (3c199587aeae): probe and chain closures equal the current ones
+- 2026-11-18T00:36:22Z policy: scaffold_policy_sha256 f56705f93546d0c3b310e3414b3442f0dc9f2a08f1a412523ca1a2138a581e33 derived from the probe's --print-identity
+- 2026-11-18T00:36:22Z GATE adapter=140W 28.0V batt=100% orphans=0 -> ok
+- 2026-11-18T00:36:29Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/worktrees/m76-w2-n16/main_models.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_WORKDIR/worktrees/m76-w2-n16)
+- 2026-11-18T00:36:32Z router pid=6339 owns :8000; problems=none
+- 2026-11-18T00:36:32Z START pilot predictor=mtp blocks=[('pilot', 'Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed')]
+- 2026-11-18T00:36:32Z START STATE pilot/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: {"watts": 140, "volts": 28.0, "batt": 100, "free_mem_mb": 36477, "busy": ["6336 uv run --frozen --no-sync mlx-serve start", "6339 $STACK_WORKDIR/worktrees/m76-w2-n16/.venv/bin/python $STACK_WORKDIR/worktrees/m76-w2-n16/.venv/bin/mlx-serve start"], "orphans_clean": true}
+- 2026-11-18T00:36:32Z GATE adapter=140W 28.0V batt=100% orphans=0 -> ok
+- 2026-11-18T00:36:32Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-11-18T00:36:38Z worker pid=6410 cmdline: 6410 $STACK_WORKDIR/worktrees/m76-w2-n16/.venv/bin/python $STACK_WORKDIR/worktrees/m76-w2-n16/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --mtp-veri
+- 2026-11-18T00:37:00Z RECEIPT n16 sha256=43010a10ed0b625b credential keys={'router': 5, 'worker': 5, 'probe': 5}
+- 2026-11-18T00:37:00Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed) -> a4_pilot_0_Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.log
+- 2026-11-18T00:37:24Z A4 v2 rc=0 pass=True fresh=True run_id=a4-v2-_eqt22vw
+- 2026-11-18T00:37:32Z GATE adapter=140W 28.0V batt=100% orphans=0 -> ok
+- 2026-11-18T00:37:32Z START Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python attempt 1 (pilot, 5 items): --model Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --items beer-song,dominoes,book-store,pig-latin,grep --lang python --seed-base 1001 --out $STACK_WORKDIR/m76/p426/wave2/tg1-m76-n16-pilot.a1/pilot/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python.L0.pilot.a1.jsonl --scaffold opencode-v2-web-tg1 --expect-items python/beer-song,python/dominoes,python/book-store,python/pig-latin,python/grep --a4-v2-receipt $STACK_WORKDIR/m76/p426/wave2/tg1-m76-n16-pilot.a1/a4/0.0.oc.json --sampling-profile deployed --cancel-file $STACK_WORKDIR/m76/p426/wave2/tg1-m76-n16-pilot.a1/pilot/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python.L0.pilot.a1.CANCEL --manifest-ack $STACK_WORKDIR/m76/p426/wave2/tg1-m76-n16-pilot.a1/pilot/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python.L0.pilot.a1.ACK --limit 5 --frozen-prompt-date Tue Nov 17 2026 --invocation-nonce 456f6d6d0fb543253ccd306d4eda07fdb355f1ba4a91902a829aa9fb492eef79 --attempt 1 --attempt-rerun-index 0 --evidence p426
+- 2026-11-18T00:37:45Z generation_identity_sha256 pinned from first manifest 1ac44d9ebb4031c6a73462ed8903977b1a10f2be3f68fa8436b81b29ce1e311b
+- 2026-11-18T00:37:45Z arm Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed|mtp: arm_identity_sha256 frozen from first manifest d9efafd17b929e7aa369e7897ebe384f46079a6b81223c2685b3815c75af5a03
+- 2026-11-18T00:37:45Z BARRIER ok Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python run_id=20261117T163740-a2b27b57134e: ack created
+- 2026-11-18T00:42:32Z WATCH Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python a1: 2/5 passed=2 mean=44s eta=2min pred=250s ratio=0.18 kinds={'ok': 2} conv=100% out_tok_p50/p90/max=1376/1376/1376 budget_hits=0 adapter=140W 28.0V batt=100% free_mem_mb=2830 hb_age=4s hb={"baseline_failing": 20, "best_failing": 19, "decision_backlog_max": 0, "failing_trajectory": [[1, 20, false], [3, 19, false]], "first_crossing_request": null, "inflight_s_at_stop": null, "inflight_tokens": "unknown", "last_prompt_tokens": 12505, "max_identical_run_live": 1, "no_progress_requests": 1, "no_progress_tokens": 112, "output_tokens_completed": 7061, "post_threshold_tokens_known": 0, "requests_completed": 4, "requests_completed_at_kill": null, "stop_reason": null, "universe_size": 20} hb_elapsed=180.0384257499827
+- 2026-11-18T00:44:41Z END Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_python attempt 1 rc=0 state=exited
+- 2026-11-18T00:44:42Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-11-18T00:44:42Z ALL LEGS DONE
+- 2026-11-18T00:44:42Z stop_stack: signal SIGTERM -> own router pid 6339
+- 2026-11-18T00:44:42Z stop_stack: signal SIGTERM -> own router pid 6336
+- 2026-11-18T00:45:12Z stop_stack: signal SIGKILL -> own router pid 6336
+- 2026-11-18T00:45:23Z stop_stack: own router stopped; :8000 free=True

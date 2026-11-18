@@ -1,0 +1,38 @@
+def grep(pattern, flags, files):
+    flags = set(flags.split())
+    output = []
+    listed = set()
+    for file in files:
+        with open(file) as f:
+            for line_number, line in enumerate(f, 1):
+                if matches(pattern, flags, line):
+                    if "-l" in flags:
+                        if file not in listed:
+                            listed.add(file)
+                            output.append(file + "\n")
+                    else:
+                        output.append(
+                            format_output(line, flags, file, line_number, len(files))
+                        )
+    return "".join(output)
+
+
+def matches(pattern, flags, line):
+    if "-i" in flags:
+        pattern = pattern.lower()
+        line = line.lower()
+    if "-x" in flags:
+        matched = line.rstrip("\n") == pattern
+    else:
+        matched = pattern in line
+    return not matched if "-v" in flags else matched
+
+
+def format_output(line, flags, file, line_number, file_count):
+    if file_count > 1:
+        if "-n" in flags:
+            return f"{file}:{line_number}:{line}"
+        return f"{file}:{line}"
+    if "-n" in flags:
+        return f"{line_number}:{line}"
+    return line

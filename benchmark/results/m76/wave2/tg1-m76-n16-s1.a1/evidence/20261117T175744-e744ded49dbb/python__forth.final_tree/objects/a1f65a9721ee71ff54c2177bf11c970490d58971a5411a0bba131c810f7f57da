@@ -1,0 +1,105 @@
+import re
+
+_NUMBER_RE = re.compile(r"^-?\d+$")
+
+
+class StackUnderflowError(Exception):
+    pass
+
+
+def _check(stack, n):
+    if len(stack) < n:
+        raise StackUnderflowError("Insufficient number of items in stack")
+
+
+def _binary(op):
+    def run(stack):
+        _check(stack, 2)
+        b = stack.pop()
+        a = stack.pop()
+        stack.append(op(a, b))
+
+    return run
+
+
+def _dup(stack):
+    _check(stack, 1)
+    stack.append(stack[-1])
+
+
+def _drop(stack):
+    _check(stack, 1)
+    stack.pop()
+
+
+def _swap(stack):
+    _check(stack, 2)
+    stack[-1], stack[-2] = stack[-2], stack[-1]
+
+
+def _over(stack):
+    _check(stack, 2)
+    stack.append(stack[-2])
+
+
+def _div(stack):
+    _check(stack, 2)
+    b = stack.pop()
+    a = stack.pop()
+    if b == 0:
+        raise ZeroDivisionError("divide by zero")
+    stack.append(a // b)
+
+
+_BUILTINS = {
+    "+": _binary(lambda a, b: a + b),
+    "-": _binary(lambda a, b: a - b),
+    "*": _binary(lambda a, b: a * b),
+    "/": _div,
+    "dup": _dup,
+    "drop": _drop,
+    "swap": _swap,
+    "over": _over,
+}
+
+
+def evaluate(input_data):
+    stack = []
+    words = {}
+
+    def execute(tokens):
+        for tok in tokens:
+            if _NUMBER_RE.match(tok):
+                stack.append(int(tok))
+            elif tok in words:
+                execute(words[tok])
+            elif tok in _BUILTINS:
+                _BUILTINS[tok](stack)
+            else:
+                raise ValueError("undefined operation")
+
+    for line in input_data:
+        tokens = [t.lower() for t in line.split()]
+        i = 0
+        while i < len(tokens):
+            tok = tokens[i]
+            if tok == ":":
+                name = tokens[i + 1]
+                if _NUMBER_RE.match(name):
+                    raise ValueError("illegal operation")
+                body = []
+                i += 2
+                while i < len(tokens) and tokens[i] != ";":
+                    t = tokens[i]
+                    if t in words:
+                        body.extend(words[t])
+                    else:
+                        body.append(t)
+                    i += 1
+                words[name] = body
+                i += 1  # skip ";"
+            else:
+                execute([tok])
+                i += 1
+
+    return stack
