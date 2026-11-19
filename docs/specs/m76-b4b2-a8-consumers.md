@@ -1,4 +1,4 @@
-# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.1, 2026-11-19; design review r1 applied, ledger L1–L18)
+# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.2, 2026-11-19; r1 applied, ledger L1–L18; C368 §3.6 / S1 / S2)
 
 Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1), `docs/specs/m76-tq4-certification.md` §A8 / §Panel / §Noise floor,
 `docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel Sol + GLM + Claude Sonnet;
@@ -50,6 +50,19 @@ frozen stage-3 panel are byte-identical too (§7).
    differ between arms only if it is per-invocation (already normalised) or already in the documented KV-mode allowance; any other
    difference rejects. Tests on the real tg2 pilot manifests assert pass and that no tg2-only key is allowed.
 5. `B8.json` (`verify_all_kv`) never includes A8. The CLI writes `B8-A8.json` beside it when §3.2 applies.
+6. **Plan binding (C368 S1).** Per A8 attempt: `schedules.check_tg2_p426` on its `schedule.json` against the pinned draw for that
+   session; `chain.tg2_leg == session`; `chain.frozen_record.sha256 == v8.sha256`; the reload's key set = the first 5 items per language
+   of s1 (C368 S2). Any mismatch rejects the session.
+7. **Javascript lock-file regrade (C368 (1), S27-P10).** A javascript row whose final grade is `tampered` is ELIGIBLE iff its HARVEST-
+   bound events show (a) a package-manager install (`npm install` / `npm i` / `npm ci`) in a shell call, (b) no `write` / `edit` /
+   `patch` tool call on a path in `structured_grade.protected_manifest(prepared, solutions)`, and (c) no shell call whose command names
+   such a path except as an argument to a read-only or test-runner command (`cat`, `head`, `tail`, `ls`, `npx jest`, `npm test`); an
+   item failing (c) stays `tampered` and is listed. An eligible row is regraded: the materialised prepared tree + its final tree's
+   accepted files (from the evidence ref) → `tg2_grade.grade_item` in the pinned grader image (`grader="tg2"` validation, L9), on a
+   quiet box after the decider. The regrade writes `wave2.tg2/regrade/<attempt>/<lang>__<item>.json` (sealed: inputs' shas, the
+   eligibility facts, the grade report, `passed` / `converged` unchanged from the row except `passed`), committed on `main`;
+   `B8-A8.json` binds every regrade record's sha; signals read the regraded `passed` for eligible rows and print both counts (in-run
+   tampered vs regraded) per arm. Rows of other languages and other outcomes are never regraded.
 
 ## 4. Signals (`bench/p426_signals.py`)
 
@@ -112,5 +125,4 @@ report sha, and for s1 the ack rule (`not inside or operator_review` → `rechec
 ## 8. Out of scope
 
 Runner / sequencer / probe changes (B4b-1, frozen identity); the C365 race; the positives rule (C366); stage 4 (V); tg1 changes
-beyond §3.3. Open with the operator: S27-P10 (javascript `package-lock.json` tamper; if ruled, its regrade lands here as §3.6);
-scope requests S1 (bind each leg to the pinned plan) and S2 (reload key set) from the r1 ledger.
+beyond §3.3; the forward lock-file fix in the tg2 view (C368 (1): a separate change after the decider).
