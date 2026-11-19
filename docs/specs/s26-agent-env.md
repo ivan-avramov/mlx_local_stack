@@ -1,4 +1,4 @@
-# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1c, 2026-11-18 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
+# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1d, 2026-11-18 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
 
 ## Goal
 
@@ -191,4 +191,12 @@ with its reason.
 
 10. The run baseline `<out-base>/host_env.json` is SEALED (self-hashed, as every sequencer record); a baseline that is unreadable or
     whose seal does not verify stops (rc 1). A nonzero probe exit makes a PASS a failure too (`FAIL:probe_rc:<n>`; stricter than §4).
+
+## Erratum v1.1d (change verify round 2)
+
+11. v8 `positives_problems` accepts DECLINED only when `declined_evidence.row_sha256` is 64-hex and equals the entry's `row_sha256`.
+12. tg2's campaign-core closure (`benchmark/chains/c147/run_tg2_chain.py` `CORE_SPECS["probe_data"]`) includes
+    `benchmark/bench/tg2_gradle_home.py` (scope extension); tg1's is unchanged.
+13. Documented extension: each positives inject entry may carry `not_declined` (why a non-PASS was not declined; diagnostic only).
+14. Stop messages of the guard are flat fail-closed statements (no "the operator decides" on an automatic stop).
 
