@@ -943,6 +943,8 @@ def _identity_inputs(adapter, template, corpus, selection, universe_sha, version
     pol = base["policy"]
     cid = corpus.identity()
     timeouts = dict(cid["grader_timeout_s"])
+    if pol.get("gradle_user_home") is not None:        # S26 §3: tg2's Gradle home (absent for every other arm: tg1 unchanged)
+        extra = dict(extra, gradle_user_home=pol["gradle_user_home"])
     policy = template.build(
         scaffold=base["scaffold"], corpus_id=corpus.corpus_id, corpus_identity=corpus.identity(),
         toolbounds_sha256=pol["toolbounds_sha256"], noretry_sha256=pol["noretry_sha256"],

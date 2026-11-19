@@ -139,6 +139,16 @@ def killed_state_ok(state):
     return False
 
 
+def never_executed(state):
+    """A tool call that never ran: `state.status` is `error` and `state.metadata.providerCall.executed` is false (the
+    tool-bounds plugin rejected it before execution; S26 erratum 2)."""
+    if not isinstance(state, dict) or state.get("status") != "error":
+        return False
+    meta = state.get("metadata")
+    call = meta.get("providerCall") if isinstance(meta, dict) else None
+    return isinstance(call, dict) and call.get("executed") is False
+
+
 def cancellation_consistent(term):
     """Cancellation CONSISTENCY (Q6/Q18), not proof: the worker exposes no request- or session-correlated cancel
     receipt (tracked as C149), so an independently failed request would look the same. The worker's /metrics `summary` (mlx_vlm/server/generation.py, `snapshot`) has
@@ -248,7 +258,8 @@ def verify_row(kind, row, manifest, workdir, scaffold="opencode-v2-web-tg1"):
     per_process = ((runtime["inject"].get("policy") or {}).get("hygiene") or {}).get("per_process")
     if not isinstance(kill.get("rss"), int) or not isinstance(per_process, int) or kill["rss"] <= per_process:
         return "FAIL:rss", notes
-    shell = [c for c in calls if c[2] == "shell" and "bytearray(" in c[3]]
+    # S26 erratum 2: only EXECUTED shell calls carrying the alloc command count (a call the tool-bounds plugin rejected never ran)
+    shell = [c for c in calls if c[2] == "shell" and "bytearray(" in c[3] and not never_executed(c[4])]
     if len(shell) != 1:
         return "FAIL:no_shell_part", notes
     request, part_id, _, _, state = shell[0]

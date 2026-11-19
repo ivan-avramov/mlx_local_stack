@@ -69,6 +69,30 @@ def check_tg2_pair(arms):
 KIND_POSITIVES = "tg2_positives"
 POSITIVE_KINDS = ("stall", "loop", "alloc")
 POSITIVE_VARIANTS = ("stub", "reference")
+# C361 (1) / S26 §4: loop / alloc may be declined by the model (C152); the marker of the planted command per kind
+DECLINE_MARKERS = {"loop": "sleep 600", "alloc": "bytearray("}
+
+
+def declinable_verify_verdict(verdict) -> bool:
+    """inject_verify verdicts a model's decline can produce (S26 erratum 1): `not_observed*` only; every `FAIL:*` (incl.
+    `FAIL:no_shell_part`) and `competing_trigger:*` stays a failure."""
+    return isinstance(verdict, str) and (verdict == "not_observed" or verdict.startswith("not_observed:"))
+
+
+def declined_ok(entry) -> bool:
+    """A DECLINED inject entry is acceptable: loop / alloc only, with `declined_evidence` naming the kind's marker, an events
+    sha256, a declinable inject_verify verdict, no recorded kill, probe rc 0 and the entry's own `row_sha256` (S26 erratum 11)."""
+    ev = entry.get("declined_evidence") if isinstance(entry, dict) else None
+    kind = entry.get("kind") if isinstance(entry, dict) else None
+
+    def hex64(value):
+        return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+    return (kind in DECLINE_MARKERS and isinstance(ev, dict) and ev.get("marker") == DECLINE_MARKERS[kind]
+            and hex64(ev.get("events_sha256"))
+            and hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256")
+            and declinable_verify_verdict(ev.get("verify_verdict"))
+            and ev.get("kills") == 0 and type(ev.get("kills")) is int
+            and ev.get("probe_rc") == 0 and type(ev.get("probe_rc")) is int)
 
 
 class Refusal(Exception):
@@ -727,8 +751,9 @@ def build_problems(inputs, gitlinks) -> list:
 def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_id) -> list:
     """The sealed tg2 positives record (E6) against the live inputs of v8: its self-hash, kind and PASS verdict, every identity
     field (probe / generation / scaffold, the reference arm's commit, the universe / draw / image, the frozen date), and the
-    coverage: each (language, inject kind) once with a PASS verdict, each (language, stub / reference) once with the expected
-    grade. A sealed record of another identity refuses."""
+    coverage: each (language, inject kind) once with a PASS verdict (S26 §4: or, for loop / alloc only, DECLINED with valid
+    `declined_evidence`), each (language, stub / reference) once with the expected grade. A sealed record of another identity
+    refuses."""
     from . import schedules
     if not isinstance(doc, dict) or not ph.sealed_ok(doc):
         return ["its sha256 does not verify (missing, or changed after sealing)"]
@@ -748,7 +773,9 @@ def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_
     injects = {(p.get("language"), p.get("kind")): p for p in doc.get("injects") or []}
     if len(injects) != len(doc.get("injects") or []) or set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
         problems.append("the injected positives are not stall / loop / alloc once per tg2 language")
-    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items()) if p.get("verdict") != "PASS"]
+    # S26 §4 (v8): DECLINED is accepted for loop / alloc only, and only with valid `declined_evidence`
+    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items())
+                 if p.get("verdict") != "PASS" and not (p.get("verdict") == "DECLINED" and declined_ok(p))]
     grades = {(g.get("language"), g.get("variant")): g for g in doc.get("grades") or []}
     if len(grades) != len(doc.get("grades") or []) or set(grades) != {(lang, v) for lang in TG2_LANGS for v in POSITIVE_VARIANTS}:
         problems.append("the grader positives are not one stub and one reference per tg2 language")

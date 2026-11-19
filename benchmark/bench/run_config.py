@@ -93,6 +93,7 @@ class GenerationPolicy:
     watchdog: dict = field(default_factory=lambda: dict(WATCHDOG_OFF))
     compaction: str = "off"
     arm: dict | None = None
+    gradle_user_home: dict | None = None            # S26 §3 (tg2 only): the bench-owned Gradle home; omitted when None
 
     def __post_init__(self):
         if not (isinstance(self.config_id, str) and self.config_id):
@@ -101,6 +102,8 @@ class GenerationPolicy:
             raise ValueError("langs must be nonempty")
         if self.compaction not in COMPACTION:
             raise ValueError(f"compaction must be one of {COMPACTION}")
+        if self.gradle_user_home is not None and not isinstance(self.gradle_user_home, dict):
+            raise ValueError("gradle_user_home must be a dict or None")
         wd = self.watchdog
         if not isinstance(wd, dict) or wd.get("mode") not in ("off", "on"):
             raise ValueError("watchdog.mode must be off or on")
@@ -119,7 +122,7 @@ class GenerationPolicy:
         out = {}
         for f in fields(self):
             value = getattr(self, f.name)
-            if value is None and f.name in ("inject", "arm"):       # inject-only / M64-only keys
+            if value is None and f.name in ("inject", "arm", "gradle_user_home"):       # inject-only / M64-only / tg2-only keys
                 continue
             out[f.name] = value
         return canonical(out)
@@ -135,7 +138,8 @@ def tg1_generation_policy(*, config_id, scaffold, corpus_id, corpus_identity, la
                           datefreeze_sha256, carrier_sha256, universe_sha256, env, toolchain, inject=None,
                           inject_allowed=INJECT_KINDS, budgets=None, watchdog=None, compaction="off", arm=None,
                           gate=None, hygiene=None, grader_version=None, grader_timeout_s=None,
-                          grade_join_timeout_s=None, plugin_proof=PLUGIN_PROOF, inject_addendum_sha256=None):
+                          grade_join_timeout_s=None, plugin_proof=PLUGIN_PROOF, inject_addendum_sha256=None,
+                          gradle_user_home=None):
     """The tg1-family generation policy. `gate` / `hygiene` / grader constants default to what `tg1_runner.identity`
     derives (token_turn_gate.POLICY and proc_guard.POLICY with the inject kind's single override; structured_grade
     VERSION / TIMEOUTS; the join timeout from them), imported lazily so this module stays pure. `inject` is the kind
@@ -171,7 +175,8 @@ def tg1_generation_policy(*, config_id, scaffold, corpus_id, corpus_identity, la
         grade_join_timeout_s=grade_join_timeout_s, plugin_proof=plugin_proof, env=env, toolchain=toolchain,
         inject=inject_block, inject_allowed=tuple(inject_allowed),
         budgets=dict(DEFAULT_BUDGETS if budgets is None else budgets),
-        watchdog=dict(WATCHDOG_OFF if watchdog is None else watchdog), compaction=compaction, arm=arm)
+        watchdog=dict(WATCHDOG_OFF if watchdog is None else watchdog), compaction=compaction, arm=arm,
+        gradle_user_home=gradle_user_home)
 
 
 @dataclass(frozen=True)

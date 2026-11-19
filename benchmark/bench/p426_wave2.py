@@ -53,6 +53,8 @@ SESSION_ORDER = ("s1", "s2")
 LANG_ORDER = {"s1": ("python", "go"), "s2": ("go", "python")}      # spec 7: s2 reverses the language order
 SESSION_SEED = {"s1": 1001, "s2": 2002}
 OVERRUN_FILE, SEQUENCE_FILE, LOG_FILE = "OVERRUN_PAUSED", "sequence.json", "sequence.log"
+HOST_ENV_FILE = "host_env.json"                      # C360 / S26 §2: the run's host-environment baseline (`bench.host_env`)
+HOST_ENV_REASON = "host environment changed during the leg"
 WAVE2_DIR, REHEARSAL_DIR = "p426/wave2", "p426/rehearsal"
 CHAIN_ENTRY = ("benchmark", "chains", "c147", "run_tg1_chain.py")          # in parts: this module reads no chain rows (test_p371_chain_rows)
 SEAMS = ("launch", "alive", "wait", "power", "harvest", "harvest_path", "publish_dossier", "publish_run_files", "operator_emails",
@@ -167,11 +169,177 @@ def positives_plan(draw_doc):
     return {lg["lang"]: lg["invocations"][0]["expect"][0] for lg in sched["blocks"][0]["legs"]}
 
 
+def _inject_verify_module():
+    """`benchmark/m62/inject_verify.py` (stdlib-only at import), for its evidence-path rules and event reader."""
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+    try:
+        from m62 import inject_verify
+    finally:
+        sys.path.pop(0)
+    return inject_verify
+
+
+def _input_strings(value):
+    if isinstance(value, str):
+        yield value
+    elif isinstance(value, dict):
+        for v in value.values():
+            yield from _input_strings(v)
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            yield from _input_strings(v)
+
+
+def _row_file(run, kind, attempt):
+    return Path(run) / (f"{kind}.attempt{attempt}" + ".jsonl")
+
+
+def verified_row(run, kind, attempt, row_sha256):
+    """`(row, None)` when the run's `<kind>.attempt<n>.jsonl` holds one row and hashes to the recorded `row_sha256` (S26
+    erratum 1, Sol P17); else `(None, why)`."""
+    if not (isinstance(row_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", row_sha256)):
+        return None, "the inject run recorded no row_sha256"
+    try:
+        raw = _row_file(run, kind, attempt).read_bytes()
+    except OSError:
+        return None, "the run's row file is missing or unreadable"
+    if hashlib.sha256(raw).hexdigest() != row_sha256:
+        return None, "the run's row file is not the one the inject run recorded (row_sha256)"
+    try:
+        rows = [json.loads(x) for x in raw.decode().splitlines() if x.strip()]
+    except (ValueError, UnicodeDecodeError):
+        return None, "the run's row file is unreadable"
+    if len(rows) != 1 or not isinstance(rows[0], dict):
+        return None, "the run has no single row"
+    return rows[0], None
+
+
+def recorded_kills(row) -> int:
+    """The kills the row records: its `mem_kills` plus the processes its termination killed (`termination.killed`); -1 when
+    either record is missing or malformed (never 0 without the facts)."""
+    term = row.get("termination")
+    if not isinstance(term, dict):
+        return -1
+    n = 0
+    for value in (row.get("mem_kills"), term.get("killed")):
+        if not isinstance(value, list):
+            return -1
+        n += len(value)
+    return n
+
+
+def decline_evidence(run, kind, attempt, verify_verdict, wd, row_sha256=None, probe_rc=None):
+    """S26 §4 + erratum 1: `(declined_evidence, None)` when the model declined the planted command of `kind` (loop / alloc
+    only): the inject_verify verdict is `not_observed*` (`fz.declinable_verify_verdict`), the probe exited rc 0, the run's
+    row is the one recorded (`row_sha256`), the row records no kill, its recorded artifacts verify against the row's
+    `evidence_sha256` (inject_verify's V3 rule), and its events hold no tool call whose input carries the kind's marker.
+    Else `(None, why)`."""
+    marker = fz.DECLINE_MARKERS.get(kind)
+    if marker is None:
+        return None, f"{kind} is never declined"
+    if not fz.declinable_verify_verdict(verify_verdict):
+        return None, f"the inject_verify verdict {verify_verdict!r} is not a decline"
+    if type(probe_rc) is not int or probe_rc != 0:
+        return None, f"the probe did not exit rc 0 (rc {probe_rc!r})"
+    row, why = verified_row(run, kind, attempt, row_sha256)
+    if row is None:
+        return None, why
+    kills = recorded_kills(row)
+    if kills != 0:
+        return None, "the row records a kill" if kills > 0 else "the row's kill records are malformed"
+    iv = _inject_verify_module()
+    shas, paths = row.get("evidence_sha256"), iv.evidence_paths(row, "opencode-v2-web-tg2")
+    if not isinstance(shas, dict) or paths is None or set(shas) != set(paths):
+        return None, "the row's evidence_sha256 does not name exactly its recorded artifacts"
+    for name, field in paths.items():
+        p = iv.resolve(row.get(field, ""), wd)
+        try:
+            ok = bool(shas[name]) and p.is_file() and hashlib.sha256(p.read_bytes()).hexdigest() == shas[name]
+        except OSError:
+            ok = False
+        if not ok:
+            return None, f"the recorded artifact {name} does not verify against evidence_sha256"
+    try:
+        events = iv.load_events(iv.resolve(row.get("events_path", ""), wd))
+    except (OSError, ValueError):
+        return None, "the events file is unreadable"
+    for e in events:
+        part = e.get("part") if isinstance(e, dict) else None
+        state = part.get("state") if isinstance(part, dict) else None
+        if isinstance(state, dict) and "input" in state:
+            if any(marker in s for s in _input_strings(state["input"])) or marker in json.dumps(state["input"]):
+                return None, f"a tool call carries {marker!r} (the model ran it)"
+    return dict(events_sha256=shas["events"], marker=marker, verify_verdict=verify_verdict, kills=0, probe_rc=0,
+                row_sha256=row_sha256), None
+
+
+def _verify(ops, run, kind):
+    """{verdict, result}: the retained attempt's inject_verify verdict string (erratum 3) and, when the ops expose the richer
+    `inject_verify_result`, its RESULT line (one inject_verify call either way)."""
+    full = getattr(ops, "inject_verify_result", None)
+    if callable(full):
+        r = dict(full(run, kind))
+        return dict(verdict=r.get("verdict"), result=r.get("result"))
+    return dict(verdict=ops.inject_verify(run, kind), result=None)
+
+
+def parse_inject_verify(stdout, kind):
+    """(retained attempt's verdict, RESULT line) from `inject_verify --kind <kind>`'s stdout: the attempt lines are
+    `<kind>.attempt<n>: <verdict>` (earlier attempts carry the retry tag); a missing attempt prints `<kind>: FAIL:missing …`."""
+    row, result = None, None
+    for line in (stdout or "").splitlines():
+        line = line.rstrip()
+        m = re.fullmatch(rf"{re.escape(kind)}(?:\.attempt\d+)?: (\S.*)", line)
+        if m and "[retry" not in m.group(1) and not m.group(1).startswith(" "):
+            row = m.group(1).split(" ", 1)[0]
+        elif line.startswith("RESULT"):
+            result = line
+    return row, result
+
+
+def positive_entry(ops, wd, lang, item, kind):
+    """One inject positive (§4): the run (one retry, only on a transport abort), its inject_verify verdict, and the entry's
+    `verdict` — `PASS`, `DECLINED` (loop / alloc, with `declined_evidence`) or the failure. Returns (entry, why-not-declined)."""
+    verdict, res, n, ver = None, {}, 0, None
+    for n in (1, 2):                                    # one retry per run, only on a transport abort
+        res = dict(ops.positive_inject(lang, item, kind, seed=TG2_SESSION_SEED, attempt=n))
+        if res.get("transport_abort"):
+            verdict = "TRANSPORT_ABORT"
+            continue
+        ver = _verify(ops, res["run"], kind)
+        verdict = ver["verdict"]
+        break
+    entry = dict(language=lang, kind=kind, item=item, seed=TG2_SESSION_SEED, attempts=n, verdict=verdict,
+                 row_sha256=res.get("row_sha256"), evidence_sha256=res.get("evidence_sha256"))
+    why = None
+    if ver is not None:
+        entry.update(verify_verdict=ver["verdict"], verify_result=ver["result"], probe_rc=res.get("rc"))
+        rc = res.get("rc")
+        if rc is not None and (type(rc) is not int or rc != 0):
+            # Sol P17: a nonzero probe exit is a probe failure, never PASS / DECLINED (the verify verdict stays recorded)
+            entry["verdict"] = f"FAIL:probe_rc:{rc}"
+        elif verdict == "PASS":
+            row_file = _row_file(res["run"], kind, n)
+            if row_file.exists() or row_file.is_symlink():     # the box's PASS row always exists (inject_verify read it)
+                _, bad = verified_row(res["run"], kind, n, res.get("row_sha256"))
+                if bad:
+                    entry["verdict"], why = "FAIL:row_sha256", bad
+        elif kind in fz.DECLINE_MARKERS:
+            evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
+                                             probe_rc=rc)
+            if evidence is not None:
+                entry.update(verdict="DECLINED", declined_evidence=evidence)
+    return entry, why
+
+
 def cmd_positives(a, ops, wd, clock=time.time):
     """§3 "Positives record" (E6): per language the pilot item's stub graded FAIL and its reference PASS (`Tg2Corpus.grade`); on
     the reference arm, stall / loop / alloc on the pilot item at seed 1001 (12 `run_tg2_probe.py --tg2-inject` runs), each
     verified by `inject_verify` with that kind's causal predicate, one retry per run only on a transport abort; inside ONE serving
-    session (the lean router, the A4 gate, the worker loaded). Writes one sealed record (any outcome); rc 0 only when all pass."""
+    session (the lean router, the A4 gate, the worker loaded). S26 §4: stall must PASS; loop / alloc PASS or are DECLINED by the
+    model (`decline_evidence`). C360: the host fingerprint before the first grade and after the last inject must be equal; an
+    exception inside is recorded. Writes one sealed record (any outcome); rc 0 only when all pass."""
+    from . import host_env as he
     from . import schedules
     from . import tg2_grade
     fz.need(ops, *POSITIVE_SEAMS)
@@ -188,33 +356,39 @@ def cmd_positives(a, ops, wd, clock=time.time):
     if st.get("clean") is not True:
         raise fz.Refusal(f"the {arm} worktree is not clean")
     problems, grades, injects = [], [], []
-    for lang in TG2_LANGS:
-        for variant in fz.POSITIVE_VARIANTS:
-            g = dict(ops.positive_grade(lang, plan[lang], variant))
-            grades.append(dict(language=lang, item=plan[lang], variant=variant, **g))
-            if g.get("passed") is not (variant == "reference"):
-                problems.append(f"{lang} {variant}: graded {'PASS' if g.get('passed') else 'FAIL'}, expected "
-                                f"{'PASS' if variant == 'reference' else 'FAIL'}")
-    with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
+    probe = getattr(ops, "host_env", None)
+    probe = probe if callable(probe) else None
+    env0 = json.loads(json.dumps(probe())) if probe else None      # C360: before the first grade
+    env1 = None
+    try:
         for lang in TG2_LANGS:
-            for kind in fz.POSITIVE_KINDS:
-                verdict, res, n = None, {}, 0
-                for n in (1, 2):                                # one retry per run, only on a transport abort
-                    res = dict(ops.positive_inject(lang, plan[lang], kind, seed=TG2_SESSION_SEED, attempt=n))
-                    if res.get("transport_abort"):
-                        verdict = "TRANSPORT_ABORT"
-                        continue
-                    verdict = ops.inject_verify(res["run"], kind)
-                    break
-                injects.append(dict(language=lang, kind=kind, item=plan[lang], seed=TG2_SESSION_SEED, attempts=n, verdict=verdict,
-                                    row_sha256=res.get("row_sha256"), evidence_sha256=res.get("evidence_sha256")))
-                if verdict != "PASS":
-                    problems.append(f"{lang} {kind}: {verdict}")
+            for variant in fz.POSITIVE_VARIANTS:
+                g = dict(ops.positive_grade(lang, plan[lang], variant))
+                grades.append(dict(language=lang, item=plan[lang], variant=variant, **g))
+                if g.get("passed") is not (variant == "reference"):
+                    problems.append(f"{lang} {variant}: graded {'PASS' if g.get('passed') else 'FAIL'}, expected "
+                                    f"{'PASS' if variant == 'reference' else 'FAIL'}")
+        with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
+            for lang in TG2_LANGS:
+                for kind in fz.POSITIVE_KINDS:
+                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind)
+                    if why:
+                        entry["not_declined"] = he.portable(why)        # why the run is not PASS / DECLINED (diagnostic)
+                    injects.append(entry)
+                    if entry["verdict"] not in ("PASS", "DECLINED"):
+                        problems.append(f"{lang} {kind}: {entry['verdict']}")
+    except Exception as exc:  # noqa: BLE001  (S26 §2: recorded, the run continues to its sealed record)
+        problems.append(he.portable(f"exception: {type(exc).__name__}: {str(exc)[:300]}"))
+    finally:
+        env1 = json.loads(json.dumps(probe())) if probe else None  # also when no session opened
+    if env0 is not None:
+        problems += [f"{HOST_ENV_REASON}: {c}" for c in he.diff(env0, env1)]
     doc = dict(kind=fz.KIND_POSITIVES, corpus="tg2", arm=arm, **{f"{arm}_commit": st.get("head")},
                scaffold="opencode-v2-web-tg2", **{k: ident.get(k) for k in fz.IDENTITY_KEYS},
                draw_sha256=schedules.TG2_DRAW_SHA256, universe_sha256=schedules.TG2_UNIVERSE_SHA256,
                image_id=tg2_grade.pinned_image_id(), frozen_prompt_date=a.frozen_prompt_date, grades=grades, injects=injects,
-               problems=problems, verdict="PASS" if not problems else "FAIL", created=co.utc_stamp(clock()))
+               problems=problems, host_env=env0, host_env_after=env1, verdict="PASS" if not problems else "FAIL",
+               created=co.utc_stamp(clock()))
     try:
         sealed = ph.write_exclusive(out, doc)
     except FileExistsError:
@@ -640,6 +814,86 @@ class Sequencer:
             raise Stop(1, f"STOP: power {p.get('watts')} W / {p.get('volts')} V, battery {p.get('battery')} % before a launch "
                           f"(needs {POWER['watts']} W / {POWER['volts']} V, battery > {POWER['battery_above']} %)")
 
+    # -- C360 / S26 §2: the host environment (`bench.host_env`) against the run's recorded baseline
+    def host_probe(self):
+        """The ops' `host_env` seam, or None (test fakes may omit it; `BoxSeqOps` always has it)."""
+        probe = getattr(self.ops, "host_env", None)
+        return probe if callable(probe) else None
+
+    def host_live(self):
+        return json.loads(json.dumps(self.host_probe()()))
+
+    def host_baseline(self):
+        """The fingerprint `<out-base>/host_env.json` recorded (sealed, kind `host_env`); unreadable -> Stop(1)."""
+        path = self.out / HOST_ENV_FILE
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, ValueError):
+            doc = None
+        if not (ph.sealed_ok(doc) and doc.get("kind") == "host_env" and isinstance(doc.get("fingerprint"), dict)):
+            raise Stop(1, f"STOP: {HOST_ENV_FILE} (the run's host-environment baseline) is unreadable or not a sealed "
+                          "baseline")
+        return doc["fingerprint"]
+
+    def host_changes(self):
+        """[] without the seam or when the live fingerprint equals the baseline; else the changes (`host_env.diff`)."""
+        if self.host_probe() is None:
+            return []
+        from . import host_env
+        return host_env.diff(self.host_baseline(), self.host_live())
+
+    @staticmethod
+    def host_refusal(leg, changed):
+        return (f"STOP: the host environment differs from the run's baseline before {leg} (nothing launched): "
+                + "; ".join(changed))
+
+    def host_env_start(self):
+        """At `run()` entry: the first run of an out-base records the baseline (exclusive); a resumed run compares first."""
+        if self.host_probe() is None:
+            return
+        path = self.out / HOST_ENV_FILE
+        if not path.exists() and not path.is_symlink():
+            now = self.host_live()
+            ph.write_exclusive(path, dict(kind="host_env", fingerprint=now, created=co.utc_stamp(self.clock())))
+            self.log(f"host environment baseline recorded ({HOST_ENV_FILE})")
+            return
+        changed = self.host_changes()
+        if changed:
+            raise Stop(1, self.host_refusal(self.next_leg_name(), changed))
+
+    def next_leg_name(self):
+        """The leg this command would process next (for the resume refusal)."""
+        for spec in self.legs():
+            latest = (self.entries(spec["name"]) or [None])[-1]
+            if (latest is None or spec["name"] in (getattr(self.a, "rerun", None) or []) or not self.harvested(latest)
+                    or latest["state"] not in (*VALID_STATES, spec["expect"])):
+                return spec["name"]
+        return "the end of the run"
+
+    def host_log_after_exception(self, name):
+        """An exception left a leg's launch region: log the host comparison (never raises; the exception propagates)."""
+        try:
+            if self.host_probe() is None:
+                return
+            try:
+                changed = self.host_changes()
+            except Exception as exc:  # noqa: BLE001
+                self.log(f"{name}: an exception left the leg; the host environment could not be compared ({type(exc).__name__})")
+                return
+            self.log(f"{name}: an exception left the leg; the host environment "
+                     + ("changed: " + "; ".join(changed) if changed else "is unchanged"))
+        except Exception:  # noqa: BLE001  (logging must not replace the original exception)
+            pass
+
+    def host_env_final(self):
+        """Both exits of `run()`, before the run files are published: a change after the last leg is recorded in
+        `sequence.json` (`host_env_after_last_leg`) and stops (rc 1)."""
+        changed = self.host_changes()
+        if changed:
+            self.seq["host_env_after_last_leg"] = changed
+            self.save()
+            raise Stop(1, "STOP: the host environment changed after the last leg: " + "; ".join(changed))
+
     # -- the boundary: PAUSE and the idle gap (spec 1, 9)
     def last_leg_end(self):
         try:
@@ -742,6 +996,9 @@ class Sequencer:
         self.wait_boundary()
         self.verify_world()
         self.check_power()
+        changed = self.host_changes()                  # C360 / S26 §2: the host equals the run's baseline before a launch
+        if changed:
+            raise Stop(1, self.host_refusal(spec["name"], changed))
         if self.corpus == "tg2":                       # M76 B4b-1: the deadline exists before the launch (no default wall)
             try:
                 value = float(self.deadline(spec))
@@ -763,31 +1020,41 @@ class Sequencer:
         self.seq["legs"].append(entry)
         self.save()
         self.log(f"START {name}: " + json.dumps(argv))
-        handle = self.ops.launch(argv, cwd=self.worktrees[spec["arm"]], pass_fds=())
-        self.log(f"chain PID {handle.pid}")
-        rc, t0, watcher, watcher_dead, overrun = self.supervise(spec, attempt, root, handle)
-        ended = self.clock()
-        atomic_text(self.wd / pl.LAST_LEG_END, repr(float(ended)) + "\n")
-        cls = classify_leg(root, rc, arm=spec["arm"])
-        if overrun and cls["state"] == "INVALID" and not self.finished_cleanly(root):
-            cls = dict(cls, state="OVERRUN")
-        settled = self.finish_watcher(watcher)
-        if watcher is None:
-            speed = dict(valid=False, reason="no watcher was started (the leg never created its out-root)")
-        elif watcher_dead is not None:
-            speed = dict(valid=False, reason="the watcher died before the chain exited")
-        elif not settled:
-            speed = dict(valid=False, reason="the watcher did not finalize its journal")
-        else:
-            speed = speed_of(root / "watch.jsonl")
-        root.mkdir(parents=True, exist_ok=True)
-        doc = dict(leg=spec["name"], attempt=attempt, state=cls["state"], reason=cls["reason"], chain_rc=rc,
-                   started=co.utc_stamp(t0), ended=co.utc_stamp(ended), speed_valid=bool(speed["valid"]),
-                   speed_reason=speed["reason"], overrun=overrun, **{"class": cls["class"]})
-        if spec["kind"] == "makeup" and cls["state"] not in VALID_STATES:
-            doc["not_run"] = not_run(root, self.canon)
-        ph.write_exclusive(root / "leg.json", doc)
+        try:                                           # C360 / S26 §2: from the launch to the leg.json write
+            handle = self.ops.launch(argv, cwd=self.worktrees[spec["arm"]], pass_fds=())
+            self.log(f"chain PID {handle.pid}")
+            rc, t0, watcher, watcher_dead, overrun = self.supervise(spec, attempt, root, handle)
+            ended = self.clock()
+            atomic_text(self.wd / pl.LAST_LEG_END, repr(float(ended)) + "\n")
+            cls = classify_leg(root, rc, arm=spec["arm"])
+            if overrun and cls["state"] == "INVALID" and not self.finished_cleanly(root):
+                cls = dict(cls, state="OVERRUN")
+            settled = self.finish_watcher(watcher)
+            if watcher is None:
+                speed = dict(valid=False, reason="no watcher was started (the leg never created its out-root)")
+            elif watcher_dead is not None:
+                speed = dict(valid=False, reason="the watcher died before the chain exited")
+            elif not settled:
+                speed = dict(valid=False, reason="the watcher did not finalize its journal")
+            else:
+                speed = speed_of(root / "watch.jsonl")
+            host_changed = self.host_changes()         # the leg must not change the host under itself
+            if host_changed:
+                reason = HOST_ENV_REASON + ": " + "; ".join(host_changed) + (f" (prior: {cls['reason']})" if cls["reason"] else "")
+                cls = dict(cls, state="INVALID", reason=reason, **{"class": "systemic"})
+            root.mkdir(parents=True, exist_ok=True)
+            doc = dict(leg=spec["name"], attempt=attempt, state=cls["state"], reason=cls["reason"], chain_rc=rc,
+                       started=co.utc_stamp(t0), ended=co.utc_stamp(ended), speed_valid=bool(speed["valid"]),
+                       speed_reason=speed["reason"], overrun=overrun, **{"class": cls["class"]})
+            if spec["kind"] == "makeup" and cls["state"] not in VALID_STATES:
+                doc["not_run"] = not_run(root, self.canon)
+            ph.write_exclusive(root / "leg.json", doc)
+        except BaseException:
+            self.host_log_after_exception(name)
+            raise
         entry["state"] = cls["state"]
+        if host_changed:
+            entry["reason"] = cls["reason"]
         self.save()
         self.log(f"END {name}: rc {rc} state {cls['state']}" + (f" ({cls['reason']})" if cls["reason"] else ""))
         if not settled:
@@ -1041,6 +1308,8 @@ class Sequencer:
     def after_leg(self, spec, entry):
         """What follows a finished, harvested leg (also on resume): its state, its pair dossier, the pilot gate."""
         if entry["state"] not in VALID_STATES:
+            if str(entry.get("reason") or "").startswith(HOST_ENV_REASON):     # C360: stops even where INVALID is expected
+                raise Stop(1, f"STOP: {spec['name']}.a{entry['attempt']} is INVALID: {entry['reason']}")
             if entry["state"] == spec["expect"]:
                 self.log(f"{spec['name']}: {entry['state']} as the rehearsal expects")
                 return
@@ -1168,7 +1437,12 @@ class Sequencer:
         run = self.out / "run"
         if self.corpus == "tg2" and run.is_dir():
             paths += [p for p in sorted(run.glob("recheck-s*.json")) if p not in paths]
-        return paths + [self.out / SEQUENCE_FILE]
+        return paths + self.host_env_paths() + [self.out / SEQUENCE_FILE]
+
+    def host_env_paths(self):
+        """C360 / S26 §2: the run's host-environment baseline, published with the run files when it exists."""
+        path = self.out / HOST_ENV_FILE
+        return [path] if path.is_file() else []
 
     def process(self, spec):
         latest = (self.entries(spec["name"]) or [None])[-1]
@@ -1206,6 +1480,7 @@ class Sequencer:
             self.canon = canonical_occurrences(read_occurrences(self.a.occurrences, s3=self.lever == "kv"), s3=self.lever == "kv")
         if (self.out / OVERRUN_FILE).exists():
             raise Stop(1, f"STOP: {OVERRUN_FILE} exists: the operator removes it to resume")
+        self.host_env_start()                                # C360 / S26 §2: the baseline, before the first leg
         self.emails = tuple(self.ops.operator_emails())
         if not self.emails:                                  # spec 16.8: never "no operator address" (unset user.email, a failing read)
             raise fz.Refusal("the operator email set is empty (the main checkout's `git config user.email` is unset or unreadable): "
@@ -1219,9 +1494,11 @@ class Sequencer:
         for spec in self.legs():
             self.process(spec)
             if getattr(self.a, "through", None) and spec["name"] == self.a.through:
+                self.host_env_final()
                 self.publish_run_files_or_stop()
                 self.log(f"through {spec['name']}: stopping as asked")
                 return 0
+        self.host_env_final()
         self.publish_run_files_or_stop()
         self.log("DONE: every leg of this command is complete")
         return 0
@@ -1251,7 +1528,7 @@ class Sequencer:
         if self.corpus == "tg2":
             paths = self.run_file_paths()
         else:
-            paths = sorted(p for p in self.record_dir.iterdir() if p.is_file()) + [self.out / SEQUENCE_FILE]
+            paths = sorted(p for p in self.record_dir.iterdir() if p.is_file()) + self.host_env_paths() + [self.out / SEQUENCE_FILE]
         self.ops.publish_run_files(paths, emails=self.emails)
         self.run_files_done = True
 
@@ -1313,6 +1590,11 @@ class BoxSeqOps(fz.BoxOps):
     def wait(self, handle):
         proc = self._procs.get(handle.pid)
         return proc.wait() if proc is not None else 0
+
+    def host_env(self):
+        """C360 / S26 §2: the live host-environment fingerprint (`bench.host_env.fingerprint_for_run`)."""
+        from . import host_env
+        return host_env.fingerprint_for_run()
 
     def power(self):
         sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "m1"))
@@ -1457,12 +1739,25 @@ class BoxSeqOps(fz.BoxOps):
                     evidence_sha256=sha(out.with_suffix(".manifest.json")))
 
     def inject_verify(self, run, kind):
-        """`m62/inject_verify.py --scaffold opencode-v2-web-tg2 --run <dir> --kind <k>`: the kind's existing causal predicate."""
+        """`m62/inject_verify.py --scaffold opencode-v2-web-tg2 --run <dir> --kind <k>`: the kind's existing causal predicate;
+        returns the retained attempt's verdict string (`PASS`, `not_observed:kill`, `FAIL:…`; S26 erratum 3)."""
+        return self.inject_verify_result(run, kind)["verdict"]
+
+    def inject_verify_result(self, run, kind):
+        """S26 §4: {verdict (the retained attempt's verdict string), result (the RESULT line), rc}. `PASS` needs exit 0; a
+        run whose stdout names no verdict is `FAIL:no_verdict:rc<n>`."""
         wt = self._pos["wt"] if self._pos else Path(__file__).resolve().parents[2]
         done = subprocess.run([str(wt / ".venv-bench/bin/python"), str(wt / "benchmark/m62/inject_verify.py"), "--scaffold",
                                "opencode-v2-web-tg2", "--run", str(run), "--kind", kind, "--workdir", str(self.wd)],
                               cwd=str(wt), capture_output=True, text=True, timeout=600, stdin=subprocess.DEVNULL)
-        return "PASS" if done.returncode == 0 else f"FAIL (inject_verify rc {done.returncode})"
+        row, result = parse_inject_verify(done.stdout, kind)
+        if row is None:
+            verdict = f"FAIL:no_verdict:rc{done.returncode}"
+        elif row == "PASS" and done.returncode != 0:
+            verdict = f"FAIL:inconsistent:PASS:rc{done.returncode}"
+        else:
+            verdict = row
+        return dict(verdict=verdict, result=result, rc=done.returncode)
 
     def notify(self, message):
         print(message, file=sys.stderr, flush=True)

@@ -127,6 +127,17 @@ fi
 # --- 5. benchmark-pinned opencode 2.0.20 --------------------------------------------------------
 "$REPO/scripts/install_bench_opencode.sh"
 
+# --- 5b. agent toolchains (C360, S26 §5): what the tg2 agent finds on its PATH (/opt/homebrew/bin:/usr/bin:/bin) -------
+# Each leg's host_env fingerprint records these; an agent that installs anything else invalidates its leg.
+AGENT_PATH=/opt/homebrew/bin:/usr/bin:/bin
+command -v brew >/dev/null 2>&1 || die "Homebrew is required (the agent toolchains are Homebrew formulae)"
+HOMEBREW_NO_AUTO_UPDATE=1 brew install rust openjdk@21 cmake >/dev/null || die "brew install rust openjdk@21 cmake failed"
+HOMEBREW_NO_AUTO_UPDATE=1 brew link --force openjdk@21 >/dev/null || die "brew link --force openjdk@21 failed"
+env PATH="$AGENT_PATH" /bin/sh -c 'command -v java' >/dev/null 2>&1 || die "java does not resolve on the agent PATH ($AGENT_PATH)"
+env PATH="$AGENT_PATH" java -version >/dev/null 2>&1 || die "java on the agent PATH does not run"
+say "agent toolchains: $(env PATH="$AGENT_PATH" rustc --version 2>/dev/null | head -1); $(env PATH="$AGENT_PATH" java -version 2>&1 | head -1); $(env PATH="$AGENT_PATH" cmake --version 2>/dev/null | head -1)"
+say "tg2 prerequisite (not run here): (cd benchmark && ../.venv-bench/bin/python -m bench.tg2_gradle_home prefill)"
+
 # --- 6. bench venv from the exact pins ----------------------------------------------------------
 if [ "$SKIP_VENV" = 0 ]; then
   VENV="$REPO/.venv-bench"

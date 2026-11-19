@@ -58,6 +58,9 @@ GENERATION_DATA = (
 TG2_LABEL = "opencode-v2-web-tg2"
 TG2_CARRIER = REPO / "benchmark/opencode_bench_v2_web_tg2.json"
 TG2_GENERATION_DATA = GENERATION_DATA[:3] + ("benchmark/opencode_bench_v2_web_tg2.json",)
+# S26 erratum 5 (Sol P18): `bench.tg2_gradle_home` is resolved by name (never in the shared tg1 / oc import-time closure), so its
+# bytes enter tg2's `probe_code_sha256` as identity data; tg1's closure and data are unchanged.
+TG2_GRADLE_HOME_SOURCE = "benchmark/bench/tg2_gradle_home.py"
 TG1_FAMILY = (TG1_LABEL, TG2_LABEL)                 # the labels that run the tg1 plugin set (`provenance.TG1_FAMILY`)
 # The fields of the pairing composite shared by every arm (spec 4); model-specific identity is separate (arm identity).
 GENERATION_FIELDS = (
@@ -120,6 +123,12 @@ def m64_template():
                              watchdog=rc.watchdog_on(limit_s=arm_watchdog.LIMIT_S, grace_s=arm_watchdog.GRACE_S,
                                                      toolwindows_sha256=toolwindows),
                              compaction="on_accounted")
+
+
+def _tg2_gradle_home():
+    """S26 §3: `bench.tg2_gradle_home`, imported by name (the tg1 / oc probe closures hold no tg2 module)."""
+    import importlib
+    return importlib.import_module(__package__ + ".tg2_gradle_home")
 
 
 class TransportFailure(tg.TransportAbort):
@@ -233,7 +242,7 @@ class OpencodeArm(aa.ArmAdapter):
     receipt_class_rules = dict(task="required", compaction="required", auxiliary="forbidden")   # 2.0.20 sends tools always
     supports_attempt_header = True          # `providers.<id>.settings.headers` reaches every request (verified on 2.0.20)
 
-    def __init__(self, p=None, *, mode="m64", search=None, p426=False, scaffold="tg1"):
+    def __init__(self, p=None, *, mode="m64", search=None, p426=False, scaffold="tg1", gradle_home=None):
         if mode not in ("tg1", "m64"):
             raise aa.ArmContractError(f"unknown opencode arm mode {mode!r}")
         if p426 and mode != "tg1":
@@ -245,6 +254,11 @@ class OpencodeArm(aa.ArmAdapter):
         self.search = search if search is not None else aa.UnavailableSearchService()
         self.m64 = mode == "m64"
         self.tg2 = scaffold == "tg2"       # M76 B4b-1: the tg2 carrier and label; everything else is the tg1 mode's
+        if gradle_home is not None and not self.tg2:
+            raise aa.ArmContractError("a Gradle home is bound to the tg2 arm only")
+        # S26 §3: the tg2 Gradle home (`bench.tg2_gradle_home`): injected, or resolved by name for a tg2 arm — never a import-time
+        # import, so no tg2 module enters the shared tg1 / oc closure (test_p371_closures)
+        self.gradle_home = gradle_home if gradle_home is not None or not self.tg2 else _tg2_gradle_home()
         self.plugin_names = PLUGINS_M64 if self.m64 else PLUGINS
         self.label = M64_LABEL if self.m64 else (TG2_LABEL if self.tg2 else TG1_LABEL)
         self.receipt_kinds = ("primary", "compaction") if self.m64 else ("primary",)
@@ -264,6 +278,11 @@ class OpencodeArm(aa.ArmAdapter):
         """Non-Python inputs of the generation identity: the tg1 set (plugins, the tg1 carrier = the base the M64
         carrier derives from); the M64 transform itself is Python and is in the import closure. tg2: the plugins + its carrier."""
         return TG2_GENERATION_DATA if self.tg2 else GENERATION_DATA
+
+    @property
+    def identity_data(self):
+        """The data of `probe_code_sha256`: `generation_data`, plus (tg2 only) `bench/tg2_gradle_home.py` (S26 erratum 5)."""
+        return tuple(self.generation_data) + ((TG2_GRADLE_HOME_SOURCE,) if self.tg2 else ())
 
     @property
     def carrier(self):
@@ -344,11 +363,13 @@ class OpencodeArm(aa.ArmAdapter):
                                  watchdog=dict(limit_s=arm_watchdog.LIMIT_S, grace_s=arm_watchdog.GRACE_S))
         if inject:
             policy["inject"] = dict(kind=inject, prompt_addendum_sha256=inject_addendum_sha256)
+        if self.tg2 and self.gradle_home is not None:  # S26 §3: the bench-owned Gradle home every tg2 Java item finds
+            policy["gradle_user_home"] = self.gradle_home.identity_policy()
         entry = Path(p.__file__).resolve().relative_to(REPO.resolve()).as_posix()
         result = dict(
             scaffold=label, policy=policy,
             scaffold_policy_sha256=hashlib.sha256(json.dumps(policy, sort_keys=True).encode()).hexdigest(),
-            probe_code_sha256=ic.closure_sha256(entry, REPO, data=self.generation_data),
+            probe_code_sha256=ic.closure_sha256(entry, REPO, data=self.identity_data),
             opencode_version=version, opencode_exe_sha256=p._sha_of(binary))
         if inject:
             result["inject"] = dict(kind=inject, policy=dict(gate=gate, hygiene=hygiene),
@@ -437,6 +458,13 @@ class OpencodeArm(aa.ArmAdapter):
 
     def build_env(self, run_dir, scratch, overlay, *, receipts, frozen_date, toolwindow_receipts=None, attempt=None):
         env = self.p._opencode_env(run_dir, scratch, overlay, frozen_date=frozen_date, receipts=receipts)
+        if self.tg2:                                   # S26 §3: the prefilled Gradle home, or the item never starts
+            if self.gradle_home is None:
+                raise aa.ArmContractError("tg2 Gradle home: none is bound to the tg2 arm")
+            problems = self.gradle_home.check_problems()
+            if problems:
+                raise aa.ArmContractError(f"tg2 Gradle home: {problems[0]}")
+            env["GRADLE_USER_HOME"] = str(self.gradle_home.folder())
         if self.m64 and toolwindow_receipts is not None:
             if attempt is None:
                 raise aa.ArmContractError("the tool-window receipts need the item attempt's id")
@@ -720,6 +748,8 @@ class OpencodeArm(aa.ArmAdapter):
         out = dict(opencode_version=ident["opencode_version"])
         if binary_exists:
             out["opencode_exe_sha256"] = ident["opencode_exe_sha256"]
+        if self.tg2 and "gradle_user_home" in (ident.get("policy") or {}):     # S26 §3: tg2's `--print-identity` carries it
+            out["gradle_user_home"] = ident["policy"]["gradle_user_home"]
         return out
 
     def merge_receipts(self, reconciliation, summary):

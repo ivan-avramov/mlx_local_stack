@@ -42,7 +42,8 @@ NAMED_LIFECYCLE = {"runner": f"{_HERE}/run_tg2_chain.py", "chain_ops": "benchmar
 # the tg1 chain module it reuses: a shared-core edit rotates both).
 CORE_SPECS = dict(probe_entry="benchmark/run_tg2_probe.py",
                   probe_data=("benchmark/opencode_plugins/toolbounds.js", "benchmark/opencode_plugins/noretry.js",
-                              "benchmark/opencode_plugins/datefreeze.js", "benchmark/opencode_bench_v2_web_tg2.json"),
+                              "benchmark/opencode_plugins/datefreeze.js", "benchmark/bench/tg2_gradle_home.py",
+                              "benchmark/opencode_bench_v2_web_tg2.json"),       # S26 erratum 12: the Gradle home, tg2 only
                   chain_entry=f"{_HERE}/run_tg2_chain.py", chain_data=())
 ATTEMPT_NAME = t1.ATTEMPT_NAME
 
