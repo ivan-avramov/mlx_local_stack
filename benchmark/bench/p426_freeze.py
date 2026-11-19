@@ -14,6 +14,7 @@ K3, the production tree) goes through `checks(kind, **inputs)`, which returns th
 from __future__ import annotations
 
 import argparse
+import ast
 import hashlib
 import json
 import re
@@ -93,6 +94,138 @@ def declined_ok(entry) -> bool:
             and declinable_verify_verdict(ev.get("verify_verdict"))
             and ev.get("kills") == 0 and type(ev.get("kills")) is int
             and ev.get("probe_rc") == 0 and type(ev.get("probe_rc")) is int)
+
+
+# C366 (S27-P6): two positives verdicts ruled after the 2026-11-19 tg2 positives
+TRANSFER_KINDS = {"stall": ("not_observed:trailing", "stalled"), "loop": ("not_observed:cancellation", "looping")}
+TRANSFER_REFERENCE_SHA256 = "1861db0175e0a97204874bc4bf13677746153a9475978302d9bca0c9f1c20be0"   # 11-17 positives (c7c6993a)
+WAIVED_VERIFY_VERDICT = "FAIL:unrelated_kill"
+# The stop / cancel / reconcile path the transfer relies on (C366 r1 P1: whole files, transitively — every helper, constant and
+# class the stop path reaches in them; only the NAMED definitions are excluded: the S26 identity / Gradle-home code, and
+# inject_verify's alloc tail). `(file, excluded dotted names, {function: marker})`: an excluded name is cut (absent = nothing
+# to cut); a function in the third map is kept up to its marker line, and a missing one or marker raises (the transfer refuses).
+CANCEL_PATH = (
+    ("benchmark/bench/token_turn_gate.py", (), {}),
+    ("benchmark/bench/proc_guard.py", (), {}),
+    ("benchmark/bench/arm_adapter.py", (), {}),
+    ("benchmark/bench/opencode_v2_core.py", (), {}),
+    ("benchmark/bench/host.py", (), {}),
+    ("benchmark/bench/worker_receipts.py", (), {}),
+    ("benchmark/bench/tg2_runner.py", (), {}),
+    ("benchmark/run_tg2_probe.py", (), {}),
+    ("benchmark/bench/arm_runner.py", ("_identity_inputs",), {}),
+    ("benchmark/bench/arm_opencode.py", ("OpencodeArm.__init__", "OpencodeArm.build_env", "OpencodeArm.identity",
+                                         "OpencodeArm.identity_data", "OpencodeArm.identity_summary", "TG2_GRADLE_HOME_SOURCE",
+                                         "_tg2_gradle_home"), {}),
+    ("benchmark/m62/inject_verify.py", ("never_executed",), {"verify_row": "\n    # alloc\n"}),
+)
+CANCEL_PATH_SHA256 = "97f6e1d596f2e3912429cc8e54cd80c30865a016b30249c1e9248fc82adca834"   # at c7c6993a (the reference's commit)
+# C366 r1 P2: the reference record's stall rows per language (a transfer names exactly its language's)
+TRANSFER_REFERENCE_STALL_ROWS = {
+    "rust": "c97ec65c814f0c7163da98c3fb3e823582a576b92a75730067df564edcaa3cfe",
+    "javascript": "e329e3849604558362532e70115bf7d107f316762b8e459010328595f696f589",
+    "java": "88a7eae6c49347660ac3880d52d8c58a8e6b6739fa626430a66593297b9e5ea3",
+    "cpp": "092adf471bebb40f022cacad7e756fe22f88c616789f7d16374017ef93f09265"}
+
+
+def _named_nodes(tree):
+    for node in tree.body:
+        name = getattr(node, "name", None)
+        if name is None and isinstance(node, (ast.Assign, ast.AnnAssign)):
+            targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+            name = next((t.id for t in targets if isinstance(t, ast.Name)), None)
+        if name:
+            yield name, node
+        if isinstance(node, ast.ClassDef):
+            for member in node.body:
+                if getattr(member, "name", None):
+                    yield f"{node.name}.{member.name}", member
+
+
+def cancel_path_sha256(read) -> str:
+    """sha256 over `CANCEL_PATH`; `read(rel)` returns a file's text (a worktree file, or `git show <rev>:<rel>`). Each file's AST
+    (comments and positions ignored, docstrings kept) is hashed with its named exclusions removed and each truncated function
+    cut before its marker line. A transfer stands only while this equals `CANCEL_PATH_SHA256` (C366: any other edit of these
+    files needs a fresh in-run proof)."""
+    h = hashlib.sha256()
+    for rel, excluded, truncated in CANCEL_PATH:
+        text = read(rel)
+        tree = ast.parse(text)
+        nodes = dict(_named_nodes(tree))
+        drop = {id(nodes[n]) for n in excluded if n in nodes}        # absent at one commit = excluded there too
+        for name, marker in truncated.items():
+            node = nodes[name]                                       # KeyError: a missing function refuses
+            seg = "".join(text.splitlines(keepends=True)[node.lineno - 1:node.end_lineno])
+            if marker not in seg:
+                raise ValueError(f"{rel}: {name} has no marker {marker.strip()!r}")
+            cut = node.lineno + seg[:seg.index(marker) + 1].count("\n")      # the marker's line number
+            node.body = [st for st in node.body if st.lineno < cut]
+        tree.body = [n for n in tree.body if id(n) not in drop]
+        for n in tree.body:
+            if isinstance(n, ast.ClassDef):
+                n.body = [m for m in n.body if id(m) not in drop]
+        h.update(f"{rel}\n".encode() + ast.dump(tree, include_attributes=False).encode() + b"\n")
+    return h.hexdigest()
+
+
+def _hex64(value):
+    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
+
+
+def _int(value, want=None):
+    return type(value) is int and (want is None or value == want)
+
+
+def worktree_cancel_path_sha256(worktree):
+    """C366: a worktree's stop-path digest (`cancel_path_sha256`), or None when it cannot be computed."""
+    try:
+        return cancel_path_sha256(lambda rel: (Path(worktree) / rel).read_text())
+    except (OSError, SyntaxError, KeyError, ValueError):
+        return None
+
+
+def transfer_ok(entry) -> bool:
+    """A PASS_BY_TRANSFER entry is acceptable (C366 (a)): stall / loop only; the stop of the kind fired and its client kill
+    verified with no request in flight; probe rc 0; the entry's own `row_sha256`; the reference is the sealed 11-17 record; the
+    arm's stop path is source-identical to the reference commit's (`cancel_path_sha256`)."""
+    ev = entry.get("transfer_evidence") if isinstance(entry, dict) else None
+    want = TRANSFER_KINDS.get(entry.get("kind")) if isinstance(entry, dict) else None
+    return (want is not None and isinstance(ev, dict) and ev.get("verify_verdict") == want[0]
+            and ev.get("stop_reason") == want[1] and _int(ev.get("in_flight_at_kill"), 0) and ev.get("killed_verified") is True
+            and _int(ev.get("probe_rc"), 0) and _hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256")
+            and ev.get("reference_sha256") == TRANSFER_REFERENCE_SHA256
+            and ev.get("reference_row_sha256") == TRANSFER_REFERENCE_STALL_ROWS.get(entry.get("language"))
+            and ev.get("cancel_path_sha256") == CANCEL_PATH_SHA256)
+
+
+def waived_ok(entry) -> bool:
+    """A WAIVED entry is acceptable (C366 (b)): alloc only; the one kill a model-role process that is not the planted command,
+    over the inject's per-process limit; no tool call carried the marker; probe rc 0; the entry's own `row_sha256`."""
+    ev = entry.get("waived_evidence") if isinstance(entry, dict) else None
+    return (isinstance(entry, dict) and entry.get("kind") == "alloc" and isinstance(ev, dict)
+            and ev.get("verify_verdict") == WAIVED_VERIFY_VERDICT and ev.get("killed_role") == "model"
+            and isinstance(ev.get("killed_argv0"), str) and ev.get("marker_in_argv") is False
+            and ev.get("marker_in_tool_calls") is False
+            and _int(ev.get("rss")) and _int(ev.get("per_process")) and ev["per_process"] > 0 and ev["rss"] > ev["per_process"]
+            and _int(ev.get("probe_rc"), 0) and _hex64(ev.get("events_sha256"))
+            and _hex64(ev.get("manifest_sha256")) and ev.get("manifest_sha256") == entry.get("evidence_sha256")
+            and _hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256"))
+
+
+def inject_accepted(entry) -> bool:
+    """PASS; DECLINED (loop / alloc, S26 §4); PASS_BY_TRANSFER (stall / loop) or WAIVED (alloc), C366 — each with valid evidence."""
+    v = entry.get("verdict") if isinstance(entry, dict) else None
+    return (v == "PASS" or (v == "DECLINED" and declined_ok(entry)) or (v == "PASS_BY_TRANSFER" and transfer_ok(entry))
+            or (v == "WAIVED" and waived_ok(entry)))
+
+
+def waiver_problems(injects) -> list:
+    """C366 (b): a WAIVED alloc stands only beside an alloc PASS of another language in the same record."""
+    entries = list(injects)
+    if any(e.get("verdict") == "WAIVED" for e in entries) and \
+            not any(e.get("kind") == "alloc" and e.get("verdict") == "PASS" for e in entries):
+        return ["alloc WAIVED but no alloc PASS in the record (C366)"]
+    return []
 
 
 class Refusal(Exception):
@@ -748,7 +881,7 @@ def build_problems(inputs, gitlinks) -> list:
     return problems
 
 
-def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_id) -> list:
+def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_id, cancel_path_sha256=None) -> list:
     """The sealed tg2 positives record (E6) against the live inputs of v8: its self-hash, kind and PASS verdict, every identity
     field (probe / generation / scaffold, the reference arm's commit, the universe / draw / image, the frozen date), and the
     coverage: each (language, inject kind) once with a PASS verdict (S26 §4: or, for loop / alloc only, DECLINED with valid
@@ -773,9 +906,12 @@ def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_
     injects = {(p.get("language"), p.get("kind")): p for p in doc.get("injects") or []}
     if len(injects) != len(doc.get("injects") or []) or set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
         problems.append("the injected positives are not stall / loop / alloc once per tg2 language")
-    # S26 §4 (v8): DECLINED is accepted for loop / alloc only, and only with valid `declined_evidence`
-    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items())
-                 if p.get("verdict") != "PASS" and not (p.get("verdict") == "DECLINED" and declined_ok(p))]
+    # S26 §4 (v8): DECLINED for loop / alloc only, with valid `declined_evidence`; C366: PASS_BY_TRANSFER (stall / loop) and
+    # WAIVED (alloc, beside an alloc PASS) with valid evidence
+    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items()) if not inject_accepted(p)]
+    problems += waiver_problems(injects.values())
+    if any(p.get("verdict") == "PASS_BY_TRANSFER" for p in injects.values()) and cancel_path_sha256 != CANCEL_PATH_SHA256:
+        problems.append("a PASS_BY_TRANSFER entry, but the reference arm's live stop path is not the reference commit's (C366)")
     grades = {(g.get("language"), g.get("variant")): g for g in doc.get("grades") or []}
     if len(grades) != len(doc.get("grades") or []) or set(grades) != {(lang, v) for lang in TG2_LANGS for v in POSITIVE_VARIANTS}:
         problems.append("the grader positives are not one stub and one reference per tg2 language")
@@ -827,7 +963,8 @@ def cmd_v8_tg2(a, ops, checks, wd):
     image_id = tg2_grade.pinned_image_id()
     positives = read_json(a.positives, "--positives")
     problems += [f"positives: {p}" for p in positives_problems(positives, arm=ref, commit=st[ref].get("head"), identity=idents[ref],
-                                                               frozen_prompt_date=inputs.get("frozen_prompt_date"), image_id=image_id)]
+                                                               frozen_prompt_date=inputs.get("frozen_prompt_date"), image_id=image_id,
+                                                               cancel_path_sha256=worktree_cancel_path_sha256(off))]
     draw = Path(__file__).resolve().parents[1] / "m65" / "tg2_draw.json"
     if not draw.is_file() or sha256_file(draw) != schedules.TG2_DRAW_SHA256:
         problems.append("the committed tg2 draw is not the pinned one (TG2_DRAW_SHA256)")

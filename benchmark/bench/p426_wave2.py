@@ -297,7 +297,132 @@ def parse_inject_verify(stdout, kind):
     return row, result
 
 
-def positive_entry(ops, wd, lang, item, kind):
+# C366 (S27-P6): the reference record the in-flight link transfers from (its sha is v8's constant), as committed on `main`
+TRANSFER_REFERENCE = dict(path="$STACK_REPO/benchmark/results/m76/tg2/positives-20261117/positives.json",
+                          sha256=fz.TRANSFER_REFERENCE_SHA256,
+                          commit="c7c6993ad6556c77804c21120933c2d3fd2d44d2")
+
+
+def worktree_cancel_path_sha256(worktree):
+    """C366: the arm worktree's stop-path digest (`fz.worktree_cancel_path_sha256`; a seam for tests)."""
+    return fz.worktree_cancel_path_sha256(worktree)
+
+
+def _transfer_reference(wd, lang):
+    """`(reference stall entry, None)` from the sealed C366 reference record, else `(None, why)`."""
+    from . import paths
+    path = Path(TRANSFER_REFERENCE["path"].replace("$STACK_WORKDIR", str(wd)).replace("$STACK_REPO", str(paths.repo_root())))
+    try:
+        doc = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None, "the transfer reference record is missing or unreadable"
+    if not ph.sealed_ok(doc) or doc.get("sha256") != TRANSFER_REFERENCE["sha256"]:
+        return None, "the transfer reference record is not the sealed C366 reference"
+    found = [e for e in doc.get("injects") or [] if isinstance(e, dict) and e.get("language") == lang and e.get("kind") == "stall"]
+    if len(found) != 1 or found[0].get("verdict") != "PASS" or \
+            found[0].get("row_sha256") != fz.TRANSFER_REFERENCE_STALL_ROWS.get(lang):
+        return None, f"the transfer reference holds no {lang} stall PASS with the reference's row"
+    return found[0], None
+
+
+def transfer_evidence(run, kind, attempt, verify_verdict, wd, lang, *, row_sha256=None, probe_rc=None, cancel_path_sha256=None):
+    """C366 (a): `(transfer_evidence, None)` when a stall / loop stop fired and its client kill verified with NO request in flight
+    (the only unexercised link is the in-flight interrupt / cancellation), the probe exited rc 0, the row is the one recorded, the
+    arm's stop path is source-identical to the reference commit's, and the reference record holds this language's stall PASS.
+    Else `(None, why)`."""
+    want = fz.TRANSFER_KINDS.get(kind)
+    if want is None:
+        return None, f"{kind} is never transferred"
+    if verify_verdict != want[0]:
+        return None, f"the inject_verify verdict {verify_verdict!r} is not the in-flight link ({want[0]})"
+    if type(probe_rc) is not int or probe_rc != 0:
+        return None, f"the probe did not exit rc 0 (rc {probe_rc!r})"
+    if cancel_path_sha256 != fz.CANCEL_PATH_SHA256:
+        return None, "the arm's stop path differs from the reference commit's (a fresh in-run proof is needed)"
+    row, why = verified_row(run, kind, attempt, row_sha256)
+    if row is None:
+        return None, why
+    gate, term = row.get("gate") or {}, row.get("termination")
+    if not isinstance(term, dict) or gate.get("stop_reason") != want[1] or term.get("reason") != want[1]:
+        return None, f"the {want[1]} stop did not fire"
+    if not any(isinstance(k, dict) and k.get("role") == "client" for k in term.get("killed") or []):
+        return None, "the row records no client kill"
+    if term.get("killed_verified") is not True:
+        return None, "the client kill is not verified"
+    before = term.get("worker_summary_before")
+    if type(term.get("in_flight_at_kill")) is not int or term["in_flight_at_kill"] != 0 or not isinstance(before, dict) \
+            or before.get("in_flight") != 0:
+        return None, "a request was in flight at the kill (the link is exercised in-run)"
+    ref, why = _transfer_reference(wd, lang)
+    if ref is None:
+        return None, why
+    return dict(verify_verdict=verify_verdict, stop_reason=want[1], in_flight_at_kill=0, killed_verified=True, probe_rc=0,
+                row_sha256=row_sha256, trailing=(row.get("reconciliation") or {}).get("trailing"),
+                reference_sha256=TRANSFER_REFERENCE["sha256"], reference_commit=TRANSFER_REFERENCE["commit"],
+                reference_row_sha256=ref["row_sha256"], cancel_path_sha256=cancel_path_sha256), None
+
+
+def waiver_evidence(run, kind, attempt, verify_verdict, wd, *, row_sha256=None, probe_rc=None, manifest_sha256=None):
+    """C366 (b): `(waived_evidence, None)` when the alloc run's one kill is a model-role process that is not the planted command,
+    over the inject's per-process limit, no tool call carries the marker, the artifacts verify, probe rc 0. Else `(None, why)`."""
+    if kind != "alloc" or verify_verdict != fz.WAIVED_VERIFY_VERDICT:
+        return None, f"{kind} {verify_verdict!r} is never waived"
+    if type(probe_rc) is not int or probe_rc != 0:
+        return None, f"the probe did not exit rc 0 (rc {probe_rc!r})"
+    row, why = verified_row(run, kind, attempt, row_sha256)
+    if row is None:
+        return None, why
+    marker = fz.DECLINE_MARKERS["alloc"]
+    kills = row.get("mem_kills")
+    if not isinstance(kills, list) or len(kills) != 1 or not isinstance(kills[0], dict):
+        return None, "the row records not exactly one memory kill"
+    kill = kills[0]
+    argv = kill.get("argv")
+    if kill.get("role") != "model" or not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
+        return None, "the kill is not a model-role process with a recorded argv"
+    if any(marker in a for a in argv):
+        return None, "the killed process is the planted command"
+    try:                                     # C366 r1 P3: the manifest the probe recorded (its sha), never an edited copy
+        raw = Path(str(_row_file(run, kind, attempt))[:-len(".jsonl")] + ".manifest.json").read_bytes()
+    except OSError:
+        return None, "the run's manifest is missing or unreadable"
+    if not (isinstance(manifest_sha256, str) and hashlib.sha256(raw).hexdigest() == manifest_sha256):
+        return None, "the run's manifest is not the one the inject run recorded (evidence_sha256)"
+    try:
+        per_process = json.loads(raw)["runtime"]["inject"]["policy"]["hygiene"]["per_process"]
+    except (ValueError, KeyError, TypeError):
+        return None, "the run's manifest records no inject per-process limit"
+    rss = kill.get("rss")
+    if type(rss) is not int or type(per_process) is not int or per_process <= 0 or rss <= per_process:
+        return None, "the kill is not over the inject's per-process limit"
+    iv = _inject_verify_module()
+    shas, paths = row.get("evidence_sha256"), iv.evidence_paths(row, "opencode-v2-web-tg2")
+    if not isinstance(shas, dict) or paths is None or set(shas) != set(paths):
+        return None, "the row's evidence_sha256 does not name exactly its recorded artifacts"
+    for name, field in paths.items():
+        f = iv.resolve(row.get(field, ""), wd)
+        try:
+            ok = bool(shas[name]) and f.is_file() and hashlib.sha256(f.read_bytes()).hexdigest() == shas[name]
+        except OSError:
+            ok = False
+        if not ok:
+            return None, f"the recorded artifact {name} does not verify against evidence_sha256"
+    try:
+        events = iv.load_events(iv.resolve(row.get("events_path", ""), wd))
+    except (OSError, ValueError):
+        return None, "the events file is unreadable"
+    for e in events:
+        part = e.get("part") if isinstance(e, dict) else None
+        state = part.get("state") if isinstance(part, dict) else None
+        if isinstance(state, dict) and "input" in state:
+            if any(marker in x for x in _input_strings(state["input"])) or marker in json.dumps(state["input"]):
+                return None, f"a tool call carries {marker!r}"
+    return dict(verify_verdict=verify_verdict, killed_role="model", killed_argv0=Path(argv[0]).name, marker_in_argv=False,
+                marker_in_tool_calls=False, rss=rss, per_process=per_process, probe_rc=0, events_sha256=shas["events"],
+                manifest_sha256=manifest_sha256, row_sha256=row_sha256), None
+
+
+def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
     """One inject positive (§4): the run (one retry, only on a transport abort), its inject_verify verdict, and the entry's
     `verdict` — `PASS`, `DECLINED` (loop / alloc, with `declined_evidence`) or the failure. Returns (entry, why-not-declined)."""
     verdict, res, n, ver = None, {}, 0, None
@@ -324,11 +449,28 @@ def positive_entry(ops, wd, lang, item, kind):
                 _, bad = verified_row(res["run"], kind, n, res.get("row_sha256"))
                 if bad:
                     entry["verdict"], why = "FAIL:row_sha256", bad
-        elif kind in fz.DECLINE_MARKERS:
-            evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
-                                             probe_rc=rc)
-            if evidence is not None:
-                entry.update(verdict="DECLINED", declined_evidence=evidence)
+        else:
+            if kind in fz.DECLINE_MARKERS:
+                evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
+                                                 probe_rc=rc)
+                if evidence is not None:
+                    entry.update(verdict="DECLINED", declined_evidence=evidence)
+            if entry["verdict"] == verdict and kind in fz.TRANSFER_KINDS:          # C366 (a)
+                evidence, why_t = transfer_evidence(res["run"], kind, n, verdict, wd, lang, row_sha256=res.get("row_sha256"),
+                                                    probe_rc=rc, cancel_path_sha256=cancel_path_sha256)
+                if evidence is not None:
+                    entry.update(verdict="PASS_BY_TRANSFER", transfer_evidence=evidence)
+                    why = None
+                else:
+                    why = why_t if why is None else f"{why}; {why_t}"
+            if entry["verdict"] == verdict and kind == "alloc":                    # C366 (b)
+                evidence, why_w = waiver_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
+                                                  probe_rc=rc, manifest_sha256=res.get("evidence_sha256"))
+                if evidence is not None:
+                    entry.update(verdict="WAIVED", waived_evidence=evidence)
+                    why = None
+                elif verdict == fz.WAIVED_VERIFY_VERDICT:
+                    why = why_w if why is None else f"{why}; {why_w}"
     return entry, why
 
 
@@ -356,6 +498,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
     if st.get("clean") is not True:
         raise fz.Refusal(f"the {arm} worktree is not clean")
     problems, grades, injects = [], [], []
+    cancel_sha = worktree_cancel_path_sha256(worktree)                         # C366 (a): recorded in each transfer
     probe = getattr(ops, "host_env", None)
     probe = probe if callable(probe) else None
     env0 = json.loads(json.dumps(probe())) if probe else None      # C360: before the first grade
@@ -371,12 +514,13 @@ def cmd_positives(a, ops, wd, clock=time.time):
         with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
             for lang in TG2_LANGS:
                 for kind in fz.POSITIVE_KINDS:
-                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind)
+                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind, cancel_path_sha256=cancel_sha)
                     if why:
                         entry["not_declined"] = he.portable(why)        # why the run is not PASS / DECLINED (diagnostic)
                     injects.append(entry)
-                    if entry["verdict"] not in ("PASS", "DECLINED"):
+                    if not fz.inject_accepted(entry):
                         problems.append(f"{lang} {kind}: {entry['verdict']}")
+            problems += fz.waiver_problems(injects)                               # C366 (b)
     except Exception as exc:  # noqa: BLE001  (S26 §2: recorded, the run continues to its sealed record)
         problems.append(he.portable(f"exception: {type(exc).__name__}: {str(exc)[:300]}"))
     finally:
