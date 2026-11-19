@@ -16,11 +16,14 @@ ship recommendation to the operator.
 ## FIRST
 
 **HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
-any Cellar change. Session 27 state of this line: **tg2 rehearsal `20261119a` LIVE** (positives FAIL → C366; rerun after the rehearsal; then v8, pilot).
+any Cellar change. Session 27 state of this line: **tg2 PILOT PAIR LIVE** (`$STACK_WORKDIR/m76/p426/wave2.tg2/`, started 2026-11-19 22:07Z).
 
-0. Session 27: stack gate of `c34976a03` FAILED (6 / 15331; S27-P3: an inherited Claude Code env var + a cancel-path race the box's
-   timing now loses, both also outside S27-P1). A Homebrew upgrade ran 11-18 22:45 (S27-P4). Waiting on the operator: S27-P2 / P3 / P4,
-   the autonomy question (C359 expired), a reboot. Launch gates / legs with `env -u CLAUDE_CODE_CHILD_NOTES_DIR`.
+0. Session 27 (live): tg2 pilot pair running — sequencer `$STACK_WORKDIR/m76/p426/wave2.tg2/` (`launch_pilot.sh`, `--through
+   tg2-m76-x-pilot`), v8 `run/v8_base.json` 7e75cd66, positives `run/positives.json` 3333fa6c (PASS under C366: java stall PASS
+   in-run; 3 stalls + java / cpp loop PASS_BY_TRANSFER; loops / allocs otherwise DECLINED; java alloc PASS). Rehearsal
+   `rehearsal.tg2/20261119a`: R2 x a2 INVALID as expected (a1 NOT_STARTED, S27-P7), R3 n16 VALID. Gate PASS `9abef6a69` (the arms).
+   No pytest and code-free `main` until the sequencer exits. Next: pilot gate → the sizing report vs both budgets (S24-P9; walls
+   within-pair, S27-P5 launch-latency log `m76/p426/exec-latency/`) → the stage-3b Go to the operator.
 1. Not pushed: `main` is ~46 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
    top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
 2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
@@ -57,6 +60,8 @@ any Cellar change. Session 27 state of this line: **tg2 rehearsal `20261119a` LI
 - `m76-w2-{n16,x}`: Wave 2 tg1 arms — outputs harvested (`benchmark/results/m76/wave2/`, evidence `8b45058f`); keep until stage 4 decides
   whether X legs are reused. `m76-q-{n16,x}` (Wave 1) and `m76-f45-*` (stages 1–4): keep until the stage 4 harvest.
 - `m76-g2-{n16,x}`: tg2 arms for stage 3b (session 27) — keep through the A8 harvest.
+- `s27-c366` (merged into `main` at `2673ca472`; submodules checked out) — remove. `evidence-s27` (local `evidence` commit
+  `1c42f0ef`, tg2 positives evidence) — remove (`git worktree remove`; the branch keeps it).
 - `m76-g-{n16,x}`: superseded tg2 arms (pre-S26 code) — remove once the `m76-g2-*` positives run works.
 - Session 27 removed (harvested / merged): `fe-s26-*`, `s26-review`, `s26-p9-guard` (+ its merged branch), `evidence-pub`.
 - Scratch: `$STACK_WORKDIR/review/s25-p10/` (cold-read clone; harvested to `docs/reviews/s25-p10/`) — remove. `gate/scratch/stack-67908a4b33eb-*`
