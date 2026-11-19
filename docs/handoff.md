@@ -5,7 +5,7 @@ S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359–C363 (next **C364**). Session 27 ids used: S27-P1 (done), S27-P2 / P3 / P4 (OPEN); next S27-P5.
+Decisions: session 26 ruled C359–C363; session 27 C364–C365 (next **C366**). Session 27 ids used: S27-P1 (done), S27-P2 / P3 / P4 (OPEN); next S27-P5.
 
 ## Goal
 

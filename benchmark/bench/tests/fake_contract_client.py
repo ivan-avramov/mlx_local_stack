@@ -137,8 +137,6 @@ class Client:
         b = self.behaviour
         signal.signal(signal.SIGTERM, self.on_term)
         shape = b.get("shape")
-        if shape == "cancel":
-            Path(self.cfg["cancel_file"]).write_text("")
         while True:
             self.step += 1
             mid = f"m{self.step}"
@@ -167,6 +165,9 @@ class Client:
             self.assistant(mid, usage, finish)
             emit("step_finish", mid, tokens=self.tokens(usage))
             if shape == "cancel":
+                # S27-P3: request the cancel only after step 1 is recorded (it was written before the first request, so a
+                # slow client launch let the cancel land before any assistant message: "empty assistant export")
+                Path(self.cfg["cancel_file"]).write_text("")
                 time.sleep(60)                               # the runner cancels us; SIGTERM ends the sleep
             if self.cfg.get("window") and self.last_prompt_tokens >= self.cfg["window"] - 1000 and reply["calls"]:
                 self.compact(mid)

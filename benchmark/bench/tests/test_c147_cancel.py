@@ -350,7 +350,24 @@ def test_sigterm_abort_still_records_cleanup_status_in_the_manifest(probe, monke
     import signal
     f = tg_fixture(probe, monkeypatch, tmp_path)
     marker = linger_events(f, tmp_path)
-    when(marker, lambda: os.kill(os.getpid(), signal.SIGTERM))
+    # S27-P3: the SIGTERM lands once the client lingers AND the step-1 snapshot grade has returned. Firing on the marker alone
+    # raced that grade: with a slow process launch (an endpoint agent checking every exec) the abort path killed the in-flight
+    # grader and its empty report raised TransportAbort, masking exit 143 (a product residual, recorded in S27-P3).
+    graded, real = threading.Event(), sg.grade
+
+    def grade(*a, **k):
+        try:
+            return real(*a, **k)
+        finally:
+            graded.set()
+    monkeypatch.setattr(sg, "grade", grade)
+
+    def fire():
+        deadline = time.time() + 30
+        while time.time() < deadline and not (marker.exists() and graded.is_set()):
+            time.sleep(0.02)
+        os.kill(os.getpid(), signal.SIGTERM)
+    threading.Thread(target=fire, daemon=True).start()
     prior = signal.getsignal(signal.SIGTERM)
     try:
         with pytest.raises(SystemExit) as exc:
