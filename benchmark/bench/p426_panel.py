@@ -1222,7 +1222,10 @@ def a7_cursor(out_dir, label, runner=subprocess.run):
 # labels it (C166 / C206), and the label is frozen and printed beside every member.
 KV_PANEL_BUILD = "s3"
 KV_PANEL_VERSION = "m76-b3-panel"
-KV_LEAK_PATTERNS = LEAK_PATTERNS + (r"\bm76\b", r"\btq4", r"kv_bits", r"m72_", r"\bn16\b")
+# S26-P17b: under the KV lever a leak is what reveals the ARM or the BOX. Both KV arms are one registry entry with MTP ON, so the MTP
+# lever's arm markers (mtp, drafter, draft_kind, joint_v1) and generic path prefixes (/Users/, /home/, /private/: an API route or an
+# example path in an answer) are content; the box itself is caught by `_box_identity` (its real home path and username).
+KV_LEAK_PATTERNS = (r"p426", r"caslca/", r"\bm76\b", r"\btq4", r"kv_bits", r"m72_", r"\bn16\b")
 KV_WAVE1_MEMBERS = ("A1", "A2", "A3", "A4", "A5")
 KV_MEMBER_KIND = {"A1": "math500", "A2": "cjudge", "A3": "vision", "A4": "reasoning", "A5": "longctx"}
 KV_MEMBER_RUBRIC = {"A1": "reasoning", "A2": "cjudge", "A3": "vision", "A4": "reasoning", "A5": "reasoning"}
@@ -1338,10 +1341,22 @@ def kv_judges(path, modality, single_family_label=None):
     return judges, dict(label=label, families=sorted(families))
 
 
+def _box_identity():
+    """S26-P17b: this machine's real home path and username (read at run time, never written down)."""
+    import getpass
+
+    return str(Path.home()), getpass.getuser()
+
+
 def _kv_leaks(text, extra_names=()):
     lowered = text.lower()
     hits = [n for n in list(_leak_names()) + list(extra_names) if n.lower() in lowered]
     hits += [p for p in KV_LEAK_PATTERNS if re.search(p, text, re.I)]
+    home, user = _box_identity()
+    if home in text:
+        hits.append("box-home")
+    if user and re.search(r"(?<![\w.-])" + re.escape(user) + r"(?![\w-])", text):
+        hits.append("box-user")
     # S26-P17: no `family-token` check under the KV lever — both arms are ONE registry entry (they differ only in the KV mode),
     # so a model-family token in an answer (a topic: "Qwen2.5", "NVIDIA") cannot tell a judge which arm wrote it; excluding such  # allow-shorthand: quotes model output
     # items would select on the arms' outputs. The KV / arm identifiers above, registry names and template tags still refuse.

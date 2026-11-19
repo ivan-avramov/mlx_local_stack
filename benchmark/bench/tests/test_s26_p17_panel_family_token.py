@@ -76,3 +76,24 @@ def test_the_registry_name_still_refuses(tmp_path, monkeypatch):
     tp = TokenPanel(tmp_path, monkeypatch, "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed")
     with pytest.raises(V.RefusalError, match="packet leak"):
         tp.export()
+
+
+# ---- S26-P17b: generic path / MTP patterns are content under the KV lever; the box's real home and username still refuse
+@pytest.mark.parametrize("text", ["PATCH /api/admin/users/:id/role", "never write outside /home/dev/projects/*",  # allow-pii-pattern: a generic example path from a model answer
+                                  "Speculative Decoding with an MTP Head", "a drafter model", "/private/tmp/build"])
+def test_topical_paths_and_mtp_words_are_content_under_the_kv_lever(tmp_path, monkeypatch, text):
+    """[FIX] the real second refusal (an API route matched /Users/ case-insensitively; a generic /home/ path; a question about MTP —
+    both KV arms run MTP ON): exported as written."""
+    tp = TokenPanel(tmp_path, monkeypatch, text, arms=("x",))
+    assert tp.export()["A2"]["counts"]["items"] == len(tp.w.ids["axes"]["cjudge"]["block1"]) * 2
+
+
+def test_the_boxs_real_home_path_and_username_still_refuse(tmp_path, monkeypatch):
+    """[INV] the machine's own home path or username in an answer is a box identity (and PII): refuse."""
+    import getpass
+    from pathlib import Path
+    for k, text in enumerate((str(Path.home()) + "/ws/project", "owned by " + getpass.getuser() + " on this box")):
+        (tmp_path / f"case{k}").mkdir()
+        tp = TokenPanel(tmp_path / f"case{k}", monkeypatch, text)
+        with pytest.raises(V.RefusalError, match="packet leak"):
+            tp.export()
