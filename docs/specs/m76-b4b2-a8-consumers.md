@@ -1,4 +1,4 @@
-# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.3, 2026-11-19; r1 + r2 applied, ledgers L1–L18, M1–M12; C368)
+# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.4, 2026-11-19; r1–r3 applied, ledgers L, M, N; C368)
 
 Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1), `docs/specs/m76-tq4-certification.md` §A8 / §Panel / §Noise floor,
 `docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel Sol + GLM + Claude Sonnet;
@@ -47,7 +47,8 @@ frozen stage-3 panel are byte-identical too (§7).
    `final_tree.manifest_sha256` present; exactly one HARVEST destination-main final-tree manifest for that row's run id and item; its
    `published_sha256` equal to the row's. A missing block, no match, or several matches → a REASON (the session is rejected), never
    `identical: false` with null shas; a published manifest for an item that has a row in that attempt but names another run id is
-   an orphan → a REASON, unless the chain records that run id as a discarded DNF / rerun slot. DNF slots are exempt; an all-DNF
+   an orphan → a REASON, unless the chain's `slot_attempts` dispositions / `seen_run_ids` record that run id as a discarded DNF /
+   rerun slot. DNF slots are exempt; an all-DNF
    attempt passes.
    A7's committed `B8.json` has no null manifest sha (unchanged).
 4. **Provenance.** `kv_a7_normalise` / `kv_a7_provenance_reasons` become corpus-neutral (`kv_normalise`, A7 aliases kept). A key may
@@ -61,22 +62,33 @@ frozen stage-3 panel are byte-identical too (§7).
 7. **Javascript lock-file regrade (C368 (1), S27-P10).** The tamper receipt records no reasons, so eligibility is proven from the
    HARVEST-bound events or the row stays `tampered`. One pure function `a8_regrade_eligibility(row, events, final_manifest, entry)`
    (shared by the regrade tool and B8-A8) returns `eligible` or `stays_tampered` with the failed condition:
-   a. every `write` / `edit` / `patch` tool path (normalised work-relative) is a path of the B8-verified final-tree manifest (the
-      accepted files);
+   The work root is the item's work directory as the events name it (the `…/oc-<slug>/<slug>/` prefix of the scrubbed paths; every
+   path is normalised relative to it; a path outside it → `stays_tampered`).
+   a. tools: only `read`, `glob`, `grep`, `list`, `webfetch`, `websearch`, `todoread`, `todowrite`, `write`, `edit`, `patch` and
+      `shell` appear (any other tool name → `stays_tampered`); every `write` / `edit` / `patch` path is a path of the B8-verified
+      final-tree manifest (the accepted files);
    b. every shell call parses (`shlex`, punctuation chars) into simple commands joined only by `&&`, `||`, `;`, `|`, with no `$(`,
-      backtick, heredoc, subshell, variable or assignment, and redirections only `>/dev/null`, `2>/dev/null`, `2>&1`; each simple
-      command is one of: `cd <path inside the work tree>`; `ls`, `cat`, `head`, `tail`, `wc`, `grep`, `echo` (no redirection to a file);
-      `node <accepted file>`; `npx jest` / `npm test` without `-u`, `--updateSnapshot`, `--ci=false` or extra script arguments; and
-      the bare install `npm install` / `npm i` / `npm ci` with flags only (no positional package);
+      backtick, heredoc, subshell, variable, or assignment (`CI=true …` included), and redirections only `>/dev/null`,
+      `2>/dev/null`, `2>&1`; each simple command is one of: `cd <path inside the work root>`; `ls`, `cat`, `head`, `tail`, `wc`,
+      `grep`, `echo` (none redirected to a file); `npx jest` with only the flags `--silent`, `--verbose`, `--runInBand`, `--no-cache`
+      and positional test paths, each a prepared or accepted file or a glob (e.g. `./*`) whose matches in the prepared + accepted
+      tree are only such files; `npm test` with no arguments; the bare install `npm install` / `npm i` / `npm ci` with only the flags
+      `--no-audit`, `--no-fund`, `--silent`, `--no-progress`, `--prefer-offline` (no positional package);
    c. at least one shell call is such a bare install (the lock file's cause).
+   Real pilot commands (both must classify `eligible`, tested verbatim): `ls node_modules >/dev/null 2>&1 && npx jest ./* 2>&1 | tail
+   -20 || echo "NO_NODE_MODULES"` and `npm install --no-audit --no-fund 2>&1 | tail -3 && npx jest ./* 2>&1 | tail -25`.
+   **Residual (documented, operator):** jest and `npm test` execute model-authored solution code, which can write files no event
+   shows; eligibility is conservative evidence, not proof. `node <file>` is not allowed (it adds nothing a test run does not).
    Anything outside (b) → `stays_tampered` (listed, never regraded). An eligible row is regraded: the materialised prepared tree +
    the accepted files (the set from the B8-verified final-tree manifest on `main`; each file's bytes from its `objects/<sha>` blob on
    the evidence ref) → `tg2_grade.grade_item` in the pinned grader image (`grader="tg2"` validation, L9), on a quiet box after the
    decider. A non-scored regrade outcome (timeout, transport, image error) aborts the regrade tool; it is never a grade. The tool
-   writes, for EVERY final-`tampered` javascript row, `wave2.tg2/regrade/<attempt>/<lang>__<item>.json` (sealed with `ph.seal`:
+   writes, for EVERY final-`tampered` javascript row of every session (pilot, s1, s2, reload),
+   `wave2.tg2/regrade/<attempt>/<lang>__<item>.json` (sealed with `ph.seal` = `p426_hooks.seal`:
    input shas, the eligibility result and facts, and for eligible rows the grade report and `regraded_passed`; `converged` is the
    row's), committed on `main`. B8-A8 enumerates the final-`tampered` javascript rows (`grade_reports[-1]` final, outcome
-   `tampered`), requires exactly one sealed record per row (else the session is `incomplete`), re-derives eligibility from the events
+   `tampered`), requires exactly one sealed record per row of a confirmatory session (else that session is `incomplete`; a
+   diagnostic session's missing record is labelled `regrade pending`, never a refusal), re-derives eligibility from the events
    on the evidence ref with the same function (a mismatch refuses), and binds every record's sha in `inputs`. **Effective passed:**
    one accessor `a8_passed(row, regrade)` = `regraded_passed` for eligible rows, else the row's `passed` — used by signals, B8-A8
    counts, panel selection and packets alike. The sheet prints per arm: final-`tampered` javascript rows, eligible, regraded to
@@ -96,12 +108,13 @@ frozen stage-3 panel are byte-identical too (§7).
    leg window from `B8-A8.latency` — `wave2.tg2/run/exec_latency.json` (rows `{t, fresh_ms, repeat_ms, true_ms, threatlocker_cpu}`
    over the campaign, sealed with `ph.seal`, published by the designer after the decider; its sha in `B8-A8.inputs`); absent →
    `latency: incomplete` (descriptive only; never a refusal).
-4. **Inputs:** `compute_kv(b8, b8_sha256, b8_a8=None, b8_a8_sha256=None)`; with `b8_a8` the signals verify
-   `b8_a8.base_b8_sha256 == b8_sha256` and re-hash every `b8_a8.inputs` file (as `_kv_check_b8_inputs` does for B8); a mismatch
-   refuses.
 3. **Flags:** `kv_flags` gains A8 (LOSS, UNDECIDED, size warnings, `session_interaction`) and a `hold` flag (`blocking=True`) from
    `final["hold"]`; `render_kv`'s decode loop gets an explicit A8 case; heading "## A8 tg2" after A7. With no `B8-A8.json` the sheet is
    byte-identical (A8 omitted, never "pending").
+4. **Inputs:** `compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False, b8_a8=None, b8_a8_sha256=None)`; with `b8_a8`
+   the signals verify
+   `b8_a8.base_b8_sha256 == b8_sha256` and re-hash every `b8_a8.inputs` file (as `_kv_check_b8_inputs` does for B8); a mismatch
+   refuses.
 
 ## 5. Re-check labels
 
@@ -140,7 +153,8 @@ re-check label `incomplete`. The sheet labels each as the runner's interim re-ch
 1. With no `B8-A8.json`: `B8.json`, `SIGNALS.md`, `SIGNALS-partial.md` regenerate byte-identically from `main`'s inputs.
 2. With `B8-A8.json`: `B8.json` byte-identical; the sheet's A1–A7 sections and raw panel statistics identical; only the A8 section,
    the header shas / counts, the flags and the Holm-adjusted column may differ — tested as that projection.
-3. On the real harvested pilot pair (decider absent): `B8-A8.json` builds with the pilot accepted, s1 / s2 `incomplete`, final-tree
+3. On the real harvested pilot pair (decider absent): `B8-A8.json` builds with the pilot accepted (its javascript row `regrade
+   pending`), s1 / s2 `incomplete`, final-tree
    identities matched (no null sha), provenance passing; the prompt check passes on the pilot export.
 4. Red tests first (blind test-writer): the per-row final-tree rule (missing block, no match, two matches, orphan, all-DNF) on both
    axes; A8 names / namespace / worktree guard; a partial decider → incomplete, not a refusal; HOLD (a language at −25 pp → `hold`
@@ -149,7 +163,8 @@ re-check label `incomplete`. The sheet labels each as the runner's interim re-ch
 5. After the decider, in order: publish `run/exec_latency.json`; the javascript regrade tool (§3.7); B8-A8 → signals → panel export
    on the real records (regrade only, never a rerun).
 6. Regrade eligibility tests on real-shaped events: the pilot's two commands → eligible; `npm install lodash` → stays tampered;
-   a write to `babel.config.js` → stays; `echo x > package.json` → stays; `npx jest -u` → stays; an eligible row with no regrade
+   a write to `babel.config.js` → stays; `echo x > package.json` → stays; `npx jest -u` / `--coverage` → stays; `CI=true npx jest` →
+   stays; `node setup.js` → stays; an unknown tool name → stays; an eligible row with no regrade
    record → `incomplete`; a record whose re-derived eligibility differs → refuse; the effective-passed accessor in panel selection.
 
 ## 8. Out of scope
