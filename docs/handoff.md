@@ -5,7 +5,7 @@ S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359–C363; session 27 C364–C366 (next **C367**). Session 27 ids used: S27-P1 … P8; next S27-P9.
+Decisions: session 26 ruled C359–C363; session 27 C364–C369 (next **C370**). Session 27 ids used: S27-P1 … P8; next S27-P9.
 
 ## Goal
 
@@ -49,8 +49,10 @@ any Cellar change. Session 27 state of this line: **tg2 DECIDER LIVE** (C367; `$
    new rule; rehearsal (`p426_freeze rehearsal --corpus tg2` → `p426_wave2 rehearsal --corpus tg2`, out-base under
    `$STACK_WORKDIR/m76/p426/rehearsal.tg2/`, `--main-root` a scratch clone, P576), v8 (`--corpus tg2 --positives …`), the pilot pair
    (`p426_wave2 run --corpus tg2 --through tg2-m76-x-pilot`), the sizing report vs both budgets (S24-P9) → the stage-3b Go to the operator.
-4. Beside the decider (no pytest during legs): the B4b-2 spec + design review (`docs/specs/m76-b4b2-a8-consumers.md`, to write; carry L9:
-   every new tg2 consumer passes `grader="tg2"`; L16 `row_scores.py`). The KV vision rubric fix (S26-P19) before any next KV panel.
+4. B4b-2 design FINAL (spec v1.4, C369; reviews `docs/reviews/m76-b4b2/`). After the decider: publish `wave2.tg2/run/exec_latency.json`,
+   the javascript lock-file regrade tool (§3.7), then four-eyes strict implementation (blind test-writer first, implementer `claude -p`,
+   change review Sol + GLM + Sonnet, verify); the forward lock-file fix (C368) as its own change. The KV vision rubric fix (S26-P19)
+   before any next KV panel.
 5. Small fail-closed fixes still owed: the PII hook learning the username pattern from the machine config (C357). S27-P2 (push-time
    binding of the receipt's `pushed_base`, rec B content binding) rides with the next gated code change if the operator agrees.
 

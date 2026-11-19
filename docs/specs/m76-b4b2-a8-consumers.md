@@ -1,4 +1,4 @@
-# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.4, 2026-11-19; r1–r3 applied, ledgers L, M, N; C368)
+# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.4, 2026-11-19; FINAL — design review r1–r3, ledgers L, M, N; C368, C369)
 
 Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1), `docs/specs/m76-tq4-certification.md` §A8 / §Panel / §Noise floor,
 `docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel Sol + GLM + Claude Sonnet;
@@ -77,7 +77,7 @@ frozen stage-3 panel are byte-identical too (§7).
    c. at least one shell call is such a bare install (the lock file's cause).
    Real pilot commands (both must classify `eligible`, tested verbatim): `ls node_modules >/dev/null 2>&1 && npx jest ./* 2>&1 | tail
    -20 || echo "NO_NODE_MODULES"` and `npm install --no-audit --no-fund 2>&1 | tail -3 && npx jest ./* 2>&1 | tail -25`.
-   **Residual (documented, operator):** jest and `npm test` execute model-authored solution code, which can write files no event
+   **Residual (accepted, C369):** jest and `npm test` execute model-authored solution code, which can write files no event
    shows; eligibility is conservative evidence, not proof. `node <file>` is not allowed (it adds nothing a test run does not).
    Anything outside (b) → `stays_tampered` (listed, never regraded). An eligible row is regraded: the materialised prepared tree +
    the accepted files (the set from the B8-verified final-tree manifest on `main`; each file's bytes from its `objects/<sha>` blob on
