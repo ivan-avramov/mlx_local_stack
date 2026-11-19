@@ -1,111 +1,116 @@
-# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.0, 2026-11-19, for design review round 1 of 3)
+# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.1, 2026-11-19; design review r1 applied, ledger L1–L18)
 
-Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1; its scope line names this spec), `docs/specs/m76-tq4-certification.md` §A8 /
-§Panel / §Noise floor, `docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel
-Sol + GLM + Claude Sonnet; a fresh blind test-writer, not the implementer's model). Implementation and every pytest run start only
-after the A8 decider's sequencer exits (S27-P8).
+Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1), `docs/specs/m76-tq4-certification.md` §A8 / §Panel / §Noise floor,
+`docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel Sol + GLM + Claude Sonnet;
+a fresh blind test-writer, not the implementer's model). Implementation and every pytest run start only after the A8 decider's
+sequencer exits (S27-P8). Ledger: `docs/reviews/m76-b4b2/design-ledger-r1.md`.
 
 ## 1. Goal
 
-From the harvested A8 records alone (`benchmark/results/m76/wave2.tg2/` on `main`, objects on `evidence`), build `axes.A8` in B8,
-the A8 section and flags in the signals sheet, and the A8 panel members — the same contract A7 has, read by B7's pre-registered A8
-plan. A defect found here is regraded, never rerun (the B4b-1 contract). Every existing output (A1 … A7 in `B8.json`,
-`SIGNALS*.md`, the frozen stage-3 panel) is byte-identical for the existing inputs.
+From the harvested A8 records (`benchmark/results/m76/wave2.tg2/` on `main`, objects on `evidence`) plus two recorded inputs — the
+pinned polyglot checkout (`kv-export --polyglot-root`, as A7) and the sealed launch-latency record (§4.2) — build a separate B8 record
+`B8-A8.json`, the A8 section and flags of the signals sheet, and the A8 panel members, read by B7's pre-registered A8 plan. A
+defect found here is regraded, never rerun. `B8.json` is byte-identical in every state; with no A8 record the signals sheet and the
+frozen stage-3 panel are byte-identical too (§7).
 
 ## 2. Settled constraints (operator rulings; not reopened)
 
-- C338 / C336 / C339: the decider always runs; A8 is read by `m76_rule.axis_verdict("A8", …)` at α* 0.001 (`alpha_star_fixed`),
-  unit items, 80 items (20 per language × rust / javascript / java / cpp), 2 sessions (s1, s2), one look; HOLD = any language's
-  point estimate < −20 pp (`m76_rule.a8_hold`), blocking.
-- Outcome = `acc_strict@budget`: an item-session scores 1 iff `passed is True and converged is True`; a `p426_dnf` slot scores 0.
-- Panel: A8 joins the subjective Holm family when the decider runs (A1, A2, A3, A4, A5, A7 sessions, A8 sessions); members with
-  < 5 judged items are reported, not tested; Holm-adjusted p < .05 favouring N16 → flag. Judges per `judges.json`; both orders;
-  a judge context never holds both orders of one item (S26-P18).
-- KV leak rule (C362): a leak is what reveals the ARM or the BOX; model-family tokens and generic paths are answer content.
-- Noise floor (S22-P9): N16's s1-vs-s2 discordance on the same items beside X-vs-N16's; diagnostic only.
-- Walls / latency: within-pair only, never against earlier sessions; the launch-latency log is shown beside them (S27-P5).
-- C365: the runner's abort-vs-grade race is a residual; no runner edit here. C366: the positives record and its rule are inputs,
-  not changed here.
-- L9: every new call that grades or validates a tg2 report passes `grader="tg2"`. L16: `row_scores` keeps passing tg2 rows through
-  unchanged (no tg1 sidecar).
+- C338 / C336 / C339: the decider always runs; A8 = `m76_rule.axis_verdict("A8", …)`: α* 0.001 (`alpha_star_fixed`), unit items, 80
+  items (20 per language × rust / javascript / java / cpp), 2 sessions, one look; HOLD = any language's point estimate < −20 pp
+  (`m76_rule.a8_hold`), blocking.
+- Outcome = `acc_strict@budget`: 1 iff `passed is True and converged is True`; a `p426_dnf` slot = 0.
+- Panel: A8 sessions join the subjective Holm family (A1, A2, A3, A4, A5, A7 sessions, A8 sessions); < 5 judged items → reported, not
+  tested; Holm-adjusted p < .05 favouring N16 → flag; judges per `judges.json`; both orders; a judge context never holds both orders
+  of one item (S26-P18).
+- C362 leak rule: a leak reveals the ARM or the BOX; model-family tokens and generic paths are answer content.
+- Noise floor (S22-P9), walls within the pair only (S27-P5), C365 residual (no runner edit), C366 positives (an input, unchanged).
+- L9: every new call that grades or validates a tg2 report passes `grader="tg2"`. L16: `row_scores` passes tg2 rows through unchanged.
 
 ## 3. B8 (`bench/p426_verify.py`)
 
-1. **Namespaces per axis.** Replace the module-level `WAVE` use on the KV path by an axis table:
-   `KV_AXES = {"A7": (namespace "wave2", corpus "tg1", attempt re ^tg1-m76-(n16|x|v)-(pilot|s1|s2|s3|reload)\.a\d+$),
-   "A8": ("wave2.tg2", "tg2", ^tg2-m76-(n16|x)-(pilot|s1|s2|reload)\.a\d+$)}`; every reader (`_kv_load_attempt`, `harvest_manifests`,
-   `_harvest_reasons_kv`, `_supersede_reasons`, the dossier path, `_sequence_*`) takes the axis' namespace explicitly. A7 calls pass
-   "wave2" (outputs unchanged).
-2. **`verify_a8_kv(results_root)`** mirrors `verify_a7_kv`: reads `wave2.tg2/run/{v8_base,sequence}.json`; requires `v8.lever == "kv"`
-   and `v8.corpus == "tg2"`, the pair `(n16, x)` (`fz.TG2_PAIR`); confirmatory sessions fixed `("s1", "s2")` (never
-   `kv_a7_sessions`), diagnostic `("pilot", "reload")`; per session the same rules as A7 (leg state / self-hash, commits = v8,
-   HARVEST main under `benchmark/results/m76/`, the dossier `pairs/<s>__n16-a<k>__x-a<k>.json` PASS with only
-   `kv_difference_problems`-allowed differences, provenance per `runtime.lang`, equal plan shas, equal seeds, the supersede rules
-   of S26-P15 / P15b). Emits `axes.A8` with A7's key set plus `corpus: "tg2"` and `recheck: {s1, s2}` (§5).
-3. **Fail closed on an unmatched final tree (fixes a silent trap for both axes).** In `harvest_manifests` / `manifest_sha`: an
-   attempt whose HARVEST lists destination-"main" files under the axis namespace but whose pattern matches no final-tree manifest,
-   or a row whose `final_tree.manifest` names a path the HARVEST does not publish, is a REASON (the session is rejected), never
-   `identical: false` with null shas. A7's existing inputs all match (golden unchanged).
-4. **Provenance.** `kv_a7_normalise` / `kv_a7_provenance_reasons` are made corpus-neutral (rename `kv_normalise`, keep the A7 alias)
-   and checked on the real tg2 pilot manifests in a test; any tg2-only runtime key that legitimately differs between arms is
-   added to the allowed list with a cited reason, nothing else.
-5. `verify_all_kv` adds `axes.A8` iff `m76/wave2.tg2/run` exists; its absence leaves `B8.json` byte-identical.
+1. **Axis table.** `KV_AXES = {"A7": dict(namespace="wave2", corpus="tg1", attempt_re=^tg1-m76-(n16|x|v)-(pilot|s1|s2|s3|reload)\.a\d+$,
+   worktrees=m76-f45|m76-q), "A8": dict(namespace="wave2.tg2", corpus="tg2", attempt_re=^tg2-m76-(n16|x)-(pilot|s1|s2|reload)\.a\d+$,
+   worktrees=m76-g2)}`. The namespace is passed explicitly to `_kv_load_attempt`, `harvest_manifests`, `pair_keys`,
+   `_supersede_reasons`, the dossier reader and `verify_all_kv`'s existence check; `_kv_path_re` (foreign-worktree guard) takes the axis'
+   worktree prefix. `_harvest_reasons_kv` and `_sequence_*` stay unchanged (namespace-free). A7 calls pass "wave2" (outputs unchanged).
+2. **`verify_a8_kv(results_root) → B8-A8 document`.** Built only when `m76/wave2.tg2/run` exists AND v8's pair is `fz.TG2_PAIR`
+   (`(n16, x)`), `v8.lever == "kv"`, `v8.corpus == "tg2"`. Confirmatory sessions `kv_a8_sessions()` (from `m76_rule.axis_plan("A8")`;
+   `("s1", "s2")` today), diagnostic `("pilot", "reload")`. Per session the A7 rules (leg state / self-hash, commits = v8, HARVEST main
+   under `benchmark/results/m76/`, the dossier PASS with only `kv_difference_problems`-allowed differences, provenance per
+   `runtime.lang`, equal plan shas, equal seeds, the S26-P15 / P15b supersede rules). A session without its pair record or its harvested
+   legs is `status: incomplete` with its reasons (the decider may be mid-run or stopped); only corrupted or contradictory records
+   refuse. Output keys = A7's plus `corpus: "tg2"`, `status`, `recheck` (§5), `latency` (§4.2), `base_b8_sha256` (the sha of the
+   `B8.json` it accompanies) and `inputs` (every file read, with its sha).
+3. **Final-tree identity, per row, fail-closed (both axes).** For every non-DNF row: `final_tree.manifest` (a path) and
+   `final_tree.manifest_sha256` present; exactly one HARVEST destination-main final-tree manifest for that row's run id and item; its
+   `published_sha256` equal to the row's. A missing block, no match, several matches, or an orphan published manifest no row names →
+   a REASON (the session is rejected), never `identical: false` with null shas. DNF slots are exempt; an all-DNF attempt passes.
+   A7's committed `B8.json` has no null manifest sha (unchanged).
+4. **Provenance.** `kv_a7_normalise` / `kv_a7_provenance_reasons` become corpus-neutral (`kv_normalise`, A7 aliases kept). A key may
+   differ between arms only if it is per-invocation (already normalised) or already in the documented KV-mode allowance; any other
+   difference rejects. Tests on the real tg2 pilot manifests assert pass and that no tg2-only key is allowed.
+5. `B8.json` (`verify_all_kv`) never includes A8. The CLI writes `B8-A8.json` beside it when §3.2 applies.
 
 ## 4. Signals (`bench/p426_signals.py`)
 
-1. `_kv_a8_section`: every confirmatory session B8-accepted with equal key sets, else "incomplete"; `{item: {session: 0/1}}` per arm
-   by `_strict` (DNF = 0); the verdict ONLY from `m76_rule.axis_verdict("A8", look=1, test, ref, languages={item: language})`, the
-   language from the id prefix (`<lang>/<slug>`; a prefix outside `TG2_LANGS` refuses).
-2. Report beside the verdict (descriptive): per-language point and interval (the B7 per-language helper), the HOLD line, the paired
-   session delta (as A7), per-session estimates, the session-interaction flag, the noise floor (N16 s1 vs s2 discordance; X vs N16),
-   the reload control (same-seed X reload vs X s1/s2 and N16 reload, discordance only), decode (`_speed` over `items[].totals`),
-   per-language walls within the pair with the S27-P5 caveat and the latency-log summary for each leg's window.
-3. Flags: A8 joins `kv_flags` (LOSS, UNDECIDED, size warnings, `hold`, `session_interaction`); `KV_BLOCKING` gains `hold`.
-4. Headings / tuples that name A7 or tg1 get the A8 / tg2 twin; `render_kv` adds "## A8 tg2" after A7; with no `axes.A8` the sheet
-   is byte-identical.
+1. **`_kv_a8_section(b8_a8)`**: `status` must be complete with every confirmatory session accepted and equal key sets, else the axis
+   is "incomplete" (no verdict); `{item: {session: 0/1}}` per arm by `_strict`; the verdict ONLY from
+   `m76_rule.axis_verdict("A8", look=1, test, ref, languages={item: lang})`, the language from the id prefix (outside `TG2_LANGS` →
+   refuse).
+2. **Descriptive beside the verdict:** per-language `m76_rule.loss_bound` at `PER_SESSION_ALPHA` (0.025; labelled descriptive,
+   unadjusted, no verdict); the HOLD line (exact point estimates); the paired session delta and per-session estimates (as A7); the
+   session-interaction flag; the noise floor (N16 s1 vs s2 discordance; X vs N16); the reload control — X reload vs X s1 and N16 reload
+   vs N16 s1 on the 20 shared items with per-item equal `sampler_seed` asserted (else the control prints "refused: seeds differ"), and
+   X vs N16 within reload; decode (`_speed` over `items[].totals`); per-language walls within the pair; the launch-latency summary per
+   leg window from `B8-A8.latency` — the sealed `wave2.tg2/run/exec_latency.json` (rows `{t, fresh_ms, repeat_ms, true_ms,
+   threatlocker_cpu}` over the campaign, published by the designer after the decider; its sha in `B8-A8.inputs`).
+3. **Flags:** `kv_flags` gains A8 (LOSS, UNDECIDED, size warnings, `session_interaction`) and a `hold` flag (`blocking=True`) from
+   `final["hold"]`; `render_kv`'s decode loop gets an explicit A8 case; heading "## A8 tg2" after A7. With no `B8-A8.json` the sheet is
+   byte-identical (A8 omitted, never "pending").
 
 ## 5. Re-check labels
 
-`run/recheck-s1.json` / `recheck-s2.json` (sealed by the sequencer; `sequence.json` `rechecks.*.sha256`) are read by B8, re-verified
-(seal + sha in `sequence.json`; s1's ack when its verdict was not `inside`), and labelled in the signals sheet as the runner's
-interim re-check (descriptive; never a verdict). A missing re-check record for a harvested session refuses.
+B8-A8 reads `run/recheck-s1.json` and `run/recheck-s2.json` and checks each with the sequencer's own `check_recheck_doc` against
+B8-A8's selected attempts (gate, axis, sessions, ref, test, attempts), the seal, the sha recorded in `sequence.json`, the simulation
+report sha, and for s1 the ack rule (`not inside or operator_review` → `rechecks.s1.ack` present). Required for s1 and s2 only
+(pilot and reload have none). The sheet labels each as the runner's interim re-check (descriptive, never a verdict).
 
 ## 6. Panel (`bench/p426_panel.py`)
 
-1. Members `A8-s1`, `A8-s2` (only sessions B8 accepted; `kv_members()` gains them when `axes.A8` exists); rubric "code" (language-
-   neutral). The frozen stage-3 panel (A1 … A7) is not re-exported or re-frozen; A8 members are a separate freeze bound to the B8
-   record that carries A8.
-2. **Packet (`_a8_packet`)**: selection as A7 (both arms `passed`; identical final trees counted at 0.5, not judged). Task text = the
-   exact tg2 prompt bytes the model saw, rebuilt by the runner's own prompt function (`corpus_tg2` `prompt`, E1, incl. the helper
-   sentence H; never the inject addendum), and checked against the recorded transcript's first user message (sha equal, else refuse).
-   Start tree = the MATERIALISED tree (`tg2_materialize.prepare_tree`; its bytes hashed against `prepared`), never raw polyglot bytes.
-   Final tree = the evidence ref at `benchmark/results/m76/wave2.tg2/<att>/evidence/<run>/…`, manifest sha equal to the row's and B8's.
-   Diff = every new or changed file; protected = the entry's `tests` ∪ the build files the prompt forbids editing; a changed protected
-   file refuses EXCEPT Rust `Cargo.toml` `[dependencies]` additions naming crates in `OFFLINE_CRATES.md` (the prompt permits them).
-   Non-UTF-8 files: listed by path and size, not diffed. Tool counts as A7.
-3. Leak check: C362's KV list + registry names + the box identity + template tags. A hit refuses the member export and is reported
-   per item with the pattern name only (never the text); the designer takes it to the operator (no exclusion, no redaction).
-4. Holm family: the A8 members join the existing family; the readout prints A1 … A7 unchanged and the family re-adjusted with A8.
+1. **Members.** `kv_members(sessions=None, a8_sessions=None)`: `A8-<s>` for each accepted confirmatory session; every caller
+   (`kv_export`, `kv_panel_members`, `kv_expected_members`, `kv_panel_completeness`, `kv_panel_family`) passes `a8_sessions` from
+   `B8-A8.json` when present, None otherwise (unchanged output). `kv_rubric("A8-…") = "code"`. `KV_INPUT_SOURCE["A8"]`,
+   `kv_a8_context(b8_a8)` (the A7 analogue). A8 members are frozen against `B8-A8.json`'s sha; A1–A7 stay bound to `B8.json`;
+   ingestion checks each member against its own record.
+2. **Packet `_a8_packet`** (never `_StartTree`): selection as A7 (both arms `passed`; identical final-tree manifests count 0.5, not
+   judged). Task text = the runner's prompt (`corpus_tg2.prompt`, E1, incl. the helper sentence H, no inject addendum) rebuilt from the
+   pinned polyglot root (its sha = the universe's `polyglot_sha`; each blob against `inputs_sha256`) and required equal to the first
+   user message of the HARVEST-bound evidence export (else refuse; checked on the pilot export before the freeze). Start tree =
+   `tg2_materialize.prepare_tree` from the same root, hashed against `prepared`. Final tree: the manifest from `main` (B8-verified),
+   objects and events from the evidence ref, each bound by HARVEST and the row. Diff = every new or changed file. The final tree is the
+   grader's `accepted_files`: assert that no path in `structured_grade.protected_manifest(prepared, solutions)` other than a Rust
+   `Cargo.toml` is new or changed (else refuse); a changed `Cargo.toml` is diffed as content (the grader accepted it). Non-UTF-8 files:
+   listed by path and size. Tool counts as A7.
+3. **Leak check:** C362's KV list + registry names + the box identity + template tags. A hit refuses that member's export and is
+   reported per item with the pattern name only; the designer takes it to the operator (no exclusion, no redaction).
+4. **Holm:** the family over all members with a frozen record (A1–A7 against `B8.json`, A8 against `B8-A8.json`); raw A1–A7
+   statistics unchanged, adjusted p recomputed.
 
 ## 7. Acceptance (pre-registered)
 
-1. Goldens: the committed `B8.json`, `SIGNALS.md`, `SIGNALS-partial.md` regenerate byte-identically on `main`'s inputs with the
-   change (A8 absent), and with `wave2.tg2` present only `axes.A8` / the A8 sections are added.
-2. On the real harvested pilot pair: B8 builds the pilot (diagnostic) pair accepted, the final-tree manifests match (no null sha), the
-   provenance passes.
-3. Red tests first (blind test-writer): the unmatched-manifest trap (both axes), A8 attempt names / namespace, fixed sessions, HOLD
-   wiring (a language at −25 pp → `hold` blocking), DNF = 0, a missing / tampered re-check, the prompt-sha check, the protected-file
-   rule incl. the Cargo.toml exception, the leak refusal, A7 unchanged.
-4. After the decider: B8 → signals → panel export on the real records, regrade only.
+1. With no `B8-A8.json`: `B8.json`, `SIGNALS.md`, `SIGNALS-partial.md` regenerate byte-identically from `main`'s inputs.
+2. With `B8-A8.json`: `B8.json` byte-identical; the sheet's A1–A7 sections and raw panel statistics identical; only the A8 section,
+   the header shas / counts, the flags and the Holm-adjusted column may differ — tested as that projection.
+3. On the real harvested pilot pair (decider absent): `B8-A8.json` builds with the pilot accepted, s1 / s2 `incomplete`, final-tree
+   identities matched (no null sha), provenance passing; the prompt check passes on the pilot export.
+4. Red tests first (blind test-writer): the per-row final-tree rule (missing block, no match, two matches, orphan, all-DNF) on both
+   axes; A8 names / namespace / worktree guard; a partial decider → incomplete, not a refusal; HOLD (a language at −25 pp → `hold`
+   blocking); DNF = 0; the re-check binding (a superseded attempt, a missing ack); the reload seed assert; the prompt check; the
+   protected-path assertion incl. a grader-accepted `Cargo.toml`; the leak refusal; the A7 / no-A8 goldens.
+5. After the decider: B8-A8 → signals → panel export on the real records, regrade only.
 
 ## 8. Out of scope
 
-Runner / sequencer / probe changes (B4b-1, frozen identity); the C365 race; the positives rule (C366); stage 4 (V); any tg1 change
-beyond the fail-closed fix of §3.3.
-
-## 9. Questions for the design review
-
-Q1 is §3.3's fail-closed rule right for A7 too (could a legitimate A7 row lack a published manifest)? Q2 is the reload control in §4.2
-meaningful as specified (X reload vs X s1/s2)? Q3 should the panel's task text include H (it is what the model saw) — or does H
-leak nothing and change nothing? Q4 the Cargo.toml exception: allow only additions of offline crates, or any edit the grader
-accepted? Q5 does a both-pass, identical-tree item count 0.5 as in A7, given multi-file trees?
+Runner / sequencer / probe changes (B4b-1, frozen identity); the C365 race; the positives rule (C366); stage 4 (V); tg1 changes
+beyond §3.3. Open with the operator: S27-P10 (javascript `package-lock.json` tamper; if ruled, its regrade lands here as §3.6);
+scope requests S1 (bind each leg to the pinned plan) and S2 (reload key set) from the r1 ledger.
