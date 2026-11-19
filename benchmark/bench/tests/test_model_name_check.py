@@ -394,6 +394,32 @@ def test_harvested_m76_kv_wave2_records_are_DATA_not_prose_S26_P16(path):
     assert sorted({v.path for v in found}) == ["benchmark/results/m76/wave2.tg2/notes.md", "benchmark/results/m76/wave2/README.md"]
 
 
+@pytest.mark.parametrize("path", [
+    "benchmark/results/m76/panel/A2/claude-opus-5-5/batch00/p0000.md",
+    "benchmark/results/m76/panel/A1/cursor:gpt-5.6-sol-high/batch05/p0233.md",
+    "benchmark/results/m76/panel/A7-s1/claude-opus-5-5/batch03/p0031.verdict.json",
+    "benchmark/results/p426/panel/claude-opus-5-5/batch00/p0001.md",
+])
+def test_frozen_panel_packets_and_verdicts_are_DATA_not_prose_S26_P16b(path):
+    """S26-P16b: a frozen panel packet is the verbatim pair of model answers a judge sees ("the uniform distribution", "the quantized
+    model"); a verdict is verbatim judge output. Both are data. The panel's README_JUDGE.md / FROZEN.json stay checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+average over the uniform distribution; is the quantized model the same?\n"
+            "+++ b/benchmark/results/m76/panel/A2/README_JUDGE.md\n@@ -0,0 +1 @@\n+optiq regressed\n")  # allow-shorthand: the test names the banned forms
+    found = MN.diff_violations(diff)
+    assert sorted({v.path for v in found}) == ["benchmark/results/m76/panel/A2/README_JUDGE.md"]
+
+
+@pytest.mark.parametrize("path", [
+    "benchmark/results/m76/panel/A2/notes/extra/batch0/p0.md",
+    "benchmark/results/m76/panel/notes/batch00/p0000.md",
+    "benchmark/results/m76/panel/A2/claude-opus-5-5/batch00/summary.md",
+])
+def test_panel_lookalike_paths_stay_checked_S26_P16b(path):
+    """S26-P16b cold read (Sol P1): only the writer's <member>/<judge>/batchNN/pNNNN.* layout is data; lookalikes stay checked."""
+    diff = f"+++ b/{path}\n@@ -0,0 +1 @@\n+average over the uniform distribution\n"
+    assert {v.path for v in MN.diff_violations(diff)} == {path}
+
+
 @pytest.mark.parametrize("text", [
     "--production-ref (default the 7207179b pin) names the production tree",
     "the 0b603d03 head carries B1",

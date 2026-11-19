@@ -43,6 +43,8 @@ _P426_WAVE1 = re.compile(r"^benchmark/results/p426/wave1(\.[a-z][a-z0-9]{0,7})?/
 _P426_WAVE2 = re.compile(r"^benchmark/results/p426/wave2(\.[a-z0-9][a-z0-9.-]*)?/(tg1-p426-[a-z0-9-]+\.a\d+|run|pairs)/")
 # S26-P16: the KV lever's Wave-2 harvest (M76 B3 / B4b-1) — `m76/wave2/` (tg1) and `m76/wave2.tg2/` — the same verbatim records.
 _M76_WAVE2 = re.compile(r"^benchmark/results/m76/wave2(\.[a-z0-9][a-z0-9.-]*)?/(tg[12]-m76-[a-z0-9-]+\.a\d+|run|pairs)/")
+# S26-P16b: a frozen panel packet (the verbatim answers a judge sees) and a judge verdict are data; README_JUDGE.md / FROZEN.json stay checked.
+_PANEL_PACKET = re.compile(r"^benchmark/results/(?:p426/panel|m76/panel/A\d(?:-s\d)?)/[A-Za-z0-9:._-]+/batch\d{2,}/p\d{4,}\.(?:md|verdict\.json|failed\.txt)$")
 # P650 / C293: a panel member's or helper's raw report under `docs/reviews/<item>/` is verbatim model output — data. The designer's
 # files beside it (dispositions, notes) stay checked.
 _REVIEW_OUTPUT = re.compile(
@@ -287,7 +289,7 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # EvalPlus grader output *_samples_eval_results.json, which embeds the
             # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
             # P437: harvested Wave-1 evidence is a verbatim, sha-manifested copy (registry, receipts, logs) — data too.
-            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or _M76_WAVE2.match(path) or _REVIEW_OUTPUT.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or _M76_B3_REGISTRY_FIXTURE.match(path) or path.startswith("benchmark/results/") and (
+            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or _M76_WAVE2.match(path) or _PANEL_PACKET.match(path) or _REVIEW_OUTPUT.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or _M76_B3_REGISTRY_FIXTURE.match(path) or path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))
