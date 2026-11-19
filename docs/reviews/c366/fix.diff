@@ -1,0 +1,552 @@
+diff --git a/benchmark/bench/p426_freeze.py b/benchmark/bench/p426_freeze.py
+index 1bac28300..70dc8f9e0 100644
+--- a/benchmark/bench/p426_freeze.py
++++ b/benchmark/bench/p426_freeze.py
+@@ -95,6 +95,85 @@ def declined_ok(entry) -> bool:
+             and ev.get("probe_rc") == 0 and type(ev.get("probe_rc")) is int)
+ 
+ 
++# C366 (S27-P6): two positives verdicts ruled after the 2026-11-19 tg2 positives
++TRANSFER_KINDS = {"stall": ("not_observed:trailing", "stalled"), "loop": ("not_observed:cancellation", "looping")}
++TRANSFER_REFERENCE_SHA256 = "1861db0175e0a97204874bc4bf13677746153a9475978302d9bca0c9f1c20be0"   # 11-17 positives (c7c6993a)
++WAIVED_VERIFY_VERDICT = "FAIL:unrelated_kill"
++# The stop / cancel / reconcile path the transfer relies on: whole file (None) or a dotted function / class, source-exact.
++CANCEL_PATH = (("benchmark/bench/token_turn_gate.py", None), ("benchmark/bench/arm_runner.py", "run_item"),
++               ("benchmark/bench/arm_runner.py", "_run_item"), ("benchmark/bench/arm_adapter.py", "ArmAdapter.cancel"),
++               ("benchmark/bench/proc_guard.py", "ProcessGuard.kill_role"),
++               ("benchmark/bench/proc_guard.py", "ProcessGuard.graceful_stop"),
++               ("benchmark/bench/proc_guard.py", "ProcessGuard.verify_gone"), ("benchmark/bench/arm_opencode.py", "OcStream"),
++               ("benchmark/bench/arm_opencode.py", "OpencodeArm.reconcile"))
++CANCEL_PATH_SHA256 = "c9c4cab6c49da16d112a8efde576805ea618cbe88330dae5166fa720666eed71"   # at c7c6993a (the reference's commit)
++
++
++def cancel_path_sha256(read) -> str:
++    """sha256 over the `CANCEL_PATH` sources; `read(rel)` returns a file's text (a worktree file, or `git show <rev>:<rel>`).
++    A transfer stands only while this equals `CANCEL_PATH_SHA256` (C366: any edit of the stop path needs a fresh in-run proof)."""
++    import ast
++    h = hashlib.sha256()
++    for rel, dotted in CANCEL_PATH:
++        text = read(rel)
++        node, body = None, ast.parse(text).body
++        for part in (dotted.split(".") if dotted else ()):
++            node = next(n for n in body if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and n.name == part)
++            body = node.body
++        h.update(f"{rel}::{dotted}\n".encode() + (text if node is None else ast.get_source_segment(text, node)).encode() + b"\n")
++    return h.hexdigest()
++
++
++def _hex64(value):
++    return isinstance(value, str) and re.fullmatch(r"[0-9a-f]{64}", value) is not None
++
++
++def _int(value, want=None):
++    return type(value) is int and (want is None or value == want)
++
++
++def transfer_ok(entry) -> bool:
++    """A PASS_BY_TRANSFER entry is acceptable (C366 (a)): stall / loop only; the stop of the kind fired and its client kill
++    verified with no request in flight; probe rc 0; the entry's own `row_sha256`; the reference is the sealed 11-17 record; the
++    arm's stop path is source-identical to the reference commit's (`cancel_path_sha256`)."""
++    ev = entry.get("transfer_evidence") if isinstance(entry, dict) else None
++    want = TRANSFER_KINDS.get(entry.get("kind")) if isinstance(entry, dict) else None
++    return (want is not None and isinstance(ev, dict) and ev.get("verify_verdict") == want[0]
++            and ev.get("stop_reason") == want[1] and _int(ev.get("in_flight_at_kill"), 0) and ev.get("killed_verified") is True
++            and _int(ev.get("probe_rc"), 0) and _hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256")
++            and ev.get("reference_sha256") == TRANSFER_REFERENCE_SHA256 and _hex64(ev.get("reference_row_sha256"))
++            and ev.get("cancel_path_sha256") == CANCEL_PATH_SHA256)
++
++
++def waived_ok(entry) -> bool:
++    """A WAIVED entry is acceptable (C366 (b)): alloc only; the one kill a model-role process that is not the planted command,
++    over the inject's per-process limit; no tool call carried the marker; probe rc 0; the entry's own `row_sha256`."""
++    ev = entry.get("waived_evidence") if isinstance(entry, dict) else None
++    return (isinstance(entry, dict) and entry.get("kind") == "alloc" and isinstance(ev, dict)
++            and ev.get("verify_verdict") == WAIVED_VERIFY_VERDICT and ev.get("killed_role") == "model"
++            and isinstance(ev.get("killed_argv0"), str) and ev.get("marker_in_argv") is False
++            and ev.get("marker_in_tool_calls") is False
++            and _int(ev.get("rss")) and _int(ev.get("per_process")) and ev["per_process"] > 0 and ev["rss"] > ev["per_process"]
++            and _int(ev.get("probe_rc"), 0) and _hex64(ev.get("events_sha256"))
++            and _hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256"))
++
++
++def inject_accepted(entry) -> bool:
++    """PASS; DECLINED (loop / alloc, S26 §4); PASS_BY_TRANSFER (stall / loop) or WAIVED (alloc), C366 — each with valid evidence."""
++    v = entry.get("verdict") if isinstance(entry, dict) else None
++    return (v == "PASS" or (v == "DECLINED" and declined_ok(entry)) or (v == "PASS_BY_TRANSFER" and transfer_ok(entry))
++            or (v == "WAIVED" and waived_ok(entry)))
++
++
++def waiver_problems(injects) -> list:
++    """C366 (b): a WAIVED alloc stands only beside an alloc PASS of another language in the same record."""
++    entries = list(injects)
++    if any(e.get("verdict") == "WAIVED" for e in entries) and \
++            not any(e.get("kind") == "alloc" and e.get("verdict") == "PASS" for e in entries):
++        return ["alloc WAIVED but no alloc PASS in the record (C366)"]
++    return []
++
++
+ class Refusal(Exception):
+     """A refusal: printed as one stderr line `REFUSED: <reason>`, exit 2, nothing written."""
+ 
+@@ -773,9 +852,10 @@ def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_
+     injects = {(p.get("language"), p.get("kind")): p for p in doc.get("injects") or []}
+     if len(injects) != len(doc.get("injects") or []) or set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
+         problems.append("the injected positives are not stall / loop / alloc once per tg2 language")
+-    # S26 §4 (v8): DECLINED is accepted for loop / alloc only, and only with valid `declined_evidence`
+-    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items())
+-                 if p.get("verdict") != "PASS" and not (p.get("verdict") == "DECLINED" and declined_ok(p))]
++    # S26 §4 (v8): DECLINED for loop / alloc only, with valid `declined_evidence`; C366: PASS_BY_TRANSFER (stall / loop) and
++    # WAIVED (alloc, beside an alloc PASS) with valid evidence
++    problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items()) if not inject_accepted(p)]
++    problems += waiver_problems(injects.values())
+     grades = {(g.get("language"), g.get("variant")): g for g in doc.get("grades") or []}
+     if len(grades) != len(doc.get("grades") or []) or set(grades) != {(lang, v) for lang in TG2_LANGS for v in POSITIVE_VARIANTS}:
+         problems.append("the grader positives are not one stub and one reference per tg2 language")
+diff --git a/benchmark/bench/p426_wave2.py b/benchmark/bench/p426_wave2.py
+index 405d6470a..a14d1882b 100644
+--- a/benchmark/bench/p426_wave2.py
++++ b/benchmark/bench/p426_wave2.py
+@@ -297,7 +297,127 @@ def parse_inject_verify(stdout, kind):
+     return row, result
+ 
+ 
+-def positive_entry(ops, wd, lang, item, kind):
++# C366 (S27-P6): the reference record the in-flight link transfers from (its sha is v8's constant)
++TRANSFER_REFERENCE = dict(path="$STACK_WORKDIR/m76/p426/tg2/attempt1-FAIL/positives.json", sha256=fz.TRANSFER_REFERENCE_SHA256,
++                          commit="c7c6993ad6556c77804c21120933c2d3fd2d44d2")
++
++
++def worktree_cancel_path_sha256(worktree):
++    """C366: the arm worktree's stop-path digest (`fz.cancel_path_sha256`), or None when it cannot be computed."""
++    try:
++        return fz.cancel_path_sha256(lambda rel: (Path(worktree) / rel).read_text())
++    except (OSError, SyntaxError, StopIteration, ValueError):
++        return None
++
++
++def _transfer_reference(wd, lang):
++    """`(reference stall entry, None)` from the sealed C366 reference record, else `(None, why)`."""
++    path = Path(TRANSFER_REFERENCE["path"].replace("$STACK_WORKDIR", str(wd)))
++    try:
++        doc = json.loads(path.read_text())
++    except (OSError, ValueError):
++        return None, "the transfer reference record is missing or unreadable"
++    if not ph.sealed_ok(doc) or doc.get("sha256") != TRANSFER_REFERENCE["sha256"]:
++        return None, "the transfer reference record is not the sealed C366 reference"
++    found = [e for e in doc.get("injects") or [] if isinstance(e, dict) and e.get("language") == lang and e.get("kind") == "stall"]
++    if len(found) != 1 or found[0].get("verdict") != "PASS" or not re.fullmatch(r"[0-9a-f]{64}", str(found[0].get("row_sha256"))):
++        return None, f"the transfer reference holds no {lang} stall PASS"
++    return found[0], None
++
++
++def transfer_evidence(run, kind, attempt, verify_verdict, wd, lang, *, row_sha256=None, probe_rc=None, cancel_path_sha256=None):
++    """C366 (a): `(transfer_evidence, None)` when a stall / loop stop fired and its client kill verified with NO request in flight
++    (the only unexercised link is the in-flight interrupt / cancellation), the probe exited rc 0, the row is the one recorded, the
++    arm's stop path is source-identical to the reference commit's, and the reference record holds this language's stall PASS.
++    Else `(None, why)`."""
++    want = fz.TRANSFER_KINDS.get(kind)
++    if want is None:
++        return None, f"{kind} is never transferred"
++    if verify_verdict != want[0]:
++        return None, f"the inject_verify verdict {verify_verdict!r} is not the in-flight link ({want[0]})"
++    if type(probe_rc) is not int or probe_rc != 0:
++        return None, f"the probe did not exit rc 0 (rc {probe_rc!r})"
++    if cancel_path_sha256 != fz.CANCEL_PATH_SHA256:
++        return None, "the arm's stop path differs from the reference commit's (a fresh in-run proof is needed)"
++    row, why = verified_row(run, kind, attempt, row_sha256)
++    if row is None:
++        return None, why
++    gate, term = row.get("gate") or {}, row.get("termination")
++    if not isinstance(term, dict) or gate.get("stop_reason") != want[1] or term.get("reason") != want[1]:
++        return None, f"the {want[1]} stop did not fire"
++    if not any(isinstance(k, dict) and k.get("role") == "client" for k in term.get("killed") or []):
++        return None, "the row records no client kill"
++    if term.get("killed_verified") is not True:
++        return None, "the client kill is not verified"
++    before = term.get("worker_summary_before")
++    if type(term.get("in_flight_at_kill")) is not int or term["in_flight_at_kill"] != 0 or not isinstance(before, dict) \
++            or before.get("in_flight") != 0:
++        return None, "a request was in flight at the kill (the link is exercised in-run)"
++    ref, why = _transfer_reference(wd, lang)
++    if ref is None:
++        return None, why
++    return dict(verify_verdict=verify_verdict, stop_reason=want[1], in_flight_at_kill=0, killed_verified=True, probe_rc=0,
++                row_sha256=row_sha256, trailing=(row.get("reconciliation") or {}).get("trailing"),
++                reference_sha256=TRANSFER_REFERENCE["sha256"], reference_commit=TRANSFER_REFERENCE["commit"],
++                reference_row_sha256=ref["row_sha256"], cancel_path_sha256=cancel_path_sha256), None
++
++
++def waiver_evidence(run, kind, attempt, verify_verdict, wd, *, row_sha256=None, probe_rc=None):
++    """C366 (b): `(waived_evidence, None)` when the alloc run's one kill is a model-role process that is not the planted command,
++    over the inject's per-process limit, no tool call carries the marker, the artifacts verify, probe rc 0. Else `(None, why)`."""
++    if kind != "alloc" or verify_verdict != fz.WAIVED_VERIFY_VERDICT:
++        return None, f"{kind} {verify_verdict!r} is never waived"
++    if type(probe_rc) is not int or probe_rc != 0:
++        return None, f"the probe did not exit rc 0 (rc {probe_rc!r})"
++    row, why = verified_row(run, kind, attempt, row_sha256)
++    if row is None:
++        return None, why
++    marker = fz.DECLINE_MARKERS["alloc"]
++    kills = row.get("mem_kills")
++    if not isinstance(kills, list) or len(kills) != 1 or not isinstance(kills[0], dict):
++        return None, "the row records not exactly one memory kill"
++    kill = kills[0]
++    argv = kill.get("argv")
++    if kill.get("role") != "model" or not isinstance(argv, list) or not argv or not all(isinstance(a, str) for a in argv):
++        return None, "the kill is not a model-role process with a recorded argv"
++    if any(marker in a for a in argv):
++        return None, "the killed process is the planted command"
++    try:
++        manifest = json.loads(Path(str(_row_file(run, kind, attempt))[:-len(".jsonl")] + ".manifest.json").read_text())
++        per_process = manifest["runtime"]["inject"]["policy"]["hygiene"]["per_process"]
++    except (OSError, ValueError, KeyError, TypeError):
++        return None, "the run's manifest records no inject per-process limit"
++    rss = kill.get("rss")
++    if type(rss) is not int or type(per_process) is not int or per_process <= 0 or rss <= per_process:
++        return None, "the kill is not over the inject's per-process limit"
++    iv = _inject_verify_module()
++    shas, paths = row.get("evidence_sha256"), iv.evidence_paths(row, "opencode-v2-web-tg2")
++    if not isinstance(shas, dict) or paths is None or set(shas) != set(paths):
++        return None, "the row's evidence_sha256 does not name exactly its recorded artifacts"
++    for name, field in paths.items():
++        f = iv.resolve(row.get(field, ""), wd)
++        try:
++            ok = bool(shas[name]) and f.is_file() and hashlib.sha256(f.read_bytes()).hexdigest() == shas[name]
++        except OSError:
++            ok = False
++        if not ok:
++            return None, f"the recorded artifact {name} does not verify against evidence_sha256"
++    try:
++        events = iv.load_events(iv.resolve(row.get("events_path", ""), wd))
++    except (OSError, ValueError):
++        return None, "the events file is unreadable"
++    for e in events:
++        part = e.get("part") if isinstance(e, dict) else None
++        state = part.get("state") if isinstance(part, dict) else None
++        if isinstance(state, dict) and "input" in state:
++            if any(marker in x for x in _input_strings(state["input"])) or marker in json.dumps(state["input"]):
++                return None, f"a tool call carries {marker!r}"
++    return dict(verify_verdict=verify_verdict, killed_role="model", killed_argv0=Path(argv[0]).name, marker_in_argv=False,
++                marker_in_tool_calls=False, rss=rss, per_process=per_process, probe_rc=0, events_sha256=shas["events"],
++                row_sha256=row_sha256), None
++
++
++def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
+     """One inject positive (§4): the run (one retry, only on a transport abort), its inject_verify verdict, and the entry's
+     `verdict` — `PASS`, `DECLINED` (loop / alloc, with `declined_evidence`) or the failure. Returns (entry, why-not-declined)."""
+     verdict, res, n, ver = None, {}, 0, None
+@@ -324,11 +444,28 @@ def positive_entry(ops, wd, lang, item, kind):
+                 _, bad = verified_row(res["run"], kind, n, res.get("row_sha256"))
+                 if bad:
+                     entry["verdict"], why = "FAIL:row_sha256", bad
+-        elif kind in fz.DECLINE_MARKERS:
+-            evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
+-                                             probe_rc=rc)
+-            if evidence is not None:
+-                entry.update(verdict="DECLINED", declined_evidence=evidence)
++        else:
++            if kind in fz.DECLINE_MARKERS:
++                evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
++                                                 probe_rc=rc)
++                if evidence is not None:
++                    entry.update(verdict="DECLINED", declined_evidence=evidence)
++            if entry["verdict"] == verdict and kind in fz.TRANSFER_KINDS:          # C366 (a)
++                evidence, why_t = transfer_evidence(res["run"], kind, n, verdict, wd, lang, row_sha256=res.get("row_sha256"),
++                                                    probe_rc=rc, cancel_path_sha256=cancel_path_sha256)
++                if evidence is not None:
++                    entry.update(verdict="PASS_BY_TRANSFER", transfer_evidence=evidence)
++                    why = None
++                else:
++                    why = why_t if why is None else f"{why}; {why_t}"
++            if entry["verdict"] == verdict and kind == "alloc":                    # C366 (b)
++                evidence, why_w = waiver_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
++                                                  probe_rc=rc)
++                if evidence is not None:
++                    entry.update(verdict="WAIVED", waived_evidence=evidence)
++                    why = None
++                elif verdict == fz.WAIVED_VERIFY_VERDICT:
++                    why = why_w if why is None else f"{why}; {why_w}"
+     return entry, why
+ 
+ 
+@@ -356,6 +493,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
+     if st.get("clean") is not True:
+         raise fz.Refusal(f"the {arm} worktree is not clean")
+     problems, grades, injects = [], [], []
++    cancel_sha = worktree_cancel_path_sha256(worktree)                         # C366 (a): recorded in each transfer
+     probe = getattr(ops, "host_env", None)
+     probe = probe if callable(probe) else None
+     env0 = json.loads(json.dumps(probe())) if probe else None      # C360: before the first grade
+@@ -371,12 +509,13 @@ def cmd_positives(a, ops, wd, clock=time.time):
+         with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
+             for lang in TG2_LANGS:
+                 for kind in fz.POSITIVE_KINDS:
+-                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind)
++                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind, cancel_path_sha256=cancel_sha)
+                     if why:
+                         entry["not_declined"] = he.portable(why)        # why the run is not PASS / DECLINED (diagnostic)
+                     injects.append(entry)
+-                    if entry["verdict"] not in ("PASS", "DECLINED"):
++                    if not fz.inject_accepted(entry):
+                         problems.append(f"{lang} {kind}: {entry['verdict']}")
++            problems += fz.waiver_problems(injects)                               # C366 (b)
+     except Exception as exc:  # noqa: BLE001  (S26 §2: recorded, the run continues to its sealed record)
+         problems.append(he.portable(f"exception: {type(exc).__name__}: {str(exc)[:300]}"))
+     finally:
+diff --git a/benchmark/bench/tests/test_s27_p6_positives_transfer.py b/benchmark/bench/tests/test_s27_p6_positives_transfer.py
+new file mode 100644
+index 000000000..3c706d033
+--- /dev/null
++++ b/benchmark/bench/tests/test_s27_p6_positives_transfer.py
+@@ -0,0 +1,251 @@
++"""C366 (S27-P6): two positives verdicts ruled after the 2026-11-19 tg2 positives.
++(a) PASS_BY_TRANSFER (stall / loop): the stop fired, the client kill verified, nothing was in flight at the kill (so the
++    in-flight interrupt / cancellation link is not exercised), and the same language's stall PASS in the sealed 11-17 reference
++    record (byte-identical cancel path) carries that link.
++(b) WAIVED (alloc): the only kill is a model-role process other than the planted `bytearray(` command, over the inject's lowered
++    per-process limit, no tool call carries the marker, and another language's alloc PASSes in the same record."""
++from __future__ import annotations
++
++import json
++from pathlib import Path
++
++import pytest
++
++from bench import p426_freeze as fz
++from bench import p426_hooks as ph
++from bench import p426_wave2 as W2
++from bench.tests.s26_frozen import s26_support as X
++
++
++@pytest.fixture
++def world(tmp_path):
++    return X.HostWorld(tmp_path / "host")
++
++
++@pytest.fixture
++def reference(tmp_path, monkeypatch):
++    """A sealed reference record: stall PASS in every language (the 11-17 shape), at the C366 path under `$STACK_WORKDIR`."""
++    wd = Path(tmp_path) / "wd"
++    injects = [dict(language=lang, kind=k, verdict="PASS" if k == "stall" else "FAIL (inject_verify rc 4)",
++                    row_sha256=f"{n:064x}") for n, (lang, k) in enumerate((lang, k) for lang in X.LANGS for k in X.KINDS)]
++    doc = ph.seal(dict(kind=fz.KIND_POSITIVES, corpus="tg2", arm="n16", n16_commit="c" * 40, injects=injects, verdict="FAIL"))
++    path = wd / "m76" / "p426" / "tg2" / "attempt1-FAIL" / "positives.json"
++    path.parent.mkdir(parents=True, exist_ok=True)
++    path.write_text(json.dumps(doc))
++    monkeypatch.setattr(W2, "TRANSFER_REFERENCE", dict(W2.TRANSFER_REFERENCE, sha256=doc["sha256"]))
++    monkeypatch.setattr(fz, "TRANSFER_REFERENCE_SHA256", doc["sha256"])
++    monkeypatch.setattr(W2, "worktree_cancel_path_sha256", lambda wt: fz.CANCEL_PATH_SHA256)   # the fake worktree has no sources
++    return dict(path=path, doc=doc)
++
++
++def stopped(stop, in_flight=0, verified=True, client=True):
++    def mutate(row, manifest):
++        row["gate"]["stop_reason"] = stop
++        term = row["termination"]
++        killed = [k for k in term.get("killed") or [] if k.get("role") != "client"]
++        if client:
++            killed.append(dict(role="client", pid=11, create_time=1.0, argv=["opencode", "run"]))
++        term.update(reason=stop, killed=killed, killed_verified=verified, in_flight_at_kill=in_flight,
++                    worker_summary_before=dict(in_flight=in_flight, requests_started=4, requests_completed=4 - in_flight),
++                    worker_summary_after=dict(in_flight=0, requests_started=4, requests_completed=4 - in_flight))
++    return mutate
++
++
++def unrelated_kill(argv=("npm", "install"), rss=545_865_728, limit=512 * 1024 ** 2):
++    def mutate(row, manifest):
++        row["stop_reason"] = "completed"
++        row["termination"] = dict(row["termination"], reason=None, killed=[])
++        row["mem_kills"] = [dict(role="model", argv=list(argv), rss=rss, tool_call_id="c-npm")]
++        manifest["runtime"]["inject"]["policy"] = dict(manifest["runtime"]["inject"].get("policy") or {},
++                                                       hygiene=dict(per_process=limit))
++    return mutate
++
++
++def run(tmp_path, monkeypatch, world, **kw):
++    ops = X.PosOps(tmp_path, world, **kw)
++    rc, out = X.positives(tmp_path, monkeypatch, ops)
++    return rc, X.record(out)
++
++
++def entry(doc, lang, kind):
++    return X.inject_of(doc, lang, kind)
++
++
++# ------------------------------------------------------------------ (a) PASS_BY_TRANSFER
++@pytest.mark.parametrize("kind, verdict, stop", [("stall", "not_observed:trailing", "stalled"),
++                                                 ("loop", "not_observed:cancellation", "looping")])
++def test_a_stop_with_nothing_in_flight_passes_by_transfer(tmp_path, monkeypatch, world, reference, kind, verdict, stop):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("java", kind): verdict}, mutates={("java", kind): stopped(stop)},
++                  shapes={("java", kind): "keep"})
++    e = entry(doc, "java", kind)
++    assert e["verdict"] == "PASS_BY_TRANSFER", e
++    ev = e["transfer_evidence"]
++    assert ev["reference_sha256"] == reference["doc"]["sha256"] and ev["in_flight_at_kill"] == 0 and ev["verify_verdict"] == verdict
++    assert ev["reference_row_sha256"] == entry(reference["doc"], "java", "stall")["row_sha256"]
++    assert rc == 0 and doc["verdict"] == "PASS" and doc["problems"] == []
++    assert fz.positives_problems(doc, arm="n16", commit=X.COMMIT, identity=dict(X.IDENT), frozen_prompt_date=X.DATE,
++                                 image_id=doc["image_id"]) == []
++
++
++@pytest.mark.parametrize("why, mutate, verdict", [
++    ("a request was in flight", stopped("stalled", in_flight=1), "not_observed:trailing"),
++    ("the kill is not verified", stopped("stalled", verified=False), "not_observed:trailing"),
++    ("no client kill", stopped("stalled", client=False), "not_observed:trailing"),
++    ("another stop", stopped("turn_cap"), "not_observed:trailing"),
++    ("no stop at all", stopped(None), "not_observed"),
++    ("a verdict that is not the in-flight link", stopped("stalled"), "FAIL:stall_threshold"),
++])
++def test_anything_else_is_not_transferred(tmp_path, monkeypatch, world, reference, why, mutate, verdict):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("rust", "stall"): verdict}, mutates={("rust", "stall"): mutate})
++    assert entry(doc, "rust", "stall")["verdict"] == verdict, why
++    assert rc == 1 and doc["verdict"] == "FAIL"
++
++
++def test_loop_descendant_not_killed_is_not_transferred(tmp_path, monkeypatch, world, reference):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("cpp", "loop"): "not_observed:descendant"},
++                  mutates={("cpp", "loop"): stopped("looping")}, shapes={("cpp", "loop"): "keep"})
++    assert entry(doc, "cpp", "loop")["verdict"] == "not_observed:descendant" and rc == 1
++
++
++@pytest.mark.parametrize("damage", ["missing", "other-sha", "no-stall-pass"])
++def test_the_reference_must_verify_and_hold_the_languages_stall_pass(tmp_path, monkeypatch, world, reference, damage):
++    if damage == "missing":
++        reference["path"].unlink()
++    elif damage == "other-sha":
++        monkeypatch.setattr(W2, "TRANSFER_REFERENCE", dict(W2.TRANSFER_REFERENCE, sha256="1" * 64))
++    else:
++        body = {k: v for k, v in reference["doc"].items() if k != "sha256"}
++        for i in body["injects"]:
++            if i["language"] == "rust" and i["kind"] == "stall":
++                i["verdict"] = "FAIL"
++        resealed = ph.seal(body)
++        reference["path"].write_text(json.dumps(resealed))
++        monkeypatch.setattr(W2, "TRANSFER_REFERENCE", dict(W2.TRANSFER_REFERENCE, sha256=resealed["sha256"]))
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("rust", "stall"): "not_observed:trailing"},
++                  mutates={("rust", "stall"): stopped("stalled")})
++    assert entry(doc, "rust", "stall")["verdict"] == "not_observed:trailing" and rc == 1
++
++
++def test_a_nonzero_probe_exit_is_never_transferred(tmp_path, monkeypatch, world, reference):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("rust", "stall"): "not_observed:trailing"},
++                  mutates={("rust", "stall"): stopped("stalled")}, probe_rc={("rust", "stall"): 3})
++    assert entry(doc, "rust", "stall")["verdict"].startswith("FAIL:probe_rc") and rc == 1
++
++
++# ------------------------------------------------------------------ (b) WAIVED
++def test_an_unrelated_kill_over_the_inject_limit_is_waived_when_another_alloc_passes(tmp_path, monkeypatch, world, reference):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("javascript", "alloc"): "FAIL:unrelated_kill"},
++                  mutates={("javascript", "alloc"): unrelated_kill()})
++    e = entry(doc, "javascript", "alloc")
++    assert e["verdict"] == "WAIVED", e
++    assert e["waived_evidence"]["killed_argv0"] == "npm" and e["waived_evidence"]["rss"] > e["waived_evidence"]["per_process"]
++    assert rc == 0 and doc["verdict"] == "PASS"
++    assert fz.positives_problems(doc, arm="n16", commit=X.COMMIT, identity=dict(X.IDENT), frozen_prompt_date=X.DATE,
++                                 image_id=doc["image_id"]) == []
++
++
++def test_a_waiver_needs_an_alloc_pass_in_the_same_record(tmp_path, monkeypatch, world, reference):
++    verdicts = {(lang, "alloc"): "not_observed:kill" for lang in X.LANGS}
++    verdicts[("javascript", "alloc")] = "FAIL:unrelated_kill"
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts=verdicts, mutates={("javascript", "alloc"): unrelated_kill()})
++    assert entry(doc, "javascript", "alloc")["verdict"] == "WAIVED"
++    assert rc == 1 and any("no alloc PASS" in p for p in doc["problems"])
++
++
++@pytest.mark.parametrize("why, mutate", [
++    ("the killed process is the planted command", unrelated_kill(argv=("python3", "-c", "bytearray(1 << 30)"))),
++    ("the kill is not over the inject limit", unrelated_kill(rss=100 * 1024 ** 2)),
++])
++def test_other_unrelated_kills_are_not_waived(tmp_path, monkeypatch, world, reference, why, mutate):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("javascript", "alloc"): "FAIL:unrelated_kill"},
++                  mutates={("javascript", "alloc"): mutate})
++    assert entry(doc, "javascript", "alloc")["verdict"] == "FAIL:unrelated_kill", why
++    assert rc == 1
++
++
++def test_a_waiver_refuses_when_a_tool_call_carries_the_marker(tmp_path, monkeypatch, world, reference):
++    marker = X.ev_tool("c2", "shell", {"command": "python3 -c \"x = bytearray(10**10)\""})
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("javascript", "alloc"): "FAIL:unrelated_kill"},
++                  mutates={("javascript", "alloc"): unrelated_kill()},
++                  events={("javascript", "alloc"): X.default_events() + [marker]})
++    assert entry(doc, "javascript", "alloc")["verdict"] == "FAIL:unrelated_kill" and rc == 1
++
++
++# ------------------------------------------------------------------ v8
++def _v8(doc):
++    return fz.positives_problems(doc, arm="n16", commit=X.COMMIT, identity=dict(X.IDENT), frozen_prompt_date=X.DATE,
++                                 image_id=doc["image_id"])
++
++
++def _reseal(doc, edit):
++    body = json.loads(json.dumps({k: v for k, v in doc.items() if k != "sha256"}))
++    edit(body)
++    return ph.seal(body)
++
++
++@pytest.fixture
++def transferred(tmp_path, monkeypatch, world, reference):
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("java", "stall"): "not_observed:trailing",
++                                                          ("javascript", "alloc"): "FAIL:unrelated_kill"},
++                  mutates={("java", "stall"): stopped("stalled"), ("javascript", "alloc"): unrelated_kill()})
++    assert rc == 0 and _v8(doc) == []
++    return doc
++
++
++def _entry_body(body, lang, kind):
++    (e,) = [i for i in body["injects"] if i["language"] == lang and i["kind"] == kind]
++    return e
++
++
++@pytest.mark.parametrize("edit, want", [
++    (lambda b: _entry_body(b, "java", "stall")["transfer_evidence"].update(reference_sha256="2" * 64), "java stall"),
++    (lambda b: _entry_body(b, "java", "stall")["transfer_evidence"].update(in_flight_at_kill=1), "java stall"),
++    (lambda b: _entry_body(b, "java", "stall").pop("transfer_evidence"), "java stall"),
++    (lambda b: _entry_body(b, "java", "stall")["transfer_evidence"].update(row_sha256="3" * 64), "java stall"),
++    (lambda b: _entry_body(b, "javascript", "alloc").pop("waived_evidence"), "javascript alloc"),
++    (lambda b: _entry_body(b, "javascript", "alloc")["waived_evidence"].update(rss=1), "javascript alloc"),
++    (lambda b: [i.update(verdict="DECLINED", declined_evidence=None) for i in b["injects"]
++                if i["kind"] == "alloc" and i["verdict"] == "PASS"], "no alloc PASS"),
++])
++def test_v8_refuses_a_transfer_or_waiver_without_valid_evidence(transferred, edit, want):
++    assert any(want in p for p in _v8(_reseal(transferred, edit)))
++
++
++def test_v8_refuses_transfer_for_alloc_and_waiver_for_stall(transferred):
++    def swap(b):
++        s, a = _entry_body(b, "java", "stall"), _entry_body(b, "javascript", "alloc")
++        s["verdict"], a["verdict"] = "WAIVED", "PASS_BY_TRANSFER"
++    problems = _v8(_reseal(transferred, swap))
++    assert any("java stall" in p for p in problems) and any("javascript alloc" in p for p in problems)
++
++
++# ------------------------------------------------------------------ the stop path must be the reference commit's (side-agent note)
++def test_a_changed_stop_path_refuses_the_transfer(tmp_path, monkeypatch, world, reference):
++    monkeypatch.setattr(W2, "worktree_cancel_path_sha256", lambda wt: "4" * 64)
++    rc, doc = run(tmp_path, monkeypatch, world, verdicts={("rust", "stall"): "not_observed:trailing"},
++                  mutates={("rust", "stall"): stopped("stalled")})
++    assert entry(doc, "rust", "stall")["verdict"] == "not_observed:trailing" and rc == 1
++
++
++def test_v8_refuses_a_transfer_recorded_against_another_stop_path(transferred):
++    def edit(b):
++        _entry_body(b, "java", "stall")["transfer_evidence"]["cancel_path_sha256"] = "5" * 64
++    assert any("java stall" in p for p in _v8(_reseal(transferred, edit)))
++
++
++def test_the_constant_is_the_reference_commits_stop_path():
++    """`CANCEL_PATH_SHA256` is the digest of `c7c6993a`'s sources (the 11-17 reference's commit), read from git."""
++    import subprocess
++    from bench import paths
++    root = paths.repo_root()
++    ref = W2.TRANSFER_REFERENCE["commit"]
++    if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{ref}^{{commit}}"]).returncode:
++        pytest.fail(f"the reference commit {ref[:12]} is not in this checkout")
++
++    def read(rel):
++        return subprocess.run(["git", "-C", str(root), "show", f"{ref}:{rel}"], capture_output=True, text=True, check=True).stdout
++    assert fz.cancel_path_sha256(read) == fz.CANCEL_PATH_SHA256
++
++
++def test_a_worktree_without_the_sources_has_no_digest(tmp_path):
++    assert W2.worktree_cancel_path_sha256(tmp_path) is None
