@@ -5,7 +5,7 @@ S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359–C363 (next **C364**). Session 27 ids used: S27-P1 (done), S27-P2 (OPEN, push binding); next S27-P3.
+Decisions: session 26 ruled C359–C363 (next **C364**). Session 27 ids used: S27-P1 (done), S27-P2 / P3 / P4 (OPEN); next S27-P5.
 
 ## Goal
 
@@ -15,8 +15,9 @@ ship recommendation to the operator.
 
 ## FIRST
 
-0. Session 27 (live): stack gate of `c34976a03` launched 2026-11-19 ~00:00 (PID 19644, log `$STACK_WORKDIR/gate/s27-c34976a0.log`,
-   ~1 h 45 min); no GPU work while it runs. Operator asked (still open): proceed on recs through the tg2 chain? S27-P2?
+0. Session 27: stack gate of `c34976a03` FAILED (6 / 15331; S27-P3: an inherited Claude Code env var + a cancel-path race the box's
+   timing now loses, both also outside S27-P1). A Homebrew upgrade ran 11-18 22:45 (S27-P4). Waiting on the operator: S27-P2 / P3 / P4,
+   the autonomy question (C359 expired), a reboot. Launch gates / legs with `env -u CLAUDE_CODE_CHILD_NOTES_DIR`.
 1. Not pushed: `main` is ~46 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
    top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
 2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
@@ -35,7 +36,7 @@ ship recommendation to the operator.
 
 ## Next, in order
 
-1. Stack gate of `c34976a03` (S27-P1 = S25-P10 fixed; running, see 0). FAIL → read the receipt's failing step, root-cause.
+1. Stack gate: FAIL on `c34976a03` (S27-P3). After the reboot / race fix, gate again (the gate sha must be the arms' base).
 2. DONE (session 27): tg2 arms `m76-g2-n16` (`c34976a03`) / `m76-g2-x` (`1b7833b6` = + cherry-pick `d4c44a9d`), venvs by
    `p475_kv._ensure_venvs`; X's `.venv-bench` got the wrong `cv2` again (S26-P10), fixed by reinstalling `opencv-python-headless==4.13.0.92`;
    pair inventory digests equal (`.venv` 8f21180f, `.venv-bench` b7e5d411, fork venv 370cbc5f; = the `m76-w2-*` arms). Both clean.
