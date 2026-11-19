@@ -1,0 +1,11 @@
+- 2026-11-19T20:10:50Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/worktrees/m76-g2-n16/main_models.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_WORKDIR/worktrees/m76-g2-n16)
+- 2026-11-19T20:10:55Z router pid=51741 owns :8000; problems=none
+- 2026-11-19T20:10:55Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-11-19T20:11:03Z worker pid=51804 cmdline: 51804 $STACK_WORKDIR/worktrees/m76-g2-n16/.venv/bin/python $STACK_WORKDIR/worktrees/m76-g2-n16/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --mtp-ver
+- 2026-11-19T20:11:03Z RUN A4 v2 gate (Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed) -> a4_positives.log
+- 2026-11-19T20:11:35Z A4 v2 rc=0 pass=True fresh=True run_id=a4-v2-n7c7n5us
+- 2026-11-19T20:35:11Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-11-19T20:35:11Z stop_stack: signal SIGTERM -> own router pid 51741
+- 2026-11-19T20:35:11Z stop_stack: signal SIGTERM -> own router pid 51737
+- 2026-11-19T20:35:41Z stop_stack: signal SIGKILL -> own router pid 51737
+- 2026-11-19T20:35:52Z stop_stack: own router stopped; :8000 free=True
