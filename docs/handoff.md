@@ -16,14 +16,13 @@ ship recommendation to the operator.
 ## FIRST
 
 **HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
-any Cellar change. Session 27 state of this line: **tg2 PILOT PAIR LIVE** (`$STACK_WORKDIR/m76/p426/wave2.tg2/`, started 2026-11-19 22:07Z).
+any Cellar change. Session 27 state of this line: **tg2 DECIDER LIVE** (C367; `$STACK_WORKDIR/m76/p426/wave2.tg2/`, launched 2026-11-19 22:48Z, ≈ 13–20 h).
 
-0. Session 27 (live): tg2 pilot pair running — sequencer `$STACK_WORKDIR/m76/p426/wave2.tg2/` (`launch_pilot.sh`, `--through
-   tg2-m76-x-pilot`), v8 `run/v8_base.json` 7e75cd66, positives `run/positives.json` 3333fa6c (PASS under C366: java stall PASS
-   in-run; 3 stalls + java / cpp loop PASS_BY_TRANSFER; loops / allocs otherwise DECLINED; java alloc PASS). Rehearsal
-   `rehearsal.tg2/20261119a`: R2 x a2 INVALID as expected (a1 NOT_STARTED, S27-P7), R3 n16 VALID. Gate PASS `9abef6a69` (the arms).
-   No pytest and code-free `main` until the sequencer exits. Next: pilot gate → the sizing report vs both budgets (S24-P9; walls
-   within-pair, S27-P5 launch-latency log `m76/p426/exec-latency/`) → the stage-3b Go to the operator.
+0. Session 27 (live): the A8 tg2 DECIDER is running (C367) — sequencer `$STACK_WORKDIR/m76/p426/wave2.tg2/` (`launch_decider.sh`,
+   pid file `sequencer.pid`; legs s1 N16 → X, s2 X → N16, reload X → N16), on v8 7e75cd66 / amendment (pilot pair VALID, gate PASS,
+   `7756726e`); sizing `docs/reviews/m76-s3b-sizing/SIZING.md` (decider 5.9 / 8.1 / 9.5 h per arm). No pytest, no code on `main`,
+   no `brew upgrade`, no BUSY pattern in any argv until it exits. After: harvest commits (data), the stage-3b evidence batch to
+   `evidence` (`wave2.tg2/scratch/evidence` + the pilot), B8 / signals for A8 (needs B4b-2), the ship recommendation.
 1. Not pushed: `main` is ~46 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
    top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
 2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
