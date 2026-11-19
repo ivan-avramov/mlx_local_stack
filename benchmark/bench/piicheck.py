@@ -111,6 +111,8 @@ _MODEL_OUTPUT_HOME_EXEMPT_RES = tuple(re.compile(r) for r in (
     r"^benchmark/results/[^/]+/[^/]+\.jsonl$",
     rf"^benchmark/results/(?:p426|m76)/wave2[^/]*/[^/]+/{_W2_SESSION}/{_W2_STEM}$",
     rf"^leg:{_W2_SESSION}/{_W2_STEM}$",
+    # S26-P16c: a frozen panel packet (the verbatim answers a judge sees), the writer's anchored layout only
+    r"^benchmark/results/(?:p426/panel|m76/panel/A[0-9](?:-s[0-9])?)/[A-Za-z0-9:._-]+/batch[0-9]{2,}/p[0-9]{4,}\.md$",
 ))
 
 

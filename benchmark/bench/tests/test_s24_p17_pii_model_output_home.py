@@ -86,3 +86,23 @@ def test_commit_diff_path_uses_the_same_rule():
     doc = "docs/open-questions.md"
     diff_doc = diff.replace(row, doc)
     assert piicheck.diff_violations(diff_doc)
+
+
+# ---- S26-P16c: a frozen panel packet is the same model output (the writer's anchored layout); only `/home/` is suppressed
+@pytest.mark.parametrize("path", [
+    "benchmark/results/m76/panel/A2/claude-opus-5-5/batch03/p0030.md",
+    "benchmark/results/m76/panel/A2/cursor:gpt-5.6-sol-high/batch07/p0150.md",
+])
+def test_a_panel_packet_quoting_a_model_written_linux_home_is_not_flagged_S26_P16c(path):
+    diff = f"+++ b/{path}\n@@ -0,0 +1 @@\n+never write outside /home/dev/projects/*\n"  # allow-pii-pattern: the model-written path under test
+    assert piicheck.diff_violations(diff) == []
+
+
+@pytest.mark.parametrize("path", [
+    "benchmark/results/m76/panel/A2/claude-opus-5-5/batch03/p0030.md",
+    "benchmark/results/m76/panel/A2/README_JUDGE.md",
+    "benchmark/results/m76/panel/A2/notes/batch03/p0030.md",
+])
+def test_a_macos_home_path_in_a_panel_file_is_still_flagged_S26_P16c(path):
+    diff = f"+++ b/{path}\n@@ -0,0 +1 @@\n+see /Users/alice/project\n"  # allow-pii-pattern: the leak under test
+    assert [v.why for v in piicheck.diff_violations(diff)]

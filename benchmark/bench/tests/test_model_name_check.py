@@ -409,6 +409,15 @@ def test_frozen_panel_packets_and_verdicts_are_DATA_not_prose_S26_P16b(path):
     assert sorted({v.path for v in found}) == ["benchmark/results/m76/panel/A2/README_JUDGE.md"]
 
 
+@pytest.mark.parametrize("path", ["benchmark/results/m76/panel/A7-s1/FROZEN.json", "benchmark/results/m76/panel/A2/manifest.jsonl"])
+def test_a_panel_members_generated_frozen_record_is_DATA_S26_P16c(path):
+    """S26-P16c: FROZEN.json (sha-bound, generated; it embeds every item's task prompt verbatim) and manifest.jsonl are data;
+    README_JUDGE.md stays checked."""
+    diff = (f"+++ b/{path}\n@@ -0,0 +1 @@\n+\"prompt\": \"a static method on the quantized model\"\n"
+            "+++ b/benchmark/results/m76/panel/A2/README_JUDGE.md\n@@ -0,0 +1 @@\n+optiq regressed\n")  # allow-shorthand: the test names the banned forms
+    assert sorted({v.path for v in MN.diff_violations(diff)}) == ["benchmark/results/m76/panel/A2/README_JUDGE.md"]
+
+
 @pytest.mark.parametrize("path", [
     "benchmark/results/m76/panel/A2/notes/extra/batch0/p0.md",
     "benchmark/results/m76/panel/notes/batch00/p0000.md",
