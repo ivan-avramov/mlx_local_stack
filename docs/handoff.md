@@ -61,12 +61,11 @@ any Cellar change. Session 27 state of this line: **tg2 DECIDER LIVE** (C367; `$
 - `m76-w2-{n16,x}`: Wave 2 tg1 arms — outputs harvested (`benchmark/results/m76/wave2/`, evidence `8b45058f`); keep until stage 4 decides
   whether X legs are reused. `m76-q-{n16,x}` (Wave 1) and `m76-f45-*` (stages 1–4): keep until the stage 4 harvest.
 - `m76-g2-{n16,x}`: tg2 arms for stage 3b (session 27) — keep through the A8 harvest.
-- `s27-c366` (merged into `main` at `2673ca472`; submodules checked out) — remove. `evidence-s27` (local `evidence` commit
-  `1c42f0ef`, tg2 positives evidence) — remove (`git worktree remove`; the branch keeps it).
-- `m76-g-{n16,x}`: superseded tg2 arms (pre-S26 code) — remove once the `m76-g2-*` positives run works.
-- Session 27 removed (harvested / merged): `fe-s26-*`, `s26-review`, `s26-p9-guard` (+ its merged branch), `evidence-pub`.
-- Scratch: `$STACK_WORKDIR/review/s25-p10/` (cold-read clone; harvested to `docs/reviews/s25-p10/`) — remove. `gate/scratch/stack-67908a4b33eb-*`
-  (2026-11-14, an unfinished gate run; regenerable) — remove.
+- Session 27 removed (resolved): `fe-s26-*`, `s26-review`, `s26-p9-guard`, `evidence-pub`, `s27-c366` (merged `2673ca47`),
+  `evidence-s27` (local `evidence` `1c42f0ef`), superseded tg2 arms `m76-g-{n16,x}` (+ branches).
+- Scratch: `$STACK_WORKDIR/review/{s25-p10,c365,c366,b4b2-design}/` (cold-read / design-review clones; harvested to `docs/reviews/`)
+  — remove; `gate/scratch/stack-67908a4b33eb-*` (2026-11-14, an unfinished gate run; regenerable) — remove; tg2 positives runs
+  `m65/inject/positives-2026111{7,9}T*` (cited files harvested to `main` + `evidence`) — keep until the A8 readout.
 - Scratch (keep): superseded first-pass Claude verdicts `m76/panel-claude-order2-first-pass/`, `panel-claude-order2-second-pass-A2/`
   (S26-P18), `m76/panel-strays/`, the archived real `~/.gradle` `archive/s26-dot-gradle-20261117/`, `m76/p426/tg2/attempt1-FAIL/`.
 
