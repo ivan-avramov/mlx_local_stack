@@ -1,99 +1,82 @@
-# Handoff — 2026-11-17 (session 26, in progress: Wave 2 tg1 RUNNING; tg2 blocked on S26-P6 / P11 / P12; C360 guard in a stash)
+# Handoff — 2026-11-19 (session 26 → 27: stage 3a COMPLETE (A1 / A5 / A7 PASS, panel PARTIAL, no flag); S26 agent-env change merged; tg2 next)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C359, S26-P1 …
-S26-P7, then C358 …). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C363, S26-P19 …
+S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
-C359's "proceed on recs, stop only for major blockers" is SESSION 26 ONLY — a later session asks again. Label points `S26-P<n>`.
+C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359, C360, C361 (next **C362**); discussion ids so far S26-P1 … S26-P13.
+Decisions: session 26 ruled C359–C363 (next **C364**); discussion ids restart at `S27-P1`.
 
 ## Goal
 
 Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
-256K). Ship when stage 1 memory ✔, stage 2 exactness ✔, stage 3: A1 ✔ (look 1 PASS), A5 ✔ (look 1 PASS), A7, A8 decider all PASS, no tg2
-HOLD, no panel / interaction flag; else per-axis signals → the operator. M1 dropped from stage 3 (C352).
+256K). Stage 1 memory ✔, stage 2 exactness ✔, stage 3a ✔ (A1, A5, A7 PASS; panel no flag). Remaining: stage 3b A8 (tg2) decider, then the
+ship recommendation to the operator.
 
 ## FIRST
 
-1. `main` is ahead of `origin/main` (`3fc079ca`) by session-26 docs and the S26-P8 fix (`ad1c5533`). Not pushed (no push asked).
-2. Running: Wave 2 tg1 sequencer (`$STACK_WORKDIR/m76/p426/wave2/sequencer.pid`; v8 `611520b5…`; 10 legs: pilot pair → gate → amendment →
-   s1, s2, s3 → reload) and its Cellar guard (`wave2/guard.log`; PAUSE on any Homebrew change). Power 140 W / 28 V; `pgrep -fl "claude -p"`.
-3. Four-eyes STRICT run "S26 agent env" (C360 + C361), spec `docs/specs/s26-agent-env.md` v1.1 (design review r1 Sol + GLM applied,
-   ledger `docs/reviews/s26-agent-env/`). Baseline `7a535a28`. Implementer = fresh Claude Opus 5.5 `claude -p` in
-   `worktrees/fe-s26-impl` (output `m76/s26-impl-1.json`); test-writer = Claude Sonnet 5.5 `claude -p` (resumable) in `worktrees/fe-s26-tw`,
-   tests in `benchmark/bench/tests/s26_frozen/` (output `m76/s26-tw-1.json`). Phase A (write only, `py_compile` only, BUSY strings
-   forbidden) runs beside Wave 2; phase B (resume both: test-writer runs on baseline → freeze → reveal → candidate run; implementer runs
-   its tests) in the GPU gap after Wave 2; then change review (Sol + GLM `verify`), fix round if needed, then **Accept = an explicit
-   operator ask with the final diff, findings and test results (NOT covered by C359 / "keep going", which covered Go only)**; then merge, stack gate on the new `main`, tg2 arms rebuilt, `python -m bench.tg2_gradle_home prefill`, tg2 positives. Old draft worktree
-   `worktrees/s26-p9-guard` = starting code only (remove at merge). Review checkout `worktrees/s26-review` (remove at merge).
-   **While Wave 2 runs, `main` takes docs commits only** (each harvest re-imports `bench` from `main`'s working tree; `git add` by path);
-   helpers and my own commands never carry a BUSY marker string (`chain_ops.BUSY`) in argv.
+1. Not pushed: `main` is ~44 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
+   top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
+2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
 
 ## State
 
-- S26-P1: stage-3a Wave 1 readout from `main` = the acceptance run byte for byte (`$STACK_WORKDIR/m76/s26-readout/`): A1 PASS (+2.0 pp,
-  loss bound 0.0), A5 PASS (0 / 72 discordant, loss bound 9.2 pp = the n-72 exact bound), 0 flags; decode X / N16 0.85–0.92.
-- tg2 (B4b-1 acceptance criterion 3): positives on `m76-g-n16` sealed **FAIL** (`m76/p426/tg2/attempt1-FAIL/`). Grades 8 / 8 and stall 4 / 4
-  work; loop 1 / 4, alloc 0 / 4 (the model declines the planted instructions: S26-P6). The agent self-provisions toolchains over the network
-  (rustup into the per-run hermetic HOME; `brew install openjdk@17` onto the shared host — reverted; S26-P5). **Both OPEN for the operator; no tg2
-  leg runs until ruled.**
-- Wave 2 tg1 (A7): arms `m76-w2-{n16,x}` at the gated `3c199587` (S26-P7); rehearsal manifest `01ba1be9…`; rehearsal `20261117a` launched
-  2026-11-17 22:13Z (R1 n16 / x, R2 mismatch on x → INVALID expected, R3 kill on n16; ≈ 4.5 h).
-- Panel: runs once after Wave 2, from the B8 that includes A7 (S26-P4).
-- Box toolchains (C360 (3), installed 2026-11-17 16:3x): `rust` 1.100, `openjdk@21` (force-linked; host had no JDK), `cmake` 4.5 (+ deps
-  libgit2, z3, llvm (keg-only, unlinked), pkgconf, giflib, webp, libtiff, little-cms2). The real `~/.gradle` the positives created is archived
-  (`archive/s26-dot-gradle-20261117/`; S26-P12).
-- tg2 waits on the operator: S26-P6 (inject positives harness-side), S26-P11 (per-item fetch caches), S26-P12 (JVM ignores the hermetic HOME).
+- Stage 3a readout (committed, `benchmark/results/m76/`): `B8.json` (Wave 1 10 / 10 + A7 5 / 5 pairs), `SIGNALS-partial.md` (C363: the
+  panel readout; one Cursor verdict of 1152 failed, A2 39 / 40), `SIGNALS.md` (default sheet, panel not ingested). A1 +2.0 pp, loss bound
+  0.0; A5 0 / 72 discordant, loss bound 9.2 pp; A7 +1.6 pp [−3.9, +7.8], loss bound 3.9 pp; panel all Holm p ≥ 0.65; directional: tg1 code
+  quality leans N16 in all three sessions (0.40 / 0.43 / 0.49, none significant). README has a PROVISIONAL M76 row (update it with the panel).
+- S26 agent-env change on `main` (`5c5b00eab`, C363): host-env fingerprint guard (sequencer + tg2 positives), positives decline rule,
+  inject_verify alloc fix (S26-P14), bench-owned tg2 Gradle home (`$STACK_WORKDIR/tg2-gradle-home/`, prefilled + checked on this box, 45
+  / 45 offline), bootstrap 5b toolchains (installed: rust 1.100, openjdk@21 linked, cmake 4.5). Report `docs/reviews/s26-agent-env/REPORT.md`.
+- Also merged this session: S26-P8 (KV rehearsal harvest + watcher PYTHONPATH), S26-P15 / P15b (B8 rerun selection: a rerun only of a
+  not-clean attempt with a recorded reason), S26-P16 / b / c (hook data exemptions), S26-P17 / P17b (C362: KV panel leak = arm / box identity).
 
 ## Next, in order
 
-1. Rehearsal result → `p426_freeze v8 --lever kv --corpus tg1 --pair n16,x --arm-worktree … --rehearsal-manifest … --r1-off/--r1-on (R1 roots)
-   --r2 --r3 --build-inputs $STACK_WORKDIR/m76/p426/wave2/build_inputs.json --historical-walls benchmark/results/p426/wave2/historical_walls.json
-   --out m76/p426/wave2/run/v8_base.json` → `p426_wave2 run --lever kv --pair n16,x … --out-base m76/p426/wave2 --record-dir m76/p426/wave2/run`
-   (pilot → gate → amendment → s1 → re-check → s2 → s3 per the look rule → reload). Guard beside it (`host_guard.sh <pid> <out-base>/PAUSE <log>`).
-2. On the operator's S26-P5 / S26-P6 ruling: the tg2 environment / inject spec change (four-eyes strict), then positives again
-   (`m76/p426/tg2/`, build inputs there; run record dir `m76/p426/tg2/run`), rehearsal `m76/p426/rehearsal.tg2/`, v8, pilot pair, sizing report.
-3. After Wave 2: B8 + signals with A7, then the panel (S26-P4), then the stage-3a readout.
-4. B4b-2 spec + design review (no pytest) beside GPU legs; small fail-closed fixes (S25-P10, PII username pattern) in a GPU gap.
+1. Stack gate on the new `main` (full suite). S25-P10 is still open: fix it first (small fail-closed fix, test first, one cold read), or
+   gate from a `main` checkout that does NOT yet contain the build.
+2. tg2 arms rebuilt at the gated `main` sha: N16 = that sha, X = + the X registry commit (cherry-pick `d4c44a9d`). Build every venv as the
+   s3 arms (`uv sync --frozen`; `.venv-bench` from `benchmark/requirements-bench.lock`; `src/mlx-vlm/.venv` by `p475_kv._ensure_fork_venv`'s
+   recipe) and CHECK with the gate's inventory digest within the pair (S26-P10: opencv's `cv2` lands order-dependently — reinstall
+   `opencv-python-headless` if the digests differ). Old tg2 arms `m76-g-*` are superseded (remove after the new ones work).
+3. tg2 positives (`p426_wave2 positives --corpus tg2 --lever kv`, out `<out-base>/run/positives.json`, record the frozen prompt date) under the
+   new rule; rehearsal (`p426_freeze rehearsal --corpus tg2` → `p426_wave2 rehearsal --corpus tg2`, out-base under
+   `$STACK_WORKDIR/m76/p426/rehearsal.tg2/`, `--main-root` a scratch clone, P576), v8 (`--corpus tg2 --positives …`), the pilot pair
+   (`p426_wave2 run --corpus tg2 --through tg2-m76-x-pilot`), the sizing report vs both budgets (S24-P9) → the stage-3b Go to the operator.
+4. Beside the decider (no pytest during legs): the B4b-2 spec + design review (`docs/specs/m76-b4b2-a8-consumers.md`, to write; carry L9:
+   every new tg2 consumer passes `grader="tg2"`; L16 `row_scores.py`). The KV vision rubric fix (S26-P19) before any next KV panel.
+5. Small fail-closed fixes still owed: S25-P10; the PII hook learning the username pattern from the machine config (C357).
 
-## Worktrees and scratch
+## Worktrees and scratch (each: resolution)
 
-- Wave 2 tg1 arms `$STACK_WORKDIR/worktrees/m76-w2-{n16,x}` (branches `m76-w2-n16` = `3c199587`, `m76-w2-x` = `0fc05281`): Wave 2, keep until its
-  harvest. tg2 arms `m76-g-{n16,x}` (`c7c6993a` / `de87df98`): stage 3b, keep. Stage-3a Wave 1 arms `m76-q-{n16,x}` (their 255 untracked rows each
-  are byte-identical to `main`'s); stage 1–4 arms `m76-f45-*`: keep until stage 4 harvest.
-- Every new arm: `uv sync --frozen`; `.venv-bench` from `benchmark/requirements-bench.lock`; `src/mlx-vlm/.venv` by `p475_kv._ensure_fork_venv`'s
-  recipe (editable fork, constraints from the arm `.venv` freeze; a plain `uv sync` there gives other pins). Check `uv pip freeze` sha equal to the s3 arms'.
-- Scratch publish clones: `m76/p426/tg2/main-clone`, `m76/p426/rehearsal/main-clone-20261117a` (P576 workaround).
+- `m76-w2-{n16,x}`: Wave 2 tg1 arms — outputs harvested (`benchmark/results/m76/wave2/`, evidence `8b45058f`); keep until stage 4 decides
+  whether X legs are reused. `m76-q-{n16,x}` (Wave 1) and `m76-f45-*` (stages 1–4): keep until the stage 4 harvest.
+- `m76-g-{n16,x}`: superseded tg2 arms (pre-S26 code) — remove after next item 2.
+- `fe-s26-impl`, `fe-s26-tw`, `fe-s26-base`, `s26-review`, `s26-p9-guard`: four-eyes copies; reports harvested in
+  `docs/reviews/s26-agent-env/` (suite / frozen summary lines are in the test-writer reports); remove them.
+- `evidence-pub`: worktree of the local `evidence` branch (commit `8b45058f` made there) — remove (`git worktree remove`); the branch keeps it.
+- Scratch (keep): superseded first-pass Claude verdicts `m76/panel-claude-order2-first-pass/`, `panel-claude-order2-second-pass-A2/`
+  (S26-P18), `m76/panel-strays/`, the archived real `~/.gradle` `archive/s26-dot-gradle-20261117/`, `m76/p426/tg2/attempt1-FAIL/`.
 
 ## Rules learned (session 26)
 
-- Helpers beside live legs (side-agent note, adopted): anything that runs tests waits for a GPU gap; a read-only panel review may
-  overlap a leg only when launched after that leg's start census and finished before the next leg is due (`chain_core` census:
-  any foreign argv carrying a `chain_ops.BUSY` marker aborts the leg). Briefs go on stdin, never in argv.
-- An inject positive that asks the model to misbehave measures the model's compliance, not the harness; this model declines harmful asks.
-- An agentic leg can mutate the host (package managers write outside any redirected HOME): snapshot the Homebrew Cellar around every leg.
-- A panel frozen against a B8 record is bound to that record's sha: freeze once, from the final B8.
-- v8 needs a PASS gate receipt for exactly the reference arm's commit: pick arm commits that have one.
-- `brew uninstall` autoremoves orphaned formulae: pass `HOMEBREW_NO_AUTOREMOVE=1`, or reinstall what it took.
+- An inject positive that asks the model to misbehave measures compliance; before calling a non-PASS a decline, check whether the model ran it.
+- An agentic leg can mutate the host; the JVM ignores `$HOME` (Gradle needs `GRADLE_USER_HOME`).
+- A judge context never holds both orders of one item; never declare a batch of helpers done without each one's report.
+- A panel is frozen once, against the final B8; a pre-registered instrument rule changed after seeing data goes to the operator.
+- Check new arms with the gate's inventory digest, not `pip freeze`; v8 needs a gate receipt for exactly the reference arm's commit.
+- Each harvest re-imports `bench` from `main`'s working tree: while legs run, `main` takes docs commits only; helper briefs on stdin, never a
+  BUSY marker in any argv; read-only reviews only between leg censuses.
+- `brew uninstall` autoremoves orphans; a refused commit leaves files staged for the next one (check `git status` before committing).
 
-## Rules learned (session 25)
+## Rules learned (sessions 18–25, condensed; full text in git history of this file)
 
-- A four-eyes implementer runs named test files only, full output to files, 2 h limit; the full suite runs once, as the designer's gate (C356 (3)).
-- Allowlist the exact command forms a helper must run. Read a generator's write contract before a long run.
-- A test timeout is a margin over a measured duration. "checked" names the check and its result; otherwise "expected".
-- Root-cause a counter mismatch across rungs before naming a mechanism. Launch the stack gate from a `main` checkout (S25-P10).
-- Sweep new docs for the username before committing. A history rewrite renames every later commit: commit the map.
-
-## Rules learned (sessions 18–24, condensed; full text in git history of this file)
-
-- Waiters match names the code emits. Run the real path early: mocks hide real-path facts. Refusals never echo matched PII.
-- Specs fix behaviour + named seams with a deviation rule (C348). The PII / naming hooks read docs, tests and commit messages too.
-- `bench.*` modules run from `benchmark/`. `pytest` (or `mlx-serve` in an argv) refuses P369 / qualify runs; GPU stages and helpers cannot overlap.
-- A pre-registered decision rule needs its error simulated. Measure memory per process, real graph shape, known positives.
-- After a reboot start OrbStack before any gate; docker lives in `~/.orbstack/bin`. Read a FAIL receipt's `failure_artifacts` before rerunning.
-- Fork changes to upstream-shared files need a `# Fork` marker; run `bench.modelnames` over a fork diff before committing.
+- Four-eyes implementers run named tests only; the full suite runs once as the gate. Allowlist exact command forms. A test timeout is a
+  margin over a measured duration. "checked" names the check. Sweep docs for the username. A history rewrite renames later commits.
+- Waiters match emitted names; run the real path early; refusals never echo PII. `bench.*` modules run from `benchmark/`.
+- GPU stages and helpers running pytest cannot overlap. Measure memory per process. After a reboot start OrbStack before any gate.
 
 ## Archives (local, no push)
 
-- `$STACK_WORKDIR/archive/tg2-universe-ff76573b/` (session 25), `m72/superseded-instrument-v{1,2}/`, `archive/p475-base-*`,
-  `archive/session18-worktrees/`; branches `archive/*` (M72 1.3 cited by `benchmark/results/m72/m72-13/README.md`).
+- `$STACK_WORKDIR/archive/tg2-universe-ff76573b/`, `archive/s26-dot-gradle-20261117/`, `m72/superseded-instrument-v{1,2}/`, `archive/p475-base-*`,
+  `archive/session18-worktrees/`; branches `archive/*`.
