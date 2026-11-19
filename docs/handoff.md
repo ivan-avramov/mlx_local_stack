@@ -15,6 +15,9 @@ ship recommendation to the operator.
 
 ## FIRST
 
+**HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
+any Cellar change. Session 27 state of this line: no run live yet.
+
 0. Session 27: stack gate of `c34976a03` FAILED (6 / 15331; S27-P3: an inherited Claude Code env var + a cancel-path race the box's
    timing now loses, both also outside S27-P1). A Homebrew upgrade ran 11-18 22:45 (S27-P4). Waiting on the operator: S27-P2 / P3 / P4,
    the autonomy question (C359 expired), a reboot. Launch gates / legs with `env -u CLAUDE_CODE_CHILD_NOTES_DIR`.
