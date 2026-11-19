@@ -1,0 +1,67 @@
+commit 9abef6a6959e1caf936ec6f01154d940d47759e4
+Author: iavramov <304549410+ivan-avramov-n@users.noreply.github.com>
+Date:   Thu Nov 19 08:25:15 2026 -0800
+
+    fix(bench): C365 — the cancel-path tests fire their stop at the moment they test, not mid-grade (S27-P3)
+    
+    test_c147_cancel's SIGTERM test now waits for the client to linger AND the step-1 snapshot grade to return; the fake contract
+    client writes its cancel file after step 1 is recorded, just before the sleep its comment names. Both raced a slow process
+    launch (an endpoint agent checks every exec): the abort killed an in-flight grader (TransportAbort masked exit 143), or the
+    cancel landed before any assistant message (empty export). Test-only; the runner's abort-vs-grade race is a recorded residual
+    (C365), fixed at the next probe identity rotation. 75 / 75 three runs. Records C364 / C365.
+    
+    Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+
+diff --git a/benchmark/bench/tests/fake_contract_client.py b/benchmark/bench/tests/fake_contract_client.py
+index c85f2d9ee..484b5c5dc 100644
+--- a/benchmark/bench/tests/fake_contract_client.py
++++ b/benchmark/bench/tests/fake_contract_client.py
+@@ -137,8 +137,6 @@ class Client:
+         b = self.behaviour
+         signal.signal(signal.SIGTERM, self.on_term)
+         shape = b.get("shape")
+-        if shape == "cancel":
+-            Path(self.cfg["cancel_file"]).write_text("")
+         while True:
+             self.step += 1
+             mid = f"m{self.step}"
+@@ -167,6 +165,9 @@ class Client:
+             self.assistant(mid, usage, finish)
+             emit("step_finish", mid, tokens=self.tokens(usage))
+             if shape == "cancel":
++                # S27-P3: request the cancel only after step 1 is recorded (it was written before the first request, so a
++                # slow client launch let the cancel land before any assistant message: "empty assistant export")
++                Path(self.cfg["cancel_file"]).write_text("")
+                 time.sleep(60)                               # the runner cancels us; SIGTERM ends the sleep
+             if self.cfg.get("window") and self.last_prompt_tokens >= self.cfg["window"] - 1000 and reply["calls"]:
+                 self.compact(mid)
+diff --git a/benchmark/bench/tests/test_c147_cancel.py b/benchmark/bench/tests/test_c147_cancel.py
+index 6c9efd8bb..000c55bd4 100644
+--- a/benchmark/bench/tests/test_c147_cancel.py
++++ b/benchmark/bench/tests/test_c147_cancel.py
+@@ -350,7 +350,24 @@ def test_sigterm_abort_still_records_cleanup_status_in_the_manifest(probe, monke
+     import signal
+     f = tg_fixture(probe, monkeypatch, tmp_path)
+     marker = linger_events(f, tmp_path)
+-    when(marker, lambda: os.kill(os.getpid(), signal.SIGTERM))
++    # S27-P3: the SIGTERM lands once the client lingers AND the step-1 snapshot grade has returned. Firing on the marker alone
++    # raced that grade: with a slow process launch (an endpoint agent checking every exec) the abort path killed the in-flight
++    # grader and its empty report raised TransportAbort, masking exit 143 (a product residual, recorded in S27-P3).
++    graded, real = threading.Event(), sg.grade
++
++    def grade(*a, **k):
++        try:
++            return real(*a, **k)
++        finally:
++            graded.set()
++    monkeypatch.setattr(sg, "grade", grade)
++
++    def fire():
++        deadline = time.time() + 30
++        while time.time() < deadline and not (marker.exists() and graded.is_set()):
++            time.sleep(0.02)
++        os.kill(os.getpid(), signal.SIGTERM)
++    threading.Thread(target=fire, daemon=True).start()
+     prior = signal.getsignal(signal.SIGTERM)
+     try:
+         with pytest.raises(SystemExit) as exc:

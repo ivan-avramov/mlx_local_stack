@@ -353,26 +353,31 @@ def test_sigterm_abort_still_records_cleanup_status_in_the_manifest(probe, monke
     # S27-P3: the SIGTERM lands once the client lingers AND the step-1 snapshot grade has returned. Firing on the marker alone
     # raced that grade: with a slow process launch (an endpoint agent checking every exec) the abort path killed the in-flight
     # grader and its empty report raised TransportAbort, masking exit 143 (a product residual, recorded in S27-P3).
-    graded, real = threading.Event(), sg.grade
+    graded, done, gate, real = threading.Event(), threading.Event(), threading.Lock(), sg.grade
 
     def grade(*a, **k):
-        try:
-            return real(*a, **k)
-        finally:
-            graded.set()
+        result = real(*a, **k)
+        graded.set()                    # only a grade that returned (C365 r1 P1: a raising grader never fires the stop)
+        return result
     monkeypatch.setattr(sg, "grade", grade)
 
     def fire():
         deadline = time.time() + 30
-        while time.time() < deadline and not (marker.exists() and graded.is_set()):
+        while time.time() < deadline and not done.is_set() and not (marker.exists() and graded.is_set()):
             time.sleep(0.02)
-        os.kill(os.getpid(), signal.SIGTERM)
-    threading.Thread(target=fire, daemon=True).start()
+        with gate:                      # C365 r1 P2: never signal after the test has unwound
+            if not done.is_set():
+                os.kill(os.getpid(), signal.SIGTERM)
+    firing = threading.Thread(target=fire, daemon=True)
+    firing.start()
     prior = signal.getsignal(signal.SIGTERM)
     try:
         with pytest.raises(SystemExit) as exc:
             f["run"]("one")
     finally:
+        with gate:
+            done.set()
+        firing.join(5)
         signal.signal(signal.SIGTERM, prior)
     assert exc.value.code == 143
     man = json.loads(f["mp"].read_text())
