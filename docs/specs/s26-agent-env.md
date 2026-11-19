@@ -1,4 +1,4 @@
-# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1b, 2026-11-17 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
+# S26 — agent environment: host fingerprint guard (C360) + tg2 positives and Gradle home (C361) — SPEC v1.1c, 2026-11-18 (four-eyes STRICT; v1.1 applies design review round 1, v1.1a the change review round 1 errata; `docs/reviews/s26-agent-env/`)
 
 ## Goal
 
@@ -186,4 +186,9 @@ with its reason.
 9. "The row records no kill" (erratum 1) means BOTH `mem_kills` and `termination.killed` are present and empty. A genuine decline
    completes normally (all six recorded declines: `stop_reason: completed`, no kill); any kill — a memory kill or a client kill —
    means the run is not a clean decline (fail closed).
+
+## Erratum v1.1c (test-writer second delivery, T3 / D1; designer judgement)
+
+10. The run baseline `<out-base>/host_env.json` is SEALED (self-hashed, as every sequencer record); a baseline that is unreadable or
+    whose seal does not verify stops (rc 1). A nonzero probe exit makes a PASS a failure too (`FAIL:probe_rc:<n>`; stricter than §4).
 
