@@ -5,7 +5,7 @@ S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359–C363; session 27 C364–C365 (next **C366**). Session 27 ids used: S27-P1 … P5; next S27-P6.
+Decisions: session 26 ruled C359–C363; session 27 C364–C366 (next **C367**). Session 27 ids used: S27-P1 … P8; next S27-P9.
 
 ## Goal
 
@@ -16,7 +16,7 @@ ship recommendation to the operator.
 ## FIRST
 
 **HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
-any Cellar change. Session 27 state of this line: **tg2 positives LIVE** (2026-11-19 12:10; then the rehearsal, v8, pilot).
+any Cellar change. Session 27 state of this line: **tg2 rehearsal `20261119a` LIVE** (positives FAIL → C366; rerun after the rehearsal; then v8, pilot).
 
 0. Session 27: stack gate of `c34976a03` FAILED (6 / 15331; S27-P3: an inherited Claude Code env var + a cancel-path race the box's
    timing now loses, both also outside S27-P1). A Homebrew upgrade ran 11-18 22:45 (S27-P4). Waiting on the operator: S27-P2 / P3 / P4,
