@@ -526,6 +526,42 @@ def _sequence_pair_and_superseded(seq, session):
 
 
 
+def _supersede_reasons(reader, seq, superseded, chosen, where):
+    """S26-P15b (r1 Sol P1–P4): for each arm's chosen attempt `<leg>.aN`, every earlier attempt `<leg>.a1 … a(N-1)` must exist with a
+    self-hash-verified leg.json that is NOT clean (state not VALID, or speed_valid not True), and sequence.json `reruns` must record a
+    non-empty reason for EVERY hop k -> k+1. Anchored on the chosen name (already member-validated), never on which pair records
+    survive; anything missing, unreadable or unsealed fails closed. [] when allowed; else rule-3 reasons (the session pair is
+    rejected, never silently replaced). `superseded` is reported by the caller; it does not decide."""
+    reasons = []
+    reruns = [r for r in (seq.get("reruns") or []) if isinstance(r, dict)]
+    for arm, name in sorted(chosen.items()):
+        leg, n = leg_name(name), attempt_no(name)
+        for k in range(1, n):
+            old = f"{leg}.a{k}"
+            att = reader.root / WAVE / old
+            if att.is_symlink() or not att.is_dir() or att.resolve().parent != (reader.root / WAVE).resolve():
+                reasons.append(f"rule 3: {name} replaced {old}, which is missing or outside wave2/")
+                doc = False
+            else:
+                try:
+                    doc = reader.read_json(att / "leg.json", f"{where} {arm} earlier attempt {old} leg.json")
+                except RefusalError:
+                    doc = None
+            if doc is False:
+                pass
+            elif not isinstance(doc, dict) or not self_hash_ok(doc):
+                reasons.append(f"rule 3: {name} replaced {old}, whose leg.json is missing, unreadable or not self-hash-verified")
+            elif doc.get("leg") != leg or doc.get("attempt") != k:
+                reasons.append(f"rule 3: {old}/leg.json is not the record of {old} (leg {doc.get('leg')!r}, attempt {doc.get('attempt')!r})")
+            elif doc.get("state") == "VALID" and doc.get("speed_valid") is True:
+                reasons.append(f"rule 3: {name} superseded a clean attempt {old} (VALID and speed-valid); a rerun may replace only an "
+                               "invalid or speed-invalid attempt")
+            rec = [r for r in reruns if r.get("leg") == leg and r.get("attempt") == k + 1]
+            if not rec or not isinstance(rec[-1].get("reason"), str) or not rec[-1]["reason"].strip():
+                reasons.append(f"rule 3: {leg}.a{k + 1} has no recorded rerun reason in sequence.json reruns")
+    return reasons
+
+
 def _sequence_leg_reasons(seq, arm, name):
     reasons = []
     for leg in seq.get("legs") or []:
@@ -556,7 +592,7 @@ def verify_a7(results_root):
             names[arm] = name
         off = load_attempt(reader, names["off"], session, f"pair {session} off {names['off']}")
         on = load_attempt(reader, names["on"], session, f"pair {session} on {names['on']}")
-        reasons = list(v8_reasons)
+        reasons = list(v8_reasons) + _supersede_reasons(reader, seq, superseded, names, f"pair {session}")
         for arm, att in (("off", off), ("on", on)):
             reasons += _leg_reasons(arm, att) + _sequence_leg_reasons(seq, arm, att["name"])
         for arm, att in (("off", off), ("on", on)):
@@ -2111,7 +2147,7 @@ def verify_a7_kv(results_root, pair):
             if not path.is_dir() or path.resolve().parent != (reader.root / WAVE).resolve():
                 raise RefusalError(f"pair {session} {arm}: attempt {WAVE}/{names[arm]} is missing or outside {WAVE}/")
             atts[arm] = _kv_load_attempt(reader, names[arm], session, f"pair {session} {arm} {names[arm]}")
-        reasons = list(v8_reasons)
+        reasons = list(v8_reasons) + _supersede_reasons(reader, seq, superseded, names, f"pair {session}")
         for arm in (ref, test):
             reasons += _leg_reasons(arm, atts[arm]) + _sequence_leg_reasons(seq, arm, names[arm])
             reasons += _commit_reasons(v8, arm, atts[arm])
