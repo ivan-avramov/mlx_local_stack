@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from bench import arm_adapter as aa
 from bench import arm_opencode as ao
 from bench import arm_runner
@@ -45,15 +47,28 @@ def test_the_tg1_probe_closure_holds_the_core_and_excludes_the_forbidden_modules
     assert not pi_dsh_or_tg2(got), pi_dsh_or_tg2(got)
 
 
-def test_the_tg1_carrier_and_plugins_the_arm_wraps_are_unedited_by_this_build():
+CARRIER_AND_PLUGINS = {"benchmark/opencode_bench_v2_web_tg1.json",
+                       *("benchmark/opencode_plugins/" + n for n in ("noretry.js", "toolbounds.js", "datefreeze.js"))}
+
+
+def carrier_edits(repo, base):
+    """The tg1 carrier / plugin files changed between `base` and HEAD — a rename lists both paths (`--no-renames`); a git
+    error raises, never reads as no change."""
     import subprocess
-    base = subprocess.run(["git", "merge-base", "HEAD", "main"], cwd=REPO, capture_output=True, text=True).stdout.strip()
-    assert base, "no merge base with main"
-    changed = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=REPO, capture_output=True,
-                             text=True).stdout.split()
-    assert "benchmark/opencode_bench_v2_web_tg1.json" not in changed
-    kept = {"benchmark/opencode_plugins/" + n for n in ("noretry.js", "toolbounds.js", "datefreeze.js")}
-    assert not (set(changed) & kept), sorted(set(changed) & kept)
+    changed = subprocess.run(["git", "diff", "--no-renames", "--name-only", base, "HEAD"], cwd=repo, capture_output=True, text=True,
+                             check=True).stdout.split()
+    return sorted(set(changed) & CARRIER_AND_PLUGINS)
+
+
+def test_the_tg1_carrier_and_plugins_the_arm_wraps_are_unedited_by_this_build():
+    # S25-P10: "this build" = everything since GitHub's last-pushed `main` (the gate's `GATE_PUSHED_BASE`), never the local
+    # `main`, which can contain the build (a vacuous diff) or be absent (a gate clone of another branch).
+    from bench import local_gate
+    try:
+        base = local_gate.resolve_pushed_base(REPO)
+    except local_gate.GateError as exc:
+        pytest.fail(f"S25-P10: {exc}")
+    assert not carrier_edits(REPO, base), carrier_edits(REPO, base)
 
 
 def test_the_m64_oc_probe_closure_is_generation_only():

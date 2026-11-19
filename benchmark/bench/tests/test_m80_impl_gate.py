@@ -152,7 +152,8 @@ def _today_stack(s, wd):
         G.Step("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s,
                check="imports"),
         G.Step("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", junit, "bench/tests/"], s / "benchmark",
-               env=dict(STACK_WORKDIR=wd, NLTK_DATA=os.environ.get("NLTK_DATA", ""))),
+               env=dict(STACK_WORKDIR=wd, NLTK_DATA=os.environ.get("NLTK_DATA", ""), GATE_PUSHED_BASE=None,
+                       PYTEST_ADDOPTS=None, PYTEST_PLUGINS=None)),  # S25-P10
     ]
 
 

@@ -49,6 +49,9 @@ SIBLING = "mlx-serve"                 # M80: the mlx-vlm gate's sibling clone, `
 SIBLING_MARKER = "requires_mlx_serve"  # M80: a test carrying it must pass in the mlx-vlm gate
 PYTEST_NO_ADDOPTS = ("-o", "addopts=")  # M80: the mlx-vlm pytest runs ignore configured addopts ...
 PYTEST_ENV_DROP = {"PYTEST_ADDOPTS": None, "PYTEST_PLUGINS": None}  # ... and these (None = removed from the environment)
+PUSHED_REF = "refs/remotes/origin/main"       # S25-P10: GitHub's last-pushed `main`, as the source repository records it
+PUSHED_BASE_ENV = "GATE_PUSHED_BASE"          # S25-P10: exported to the stack gate's pytest run
+GATE_BASE_REF = "refs/gate/pushed-base"       # S25-P10: the pushed base fetched into the scratch clone
 
 
 class GateError(RuntimeError):
@@ -186,9 +189,9 @@ def sibling_path(scratch):
     return Path(scratch).parent / SIBLING
 
 
-def steps_for(repo, scratch, parity, audits=None):
+def steps_for(repo, scratch, parity, audits=None, pushed_base=None):
     """mlx-vlm (M80): `scratch` is the fork clone `<run>/mlx-vlm`; `sibling` / `sibling-sync` (in `<run>/mlx-serve`) always
-    follow `clone`."""
+    follow `clone`. stack (S25-P10): the pytest step exports `pushed_base` as `GATE_PUSHED_BASE` (None removes it)."""
     s = Path(scratch)
     junit = f"--junitxml={s / '.gate-junit.xml'}"
     if repo == "stack":
@@ -201,7 +204,8 @@ def steps_for(repo, scratch, parity, audits=None):
             Step("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s,
                  check="imports"),
             Step("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", junit, "bench/tests/"], s / "benchmark",
-                 env=dict(STACK_WORKDIR=_workdir_or_placeholder(), NLTK_DATA=os.environ.get("NLTK_DATA", ""))),
+                 env={"STACK_WORKDIR": _workdir_or_placeholder(), "NLTK_DATA": os.environ.get("NLTK_DATA", ""),
+                      PUSHED_BASE_ENV: pushed_base, **PYTEST_ENV_DROP}),
         ]
     if repo == "mlx-vlm":
         py = str(s / ".venv" / "bin" / "python")
@@ -250,6 +254,41 @@ def _git(cwd, *a, check=True):
     if check and r.returncode != 0:
         raise GateError(f"git {' '.join(a)} in {cwd}: {r.stderr.strip()[:300]}")
     return r.stdout.strip()
+
+
+def pushed_base(live):
+    """S25-P10: the source repository's `refs/remotes/origin/main` (GitHub's last-pushed `main`); GateError when absent."""
+    sha = _git(live, "rev-parse", "--verify", "--quiet", f"{PUSHED_REF}^{{commit}}", check=False)
+    if not sha:
+        raise GateError(f"no pushed base: {live} has no {PUSHED_REF} (fetch origin first)")
+    return sha
+
+
+def resolve_pushed_base(repo, environ=None):
+    """S25-P10: the base of a "this build" diff — `GATE_PUSHED_BASE` (a full sha, exported by the stack gate), else
+    `refs/remotes/origin/main` of a checkout whose `origin` is the canonical GitHub stack remote. Never the local `main`, which
+    can contain the build. GateError when neither holds or the commit is not in `repo`."""
+    environ = os.environ if environ is None else environ
+    sha = environ.get(PUSHED_BASE_ENV)
+    if sha:
+        if not re.fullmatch(r"[0-9a-f]{40}", sha):
+            raise GateError(f"{PUSHED_BASE_ENV}={sha!r} is not a full commit sha")
+        source = PUSHED_BASE_ENV
+    else:
+        if identity(_git(repo, "remote", "get-url", "origin", check=False)) != "stack":
+            raise GateError(f"no pushed base: {PUSHED_BASE_ENV} is unset and the origin of {repo} is not the canonical stack "
+                            f"remote (a gate clone's origin is the local repository; the stack gate exports {PUSHED_BASE_ENV})")
+        sha, source = pushed_base(repo), PUSHED_REF
+    if _git(repo, "cat-file", "-t", sha, check=False) != "commit":
+        raise GateError(f"pushed base {sha} ({source}) is not a commit in {repo}")
+    return sha
+
+
+def _fetch_pushed_base(scratch, live, base):
+    """S25-P10: the scratch clone holds the pushed base even when only `refs/remotes/origin/main` reaches it."""
+    _git(scratch, "fetch", "--quiet", "--no-tags", str(live), f"+{PUSHED_REF}:{GATE_BASE_REF}")
+    if _git(scratch, "rev-parse", f"{GATE_BASE_REF}^{{commit}}") != base:
+        raise GateError(f"{PUSHED_REF} of {live} moved during the run (want {base})")
 
 
 def clone_scratch(live, sha, dest):
@@ -452,6 +491,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
     if mlx_serve_sha and repo != "mlx-vlm":
         raise GateError("--mlx-serve-sha pairs an mlx-vlm run only")
     sha = _git(live, "rev-parse", f"{sha}^{{commit}}")
+    base = pushed_base(live) if repo == "stack" else None   # S25-P10: refused before any step when absent
     # M80: an mlx-vlm run always pairs — the pin resolves to a commit in `../mlx-serve` or the run is refused before any step
     paired = pinned_mlx_serve(live, mlx_serve_sha) if repo == "mlx-vlm" else None
     parity = current_parity(repo, live, sha)
@@ -468,16 +508,20 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
     if repo == "mlx-vlm":
         receipt["paired"] = {SIBLING: paired}
+    if repo == "stack":
+        receipt["pushed_base"] = base
     last = None          # (step name, full output) of the last step that ran — kept on FAIL (M75)
     junit_bytes = None
     try:
-        for step in steps_for(repo, scratch, parity, audits):
+        for step in steps_for(repo, scratch, parity, audits, pushed_base=base):
             if busy():
                 receipt["problems"].append(f"box became busy before {step.name}")
                 break
             t0 = time.monotonic()
             if step.name == "clone":
                 clone_scratch(live, sha, scratch)
+                if base:
+                    _fetch_pushed_base(scratch, live, base)
                 rc, out = 0, ""
             elif step.name == "submodules":
                 _submodules(scratch, live)

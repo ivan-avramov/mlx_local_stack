@@ -1,0 +1,374 @@
+diff --git a/benchmark/bench/local_gate.py b/benchmark/bench/local_gate.py
+index 37ef35790..18f005cb9 100644
+--- a/benchmark/bench/local_gate.py
++++ b/benchmark/bench/local_gate.py
+@@ -49,6 +49,9 @@ SIBLING = "mlx-serve"                 # M80: the mlx-vlm gate's sibling clone, `
+ SIBLING_MARKER = "requires_mlx_serve"  # M80: a test carrying it must pass in the mlx-vlm gate
+ PYTEST_NO_ADDOPTS = ("-o", "addopts=")  # M80: the mlx-vlm pytest runs ignore configured addopts ...
+ PYTEST_ENV_DROP = {"PYTEST_ADDOPTS": None, "PYTEST_PLUGINS": None}  # ... and these (None = removed from the environment)
++PUSHED_REF = "refs/remotes/origin/main"       # S25-P10: GitHub's last-pushed `main`, as the source repository records it
++PUSHED_BASE_ENV = "GATE_PUSHED_BASE"          # S25-P10: exported to the stack gate's pytest run
++GATE_BASE_REF = "refs/gate/pushed-base"       # S25-P10: the pushed base fetched into the scratch clone
+ 
+ 
+ class GateError(RuntimeError):
+@@ -186,9 +189,9 @@ def sibling_path(scratch):
+     return Path(scratch).parent / SIBLING
+ 
+ 
+-def steps_for(repo, scratch, parity, audits=None):
++def steps_for(repo, scratch, parity, audits=None, pushed_base=None):
+     """mlx-vlm (M80): `scratch` is the fork clone `<run>/mlx-vlm`; `sibling` / `sibling-sync` (in `<run>/mlx-serve`) always
+-    follow `clone`."""
++    follow `clone`. stack (S25-P10): the pytest step exports `pushed_base` as `GATE_PUSHED_BASE` (None removes it)."""
+     s = Path(scratch)
+     junit = f"--junitxml={s / '.gate-junit.xml'}"
+     if repo == "stack":
+@@ -201,7 +204,8 @@ def steps_for(repo, scratch, parity, audits=None):
+             Step("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s,
+                  check="imports"),
+             Step("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", junit, "bench/tests/"], s / "benchmark",
+-                 env=dict(STACK_WORKDIR=_workdir_or_placeholder(), NLTK_DATA=os.environ.get("NLTK_DATA", ""))),
++                 env={"STACK_WORKDIR": _workdir_or_placeholder(), "NLTK_DATA": os.environ.get("NLTK_DATA", ""),
++                      PUSHED_BASE_ENV: pushed_base}),
+         ]
+     if repo == "mlx-vlm":
+         py = str(s / ".venv" / "bin" / "python")
+@@ -252,6 +256,41 @@ def _git(cwd, *a, check=True):
+     return r.stdout.strip()
+ 
+ 
++def pushed_base(live):
++    """S25-P10: the source repository's `refs/remotes/origin/main` (GitHub's last-pushed `main`); GateError when absent."""
++    sha = _git(live, "rev-parse", "--verify", "--quiet", f"{PUSHED_REF}^{{commit}}", check=False)
++    if not sha:
++        raise GateError(f"no pushed base: {live} has no {PUSHED_REF} (fetch origin first)")
++    return sha
++
++
++def resolve_pushed_base(repo, environ=None):
++    """S25-P10: the base of a "this build" diff — `GATE_PUSHED_BASE` (a full sha, exported by the stack gate), else
++    `refs/remotes/origin/main` of a checkout whose `origin` is the canonical GitHub stack remote. Never the local `main`, which
++    can contain the build. GateError when neither holds or the commit is not in `repo`."""
++    environ = os.environ if environ is None else environ
++    sha = environ.get(PUSHED_BASE_ENV)
++    if sha:
++        if not re.fullmatch(r"[0-9a-f]{40}", sha):
++            raise GateError(f"{PUSHED_BASE_ENV}={sha!r} is not a full commit sha")
++        source = PUSHED_BASE_ENV
++    else:
++        if identity(_git(repo, "remote", "get-url", "origin", check=False)) != "stack":
++            raise GateError(f"no pushed base: {PUSHED_BASE_ENV} is unset and the origin of {repo} is not the canonical stack "
++                            f"remote (a gate clone's origin is the local repository; the stack gate exports {PUSHED_BASE_ENV})")
++        sha, source = pushed_base(repo), PUSHED_REF
++    if _git(repo, "cat-file", "-t", sha, check=False) != "commit":
++        raise GateError(f"pushed base {sha} ({source}) is not a commit in {repo}")
++    return sha
++
++
++def _fetch_pushed_base(scratch, live, base):
++    """S25-P10: the scratch clone holds the pushed base even when only `refs/remotes/origin/main` reaches it."""
++    _git(scratch, "fetch", "--quiet", "--no-tags", str(live), f"+{PUSHED_REF}:{GATE_BASE_REF}")
++    if _git(scratch, "rev-parse", f"{GATE_BASE_REF}^{{commit}}") != base:
++        raise GateError(f"{PUSHED_REF} of {live} moved during the run (want {base})")
++
++
+ def clone_scratch(live, sha, dest):
+     dest = Path(dest)
+     if dest.exists():
+@@ -452,6 +491,7 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
+     if mlx_serve_sha and repo != "mlx-vlm":
+         raise GateError("--mlx-serve-sha pairs an mlx-vlm run only")
+     sha = _git(live, "rev-parse", f"{sha}^{{commit}}")
++    base = pushed_base(live) if repo == "stack" else None   # S25-P10: refused before any step when absent
+     # M80: an mlx-vlm run always pairs — the pin resolves to a commit in `../mlx-serve` or the run is refused before any step
+     paired = pinned_mlx_serve(live, mlx_serve_sha) if repo == "mlx-vlm" else None
+     parity = current_parity(repo, live, sha)
+@@ -468,16 +508,20 @@ def run(repo, sha, *, live, gate_dir, baselines, runner=_real_runner, busy=_real
+                    ("python 3.11 / 3.13 (CI matrix)" if repo == "mlx-serve" else None))
+     if repo == "mlx-vlm":
+         receipt["paired"] = {SIBLING: paired}
++    if repo == "stack":
++        receipt["pushed_base"] = base
+     last = None          # (step name, full output) of the last step that ran — kept on FAIL (M75)
+     junit_bytes = None
+     try:
+-        for step in steps_for(repo, scratch, parity, audits):
++        for step in steps_for(repo, scratch, parity, audits, pushed_base=base):
+             if busy():
+                 receipt["problems"].append(f"box became busy before {step.name}")
+                 break
+             t0 = time.monotonic()
+             if step.name == "clone":
+                 clone_scratch(live, sha, scratch)
++                if base:
++                    _fetch_pushed_base(scratch, live, base)
+                 rc, out = 0, ""
+             elif step.name == "submodules":
+                 _submodules(scratch, live)
+diff --git a/benchmark/bench/tests/test_m64_arm_closure.py b/benchmark/bench/tests/test_m64_arm_closure.py
+index e1b80ae3f..a6b86ce70 100644
+--- a/benchmark/bench/tests/test_m64_arm_closure.py
++++ b/benchmark/bench/tests/test_m64_arm_closure.py
+@@ -5,6 +5,8 @@ from __future__ import annotations
+ import json
+ from pathlib import Path
+ 
++import pytest
++
+ from bench import arm_adapter as aa
+ from bench import arm_opencode as ao
+ from bench import arm_runner
+@@ -45,15 +47,27 @@ def test_the_tg1_probe_closure_holds_the_core_and_excludes_the_forbidden_modules
+     assert not pi_dsh_or_tg2(got), pi_dsh_or_tg2(got)
+ 
+ 
+-def test_the_tg1_carrier_and_plugins_the_arm_wraps_are_unedited_by_this_build():
++CARRIER_AND_PLUGINS = {"benchmark/opencode_bench_v2_web_tg1.json",
++                       *("benchmark/opencode_plugins/" + n for n in ("noretry.js", "toolbounds.js", "datefreeze.js"))}
++
++
++def carrier_edits(repo, base):
++    """The tg1 carrier / plugin files changed between `base` and HEAD (a git error raises, never reads as no change)."""
+     import subprocess
+-    base = subprocess.run(["git", "merge-base", "HEAD", "main"], cwd=REPO, capture_output=True, text=True).stdout.strip()
+-    assert base, "no merge base with main"
+-    changed = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=REPO, capture_output=True,
+-                             text=True).stdout.split()
+-    assert "benchmark/opencode_bench_v2_web_tg1.json" not in changed
+-    kept = {"benchmark/opencode_plugins/" + n for n in ("noretry.js", "toolbounds.js", "datefreeze.js")}
+-    assert not (set(changed) & kept), sorted(set(changed) & kept)
++    changed = subprocess.run(["git", "diff", "--name-only", base, "HEAD"], cwd=repo, capture_output=True, text=True,
++                             check=True).stdout.split()
++    return sorted(set(changed) & CARRIER_AND_PLUGINS)
++
++
++def test_the_tg1_carrier_and_plugins_the_arm_wraps_are_unedited_by_this_build():
++    # S25-P10: "this build" = everything since GitHub's last-pushed `main` (the gate's `GATE_PUSHED_BASE`), never the local
++    # `main`, which can contain the build (a vacuous diff) or be absent (a gate clone of another branch).
++    from bench import local_gate
++    try:
++        base = local_gate.resolve_pushed_base(REPO)
++    except local_gate.GateError as exc:
++        pytest.fail(f"S25-P10: {exc}")
++    assert not carrier_edits(REPO, base), carrier_edits(REPO, base)
+ 
+ 
+ def test_the_m64_oc_probe_closure_is_generation_only():
+diff --git a/benchmark/bench/tests/test_m80_fe_gate_sibling.py b/benchmark/bench/tests/test_m80_fe_gate_sibling.py
+index efc9210a4..87d809922 100644
+--- a/benchmark/bench/tests/test_m80_fe_gate_sibling.py
++++ b/benchmark/bench/tests/test_m80_fe_gate_sibling.py
+@@ -172,7 +172,7 @@ def test_stack_steps_are_unchanged(tmp_path, monkeypatch):
+         ("venv-sync", ["uv", "pip", "sync", "--python", py, "benchmark/requirements-bench.lock"], s, {}, None),
+         ("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s, {}, "imports"),
+         ("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={s / '.gate-junit.xml'}", "bench/tests/"],
+-         s / "benchmark", dict(STACK_WORKDIR="/wd", NLTK_DATA="/nl"), None),
++         s / "benchmark", dict(STACK_WORKDIR="/wd", NLTK_DATA="/nl", GATE_PUSHED_BASE=None), None),  # S25-P10: export key added
+     ]
+ 
+ 
+diff --git a/benchmark/bench/tests/test_m80_impl_gate.py b/benchmark/bench/tests/test_m80_impl_gate.py
+index 4ede785ec..06135dbd2 100644
+--- a/benchmark/bench/tests/test_m80_impl_gate.py
++++ b/benchmark/bench/tests/test_m80_impl_gate.py
+@@ -152,7 +152,7 @@ def _today_stack(s, wd):
+         G.Step("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s,
+                check="imports"),
+         G.Step("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", junit, "bench/tests/"], s / "benchmark",
+-               env=dict(STACK_WORKDIR=wd, NLTK_DATA=os.environ.get("NLTK_DATA", ""))),
++               env=dict(STACK_WORKDIR=wd, NLTK_DATA=os.environ.get("NLTK_DATA", ""), GATE_PUSHED_BASE=None)),  # S25-P10
+     ]
+ 
+ 
+diff --git a/benchmark/bench/tests/test_s25_p10_pushed_base.py b/benchmark/bench/tests/test_s25_p10_pushed_base.py
+new file mode 100644
+index 000000000..4a70d780f
+--- /dev/null
++++ b/benchmark/bench/tests/test_s25_p10_pushed_base.py
+@@ -0,0 +1,185 @@
++"""S25-P10: a "this build" diff names a base that cannot be the build itself — GitHub's last-pushed `main` (the source repo's
++`refs/remotes/origin/main`), recorded in the stack gate's receipt and exported to its pytest run as `GATE_PUSHED_BASE`; never
++the local `main` (a gate from a non-`main` clone has none; a `main` that already contains the build makes the diff vacuous)."""
++import json
++import subprocess
++from pathlib import Path
++
++import pytest
++
++from bench import local_gate as G
++from bench.tests.test_m64_arm_closure import carrier_edits
++
++CANON = "git@github.com:ivan-avramov/mlx_local_stack.git"
++PLUGIN = "benchmark/opencode_plugins/datefreeze.js"
++
++
++def _git(cwd, *a):
++    return subprocess.run(["git", "-C", str(cwd), *a], capture_output=True, text=True, check=True).stdout.strip()
++
++
++def _init(path):
++    path.mkdir(parents=True)
++    _git(path, "init", "-q", "-b", "main")
++    _git(path, "config", "user.email", "t@example.invalid")
++    _git(path, "config", "user.name", "t")
++    _git(path, "config", "core.hooksPath", "/dev/null")
++
++
++def _commit(path, files, msg="c"):
++    for rel, text in files.items():
++        (path / rel).parent.mkdir(parents=True, exist_ok=True)
++        (path / rel).write_text(text)
++    _git(path, "add", "-A")
++    _git(path, "commit", "-q", "-m", msg)
++    return _git(path, "rev-parse", "HEAD")
++
++
++@pytest.fixture
++def stack(tmp_path):
++    """A stack checkout whose pushed `main` (refs/remotes/origin/main) is `base`; local `main` = base + an edit of datefreeze.js."""
++    repo = tmp_path / "ws" / "mlx_local_stack"
++    _init(repo)
++    base = _commit(repo, {PLUGIN: "v1\n", "benchmark/opencode_bench_v2_web_tg1.json": "{}\n"})
++    head = _commit(repo, {PLUGIN: "v2\n"}, "the build edits a plugin")
++    _git(repo, "remote", "add", "origin", CANON)
++    _git(repo, "update-ref", G.PUSHED_REF, base)
++    return dict(repo=repo, base=base, head=head)
++
++
++# ------------------------------------------------------------------ the base
++def test_pushed_base_is_the_source_repos_origin_main(stack):
++    assert G.pushed_base(stack["repo"]) == stack["base"]
++
++
++def test_pushed_base_refuses_without_origin_main(stack):
++    _git(stack["repo"], "update-ref", "-d", G.PUSHED_REF)
++    with pytest.raises(G.GateError, match="no pushed base"):
++        G.pushed_base(stack["repo"])
++
++
++def test_resolve_prefers_the_gate_export(stack):
++    env = {G.PUSHED_BASE_ENV: stack["head"]}
++    assert G.resolve_pushed_base(stack["repo"], env) == stack["head"]
++
++
++def test_resolve_falls_back_to_origin_main_only_on_the_canonical_remote(stack):
++    assert G.resolve_pushed_base(stack["repo"], {}) == stack["base"]
++
++
++def test_a_non_main_clone_without_the_export_refuses_with_a_clear_message(stack, tmp_path):
++    """The S25-P10 failure shape: a gate clone (origin = the local repository) of a branch, no local `main`, no export."""
++    clone = tmp_path / "clone"
++    subprocess.run(["git", "clone", "-q", "--no-checkout", str(stack["repo"]), str(clone)], check=True)
++    _git(clone, "checkout", "-q", "--detach", stack["head"])
++    _git(clone, "branch", "-D", "main")
++    with pytest.raises(G.GateError, match=G.PUSHED_BASE_ENV):
++        G.resolve_pushed_base(clone, {})
++
++
++@pytest.mark.parametrize("value", ["HEAD", "main", "abc123", "z" * 40])
++def test_the_export_must_be_a_full_sha(stack, value):
++    with pytest.raises(G.GateError, match="full commit sha"):
++        G.resolve_pushed_base(stack["repo"], {G.PUSHED_BASE_ENV: value})
++
++
++def test_an_exported_base_absent_from_the_checkout_refuses(stack):
++    with pytest.raises(G.GateError, match="not a commit"):
++        G.resolve_pushed_base(stack["repo"], {G.PUSHED_BASE_ENV: "1" * 40})
++
++
++# ------------------------------------------------------------------ the closure check against that base
++def test_a_build_editing_datefreeze_is_caught_from_a_main_that_contains_it(stack):
++    """The vacuous case: local `main` == HEAD contains the edit; the old merge-base(HEAD, main) diff was empty."""
++    assert _git(stack["repo"], "merge-base", "HEAD", "main") == stack["head"]
++    assert carrier_edits(stack["repo"], G.resolve_pushed_base(stack["repo"], {})) == [PLUGIN]
++
++
++def test_no_edit_since_the_pushed_base_is_clean(stack):
++    assert carrier_edits(stack["repo"], stack["head"]) == []
++
++
++def test_carrier_edits_fails_closed_on_a_git_error(stack):
++    with pytest.raises(subprocess.CalledProcessError):
++        carrier_edits(stack["repo"], "1" * 40)
++
++
++# ------------------------------------------------------------------ the gate records and exports it
++def test_the_stack_pytest_step_exports_the_pushed_base(tmp_path):
++    step = G.steps_for("stack", tmp_path / "s", parity=None, pushed_base="b" * 40)[-1]
++    assert step.name == "pytest" and step.env[G.PUSHED_BASE_ENV] == "b" * 40
++
++
++def test_without_a_base_the_export_is_removed_not_inherited(tmp_path):
++    step = G.steps_for("stack", tmp_path / "s", parity=None)[-1]
++    assert G.PUSHED_BASE_ENV in step.env and step.env[G.PUSHED_BASE_ENV] is None
++
++
++def _gitlink(repo, path, sha):
++    _git(repo, "update-index", "--add", "--cacheinfo", f"160000,{sha},{path}")
++
++
++@pytest.fixture
++def live(tmp_path):
++    ws = tmp_path / "ws"
++    links = {}
++    for name in ("mlx-vlm", "mlx-serve"):
++        _init(ws / name)
++        links[name] = _commit(ws / name, {"x.txt": name})
++    repo = ws / "mlx_local_stack"
++    _init(repo)
++    _commit(repo, {"a.txt": "a\n"})
++    base_tree_commit = _git(repo, "rev-parse", "HEAD")
++    _gitlink(repo, "src/mlx-vlm", links["mlx-vlm"])
++    _gitlink(repo, "src/mlx-serve", links["mlx-serve"])
++    _git(repo, "commit", "-q", "-m", "gitlinks")
++    _git(repo, "remote", "add", "origin", CANON)
++    # the pushed base is reachable ONLY from refs/remotes/origin/main (e.g. after a local history rewrite)
++    _git(repo, "checkout", "-q", "-b", "old", base_tree_commit)
++    pushed = _commit(repo, {"old.txt": "pre-rewrite\n"}, "pushed, later rewritten locally")
++    _git(repo, "checkout", "-q", "main")
++    _git(repo, "branch", "-D", "old")
++    _git(repo, "update-ref", G.PUSHED_REF, pushed)
++    baselines = tmp_path / "baselines"
++    baselines.mkdir()
++    (baselines / "stack.skips.txt").write_text("")
++    return dict(repo=repo, sha=_git(repo, "rev-parse", "HEAD"), pushed=pushed, gate=tmp_path / "gate", baselines=baselines)
++
++
++class EnvRunner:
++    def __init__(self):
++        self.pytest_env, self.base_in_scratch = None, None
++
++    def __call__(self, argv, cwd, env):
++        name = " ".join(argv)
++        if "import mlx_vlm, mlx_serve" in name:
++            return 0, f"{cwd}/src/mlx-vlm/mlx_vlm/__init__.py {cwd}/src/mlx-serve/src/mlx_serve/__init__.py"
++        if "--junitxml" in name:
++            self.pytest_env = dict(env)
++            base = env.get(G.PUSHED_BASE_ENV)
++            self.base_in_scratch = subprocess.run(["git", "-C", str(Path(cwd).parent), "cat-file", "-t", str(base)],
++                                                  capture_output=True, text=True).stdout.strip()
++            xml = next(a.split("=", 1)[1] for a in argv if a.startswith("--junitxml="))
++            Path(xml).write_text("<testsuites><testsuite></testsuite></testsuites>")
++        return 0, ""
++
++
++def _run(live, runner):
++    return G.run("stack", live["sha"], live=live["repo"], gate_dir=live["gate"], baselines=live["baselines"], runner=runner,
++                 busy=lambda: [], dirty=lambda s, n: False, artifacts=lambda d: True)
++
++
++def test_a_stack_run_records_the_pushed_base_and_exports_it_present_in_the_scratch(live):
++    r = EnvRunner()
++    doc = json.loads(Path(_run(live, r)).read_text())
++    assert doc["verdict"] == "PASS", doc["problems"]
++    assert doc["pushed_base"] == live["pushed"]
++    assert r.pytest_env[G.PUSHED_BASE_ENV] == live["pushed"]
++    assert r.base_in_scratch == "commit"
++
++
++def test_a_stack_run_without_a_pushed_base_refuses_before_any_step(live):
++    _git(live["repo"], "update-ref", "-d", G.PUSHED_REF)
++    with pytest.raises(G.GateError, match="no pushed base"):
++        _run(live, EnvRunner())
++    assert not (live["gate"] / "scratch").exists() or not list((live["gate"] / "scratch").glob("*"))

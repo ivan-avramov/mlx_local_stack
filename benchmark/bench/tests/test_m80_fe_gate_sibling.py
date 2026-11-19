@@ -172,7 +172,7 @@ def test_stack_steps_are_unchanged(tmp_path, monkeypatch):
         ("venv-sync", ["uv", "pip", "sync", "--python", py, "benchmark/requirements-bench.lock"], s, {}, None),
         ("imports", [py, "-c", "import mlx_vlm, mlx_serve; print(mlx_vlm.__file__, mlx_serve.__file__)"], s, {}, "imports"),
         ("pytest", [py, "-m", "pytest", "-q", "-p", "no:cacheprovider", f"--junitxml={s / '.gate-junit.xml'}", "bench/tests/"],
-         s / "benchmark", dict(STACK_WORKDIR="/wd", NLTK_DATA="/nl"), None),
+         s / "benchmark", dict(STACK_WORKDIR="/wd", NLTK_DATA="/nl", GATE_PUSHED_BASE=None, PYTEST_ADDOPTS=None, PYTEST_PLUGINS=None), None),  # S25-P10
     ]
 
 
