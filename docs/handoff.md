@@ -1,11 +1,11 @@
-# Handoff — 2026-11-19 (session 26 → 27: stage 3a COMPLETE (A1 / A5 / A7 PASS, panel PARTIAL, no flag); S26 agent-env change merged; tg2 next)
+# Handoff — 2026-11-19 (session 27 in progress: S25-P10 fixed (S27-P1); stack gate of `c34976a03` running; tg2 arms `m76-g2-*` built)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C363, S26-P19 …
 S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
 wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
 C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
 
-Decisions: session 26 ruled C359–C363 (next **C364**); discussion ids restart at `S27-P1`.
+Decisions: session 26 ruled C359–C363 (next **C364**). Session 27 ids used: S27-P1 (done), S27-P2 (OPEN, push binding); next S27-P3.
 
 ## Goal
 
@@ -15,7 +15,9 @@ ship recommendation to the operator.
 
 ## FIRST
 
-1. Not pushed: `main` is ~44 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
+0. Session 27 (live): stack gate of `c34976a03` launched 2026-11-19 ~00:00 (PID 19644, log `$STACK_WORKDIR/gate/s27-c34976a0.log`,
+   ~1 h 45 min); no GPU work while it runs. Operator asked (still open): proceed on recs through the tg2 chain? S27-P2?
+1. Not pushed: `main` is ~46 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
    top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
 2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
 
@@ -33,28 +35,28 @@ ship recommendation to the operator.
 
 ## Next, in order
 
-1. Stack gate on the new `main` (full suite). S25-P10 is still open: fix it first (small fail-closed fix, test first, one cold read), or
-   gate from a `main` checkout that does NOT yet contain the build.
-2. tg2 arms rebuilt at the gated `main` sha: N16 = that sha, X = + the X registry commit (cherry-pick `d4c44a9d`). Build every venv as the
-   s3 arms (`uv sync --frozen`; `.venv-bench` from `benchmark/requirements-bench.lock`; `src/mlx-vlm/.venv` by `p475_kv._ensure_fork_venv`'s
-   recipe) and CHECK with the gate's inventory digest within the pair (S26-P10: opencv's `cv2` lands order-dependently — reinstall
-   `opencv-python-headless` if the digests differ). Old tg2 arms `m76-g-*` are superseded (remove after the new ones work).
+1. Stack gate of `c34976a03` (S27-P1 = S25-P10 fixed; running, see 0). FAIL → read the receipt's failing step, root-cause.
+2. DONE (session 27): tg2 arms `m76-g2-n16` (`c34976a03`) / `m76-g2-x` (`1b7833b6` = + cherry-pick `d4c44a9d`), venvs by
+   `p475_kv._ensure_venvs`; X's `.venv-bench` got the wrong `cv2` again (S26-P10), fixed by reinstalling `opencv-python-headless==4.13.0.92`;
+   pair inventory digests equal (`.venv` 8f21180f, `.venv-bench` b7e5d411, fork venv 370cbc5f; = the `m76-w2-*` arms). Both clean.
 3. tg2 positives (`p426_wave2 positives --corpus tg2 --lever kv`, out `<out-base>/run/positives.json`, record the frozen prompt date) under the
    new rule; rehearsal (`p426_freeze rehearsal --corpus tg2` → `p426_wave2 rehearsal --corpus tg2`, out-base under
    `$STACK_WORKDIR/m76/p426/rehearsal.tg2/`, `--main-root` a scratch clone, P576), v8 (`--corpus tg2 --positives …`), the pilot pair
    (`p426_wave2 run --corpus tg2 --through tg2-m76-x-pilot`), the sizing report vs both budgets (S24-P9) → the stage-3b Go to the operator.
 4. Beside the decider (no pytest during legs): the B4b-2 spec + design review (`docs/specs/m76-b4b2-a8-consumers.md`, to write; carry L9:
    every new tg2 consumer passes `grader="tg2"`; L16 `row_scores.py`). The KV vision rubric fix (S26-P19) before any next KV panel.
-5. Small fail-closed fixes still owed: S25-P10; the PII hook learning the username pattern from the machine config (C357).
+5. Small fail-closed fixes still owed: the PII hook learning the username pattern from the machine config (C357). S27-P2 (push-time
+   binding of the receipt's `pushed_base`, rec B content binding) rides with the next gated code change if the operator agrees.
 
 ## Worktrees and scratch (each: resolution)
 
 - `m76-w2-{n16,x}`: Wave 2 tg1 arms — outputs harvested (`benchmark/results/m76/wave2/`, evidence `8b45058f`); keep until stage 4 decides
   whether X legs are reused. `m76-q-{n16,x}` (Wave 1) and `m76-f45-*` (stages 1–4): keep until the stage 4 harvest.
-- `m76-g-{n16,x}`: superseded tg2 arms (pre-S26 code) — remove after next item 2.
-- `fe-s26-impl`, `fe-s26-tw`, `fe-s26-base`, `s26-review`, `s26-p9-guard`: four-eyes copies; reports harvested in
-  `docs/reviews/s26-agent-env/` (suite / frozen summary lines are in the test-writer reports); remove them.
-- `evidence-pub`: worktree of the local `evidence` branch (commit `8b45058f` made there) — remove (`git worktree remove`); the branch keeps it.
+- `m76-g2-{n16,x}`: tg2 arms for stage 3b (session 27) — keep through the A8 harvest.
+- `m76-g-{n16,x}`: superseded tg2 arms (pre-S26 code) — remove once the `m76-g2-*` positives run works.
+- Session 27 removed (harvested / merged): `fe-s26-*`, `s26-review`, `s26-p9-guard` (+ its merged branch), `evidence-pub`.
+- Scratch: `$STACK_WORKDIR/review/s25-p10/` (cold-read clone; harvested to `docs/reviews/s25-p10/`) — remove. `gate/scratch/stack-67908a4b33eb-*`
+  (2026-11-14, an unfinished gate run; regenerable) — remove.
 - Scratch (keep): superseded first-pass Claude verdicts `m76/panel-claude-order2-first-pass/`, `panel-claude-order2-second-pass-A2/`
   (S26-P18), `m76/panel-strays/`, the archived real `~/.gradle` `archive/s26-dot-gradle-20261117/`, `m76/p426/tg2/attempt1-FAIL/`.
 
