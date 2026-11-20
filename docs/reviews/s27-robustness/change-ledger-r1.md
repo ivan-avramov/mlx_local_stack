@@ -31,3 +31,20 @@ not the member's mechanism.
 | X20 | The javascript lock omission rests on an unproven premise (Sonnet P11) | declined | the tg2 javascript grader runs the pre-installed jest (`tg2_grade.py:44`, `/opt/tg2/js/node_modules`), never an install, so a lock in the final tree is inert; C368 (1) settled. |
 | X21 | §3.2 "as today": a denied read on a session-claimed process is killed-and-verified instead of uncertain (test-writer) | declined | meets the intent better (an owned process is gone, verified); uncertain only when not verified gone. |
 | X22 | Reused session id after a long pause could hit a reused pid's session (test-writer) | merged into X10 | the probe-start bound covers it. |
+
+## Fix round 1 outcome (fresh Claude Opus session `3a24a19a…`, 2026-11-20)
+
+- X1–X4, X6–X19 fixed with red tests (`test_s27_impl_r1fix.py` and the impl files). X19 cause: a C157 fixture re-wrapped
+  `ProcessGuard.__init__` via `monkeypatch`, whose late undo re-installed the conftest's hermetic wrapper for the rest of the run
+  (the family scan then missed the p585 / rapid-fork cases); removed with X17, regression test added.
+- **X5 corrected by the designer: not a defect.** Candidate 1 already resets the stage at each item start
+  (`ctx.update(id=item, stage="ready")`, `arm_runner.py:1367`); the designer's trace grepped `ctx["stage"]` only and missed it.
+  Kept: a boundary reset (`ctx.update(id=None, stage=None)`) as hardening, and its real-probe test.
+- Frozen-test conflicts (7), judged: X3 → the frozen interim test is re-staged so the fault lands while the client still runs
+  (keeps §10.1's "interim fault → one rerun"), and the X3 scenario added; X6 → the fixture's grader fault becomes the typed
+  `GraderInfraError` (text matching is what X6 removes); X9 → the D1 fixture row carries `last_step_start` = the real step id from
+  the recorded events (`msg_1f6b55ed0001…`), which the new probe records; the test models the new identity's row. Amended by the
+  test-writer (delivery 3).
+- Clarification within X18 / X6 (same session): the two `test_b2_frozen_s0_support` pins that §4.5 / §3.5 change (`run_inject.py`
+  sha, the schema-2 cleanup keys) are updated with their clause; `structured_grade.parse_go` brought into X6's scope so tg1 Go
+  docker faults are typed too (stage 4 may rerun tg1 legs).
