@@ -1,12 +1,12 @@
-# Handoff — 2026-11-20 (session 28: the S27 robustness bundle in four-eyes build — candidate 2 under test / review r2; then the gate)
+# Handoff — 2026-11-20 (session 28: the S27 robustness bundle built (four-eyes strict, 3 review rounds, 3 fix rounds); regate of `s27-bundle` @ `72e5626a5` running; then Accept)
 
 THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C375,
 S28-P7, S28-P5, S28-P4, C374 … C364). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance:
 guardrails prevent wrong data or wasted time, not ceremony; GPU time is the binding resource; run-time calls are the designer's
 (C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Session 28 holds run-time autonomy for the post-gate tg2
-chain (C374) — session 28 only; ask again. Label points `S28-P<n>` (used: P1–P8).
+chain (C374) — session 28 only; ask again. Label points `S28-P<n>` (used: P1–P11).
 
-Decisions: session 28 ruled C374, C375 (next **C376**).
+Decisions: session 28 ruled C374–C377 (next **C378**).
 
 ## Goal
 
@@ -27,13 +27,14 @@ recommendation.
 
 ## Next, in order
 
-1. **Finish the S27 bundle (four-eyes STRICT, spec v1.4)** — round 1 ledger `docs/reviews/s27-robustness/change-ledger-r1.md`
-   (X1–X22; fix round 1 done). In flight at handoff: test-writer delivery 3 (amend the 7 frozen-test conflicts as ruled, tests per
-   adopted finding) and panel verify r2 of 3 on `fix-1.patch`. Then judge; at most one more fix round (r3 is the last review round).
-2. **Gate = the four-eyes suite check (S28-P8):** commit the final candidate to local branch `s27-bundle`, run
-   `local_gate.run --repo stack --sha <commit>` (≈ 3 h 40 min); compare against the baseline full run of this layout
-   (`fe-s27/out/base-suite.txt`: 15162 passed / 6 env-only failures) and the last gate PASS (`9abef6a6`). Then Accept → operator
-   (list the widened cases: C375 (approved), S28-P7 (L1)), fast-forward `main`, push on the operator's word.
+1. **S27 bundle — regate running** on local branch `s27-bundle` @ `72e5626a5` (worktree `$STACK_WORKDIR/worktrees/s27-bundle`;
+   log `$STACK_WORKDIR/gate-logs/stack-72e5626a.log`). First gate (`f55c4dc1b`) FAILED 2 / 16027 on spec-changed pins (S28-P11),
+   fixed. Ledgers r1–r3 (`docs/reviews/s27-robustness/change-ledger-r{1,2,3}.md`), C376 / C377 fix rounds; frozen tests v5
+   (299), both helpers "merge". Residual to state at Accept: Z2b (a session that empties, pid reused as a new leader which spawns
+   and exits, all before the chain scan → its children claimed; needs pid reuse in seconds) plus Y7, Y8, C1 alias, C5 pause.
+2. **On gate PASS → Accept to the operator** (final diff, findings with dispositions, widened cases C375 / S28-P7), then
+   fast-forward `main` to the gated commit (no second gate: same sha); push on the operator's word; remove the worktree and
+   branch, harvest `fe-s27/` remains (briefs / reports are already in `docs/reviews/s27-robustness/four-eyes/`) and remove it.
 3. **B4b-2** (A8 consumers, spec v1.4) — after or with the bundle; reads `accounting_fault`, `cleanup_status`, rerun attempts,
    harness DNFs.
 4. **tg2 chain from the gate (C374 autonomy):** rebuild arms on the gated sha (`p475_kv._ensure_venvs`; inventory digest;
@@ -70,6 +71,7 @@ recommendation.
 - Four-eyes copies need the submodules and `.venv-bench` (else hundreds of tests mask); `claude -p` JSON `result` holds only the
   last message — have helpers write their report to a file.
 - The gate is the suite check; no separate candidate full run (S28-P8).
+- Four-eyes copies: link the polyglot corpus into the redirected `STACK_WORKDIR` and put OrbStack's docker on the helpers' PATH; compare the copy's skip count with the gate's before gating (S28-P11).
 - When verifying a reviewer's claim by grep, search every write form (`ctx[...] =` and `ctx.update(...)`) before adopting (X5).
 
 ## Rules learned (sessions 18–27, condensed; full text in git history of this file)
