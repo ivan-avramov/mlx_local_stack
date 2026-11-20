@@ -16,8 +16,9 @@ POLICY = dict(
     thinking_budget=81920,
     max_tokens=102400,
 )
-# C147 §3: a cooperative runner cancel is reconciled exactly like a gate stop but is never a nonconv kind.
-KILL_OUTCOMES = ("looping", "hard_ceiling", "stalled", "exec_timeout", "client_resource", "runner_cancel")
+# C147 §3: a cooperative runner cancel is reconciled exactly like a gate stop but is never a nonconv kind. S27 §4.5 (C373):
+# `interrupt` is the deterministic interrupt positive's harness-issued stop (positives runs only; never a nonconv kind).
+KILL_OUTCOMES = ("looping", "hard_ceiling", "stalled", "exec_timeout", "client_resource", "runner_cancel", "interrupt")
 PRECEDENCE = (
     "looping",
     "hard_ceiling",
@@ -45,6 +46,36 @@ COMPACTION_FAILED_ERROR = {"type": "compaction.failed", "message": "Compaction s
 
 class TransportAbort(RuntimeError):
     """Evidence or infrastructure cannot support a scored row."""
+
+
+class GraderInfraError(TransportAbort):
+    """S27 §5.1 (X6): a grader INFRASTRUCTURE fault of the closed list, raised only where the harness's own grader-path
+    operation fails — `kind`: `spawn` (a container / its storage did not start), `transport` (docker daemon / CLI / socket
+    loss), `image` (the pinned image is unavailable), `connection` (a grader-path connection loss). Never derived from text a
+    grade embeds (agent output). A grader timeout, mem_kill, OOM or tamper result is the item's OUTCOME, never this."""
+    KINDS = ("spawn", "transport", "image", "connection")
+
+    def __init__(self, message, *, kind):
+        if kind not in self.KINDS:
+            raise ValueError(f"grader infrastructure kind {kind!r} is not on the closed list {self.KINDS}")
+        super().__init__(message)
+        self.kind = kind
+
+
+class GraderInfraAbort(TransportAbort):
+    """S27 §5.1 / §5.8: a grader infrastructure fault that ends the probe (`stage`: `generation` for an interim grade, `final_grade`
+    once the in-probe regrades are exhausted). The abort stamp's cause is `grader_infra`."""
+
+    def __init__(self, message, *, stage, faults=()):
+        super().__init__(message)
+        self.stage = stage
+        self.faults = list(faults)
+
+
+def grader_infra_fault(exc) -> bool:
+    """True when `exc` is a grader infrastructure fault typed at its source (`GraderInfraError`, or the probe-ending
+    `GraderInfraAbort`); the message text is never consulted (X6)."""
+    return isinstance(exc, (GraderInfraError, GraderInfraAbort))
 
 
 def usage_tuple(tokens):
@@ -273,6 +304,8 @@ class EventStream:
         self.offset = 0                # file offset of the first byte of `buffer`
         self.current_offset = None     # file offset of the line being accepted
         self.signal_offset = None      # events-file size when the probe signalled the client; None = never
+        self.step_end_offsets = []     # S27 §4.1: the events-file END offset of each accepted step_finish line, in order
+        self.step_start_offsets = []   # S27 X2: the events-file END offset of each accepted step_start line, in order
         self.base_url = None           # this run's provider base URL (the one registered message suffix)
         # (request index, part id, tool name, shell command text) in live completion order (C147 linkage).
         self.tool_events = []
@@ -350,6 +383,7 @@ class EventStream:
                 raise TransportAbort("reused message id")
             self.active = mid
             self.starts.append(mid)
+            self.step_start_offsets.append(self.offset if self.current_offset is not None else None)
             self.started_at = time.monotonic()
             return
         if mid != self.active:
@@ -368,6 +402,7 @@ class EventStream:
         if kind == "step_finish":
             usage_tuple(part.get("tokens"))
             self.gate.complete(mid, part.get("tokens"), check=False)
+            self.step_end_offsets.append(self.offset if self.current_offset is not None else None)
             if self.on_complete:
                 self.on_complete(len(self.gate.request_usage))
             self.gate.check()

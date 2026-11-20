@@ -49,7 +49,8 @@ FROZEN_RUNNERS = {
     "benchmark/chains/m61/run_m61_rr.py": "fc5efff58d954060acb3c8e89c03e23da58d71f89b77728b645854b473fbfc5c",
     "benchmark/chains/m62/run_m62_live.py": "6af02c0529b69594f4cc263f8b38713672d11aa4063ee47b2a8ceb23bd2afecd",
     "benchmark/chains/m64/run_m64_chain.py": "d1b39a425c0a28ed39ff5a1bf426a9cedce35525bb55688e244266390d213c88",
-    "benchmark/chains/c147/run_inject.py": "6e13965026241e0516537c418ef068dfbdf39b8e5360eb3ac619918b7200f90d",
+    # S27 §4.5 (the tg1 interrupt positive on the shared cancel path) / §9 (identity rotation): the candidate's bytes
+    "benchmark/chains/c147/run_inject.py": "3d27a1ccf53fe6c592fdf1eb11dc5b99be3adadd60f33425e85f320c408d3141",
 }
 # rebase-amendment P520 (S′): the base is stack main 61d31bcd (T3 merged); before: src/mlx-vlm c9543fc4bcd3111b738ba7a29ca772c2c6366817,
 # src/mlx-serve 86921f029d7e55b4d8b5882f2c05ed5e2ce31ef0 (S)
@@ -594,9 +595,12 @@ def probe_main(argv):
         served = [list(u) for u in usage]
         if name in skew:                                  # the server logged one more generated token than the client saw
             served[-1][1] += 1
+        # S27 §5.9 (X18): an INTEGRITY mismatch at `done` — the server logged the item's requests under another session
+        # (`session_backend`); a token skew alone is now the item's accounting fault (§5.3, the outcome kept)
+        logged = "ses_" + "f" * 26 if name in foreign_session else session
         if log:
             with open(log, "a") as f:
-                f.write("".join(ln + "\n" for ln in item_window(session, served, draft=draft, start=10 * k)))
+                f.write("".join(ln + "\n" for ln in item_window(logged, served, draft=draft, start=10 * k)))
         account(served)
         return session, usage
 
@@ -634,6 +638,7 @@ def probe_main(argv):
         return 1
 
     skew = set(filter(None, env.get("B2_SKEW_ITEMS", "").split(",")))
+    foreign_session = set(filter(None, env.get("B2_FOREIGN_SESSION_ITEMS", "").split(",")))
     aborts = json.loads(env.get("B2_ABORTS") or "{}")
     for k, name in enumerate(names):
         item = f"{a.lang}/{name}"

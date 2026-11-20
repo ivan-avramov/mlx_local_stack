@@ -679,10 +679,56 @@ def push_level(repo, repo_dir, remote, local_ref, local_sha, remote_ref, *, gate
         name = pass_receipt(gate_dir, repo, local_sha, digest_for(repo, local_sha))
     except Exception as exc:  # v1.4: any failure computing the digest refuses this ref only
         return "full", "", [f"REFUSED: {repo} {local_sha[:8]}: cannot compute the policy digest ({type(exc).__name__}: {exc})"]
+    if name and repo == "stack":
+        # S27 §12 (C371 (2), option B): the gate's closure proof holds only while the protected files are unchanged between the
+        # receipt's `pushed_base` and the fetched `<remote>/main` (any ref at level full; `check` has fetched by now)
+        problems = push_binding_problems(repo_dir, remote, Path(gate_dir) / name, local_sha)
+        if problems:
+            return "full", "", problems
     if name:
         return "full", name, []
     return "full", "", [f"REFUSED: {repo} {local_sha[:8]}: no PASS gate receipt for a code push (level full required; "
                         f"run: bench.local_gate run --repo {repo} --sha {local_sha})"]
+
+
+def __getattr__(name):
+    if name == "PROTECTED_PUSH_PATHS":            # S27 §12: the imported constant, resolved lazily (no client import at load)
+        return protected_push_paths()
+    raise AttributeError(name)
+
+
+def protected_push_paths():
+    """S27 §12: `PROTECTED_PUSH_PATHS` — the tg1 carrier and the three plugins (`arm_specs.OC.generation_data`, the existing
+    four-file constant; a test pins its equality with the closure test's paths)."""
+    from bench import arm_specs
+    return tuple(arm_specs.OC.generation_data)
+
+
+def push_binding_problems(repo_dir, remote, receipt_path, sha):
+    """S27 §12: [] when the PASS receipt DOCUMENT carries a `pushed_base` that exists in the repo and
+    `git diff --no-renames --name-only <pushed_base> <remote>/main -- <PROTECTED_PUSH_PATHS>` succeeds and is empty; else the
+    refusal (any git error refuses), with a regate hint."""
+    hint = f"(regate against the current {remote}/main: bench.local_gate run --repo stack --sha {sha})"
+    try:
+        doc = json.loads(Path(receipt_path).read_text())
+    except (OSError, ValueError) as exc:
+        return [f"REFUSED: stack {sha[:8]}: the PASS receipt {Path(receipt_path).name} is unreadable ({type(exc).__name__}) {hint}"]
+    base = doc.get("pushed_base") if isinstance(doc, dict) else None
+    if not (isinstance(base, str) and re.fullmatch(r"[0-9a-f]{40}", base)):
+        return [f"REFUSED: stack {sha[:8]}: the PASS receipt carries no pushed_base (the protected-path binding cannot be "
+                f"checked) {hint}"]
+    exists = subprocess.run(["git", "-C", str(repo_dir), "cat-file", "-e", f"{base}^{{commit}}"], capture_output=True)
+    if exists.returncode:
+        return [f"REFUSED: stack {sha[:8]}: the receipt's pushed_base {base[:12]} is not a commit of this repository {hint}"]
+    diff = subprocess.run(["git", "-C", str(repo_dir), "diff", "--no-renames", "--name-only", base, f"{remote}/main", "--",
+                           *protected_push_paths()], capture_output=True, text=True)
+    if diff.returncode:
+        return [f"REFUSED: stack {sha[:8]}: git diff of the protected paths failed ({diff.stderr.strip()[:200]}) {hint}"]
+    moved = [p for p in diff.stdout.splitlines() if p.strip()]
+    if moved:
+        return [f"REFUSED: stack {sha[:8]}: {remote}/main changed protected file(s) {moved} since the gate's pushed_base "
+                f"{base[:12]}: the closure proof no longer describes this push {hint}"]
+    return []
 
 
 def introduced(repo_dir, remote, sha, exclude_evidence=False):

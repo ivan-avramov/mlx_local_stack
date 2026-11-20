@@ -249,16 +249,20 @@ class DeniedOrderFake(FakeProcess):
         raise psutil.AccessDenied(self.pid)
 
 
-def test_unreadable_order_for_an_eligible_process_makes_cleanup_uncertain(tmp_path):
+def test_unreadable_order_for_an_eligible_process_makes_cleanup_uncertain(tmp_path, monkeypatch):
+    """S27 §3.2 (changed rule): a denied start-order read on a process (a) / (b) do not claim is `foreign_new` with
+    `unreadable: true`, never `uncertain`; it is not killed."""
+    real = os.getsid
+    monkeypatch.setattr(proc_guard.os, "getsid", lambda pid: 1 if pid == 99702 else real(pid))
     client = OrderedFake(99701, order=1100, created=110)
     stranger = DeniedOrderFake(99702, ppid=1, created=111)
     g = fake_guard(tmp_path, [client, stranger])
     g.started, g.started_order = 100, 1000
     g.register(client, "client")
-    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*99702"):
-        g.cleanup()
+    g.cleanup()
     st = g.status()
-    assert st["uncertain"] is True and st["completed"] is True and not stranger.dead
+    assert st["uncertain"] is False and st["completed"] is True and not stranger.dead
+    assert [e for e in st["foreign_new"] if e["pid"] == 99702 and e["unreadable"] is True]
 
 
 @darwin
@@ -367,7 +371,7 @@ def test_identity_read_failure_in_cleanup_publishes_uncertain(tmp_path):
     g.started, g.started_order = 100, 1000
     g.register(client, "client")
     client.broken = True
-    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*identity unreadable"):
+    with pytest.raises(TransportAbort, match=r"cleanup uncertain.*99951"):      # S27 §3.2: a claimed (tracked) process
         g.cleanup()
     st = g.status()
     assert st["completed"] is True and st["uncertain"] is True

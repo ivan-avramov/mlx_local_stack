@@ -12,7 +12,8 @@ from .tg1_runner import TG1_EVIDENCE, TG1_P426_EVIDENCE
 SCAFFOLD = ao.TG2_LABEL
 CARRIER = ao.TG2_CARRIER
 GENERATION_DATA = ao.TG2_GENERATION_DATA
-TG2_POLICY = rc.PolicyTemplate(config_id="tg2", langs=("rust", "javascript", "java", "cpp"))
+TG2_POLICY = rc.PolicyTemplate(config_id="tg2", langs=("rust", "javascript", "java", "cpp"),
+                               inject_allowed=rc.ALL_INJECT_KINDS)        # S27 §4.5: + the deterministic interrupt positive
 TG2_EVIDENCE = TG1_EVIDENCE
 TG2_P426_EVIDENCE = TG1_P426_EVIDENCE           # B2 spec 2: the item barrier on (the chain answers it)
 

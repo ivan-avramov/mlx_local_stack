@@ -556,9 +556,15 @@ def test_fix_the_done_hook_invalidates_a_server_count_that_differs_from_the_clie
     served[0][1] += 2
     h, env, slot, rp, d = _ready_then_done(tmp_path, monkeypatch, served=served)
     try:
-        assert d.kind == "invalidate" and d.reason
+        # S27 §5.3 / §5.9 (C372, changed rule): a pairing failure on an item with an outcome is a POST-outcome accounting
+        # fault — the outcome is kept (no invalidation, no rerun), the sealed sidecar names the failed checks; the item
+        # record still says `invalid` (the count mismatch is never accepted as reconciled)
+        assert d.kind == "accounting_fault" and d.reason
         doc = json.loads((Path(env["out"]) / "items" / (cr.slot_file(slot) + ".json")).read_text())
         assert doc["verdict"] == "invalid" and not all(c["ok"] for c in doc["checks"].values())
+        assert doc["fault_class"] == "accounting" and doc["checks"]["pairing"]["ok"] is False
+        side = json.loads((Path(env["out"]) / "items" / (cr.slot_file(slot) + ".accounting.json")).read_text())
+        assert side["item_record_sha256"] == doc["sha256"] and "pairing" in side["failed_checks"]
     finally:
         env["ops"].cancel()
 

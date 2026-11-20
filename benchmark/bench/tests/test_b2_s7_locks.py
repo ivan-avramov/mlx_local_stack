@@ -397,7 +397,9 @@ def test_a_chain_does_not_refuse_under_a_held_sequencer_lock(tmp_path, monkeypat
 
 
 def test_the_lock_is_released_when_the_leg_fails(tmp_path, monkeypatch):
-    rc, env = leg(tmp_path, monkeypatch, probe_env={"B2_SKEW_ITEMS": S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[1]})
+    # S27 §5.9 (X18): an integrity mismatch at done (a token skew alone is now an accounting fault, the outcome kept)
+    rc, env = leg(tmp_path, monkeypatch,
+                  probe_env={"B2_FOREIGN_SESSION_ITEMS": S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[1]})
     assert rc == 2 and not flocked(tmp_path / LEG) and not flocked(tmp_path / ARB)
 
 

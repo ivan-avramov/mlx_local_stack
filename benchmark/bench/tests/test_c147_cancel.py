@@ -71,14 +71,14 @@ def test_cleanup_status_clean_and_uncertain(tmp_path):
     assert g.status()["uncertain"] is True and g.status()["completed"] is False
     g.register(p, "client")
     g.cleanup()
-    assert g.status() == dict(survivors=[], containers_remaining=[], uncertain=False,
-                              orphans_unattributed=[], unknown=[], completed=True)
+    assert g.status() == dict(schema=2, survivors=[], containers_remaining=[], uncertain=False,     # S27 §3.5: schema 2
+                              orphans_unattributed=[], unknown=[], completed=True, foreign_new=[], foreign_new_count=0,
+                              unreadable_count=0)
     q = Process(21, cwd=str(tmp_path / "work"), argv=["x"])
     h = guard(tmp_path, [q])
-    with pytest.raises(TransportAbort, match="uncertain"):
-        h.cleanup()
+    h.cleanup()                       # S27 §3.2 (changed rule): a path-only match is `foreign_new`, never uncertain
     s = h.status()
-    assert s["uncertain"] and s["orphans_unattributed"][0]["pid"] == 21
+    assert s["uncertain"] is False and [(e["pid"], e["path_match"]) for e in s["foreign_new"]] == [(21, True)]
 
 
 def test_cleanup_status_records_remaining_container(tmp_path, monkeypatch):
@@ -445,9 +445,8 @@ def test_cleanup_records_untracked_access_denied_and_marks_tracked_uncertain(tmp
 
     stranger = Denied(40, argv=["x"])
     g = guard(tmp_path, [stranger])
-    with pytest.raises(TransportAbort, match="uncertain.*40"):     # G1 round 4 P12: an eligible same-uid process whose
-        g.cleanup()                                                # cwd/cmdline is denied is an unreadable obligation
-    assert g.status()["uncertain"] is True
+    g.cleanup()                       # S27 §3.2 (changed rule): unclaimed + a denied read -> `foreign_new` unreadable
+    assert g.status()["uncertain"] is False and [e["unreadable"] for e in g.status()["foreign_new"]] == [True]
 
     owned = Opaque(41)
     owned.kill = lambda: None                    # never dies and cannot be inspected
@@ -455,8 +454,8 @@ def test_cleanup_records_untracked_access_denied_and_marks_tracked_uncertain(tmp
     h.tracked[(41, 10)] = "model"
     with pytest.raises(TransportAbort, match="uncertain.*41"):
         h.cleanup()
-    s = h.status()
-    assert s["uncertain"] is True and [o["pid"] for o in s["orphans_unattributed"]] == [41]
+    s = h.status()                    # S27 §3.5: the uncertainty records are `uncertain_records`
+    assert s["uncertain"] is True and 41 in [o["pid"] for o in s["uncertain_records"]]
 
 
 @pytest.mark.parametrize("denied", ["uids", "status", "create_time"])

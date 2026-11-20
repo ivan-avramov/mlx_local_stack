@@ -18,6 +18,8 @@ sys.path.insert(0, str(REPO / "benchmark"))
 from bench import opencode_v2_core as _core
 from bench import tg1_runner
 
+_INJECT_KINDS = tg1_runner.rc.ALL_INJECT_KINDS      # S27 X1: the one shared kind list (through the runner: P311 entry imports)
+
 _core.bind(globals())
 REPO = Path(__file__).resolve().parent.parent
 
@@ -66,7 +68,7 @@ def _parser():
     ap.add_argument("--chain-total", type=int, default=0)
     ap.add_argument("--a4-v2-receipt")
     ap.add_argument("--allow-version-drift", action="store_true")
-    ap.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+    ap.add_argument("--tg1-inject", choices=_INJECT_KINDS)
     ap.add_argument("--cancel-file")
     ap.add_argument("--manifest-ack")
     ap.add_argument("--sampling-profile", choices=("deployed",))
@@ -101,7 +103,7 @@ def _main():
         pre.add_argument("--print-identity", action="store_true")
         pre.add_argument("--universe", type=Path)
         pre.add_argument("--agent-system-file")
-        pre.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+        pre.add_argument("--tg1-inject", choices=_INJECT_KINDS)
         pre.add_argument("--sampling-profile", choices=("deployed",), default="deployed")
         known, _ = pre.parse_known_args()
         return tg1_runner.print_identity(sys.modules[__name__], known)

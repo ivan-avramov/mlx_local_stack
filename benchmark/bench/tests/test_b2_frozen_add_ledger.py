@@ -55,7 +55,8 @@ def test_new_a_dnf_is_ledgered_in_its_place_and_the_rest_in_the_next_invocation(
 
 
 def test_new_an_invalidated_item_is_recorded_and_ends_the_ledger(tmp_path, monkeypatch):
-    rc, cj, env = run(tmp_path, monkeypatch, {"B2_SKEW_ITEMS": PILOT[2]})
+    # S27 §5.9 (X18): an integrity mismatch at done (a token skew alone is now an accounting fault, the outcome kept)
+    rc, cj, env = run(tmp_path, monkeypatch, {"B2_FOREIGN_SESSION_ITEMS": PILOT[2]})
     assert rc == 2
     invalid = cj.get("p426_invalid")
     assert invalid and any(PILOT[2] in json.dumps(x) for x in invalid)

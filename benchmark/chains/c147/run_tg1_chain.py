@@ -324,6 +324,8 @@ def parse_args(argv):
     ap.add_argument("--pair-receipt", default=None, metavar="PATH",
                     help="--p426 only: the first leg's arm-equality receipt; this leg's receipt is compared with it after load, "
                          "before item one (spec 6.5); any difference outside the closed allowed list is systemic")
+    ap.add_argument("--pause-file", default=None, metavar="PATH",
+                    help="--p426 only (S27 §8.2): the sequencer's PAUSE file; present at an accepted item boundary, the leg holds")
     ap.add_argument("--lever", default="mtp", choices=["mtp", "kv"],
                     help="M76 B3 (--p426 only): kv = an M76 KV arm (--kv-arm), MTP ON, a lever-kv frozen record, the KV pair gate")
     ap.add_argument("--kv-arm", default=None, choices=["n16", "x", "v"], help="--lever kv: the leg's KV arm")

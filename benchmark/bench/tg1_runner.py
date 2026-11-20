@@ -38,7 +38,8 @@ INJECT_ADDENDA = corpus_tg1.INJECT_ADDENDA
 inject_addendum_sha256 = corpus_tg1.inject_addendum_sha256
 effective_policy = core.effective_policy
 
-TG1_POLICY = rc.PolicyTemplate(config_id="tg1", langs=("python", "go"))
+TG1_POLICY = rc.PolicyTemplate(config_id="tg1", langs=("python", "go"),
+                               inject_allowed=rc.ALL_INJECT_KINDS)        # S27 §4.5: + the deterministic interrupt positive
 TG1_EVIDENCE = rc.EvidencePolicy(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
                                  worker_receipts="absent", item_barrier="off")
 # B2 spec 2: the P426 mode's policy = TG1_EVIDENCE with the item barrier on (the chain answers it); selected by `--evidence p426`.

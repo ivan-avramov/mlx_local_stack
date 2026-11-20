@@ -132,6 +132,8 @@ def parse_args(argv):
     ap.add_argument("--campaign-core", required=True, metavar="TAG_OR_COMMIT")
     ap.add_argument("--frozen-record", required=True, metavar="PATH")
     ap.add_argument("--pair-receipt", default=None, metavar="PATH")
+    ap.add_argument("--pause-file", default=None, metavar="PATH",
+                    help="S27 §8.2: the sequencer's PAUSE file; present at an accepted item boundary, the leg holds there")
     ap.add_argument("--lever", required=True, choices=["kv"])
     ap.add_argument("--kv-arm", required=True, choices=list(fz.TG2_PAIR))        # change review L6: the tg2 pair's arms
     ap.add_argument("--tg2-draw", default=str(DEFAULT_DRAW), help="the pinned tg2 draw (default benchmark/m65/tg2_draw.json)")

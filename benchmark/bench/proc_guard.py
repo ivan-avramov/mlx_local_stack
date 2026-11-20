@@ -1,7 +1,10 @@
 """M62 best-effort process attribution, memory monitoring and durable artifacts.
 
 A fork that detaches and leaves scratch between samples can escape attribution.
-New same-uid orphans are diagnostic only and are never killed without attribution.
+S27 §3 (P12): cleanup kills only what the harness OWNS — tracked identities and their ancestry, the probe's own session when the
+probe leads it (or the chain names it), and processes whose readable environment carries the run's hermetic HOME / XDG_*. Every
+other new same-uid process is `foreign_new`: recorded, never killed, never a refusal (receipt schema 2). Residual (C372): an agent
+child that calls `setsid`, leaves every guard root and clears its environment is `foreign_new`.
 """
 
 from __future__ import annotations
@@ -37,6 +40,17 @@ POLICY = dict(
     container_memory="4g",
     container_swap="4g",
 )
+CLEANUP_SCHEMA = 2                 # S27 §3.5: the receipt gains `schema`, `foreign_new`, `foreign_new_count`, `unreadable_count`
+FOREIGN_NEW_CAP = 64               # S27 §3.4: listed entries; the total is `foreign_new_count`
+FOREIGN_ARGV0_CAP = 64             # S27 Y6: characters of a listed entry's executable basename
+ENV_MARKER_KEYS = ("HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME", "XDG_CACHE_HOME")
+UNCERTAIN_REASONS = ("access denied", "start order unreadable", "identity unreadable",
+                     "child of vanished unreadable process", "scan did not converge", "unreadable records overflowed",
+                     "unreadable record unresolved", "session id unreadable", "liveness unreadable", "not verified gone")
+
+
+class CleanupUncertain(TransportAbort):
+    """S27 §5.8: the owned cleanup could not be shown certain; the abort stamp's cause is `cleanup_uncertain`."""
 
 
 def _cmdline(p):
@@ -50,6 +64,35 @@ def _cmdline(p):
         raise psutil.AccessDenied(getattr(p, "pid", None), msg=f"cmdline: {exc}") from None
 
 
+def exe_identity(p):
+    """S27 Z5: a listed process's identity — (the executable's basename (`Process.exe()`) capped at FOREIGN_ARGV0_CAP, or
+    "unknown" when it cannot be read; the argument count, None when unreadable). Never argument text: argv[0] is free text a
+    process can set (titles); it is named only when it is an absolute path that resolves to that same executable (an alias
+    such as a venv's `python` link: a filesystem name of the binary, not free text). Objects without a psutil
+    implementation and without `exe()` (test fakes) name their argv[0]'s basename, as `start_time` lets them keep their own
+    create_time()."""
+    import psutil
+    try:
+        argv = _cmdline(p)
+    except Exception:  # noqa: BLE001 — evidence only
+        argv = None
+    argc = len(argv) if argv is not None else None
+    if isinstance(p, psutil.Process) or callable(getattr(p, "exe", None)):
+        try:
+            path = p.exe()
+        except Exception:  # noqa: BLE001 — unreadable (AccessDenied, ZombieProcess, SystemError, ...)
+            path = ""
+        alias = str(argv[0]) if argv else ""
+        try:
+            if path and os.path.isabs(alias) and os.path.realpath(alias) == os.path.realpath(path):
+                path = alias
+        except (OSError, ValueError):
+            pass
+    else:
+        path = str(argv[0]) if argv else ""
+    return (Path(str(path)).name[:FOREIGN_ARGV0_CAP] or "unknown"), argc
+
+
 def _lookup(psutil, pid):
     """`psutil.Process(pid)`; its construction reads the start time, so a SystemError there is AccessDenied (P585)."""
     try:
@@ -58,13 +101,16 @@ def _lookup(psutil, pid):
         raise psutil.AccessDenied(pid, msg=f"lookup: {exc}") from None
 
 
-def _scan(psutil, last):
+def _scan(psutil, last, denied=None):
     """Every live process as a `psutil.Process` built per pid (never psutil's shared `process_iter` cache, which a SystemError
     raised inside its generator would end for the whole tick; P585). A process that cannot be constructed (AccessDenied /
     SystemError: mid-exec / mid-exit) is listed through its previous tick's object, so a tracked parent never drops out of
     the ancestry closure (review r3 P1; `process_iter` kept a cached object the same way) and its reads stay denied
-    obligations; one never seen before is skipped for this tick; a vanished one is forgotten. `last` is the guard's cache."""
+    obligations; one never seen before is not listed but reported in `denied` (X11: the guard decides its ownership, never
+    a silent drop); a vanished one is forgotten. `last` is the guard's cache."""
     out, seen = [], {}
+    if denied is not None:
+        denied.clear()
     for pid in psutil.pids():
         try:
             proc = psutil.Process(pid)
@@ -73,12 +119,66 @@ def _scan(psutil, last):
         except (psutil.AccessDenied, SystemError):
             proc = last.get(pid)
             if proc is None:
+                if denied is not None:
+                    denied.add(pid)
                 continue
         out.append(proc)
         seen[pid] = proc
     last.clear()
     last.update(seen)
     return out
+
+
+# -- S27 §3.2 ownership tests (b) / (c), shared by the guard's cleanup and the chain's second scan (X10: one rule)
+def session_claim(pid, owner):
+    """§3.2 (b): True when `pid` is in the probe's session `owner`, False when it is not (or no session ownership applies:
+    `owner` None), None when its session id cannot be read; a vanished pid raises ProcessLookupError."""
+    if owner is None:
+        return False
+    try:
+        return os.getsid(pid) == owner
+    except ProcessLookupError:
+        raise
+    except OSError:
+        return None
+
+
+def _within(value, roots):
+    return isinstance(value, str) and any(value == r or value.startswith(r + "/") for r in roots)
+
+
+def hermetic_homes(paths):
+    """The hermetic roots in BOTH spellings — as given and resolved (macOS: `/var/...` is `/private/var/...`), since a process's
+    environment carries the value it was given, never its resolved form."""
+    out = set()
+    for v in paths:
+        if v:
+            out.add(str(v).rstrip("/") or "/")
+            out.add(str(Path(v).resolve()))
+    return sorted(out)
+
+
+def env_claim(p, homes):
+    """§3.2 (c): the readable environment carries a HOME / XDG_* at or under one of the run's hermetic `homes`; a denied read
+    raises AccessDenied (psutil's macOS SystemError included)."""
+    if not homes:
+        return False
+    try:
+        env = p.environ()
+    except SystemError as exc:
+        import psutil
+        raise psutil.AccessDenied(getattr(p, "pid", None), msg=f"environ: {exc}") from None
+    for k in ENV_MARKER_KEYS:
+        value = env.get(k)
+        if isinstance(value, str) and value and (_within(value, homes) or _within(str(Path(value).resolve()), homes)):
+            return True
+    return False
+
+
+def path_claim(p, roots):
+    """§3.2 (c): cwd / argv under a guard root (a path match: never ownership on its own); a denied read raises AccessDenied."""
+    values = [p.cwd(), *_cmdline(p)]
+    return any(v == root or v.startswith(root + "/") or ("=" + root + "/") in v for root in roots for v in values)
 
 
 def start_time(proc):
@@ -349,7 +449,11 @@ class ProcessGuard:
         protected_pids=(),
         scrub=None,
         context=None,
+        env_markers=None,
     ):
+        """S27 §3.1: session ownership applies only when this process leads its session at construction (the chain launches
+        every probe with `start_new_session=True`); otherwise ownership is tracked ancestry only. `env_markers` — {HOME /
+        XDG_*: value} of the run's hermetic environment (§3.2 (c)); only values under a guard root are used."""
         import psutil
 
         self.psutil = psutil
@@ -372,10 +476,28 @@ class ProcessGuard:
             except (psutil.NoSuchProcess, psutil.AccessDenied, SystemError, TransportAbort, StopIteration):
                 pass
         self.probe_session = os.getsid(0)
+        leader = self.probe_session == os.getpid()
+        if leader:
+            self.session_owner, source = self.probe_session, "leader"
+        else:
+            self.session_owner, source = None, "ancestry_only"
+        self.session = dict(sid=self.probe_session, leader=leader, owner=self.session_owner, source=source)
         self._scan_last = {}                                                         # P585: the previous tick's objects
-        self.scan = scan or (lambda: _scan(psutil, self._scan_last))
+        self._scan_denied = set()          # X11: pids the scan could not construct (no previous object), per scan
+        self._dropped = set()              # X11: those + same-uid-unknown (uids() denied) pids of the last listing
+        self.scan = scan or (lambda: _scan(psutil, self._scan_last, self._scan_denied))
         self.get = get or (lambda pid: _lookup(psutil, pid))
         self.roots = [str(Path(p).resolve()) for p in roots]
+        self.env_markers = {}
+        for key, value in (env_markers or {}).items():
+            if key in ENV_MARKER_KEYS and isinstance(value, str) and value:
+                resolved = str(Path(value).resolve())
+                if any(resolved == r or resolved.startswith(r + "/") for r in self.roots):
+                    self.env_markers[key] = value       # a box-wide value (a hand run's real HOME) never claims anything
+        self.foreign_new = {}
+        self.foreign_new_count = 0
+        self._foreign_seen = set()
+        self._counted = set()                   # §3.4: unclaimed unreadable identities provably older than the guard
         self.per_process = per_process
         self.aggregate = aggregate
         self.client_limit = client_limit
@@ -459,15 +581,21 @@ class ProcessGuard:
         self._sleep(seconds if deadline is None else max(0.0, min(seconds, deadline - self._monotonic())))
 
     def _processes(self):
-        """Same-uid live processes. Before same-uid is established a denied read skips the process; AFTER it (G1 round 4
-        P13) a process whose liveness is denied is kept and listed in `_live_denied`, which tick()/cleanup record as an
-        unreadable obligation unless it is protected."""
+        """Same-uid live processes. A process whose same-uid cannot be established (uids() denied) or that the scan could not
+        construct is not listed but kept in `_dropped` (X11: cleanup claims it when tracked or a probe-session member, else
+        counts it); AFTER same-uid (G1 round 4 P13) a process whose liveness is denied is kept and listed in `_live_denied`,
+        which tick()/cleanup record as an unreadable obligation unless it is protected."""
         found, self._live_denied = [], set()
-        for p in self.scan():
+        listing = self.scan()
+        dropped = set(self._scan_denied)
+        for p in listing:
             try:
                 if p.uids().real != os.getuid():
                     continue
-            except (self.psutil.NoSuchProcess, *self._denied):
+            except self.psutil.NoSuchProcess:
+                continue
+            except self._denied:
+                dropped.add(p.pid)          # X11: same-uid unknown — the cleanup decides its ownership (`_dropped`)
                 continue
             try:
                 if self._live(p):
@@ -477,15 +605,11 @@ class ProcessGuard:
             except self._denied:
                 found.append(p)
                 self._live_denied.add(p.pid)
+        self._dropped = dropped
         return found
 
     def _attributed_path(self, p):
-        values = [p.cwd(), *_cmdline(p)]
-        return any(
-            v == root or v.startswith(root + "/") or ("=" + root + "/") in v
-            for root in self.roots
-            for v in values
-        )
+        return path_claim(p, self.roots)
 
     def tick(self):
         with self.lock:
@@ -551,8 +675,11 @@ class ProcessGuard:
                         validity = self._parent_state(parent[0].pid, parent[1])
                         if validity == "unknown":
                             # G1 (round 4 P11): a denied/raced parent check may hide a tracked parent: the captured
-                            # child stays a descendant obligation instead of an untracked bystander
+                            # child stays a descendant obligation instead of an untracked bystander (S27: claimed, (a))
                             self._note_unreadable(self._unreadable_seen, p, edges)
+                            noted = self._unreadable_seen.get((p.pid, self._created_or_none(p)))
+                            if noted is not None:
+                                noted["claimed"] = True
                         if validity != "same":
                             parent = None
                     elif parent and not self._same_identity(parent[0].pid, parent[1]):
@@ -779,10 +906,186 @@ class ProcessGuard:
     def status(self):
         """Cleanup outcome for abort manifests; `uncertain` until cleanup() has completed (C147)."""
         if self._status is None:
-            return dict(survivors=[], containers_remaining=sorted(self.containers),
+            return dict(schema=CLEANUP_SCHEMA, survivors=[], containers_remaining=sorted(self.containers),
                         uncertain=True, orphans_unattributed=list(self.orphans_unattributed),
-                        unknown=[], completed=False)
+                        unknown=[], completed=False, foreign_new=self._foreign_list(),
+                        foreign_new_count=getattr(self, "foreign_new_count", 0),
+                        unreadable_count=len(getattr(self, "_counted", ())))
         return dict(self._status)
+
+    def _foreign_list(self):
+        return [dict(v) for v in list(getattr(self, "foreign_new", {}).values())[:FOREIGN_NEW_CAP]]
+
+    @property
+    def unreadable_count(self):
+        return len(self._counted)
+
+    def _record_foreign(self, p, key, *, path_match, unreadable, pid=None):
+        """S27 §3.4: record one `foreign_new` process (never killed); capped list + total count, one entry per identity."""
+        pid = p.pid if p is not None else pid
+        ident = (pid, key[1] if key else None)
+        if ident in self.foreign_new:
+            entry = self.foreign_new[ident]
+            entry["path_match"] = entry["path_match"] or bool(path_match)
+            entry["unreadable"] = entry["unreadable"] or bool(unreadable)
+            return
+        if ident in self._foreign_seen:
+            return
+        self._foreign_seen.add(ident)
+        try:
+            sid = os.getsid(pid)
+        except OSError:
+            sid = None
+        # X8 / Z5 (data boundary: these rows are public): a record-only entry needs the identity, never the content — the
+        # executable's basename (`exe_identity`: never argv text, scrubbed, capped) and the argument count; no argument, path
+        # or environment value
+        name, argc = exe_identity(p) if p is not None else ("unknown", None)
+        exe = [self.scrub(name)[:FOREIGN_ARGV0_CAP]]
+        self.foreign_new_count += 1
+        if len(self.foreign_new) >= FOREIGN_NEW_CAP:
+            return
+        self.foreign_new[ident] = dict(pid=pid, create_time=ident[1], argv=exe, argc=argc,
+                                       sid=sid, path_match=bool(path_match), unreadable=bool(unreadable))
+
+    def _env_match(self, p):
+        """§3.2 (c): the readable environment carries the run's hermetic HOME / XDG_* (raises AccessDenied when unreadable)."""
+        return env_claim(p, hermetic_homes(self.env_markers.values()))
+
+    def _session_claim(self, pid):
+        """§3.2 (b): True / False, or None when the session id cannot be read (uncertain); ProcessLookupError propagates."""
+        return session_claim(pid, self.session_owner)
+
+    def _ancestry(self, listing, edges):
+        """§3.2 (a): {pid: node} of this listing's tracked identities and their ancestry closure (a child never older than its
+        parent: pid reuse); computed before any read that can mark a process unreadable. Z4: each node keeps the identity it
+        was claimed with — `starts` (the start read, or for a seed whose read failed the tracked starts of its pid; None for a
+        child whose read failed), its `parent` pid and process — so `_ancestry_holds` can refuse a later readable identity
+        that differs."""
+        children_of, _unknown = edges
+        claimed = {}
+        frontier = []
+        for p in listing:
+            created = self._created_or_none(p)
+            # the EXACT tracked identity seeds the closure (a reused pid is not ours); an unreadable one by its pid, keeping
+            # the tracked starts it must still match
+            starts = frozenset(k[1] for k in self.tracked if k[0] == p.pid)
+            if (created in starts) if created is not None else starts:
+                claimed[p.pid] = dict(starts=frozenset([created]) if created is not None else starts, parent=None, proc=p)
+                frontier.append(p)
+        while frontier:
+            parent = frontier.pop()
+            for child in children_of.get(parent.pid, ()):
+                if child.pid in claimed:
+                    continue
+                pc, known = self._created_or_none(parent), claimed[parent.pid]["starts"]
+                if pc is None and known:
+                    pc = min(known)                                 # an unreadable seed: its tracked start
+                cc = self._created_or_none(child)
+                younger = True if None in (pc, cc) else cc >= pc    # unreadable: kept as a claim (needs a readable identity)
+                if younger:
+                    claimed[child.pid] = dict(starts=frozenset([cc]) if cc is not None else None, parent=parent.pid,
+                                              proc=child)
+                    frontier.append(child)
+        return claimed
+
+    def _ancestry_holds(self, ancestry, pid, start):
+        """Z4: the ancestry claim on `pid` (current start `start`, None when unreadable) holds only while every node on its
+        path to the seed still has the identity it was claimed with: a readable start outside the recorded `starts` (or, for a
+        node claimed unreadable, older than its parent) is a different process — the claim does not hold."""
+        node, now, seen = pid, start, set()
+        while node is not None and node not in seen:
+            seen.add(node)
+            rec = ancestry[node]
+            if node != pid:
+                now = self._created_or_none(rec["proc"])
+            if now is not None:
+                if rec["starts"] is not None and now not in rec["starts"]:
+                    return False
+                parent = ancestry.get(rec["parent"]) if rec["parent"] is not None else None
+                if rec["starts"] is None and parent is not None and parent["starts"]:
+                    if now < min(parent["starts"]):
+                        return False
+            node = rec["parent"]
+        return True
+
+    def _classify(self, p, ancestry):
+        """S27 §3.2 for one live same-uid process of the cleanup listing: ("skip",) | ("ours", key, claim) |
+        ("uncertain", record) | ("foreign",) | ("count",). NoSuchProcess propagates (the process vanished)."""
+        try:
+            key = (p.pid, start_time(p))
+        except (*self._denied, TransportAbort):
+            key = None
+        claim = None
+        if key is not None and key in self.tracked:
+            claim = "tracked"
+        elif key is None and any(k[0] == p.pid for k in self.tracked):
+            claim = "tracked"
+        elif p.pid in ancestry and self._ancestry_holds(ancestry, p.pid, key[1] if key else None):
+            claim = "ancestry"                              # Z4: a differing readable identity falls through (never owned)
+        else:
+            session = self._session_claim(p.pid)
+            if session is None:
+                # an unreadable session id: a possible member, resolved like any unreadable obligation
+                return ("uncertain", dict(pid=p.pid, create_time=key[1] if key else None, argv=[], reason=None))
+            if session:
+                claim = "session"
+        if claim:
+            if key is None:
+                return ("uncertain", dict(pid=p.pid, create_time=None, argv=[], reason="access denied"))
+            try:
+                protected = self._protected(p)
+            except (*self._denied, TransportAbort):
+                return ("uncertain", dict(pid=p.pid, create_time=key[1], argv=[], reason="start order unreadable"))
+            if protected:
+                return ("skip",)
+            if p.pid in self._live_denied:
+                return ("uncertain", dict(pid=p.pid, create_time=key[1], argv=[], reason="liveness unreadable"))
+            return ("ours", key, claim)
+        # unclaimed: never killed; its age decides whether it is `foreign_new` at all (ONE start-order read)
+        try:
+            order = start_order(p)
+        except (*self._denied, TransportAbort):
+            order = False                                   # unreadable age: listed (never provably older)
+        proven_older = order not in (None, False) and self.started_order is not None and order < self.started_order
+        if key is None:
+            if proven_older:
+                return ("count", None)
+            return ("foreign_unreadable", None)
+        if order is False:
+            return ("foreign_unreadable", key)
+        try:
+            excluded = self._excluded(p)
+        except (*self._denied, TransportAbort):
+            excluded = False
+        older = proven_older if (order is not None and self.started_order is not None) else key[1] < self.started
+        if excluded:
+            return ("skip",)
+        if older:
+            # §3.4 (X15): an unclaimed process provably older than the guard is never listed; it is COUNTED when any of the
+            # reads §3.2 (c) takes (liveness, cwd / argv, environment) is denied (record only)
+            if p.pid in self._live_denied:
+                return ("count", key[1])
+            try:
+                self._attributed_path(p)
+                self._env_match(p)
+            except self._denied:
+                return ("count", key[1])
+            return ("skip",)
+        unreadable = p.pid in self._live_denied
+        try:
+            path_match = self._attributed_path(p)
+        except self._denied:
+            path_match, unreadable = False, True
+        try:
+            env_match = self._env_match(p)
+        except self._denied:
+            env_match, unreadable = False, True
+        if env_match:
+            return ("ours", key, "environment")
+        if unreadable:
+            return ("foreign_unreadable", key, path_match)
+        self._record_foreign(p, key, path_match=path_match, unreadable=False)
+        return ("foreign",)
 
     def descendants_alive(self):
         for p in self._processes():
@@ -803,13 +1106,22 @@ class ProcessGuard:
             self.containers.add(name)
 
     def container_oom(self, name):
-        result = subprocess.run(
-            ["docker", "inspect", "--format", "{{.State.OOMKilled}}", name],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        return result.returncode == 0 and result.stdout.strip() == "true"
+        """Tri-state (S27 Y2): True / False, or `GraderInfraError(kind="transport")` when the state cannot be verified."""
+        from .token_turn_gate import GraderInfraError
+        try:
+            result = subprocess.run(
+                ["docker", "inspect", "--format", "{{.State.OOMKilled}}", name],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except (subprocess.TimeoutExpired, OSError) as exc:
+            raise GraderInfraError("container state unverifiable: %s" % exc, kind="transport") from exc
+        value = (result.stdout or "").strip()
+        if result.returncode != 0 or value not in ("true", "false"):
+            raise GraderInfraError("container state unverifiable: rc=%s %r" % (result.returncode, value[:80]),
+                                   kind="transport")
+        return value == "true"
 
     def remove_container(self, name):
         subprocess.run(
@@ -832,14 +1144,6 @@ class ProcessGuard:
         if result.returncode or result.stdout.strip():
             raise TransportAbort("container cleanup uncertain")
         self.containers.discard(name)
-
-    def _sweep_excluded(self, p):
-        if self._excluded(p):
-            return True
-        try:
-            return os.getsid(p.pid) == self.probe_session
-        except ProcessLookupError:
-            return False
 
     def _created_or_none(self, p):
         try:
@@ -1007,7 +1311,8 @@ class ProcessGuard:
             elif created is None:
                 state = "unresolved"            # the young occupant may be a replacement of an original we cannot name
             else:
-                state = "resolved" if (pid, occupant) in self.tracked or self._attributed_path(process) else "unresolved"
+                # S27 §3.2: a path match alone owns nothing (no corroboration): only a tracked identity resolves here
+                state = "resolved" if (pid, occupant) in self.tracked else "unresolved"
             again_process = self.get(pid)
             again = self._created_or_none(again_process)
             if again == occupant and state == "resolved" and created is None and not self._proven_older(again_process):
@@ -1030,20 +1335,74 @@ class ProcessGuard:
         bad, states = {}, {}
         for key, info in unreadable.items():
             pid, created = key
+            claimed = bool(info.get("claimed")) or self._claims(pid)
             if info["root"]:
                 state = states[key] = self._resolve(pid, created)
                 if state[0] == "unresolved":
-                    if state[1] is None:
-                        bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[], reason="start order unreadable")
+                    if not claimed:                      # S27 §3.2: unclaimed + unreadable -> foreign_new, never uncertain
+                        self._foreign_unresolved(pid, created if created is not None else state[1])
+                    elif state[1] is None:
+                        bad[(pid, None)] = dict(pid=pid, create_time=None, argv=[],
+                                                reason=info.get("reason") or "start order unreadable")
                     else:
                         bad[(pid, created)] = dict(pid=pid, create_time=created, argv=[],
-                                                   reason="unreadable record unresolved")
+                                                   reason=info.get("reason") or "unreadable record unresolved")
             for child_pid, child_created in info["children"]:
                 state = states[(key, child_pid, child_created)] = self._resolve(child_pid, child_created)
                 if state[0] == "unresolved":
+                    if not (claimed or self._claims(child_pid)):
+                        self._foreign_unresolved(child_pid, child_created)
+                        continue
                     bad[(child_pid, child_created)] = dict(pid=child_pid, create_time=child_created, argv=[],
                                                            reason="child of vanished unreadable process")
         return bad, states
+
+    def _claims(self, pid):
+        """(a) a tracked pid or (b) the probe session's member (an unreadable session id claims: fail closed)."""
+        if any(k[0] == pid for k in self.tracked):
+            return True
+        try:
+            session = self._session_claim(pid)
+        except ProcessLookupError:
+            return False
+        return session is not False
+
+    def _claim_dropped(self, unreadable):
+        """X11: a pid the listing could not include (not constructible, or its uids() denied) is decided by ownership, never
+        dropped: tracked or a probe-session member (an unreadable session id claims, as §3.2) -> a CLAIMED obligation on
+        (pid, None), resolved against the final process table like every other (gone = discharged, else uncertain); else it
+        is counted (`unreadable_count`, record only)."""
+        for pid in sorted(self._dropped):
+            if pid in self.excluded_pids or any(k[0] == pid for k in unreadable):
+                continue                                    # already an obligation under some identity
+            try:
+                claimed = self._claims(pid)
+            except OSError:
+                claimed = True
+            if claimed:
+                if len(unreadable) >= 32:
+                    self._unreadable_overflow = True
+                    return
+                unreadable[(pid, None)] = dict(children=set(), root=True, claimed=True, reason="identity unreadable")
+            else:
+                self._counted.add((pid, None))
+
+    def _foreign_unresolved(self, pid, created):
+        """An unclaimed obligation that stays unresolved: `foreign_new` (unreadable) when not provably older, else counted."""
+        try:
+            process = self.get(pid)
+        except (self.psutil.NoSuchProcess, StopIteration):
+            return
+        except (*self._denied, TransportAbort):
+            process = None
+        if process is not None:
+            try:
+                if self._proven_older(process):
+                    self._counted.add((pid, created))
+                    return
+            except (*self._transient, TransportAbort):
+                pass
+        self._record_foreign(process, (pid, created), path_match=False, unreadable=True, pid=pid)
 
     def cleanup(self):
         with defer_signals():
@@ -1066,10 +1425,12 @@ class ProcessGuard:
                 except TransportAbort as exc:
                     container_failure = container_failure or exc
             survivors = []
-            orphans = {}
+            orphans = {}                    # uncertainty records (claimed but unreadable, unresolved obligations ...)
+            escapees = {}                   # S27 §3.5: OURS processes outside `tracked`, killed (verified below)
+            killed_ours = {}                # every OURS identity this scan killed: key -> claim
             uncertain = container_failure is not None or order_failure is not None
             with self.lock:
-                unreadable = {k: dict(children=set(v["children"]), root=v["root"])
+                unreadable = {k: dict(children=set(v["children"]), root=v["root"], claimed=v.get("claimed", False))
                               for k, v in self._unreadable_seen.items()}
             previous, bad, non_converged = {}, {}, False      # C157: reconciled after every full scan
             deadline = None
@@ -1079,66 +1440,55 @@ class ProcessGuard:
                     listing = self._processes()
                     edges = self._listing_edges(listing)
                     self._refresh_descendants(unreadable, listing, edges)     # G1 (round 2 P2): readable roots too
+                    ancestry = self._ancestry(listing, edges)                 # §3.2: ownership before any denied read
+                    self._claim_dropped(unreadable)                           # X11: never dropped before ownership
                     for p in listing:
-                        key = None          # G1 (round 5 P18): set once the exact identity is read, then never reread
                         try:
-                            try:
-                                protected = self._protected(p)
-                            except (*self._denied, TransportAbort):
-                                # an eligible same-uid process whose start/order cannot be read could be ours: it is
-                                # resolved against the final process table, not frozen uncertain (C157; C151 R10). The
-                                # children of THIS listing are kept: a vanished parent proves nothing about them.
-                                self._note_unreadable(unreadable, p, edges)
-                                continue
-                            if protected:
-                                continue
-                            if p.pid in self._live_denied:      # G1 (round 4 P13)
-                                self._note_unreadable(unreadable, p, edges)
-                                continue
-                            try:
-                                key = (p.pid, start_time(p))
-                            except self._denied:        # G1 (round 2 P1): every later denied read is recorded
-                                self._note_unreadable(unreadable, p, edges)
-                                continue
-                            if key in self.tracked:
-                                p.kill()
-                                survivors.append(p.pid)
-                            elif self._attributed_path(p):
-                                uncertain = True
-                                orphans[key] = dict(pid=p.pid, create_time=key[1],
-                                                    argv=_cmdline(p), reason="path-only attribution")
-                            elif self._sweep_excluded(p):
-                                continue
-                            elif self._detached(p, unreadable, edges, key):
-                                try:
-                                    young = not self._older_than_guard(p)
-                                except self._denied:    # G1 (round 2 P1)
-                                    self._note_unreadable(unreadable, p, edges, key=key)
-                                    continue
-                                if young:
-                                    orphans[key] = dict(
-                                        pid=p.pid, create_time=start_time(p), argv=_cmdline(p)
-                                    )
+                            verdict = self._classify(p, ancestry)
+                        except (self.psutil.NoSuchProcess, ProcessLookupError):
+                            continue
+                        if verdict[0] == "uncertain":
+                            # S27 §3.2: a denied read on a process (a) / (b) claims, or an unreadable session id: a CLAIMED
+                            # obligation, resolved against the final process table (gone = discharged), else uncertain
+                            rec = verdict[1]
+                            ident = (rec["pid"], rec["create_time"])
+                            if rec["reason"] is None and any(ident in info["children"] for info in unreadable.values()):
+                                continue            # already a descendant obligation of a recorded root
+                            self._note_unreadable(unreadable, p, edges, key=ident)
+                            if ident in unreadable:
+                                unreadable[ident]["claimed"] = True
+                                unreadable[ident]["reason"] = rec["reason"]
+                            continue
+                        if verdict[0] == "count":
+                            self._counted.add((p.pid, verdict[1] if len(verdict) > 1 else None))
+                            continue
+                        if verdict[0] == "foreign_unreadable":
+                            # S27 §3.2: unclaimed + a denied read -> `foreign_new` (unreadable), never uncertain; it stays an
+                            # UNCLAIMED record so a later state change (exit, pid reuse) still forces a confirming scan (C157)
+                            key = verdict[1]
+                            if key is None or not any(key in info["children"] for info in unreadable.values()):
+                                self._note_unreadable(unreadable, p, edges, key=key or (p.pid, None))
+                            self._record_foreign(p, key, path_match=len(verdict) > 2 and verdict[2], unreadable=True)
+                            continue
+                        if verdict[0] != "ours":
+                            continue
+                        _, key, claim = verdict
+                        try:
+                            argv = self._argv(p)
+                            p.kill()                       # §3.3: one kill-and-verify loop, tracked and untracked alike
                         except self.psutil.NoSuchProcess:
                             continue
-                        except TransportAbort:      # identity unreadable (C151 R16): could be ours -> uncertain
-                            uncertain = True
-                            orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
-                                                          reason="identity unreadable")
-                            continue
                         except self._denied:
-                            # macOS denies cwd()/cmdline() for a process mid-exit or one we may not inspect. Untracked:
-                            # nothing to clear, skip. Tracked: ownership cannot be shown cleared -> uncertain.
-                            if key is None and any(k[0] == p.pid for k in self.tracked):
-                                uncertain = True
-                                orphans[(p.pid, None)] = dict(pid=p.pid, create_time=None, argv=[],
-                                                              reason="access denied")
-                            else:
-                                # G1 (round 4 P12, round 5 P18): identity and eligibility are established by here, so
-                                # a denied read (cwd/cmdline/kill/...) is an unreadable obligation on the EXACT captured
-                                # key (tracked or not); uncertainty comes from the final reconciliation and audit
-                                self._note_unreadable(unreadable, p, edges, key=key)
+                            # a claimed obligation on the EXACT key, resolved against the final process table
+                            self._note_unreadable(unreadable, p, edges, key=key)
+                            if key in unreadable:
+                                unreadable[key]["claimed"] = True
+                                unreadable[key]["reason"] = "access denied"
                             continue
+                        survivors.append(p.pid)
+                        killed_ours[key] = claim
+                        if claim != "tracked" and key not in escapees:
+                            escapees[key] = dict(pid=key[0], create_time=key[1], argv=argv, claim=claim)
                     if not survivors:
                         break
                     self._nap(0.05, deadline)
@@ -1201,31 +1551,50 @@ class ProcessGuard:
             if non_converged:
                 uncertain = True
                 orphans[(0, "did not converge")] = dict(pid=0, create_time=None, argv=[], reason="scan did not converge")
-            survivors = sorted(set(survivors) | {pid for pid, _ in alive})
+            # S27 §3.3: every OURS identity this cleanup killed — the scan's and the tracked audit's last round alike — is
+            # verified gone (bounded); X13: a survivor is one that is still alive or not verified gone, never one merely
+            # killed in the last round
+            to_verify = list(killed_ours) + [k for k in alive if k not in killed_ours]
+            unverified, end = [], self._monotonic() + 2.0
+            while True:
+                unverified = [k for k in to_verify if self._identity_state(*k) != "gone"]
+                if not unverified or self._monotonic() >= end:
+                    break
+                self._nap(0.05, end)
+            for key in unverified:
+                uncertain = True
+                orphans[key] = dict(pid=key[0], create_time=key[1], argv=[], reason="not verified gone")
+            survivors = sorted({k[0] for k in unverified})
             if unknown:
                 uncertain = True
-            self.orphans_unattributed[:] = list(orphans.values())
+            verified_escapees = [e for k, e in escapees.items() if k not in unverified]
+            self.orphans_unattributed[:] = verified_escapees
+            self._uncertain_records = list(orphans.values())
             self._status = dict(
+                schema=CLEANUP_SCHEMA,
                 survivors=list(survivors), containers_remaining=sorted(self.containers),
                 uncertain=bool(uncertain),
                 orphans_unattributed=list(self.orphans_unattributed), unknown=unknown, completed=True,
+                foreign_new=self._foreign_list(), foreign_new_count=self.foreign_new_count,
+                unreadable_count=self.unreadable_count,
             )
+            if uncertain:
+                self._status["uncertain_records"] = [dict(pid=p["pid"], create_time=p["create_time"], reason=p.get("reason"))
+                                                     for p in orphans.values()]
             if container_failure is not None:
                 raise container_failure
             if self.failure:           # C157 (P297 U2): a monitor failure is never hidden behind the uncertainty
                 raise TransportAbort("process monitor died: " + str(self.failure))
+            if survivors:
+                raise CleanupUncertain("attributed processes survived cleanup: " + json.dumps(survivors))
             if uncertain:
-                raise TransportAbort("cleanup uncertain: path-only or uninspectable processes remain " + json.dumps(
+                raise CleanupUncertain("cleanup uncertain: owned or uninspectable processes remain " + json.dumps(
                     [dict(pid=p["pid"], create_time=p["create_time"], reason=p.get("reason"))
-                     for p in orphans.values()
-                     if p.get("reason") in ("path-only attribution", "access denied", "start order unreadable",
-                                           "identity unreadable", "child of vanished unreadable process",
-                                           "scan did not converge", "unreadable records overflowed",
-                                           "unreadable record unresolved")]
+                     for p in orphans.values() if p.get("reason") in UNCERTAIN_REASONS]
                     + [dict(u, reason="tracked identity unknown") for u in unknown]
                 ) + (f"; order failure: {order_failure}" if order_failure else ""))
             if survivors:
-                raise TransportAbort("attributed processes survived cleanup")
+                raise CleanupUncertain("attributed processes survived cleanup")
             if self.failure:
                 raise TransportAbort("process monitor died: " + str(self.failure))
 

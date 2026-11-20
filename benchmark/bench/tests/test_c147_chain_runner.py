@@ -875,7 +875,9 @@ def _probe_args(tmp_path):
 def test_inject_items_distinct_seeded_python_one_per_kind():
     names = R.load_universe()
     items = RI.pick_items(names)
-    assert list(items) == ["stall", "loop", "alloc"] and len(set(items.values())) == 3
+    # S27 §4.5: + the interrupt positive, on the stall item (the three-kind draw unchanged)
+    assert list(items) == ["stall", "loop", "alloc", "interrupt"] and len(set(items.values())) == 3
+    assert items["interrupt"] == items["stall"]
     assert all(i in names["python"] for i in items.values())
     assert items == RI.pick_items(names)                          # deterministic draw
 
@@ -885,9 +887,9 @@ def test_inject_happy_path_three_legs_final_suite_unload_stop(env, tmp_path):
     rc = _run_inject(env, args)
     assert rc == 0
     legs = _probe_args(tmp_path)
-    assert len(legs) == 3
-    assert [x[x.index("--tg1-inject") + 1] for x in legs] == ["stall", "loop", "alloc"]
-    for x, n in zip(legs, (1, 1, 1)):
+    assert len(legs) == 4                                          # S27 §4.5: + the interrupt positive
+    assert [x[x.index("--tg1-inject") + 1] for x in legs] == ["stall", "loop", "alloc", "interrupt"]
+    for x, n in zip(legs, (1, 1, 1, 1)):
         assert x[x.index("--seed-base") + 1] == "1001" and x[x.index("--out") + 1].endswith(f".attempt{n}.jsonl")
         assert "--limit" not in x and x[x.index("--scaffold") + 1] == "opencode-v2-web-tg1"
         assert x[x.index("--expect-items") + 1] == "python/" + x[x.index("--items") + 1]

@@ -140,9 +140,11 @@ def build_row(arm, label, model, item, seed_base, worker, wd, out, run_id, runti
 
 
 def cleanup_status(variant=None):
-    """`proc_guard.ProcessGuard.status()`'s exact six keys; `variant` deviates from it (A7 tests)."""
-    cs = {"survivors": [], "containers_remaining": [], "uncertain": False, "orphans_unattributed": [], "unknown": [],
-          "completed": True}
+    """`proc_guard.ProcessGuard.status()`'s exact schema-2 keys (S27 §3.5: the six + schema, foreign_new, foreign_new_count,
+    unreadable_count); `variant` deviates from it (A7 tests). `orphans`: a SCHEMA-1 receipt with an unattributed orphan (the old
+    rule still refuses it; in schema 2 an orphan is a killed-and-verified escapee and is no refusal)."""
+    cs = {"schema": 2, "survivors": [], "containers_remaining": [], "uncertain": False, "orphans_unattributed": [],
+          "unknown": [], "completed": True, "foreign_new": [], "foreign_new_count": 0, "unreadable_count": 0}
     variant = variant or os.environ.get("FAKE_CLEANUP_VARIANT") or ("uncertain" if os.environ.get("FAKE_CLEANUP_UNCERTAIN") == "1" else None)
     if variant == "uncertain":
         cs["uncertain"] = True
@@ -151,6 +153,7 @@ def cleanup_status(variant=None):
     elif variant == "unknown":
         cs["unknown"] = [{"pid": 1, "why": "identity unreadable"}]
     elif variant == "orphans":
+        cs = {k: v for k, v in cs.items() if k not in ("schema", "foreign_new", "foreign_new_count", "unreadable_count")}
         cs["orphans_unattributed"] = [{"pid": 2}]
     elif variant == "extra":
         cs["extra"] = 1

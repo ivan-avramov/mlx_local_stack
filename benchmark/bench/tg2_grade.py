@@ -31,7 +31,7 @@ import io
 import uuid
 import xml.etree.ElementTree as ET
 from .structured_grade import _sha256, _write_index, manifest, protected_manifest, write_receipt
-from .token_turn_gate import TransportAbort
+from .token_turn_gate import GraderInfraError, TransportAbort
 
 VERSION = "m65-tg2-v3"           # v3: marker + bounded output also written to the report volume (timeout evidence)
 IMAGE_TAG = "tg2-grader:m65-v1"
@@ -1124,10 +1124,11 @@ def _container_oom(run, name, outputs, step):
             p = run(["docker", "inspect", "--format", "{{.State.OOMKilled}}", name], stdout=out, stderr=err,
                     text=True, timeout=30, stdin=subprocess.DEVNULL, env={**os.environ})
     except (subprocess.TimeoutExpired, OSError) as exc:
-        raise TransportAbort("container state unverifiable (%s): %s" % (step, exc)) from exc
+        raise GraderInfraError("container state unverifiable (%s): %s" % (step, exc), kind="transport") from exc
     value = path.read_text(errors="replace").strip()
     if p.returncode != 0 or value not in ("true", "false"):
-        raise TransportAbort("container state unverifiable (%s): rc=%s %r" % (step, p.returncode, value[:80]))
+        raise GraderInfraError("container state unverifiable (%s): rc=%s %r" % (step, p.returncode, value[:80]),
+                               kind="transport")
     return value == "true"
 
 
@@ -1166,7 +1167,7 @@ def _step(result, step, cmd, run, ops, outputs, timeout, work, container=None, n
         except subprocess.TimeoutExpired:
             timed_out = True
         except OSError as exc:
-            raise TransportAbort("missing docker runtime: %s" % exc) from exc
+            raise GraderInfraError("missing docker runtime: %s" % exc, kind="spawn") from exc
         if container:
             oom = _container_oom(run, container, outputs, step)
     except BaseException as exc:
@@ -1226,7 +1227,7 @@ def _plain(run, cmd, outputs, tag, timeout=60):
             p = run(cmd, stdout=out, stderr=err, text=True, timeout=timeout, stdin=subprocess.DEVNULL,
                     env={**os.environ})
     except (subprocess.TimeoutExpired, OSError) as exc:
-        raise TransportAbort("docker command failed (%s): %s" % (tag, exc)) from exc
+        raise GraderInfraError("docker command failed (%s): %s" % (tag, exc), kind="transport") from exc
     return p.returncode, path.read_text(errors="replace").strip()
 
 
@@ -1238,7 +1239,8 @@ def _exists(run, kind, name, outputs, tag):
         cmd = ["docker", "ps", "-a", "--filter", "name=^/%s$" % name, "--format", "{{.Names}}"]
     rc, text = _plain(run, cmd, outputs, tag)
     if rc != 0:
-        raise TransportAbort("tg2 cannot verify whether %s %s exists (docker listing rc=%s)" % (kind, name, rc))
+        raise GraderInfraError("tg2 cannot verify whether %s %s exists (docker listing rc=%s)" % (kind, name, rc),
+                               kind="transport")
     return name in text.split()
 
 
@@ -1252,7 +1254,7 @@ def _nonce_of(run, kind, name, outputs, tag):
     if rc == 0:
         return text
     if _exists(run, kind, name, outputs, tag + "-x"):
-        raise TransportAbort("tg2 cannot inspect %s %s (rc=%s)" % (kind, name, rc))
+        raise GraderInfraError("tg2 cannot inspect %s %s (rc=%s)" % (kind, name, rc), kind="transport")
     return None
 
 
@@ -1293,7 +1295,7 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
                                     "device=tmpfs", "--opt", "o=size=%s,mode=1777" % size, *label, name], outputs,
                               "volume-" + name)
             if rc != 0:
-                raise TransportAbort("tg2 volume create failed: %s" % text[-200:])
+                raise GraderInfraError("tg2 volume create failed: %s" % text[-200:], kind="spawn")
             if _nonce_of(run, "volume", name, outputs, "own-" + name) != nonce:
                 unverified.append(name)
                 raise TransportAbort("tg2 volume %s is not provably ours (nonce label mismatch); left in place" % name)
@@ -1305,7 +1307,7 @@ def _grade(result, lang, work, slug, run, ops, image_id, image_tag, timeout, out
         rc, text = _plain(run, _docker_run(holder, image_id, slug, vols, ["sleep", str(5 * timeout + 300)],
                                            extra=("-d", *label)), outputs, "holder")
         if rc != 0:
-            raise TransportAbort("tg2 volume holder failed to start: %s" % text[-200:])
+            raise GraderInfraError("tg2 volume holder failed to start: %s" % text[-200:], kind="spawn")
         if _nonce_of(run, "container", holder, outputs, "own-holder") != nonce:
             unverified.append(holder)
             raise TransportAbort("tg2 holder %s is not provably ours (nonce label mismatch); left in place" % holder)
@@ -1439,13 +1441,26 @@ def remove_registered(run, registry_file, private):
     return removed
 
 
+# `docker run`'s own failure status (the daemon could not create / start the container: daemon loss, image unavailable);
+# any other status is the stage script's, which reads the agent's tree
+DOCKER_RUN_FAILED = 125
+
+
+def stage_failure(launch):
+    """The staging step failed. S27 X6: a spawn fault only when docker itself could not start the container (rc 125); any
+    other status is not a grader infrastructure fault (the stage output may carry the agent's file names)."""
+    msg = "tg2 stage failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"], _text(launch)[-300:])
+    if launch["rc"] == DOCKER_RUN_FAILED and not launch["timed_out"]:
+        return GraderInfraError(msg, kind="spawn")
+    return TransportAbort(msg)
+
+
 def _grade_steps(result, lang, work, slug, run, ops, image_id, timeout, outputs, index, vols, gnonce):
     stage_mounts = [_mount("bind", work, "/src", readonly=True), *vols]
     launch = _launch(result, "setup-launch", ["bash", "-c", STAGE_SCRIPT], run, ops, image_id, slug, stage_mounts,
                      outputs, timeout, gnonce)
     if launch["rc"] != 0 or launch["timed_out"]:
-        raise TransportAbort("tg2 stage failed (rc=%s timeout=%s): %s" % (launch["rc"], launch["timed_out"],
-                                                                         _text(launch)[-300:]))
+        raise stage_failure(launch)
     pre = _launch(result, "preflight", ["bash", "-c", _preflight(lang)], run, ops, image_id, slug, vols, outputs,
                   timeout, gnonce)
     if pre["rc"] != 0 or pre["timed_out"] or pre["oom"]:

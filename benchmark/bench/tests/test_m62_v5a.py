@@ -140,10 +140,9 @@ def test_new_path_only_process_aborts_without_kill(tmp_path, monkeypatch):
     p = Process(99105, created=110, cwd=str(tmp_path))
     monkeypatch.setattr(pg.os, 'getsid', lambda pid: 5 if pid == 0 else 6)
     g = guard(tmp_path, [p]); g.started = 100
-    with pytest.raises(tg.TransportAbort, match='cleanup uncertain.*99105'):
-        g.cleanup()
-    assert not p.dead
-    assert g.orphans_unattributed[0]['pid'] == p.pid
+    g.cleanup()                       # S27 §3.2 (changed rule): a path-only match without corroboration is `foreign_new`
+    assert not p.dead and g.status()['uncertain'] is False
+    assert [e['pid'] for e in g.status()['foreign_new'] if e['path_match']] == [p.pid]
 
 
 @pytest.mark.parametrize('sig', [__import__('signal').SIGTERM, __import__('signal').SIGINT])

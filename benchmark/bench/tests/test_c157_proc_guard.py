@@ -13,6 +13,26 @@ from bench.token_turn_gate import TransportAbort
 from bench.tests.test_proc_guard import Process, guard as _guard
 
 pytestmark = pytest.mark.usefixtures("fake_guard_clock")      # G1 round 2: the production 10 s deadline, fake clock
+FOREIGN_SESSION = 777
+FOREIGN = set()                                    # pids whose session id reads as another session's (per test)
+
+
+@pytest.fixture(autouse=True)
+def _claimed_by_the_probe_session(monkeypatch):
+    """S27 §3.2: an unreadable process is an obligation only when the guard may CLAIM it ((a) ancestry, (b) the probe's
+    session, or an unreadable session id, which stays uncertain "as today"); an unclaimed one is `foreign_new`. These C157 / G1
+    obligations are exercised on that path: the guard leads the probe session (§3.1: `getsid(0) == getpid()`, as when the
+    chain launched it with `start_new_session=True`; X17) and no scripted process's session id can be read, so every young
+    one is a possible member until the final process table resolves it."""
+    FOREIGN.clear()
+
+    def getsid(pid):
+        if pid == 0:
+            return pg.os.getpid()                   # the probe leads its session
+        if pid in FOREIGN:
+            return FOREIGN_SESSION                  # a readable session id of another session: provably not ours
+        raise PermissionError(1, "session id unreadable (scripted)")
+    monkeypatch.setattr(pg.os, "getsid", getsid)
 
 
 def guard(tmp_path, processes, **kwargs):
@@ -97,9 +117,11 @@ def test_pid_reuse_clears_the_original_but_the_replacement_is_scanned(tmp_path):
     def reused(p):
         processes[processes.index(p)] = replacement
     processes.append(Unreadable(30, created=10, on_read=reused))
+    FOREIGN.add(30)                                   # S27 §3.2 (c): the replacement is another session's process
     g = guard(tmp_path, processes)
-    with pytest.raises(TransportAbort, match="path-only attribution"):
-        g.cleanup()
+    g.cleanup()                                       # a path-only match without corroboration is never killed or uncertain
+    found = [e for e in g.status()["foreign_new"] if e["pid"] == 30 and e["create_time"] == 99]
+    assert found and found[0]["path_match"] is True and not replacement.dead and g.status()["uncertain"] is False
 
 
 def test_a_live_reparented_child_of_a_vanished_unreadable_parent_refuses_clearance(tmp_path):
@@ -183,8 +205,9 @@ def test_the_observed_m63_receipt_is_the_unreadable_orphan_shape(tmp_path):
     with pytest.raises(TransportAbort) as err:
         g.cleanup()
     assert '{"pid": 87652, "create_time": null, "reason": "start order unreadable"}' in str(err.value)
-    assert {"pid": 87652, "create_time": None, "argv": [], "reason": "start order unreadable"} in \
-        g.status()["orphans_unattributed"]
+    # S27 §3.5 (schema 2): the uncertainty records live in `uncertain_records`; `orphans_unattributed` holds killed escapees
+    assert {"pid": 87652, "create_time": None, "reason": "start order unreadable"} in g.status()["uncertain_records"]
+    assert g.status()["schema"] == 2 and g.status()["orphans_unattributed"] == []
 
 
 # ----------------------------------------------------------------------------- cold review round 1 (b5b4cd53)
@@ -217,7 +240,7 @@ def test_p3_a_pid_replacement_found_only_at_the_second_recheck_is_still_scanned(
     g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
     g.started = 0
     g.kill_role = lambda role=None: []
-    with pytest.raises(TransportAbort, match="path-only attribution"):
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):    # S27 §3.2: a path match alone never resolves
         g.cleanup()
 
 
@@ -269,7 +292,7 @@ def test_r2p2_readable_then_replaced_forces_another_scan(tmp_path):
     g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
     g.started = 0
     g.kill_role = lambda role=None: []
-    with pytest.raises(TransportAbort, match="path-only attribution"):
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):    # S27 §3.2: a path match alone never resolves
         g.cleanup()
 
 
@@ -292,8 +315,8 @@ def test_r2p3_a_child_of_an_unknown_parent_process_is_a_candidate_descendant(tmp
     g = guard(tmp_path, processes)
     with pytest.raises(TransportAbort, match=r'cleanup uncertain.*"pid": 52.*child of vanished unreadable process'):
         g.cleanup()
-    assert {"pid": 52, "create_time": 12, "argv": [], "reason": "child of vanished unreadable process"} in \
-        g.status()["orphans_unattributed"]
+    assert {"pid": 52, "create_time": 12, "reason": "child of vanished unreadable process"} in \
+        g.status()["uncertain_records"]                # S27 §3.5: uncertainty records, not escapees
 
 
 def test_r2p4_a_flickering_young_process_is_kept_until_it_exits_g1(tmp_path):
@@ -358,7 +381,7 @@ def test_r3p1_gone_then_reused_still_forces_a_scan(tmp_path):
     g = pg.ProcessGuard([tmp_path], scan=lambda: list(processes), get=get)
     g.started = 0
     g.kill_role = lambda role=None: []
-    with pytest.raises(TransportAbort, match="path-only attribution"):
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):    # S27 §3.2: a path match alone never resolves
         g.cleanup()
 
 
@@ -474,7 +497,7 @@ def test_r4p2_a_descendant_pid_reused_after_the_last_scan_forces_another_scan(tm
         reconciles.append(1)
         return real(unreadable)
     g._reconcile_unreadable = counting
-    with pytest.raises(TransportAbort, match="path-only attribution"):
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):    # S27 §3.2: a path match alone never resolves
         g.cleanup()
 
 
@@ -560,7 +583,7 @@ def test_p306_a_reused_child_pid_prunes_the_record_and_the_replacement_is_still_
     processes.append(replacement)
     g.tick()
     assert not g._unreadable_seen                    # the recorded identity (41, 11) is gone: nothing to reconcile
-    with pytest.raises(TransportAbort, match="path-only attribution"):
+    with pytest.raises(TransportAbort, match="cleanup uncertain"):    # S27 §3.2: a path match alone never resolves
         g.cleanup()                                  # ... and the normal scan still sees the replacement
 
 

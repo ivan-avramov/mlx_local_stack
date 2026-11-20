@@ -63,7 +63,8 @@ def _stripped_top(name, prepared):
 def view_manifest(work, prepared, lang):
     """The normalised view (H2): `structured_grade.manifest`'s walk (same exclusions; a symlink or a non-regular file raises
     ValueError) of the work tree minus the stripped top-level build outputs and, for Rust, every `Cargo.lock` outside the
-    prepared tree. `prepared` = the prepared-tree manifest."""
+    prepared tree; for javascript every `package-lock.json` outside it (S27 §7.2, any depth). `prepared` = the prepared-tree
+    manifest."""
     root = Path(work)
     result = {}
 
@@ -83,6 +84,8 @@ def view_manifest(work, prepared, lang):
                 rel = path.relative_to(root).as_posix()
                 if lang == "rust" and path.name.casefold() == "cargo.lock" and rel not in prepared:
                     continue
+                if lang == "javascript" and path.name.casefold() == "package-lock.json" and rel not in prepared:
+                    continue                    # S27 §7.2 (C368 (1)): the package manager's lock, as Rust's Cargo.lock
                 result[rel] = _sha_bytes(path.read_bytes())
 
     walk(root, True)
@@ -292,7 +295,7 @@ class Tg2Corpus(Corpus):
                   f"pass. The specification follows.\n\n{self.spec_text(prepared.lang, prepared.name)}\n\nDo NOT modify the "
                   "tests or the build files except as stated below. Do not create new files unless the specification requires "
                   f"them; {HINTS[prepared.lang]}")
-        if inject:
+        if inject and inject != corpus_tg1.INTERRUPT_KIND:          # S27 §4.5: the interrupt positive adds no prompt text
             if inject not in INJECT_ADDENDA:
                 raise ValueError(f"unknown inject kind {inject!r}")
             prompt += " " + INJECT_ADDENDA[inject]

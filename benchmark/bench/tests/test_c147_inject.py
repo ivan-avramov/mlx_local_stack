@@ -56,7 +56,9 @@ def test_frozen_inject_constants_lower_exactly_one_constant_each():
         "stall": {"gate": {"no_progress_requests": 4}, "hygiene": {}},
         "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
         "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024 ** 2}},
+        "interrupt": {"gate": {}, "hygiene": {}},        # S27 §4.5: the interrupt positive lowers nothing (the harness stops it)
     }
+    assert runner.effective_policy("interrupt") == runner.effective_policy(None)
     campaign_gate, campaign_hygiene = runner.effective_policy(None)
     assert campaign_gate == tg.POLICY and campaign_hygiene == pg.POLICY
     expected = {"stall": ("gate", "no_progress_requests", 4), "loop": ("gate", "identical_calls", 3),

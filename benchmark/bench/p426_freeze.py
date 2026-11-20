@@ -17,6 +17,7 @@ import argparse
 import ast
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -212,11 +213,36 @@ def waived_ok(entry) -> bool:
             and _hex64(ev.get("row_sha256")) and ev.get("row_sha256") == entry.get("row_sha256"))
 
 
+INTERRUPT_KIND = "interrupt"                     # S27 §4.5 (C373): one deterministic in-flight interrupt per positives record
+PASS_NO_INFLIGHT = "PASS_NO_INFLIGHT"            # S27 §4.3: stall / loop detection with nothing in flight at the kill
+NO_INFLIGHT_KINDS = ("stall", "loop")
+
+
+def interrupt_ok(entry) -> bool:
+    """S27 §4.5 / X12: the interrupt is the record's one cancellation proof: verdict PASS on inject_verify's in-flight PASS,
+    the probe exited rc 0, and the entry carries its row's sha256 (the writer verified the row against it)."""
+    return (isinstance(entry, dict) and entry.get("kind") == INTERRUPT_KIND and entry.get("verdict") == "PASS"
+            and entry.get("verify_verdict") == "PASS" and _int(entry.get("probe_rc"), 0) and _hex64(entry.get("row_sha256")))
+
+
 def inject_accepted(entry) -> bool:
-    """PASS; DECLINED (loop / alloc, S26 §4); PASS_BY_TRANSFER (stall / loop) or WAIVED (alloc), C366 — each with valid evidence."""
+    """PASS; PASS_NO_INFLIGHT (stall / loop, S27 §4.3); DECLINED (loop / alloc, S26 §4); PASS_BY_TRANSFER (stall / loop) or
+    WAIVED (alloc), C366 — each with valid evidence. The interrupt positive accepts PASS only (its in-flight proof); v8 also
+    requires its evidence (`interrupt_ok`, X12)."""
     v = entry.get("verdict") if isinstance(entry, dict) else None
-    return (v == "PASS" or (v == "DECLINED" and declined_ok(entry)) or (v == "PASS_BY_TRANSFER" and transfer_ok(entry))
-            or (v == "WAIVED" and waived_ok(entry)))
+    kind = entry.get("kind") if isinstance(entry, dict) else None
+    if kind == INTERRUPT_KIND:
+        return v == "PASS"
+    return (v == "PASS" or (v == PASS_NO_INFLIGHT and kind in NO_INFLIGHT_KINDS) or (v == "DECLINED" and declined_ok(entry))
+            or (v == "PASS_BY_TRANSFER" and transfer_ok(entry)) or (v == "WAIVED" and waived_ok(entry)))
+
+
+def proof_of(entry) -> str:
+    """S27 §4.5: which proof an accepted entry used (the ship recommendation states it per record)."""
+    v = entry.get("verdict") if isinstance(entry, dict) else None
+    return {"PASS": "in_flight" if entry.get("kind") == INTERRUPT_KIND else "detection_in_flight",
+            PASS_NO_INFLIGHT: "detection_no_inflight", "PASS_BY_TRANSFER": "transfer", "DECLINED": "declined",
+            "WAIVED": "waived"}.get(v, "none")
 
 
 def waiver_problems(injects) -> list:
@@ -344,19 +370,53 @@ def leg_items_problems(root, arm) -> list:
     if not ledger:
         return ["the realized ledger is empty"]
     problems, judged = [], 0
+    # S27 §5.7: the harness DNFs (`p426_harness_dnf`, sealed sidecar `items/<slot>.harness_dnf.json`) beside the transport DNFs;
+    # the accepted attempt of a slot is keyed by its rerun index (earlier attempts each `harness_fault` with a reason)
+    harness = {d.get("slot"): d for d in chain.get("p426_harness_dnf") or [] if isinstance(d, dict)}
+    faults = {}
+    for a in (chain.get("progress") or {}).get("slot_attempts") or []:
+        if isinstance(a, dict) and a.get("disposition") == "harness_fault":
+            faults.setdefault(a.get("slot"), []).append(a)
+    for slot, atts in faults.items():
+        if any(not (isinstance(a.get("reason"), str) and a["reason"]) for a in atts):
+            problems.append(f"{slot}: a harness_fault attempt carries no recorded reason")
     for e in ledger:
         name = cr.slot_file(e["slot"])
+        rindex = int(e.get("rerun_index") or 0)
+        if e.get("kind") == "dnf" and e["slot"] in harness:
+            side = root / "items" / f"{name}.harness_dnf.json"
+            try:
+                doc = json.loads(side.read_text())
+            except (OSError, ValueError):
+                problems.append(f"{e['slot']}: harness DNF sidecar is missing or unreadable")
+                continue
+            if not ph.sealed_ok(doc) or doc.get("sha256") != harness[e["slot"]].get("sha256"):
+                problems.append(f"{e['slot']}: harness DNF sidecar does not verify against chain.json's record")
+            elif doc.get("kind") not in cr.HARNESS_DNF_KINDS:
+                problems.append(f"{e['slot']}: harness DNF kind {doc.get('kind')!r} is not one of {cr.HARNESS_DNF_KINDS}")
+            continue                                    # a harness DNF is the slot's terminal record (scored strict 0)
+        if rindex and len(faults.get(e["slot"], [])) < rindex:
+            problems.append(f"{e['slot']}: accepted at rerun index {rindex} without a recorded harness fault before it")
         dnf = e.get("kind") == "dnf"
-        path, what = (root / "items" / f"{name}.dnf.json", "DNF item record") if dnf else (root / "items" / f"{name}.json", "item record")
+        stem = ph.record_name(e["slot"], rindex, "dnf.json" if dnf else "json")
+        path, what = (root / "items" / stem, "DNF item record" if dnf else "item record")
         ready = None                                    # every ledger entry, a DNF included, has its ready record (spec 4.2)
         try:
-            ready = json.loads((root / "items" / f"{name}.ready.json").read_text())
+            ready = json.loads((root / "items" / ph.record_name(e["slot"], rindex, "ready.json")).read_text())
         except (OSError, ValueError):
             problems.append(f"{e['slot']}: ready record is missing or unreadable")
         else:
             if not ph.sealed_ok(ready):
                 problems.append(f"{e['slot']}: ready record's sha256 does not verify")
                 ready = None
+        accounting = e.get("accounting_fault") is True
+        if accounting and not os.path.lexists(path):
+            # S27 §5.3: the done step failed before its record; the chain sealed the sidecar (Z3: naming no item record)
+            bad = _accounting_problems(root, chain, e, rindex)
+            if bad:
+                problems.append(f"{e['slot']}: {what} is missing and the accounting sidecar does not stand for it: "
+                                + "; ".join(bad))
+            continue
         try:
             rec = json.loads(path.read_text())
         except (OSError, ValueError):
@@ -366,7 +426,10 @@ def leg_items_problems(root, arm) -> list:
             problems.append(f"{e['slot']}: {what}'s sha256 does not verify")
         elif ready is not None and rec.get("ready_sha256") != ready["sha256"]:
             problems.append(f"{e['slot']}: {what}'s ready_sha256 is not its ready record's sha256")
-        elif rec.get("verdict") != "reconciled":
+        elif accounting and _accounting_problems(root, chain, e, rindex):
+            problems.append(f"{e['slot']}: an accounting fault without its sealed sidecar (or one that names another record): "
+                            + "; ".join(_accounting_problems(root, chain, e, rindex)))
+        elif rec.get("verdict") != "reconciled" and not (accounting and rec.get("fault_class") in ("accounting", None)):
             problems.append(f"{e['slot']}: {what} is not reconciled (verdict {rec.get('verdict')!r})")
         else:                                           # a DNF item's completed requests are judged as well (it has no per-item floor)
             requests = rec.get("requests") or []
@@ -376,6 +439,31 @@ def leg_items_problems(root, arm) -> list:
     if engagement_role(arm) == "on" and not judged and not problems:
         problems.append("unengaged: no request of the leg is long enough (>= 2 generated tokens) to be judged")
     return problems
+
+
+def ledger_row(root, chain, entry):
+    """The committed row a ledger entry names (its invocation's rows file under the leg root); None when not found."""
+    inv = ph.ledger_invocation(chain, entry)
+    if inv is None:
+        return None
+    try:
+        return ph.row_for_slot(cr.read_rows(cr._resolve(root, inv["file"])), inv, entry.get("slot"))
+    except cr.ChainRowsError:
+        return None
+
+
+def _accounting_problems(root, chain, entry, rindex) -> list:
+    """S27 §5.3 / Y4 / Z3: the sealed `items/<slot>.accounting.json` against the shared contract
+    (`p426_hooks.accounting_problems`): this slot attempt, its committed row and its item record (`read_item_record`: None
+    when none exists, never read through a symlink)."""
+    slot = entry["slot"]
+    path = Path(root) / "items" / ph.record_name(slot, rindex, "accounting.json")
+    try:
+        side = json.loads(path.read_text()) if path.is_file() and not path.is_symlink() else None
+    except (OSError, ValueError):
+        side = None
+    item = ph.read_item_record(Path(root) / "items" / ph.record_name(slot, rindex, "json"))
+    return ph.accounting_problems(side, slot, rindex, row=ledger_row(root, chain, entry), item_record=item)
 
 
 def pilot_walls(root) -> list:
@@ -903,9 +991,22 @@ def positives_problems(doc, *, arm, commit, identity, frozen_prompt_date, image_
                       ("frozen_prompt_date", frozen_prompt_date)):
         if doc.get(key) != want:
             problems.append(f"{key} {str(doc.get(key))[:40]!r} is not the live {str(want)[:40]!r}")
-    injects = {(p.get("language"), p.get("kind")): p for p in doc.get("injects") or []}
-    if len(injects) != len(doc.get("injects") or []) or set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
+    all_injects = doc.get("injects") or []
+    interrupts = [p for p in all_injects if isinstance(p, dict) and p.get("kind") == INTERRUPT_KIND]
+    injects = {(p.get("language"), p.get("kind")): p for p in all_injects if not (isinstance(p, dict) and
+                                                                                   p.get("kind") == INTERRUPT_KIND)}
+    if len(injects) != len(all_injects) - len(interrupts) or \
+            set(injects) != {(lang, k) for lang in TG2_LANGS for k in POSITIVE_KINDS}:
         problems.append("the injected positives are not stall / loop / alloc once per tg2 language")
+    # S27 §4.5 (C373): the record is PASS only with ONE interrupt positive (the pilot item) that PASSes with the in-flight proof;
+    # stall / loop then prove detection (PASS or PASS_NO_INFLIGHT)
+    if len(interrupts) != 1:
+        problems.append(f"the record holds {len(interrupts)} interrupt positive(s), not exactly one")
+    elif not interrupt_ok(interrupts[0]):
+        i = interrupts[0]
+        problems.append(f"interrupt ({i.get('language')}): verdict {i.get('verdict')!r}, inject_verify "
+                        f"{i.get('verify_verdict')!r}, probe rc {i.get('probe_rc')!r}, row sha256 "
+                        f"{'present' if _hex64(i.get('row_sha256')) else 'missing'} (needs the in-flight PASS, rc 0 and its row)")
     # S26 §4 (v8): DECLINED for loop / alloc only, with valid `declined_evidence`; C366: PASS_BY_TRANSFER (stall / loop) and
     # WAIVED (alloc, beside an alloc PASS) with valid evidence
     problems += [f"{lang} {k}: verdict {p.get('verdict')!r}" for (lang, k), p in sorted(injects.items()) if not inject_accepted(p)]
@@ -992,6 +1093,9 @@ def cmd_v8_tg2(a, ops, checks, wd):
         client_step_cap=dict(seconds=prc.CLIENT_STEP_CAP_S, source=prc.CLIENT_STEP_CAP_SOURCE, bound_by="opencode_exe_sha256"),
         stack_suite_receipt_sha256=inputs["stack_suite_receipt_sha256"], tg2_draw_sha256=schedules.TG2_DRAW_SHA256,
         tg2_universe_sha256=schedules.TG2_UNIVERSE_SHA256, tg2_image_id=image_id, positives_sha256=positives["sha256"],
+        # S27 §4.5: which proof each positive used (the interrupt's in-flight PASS; stall / loop detection in flight or not)
+        positives_proofs={f"{p.get('language')}/{p.get('kind')}": proof_of(p) for p in positives.get("injects") or []
+                          if isinstance(p, dict)},
         **{k: idents[ref][k] for k in IDENTITY_KEYS}))
 
 

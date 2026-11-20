@@ -225,8 +225,11 @@ def test_regen_or_compare(monkeypatch, tmp_path):
         pytest.skip("recorded the tg1 golden")
     rec = json.loads(FIXTURE.read_text())
     for key in ("chain", "wave2", "harvest", "b8", "row"):
-        assert facts[key] == rec["facts"][key], f"tg1 {key} facts differ from the baseline golden: " + \
-            "; ".join(_diff(facts[key], rec["facts"][key])[:12])
+        # S27 (spec v1.4): the only allowed differences — the chain entry's `--pause-file` (§8.2), the row's `cleanup_status`
+        # (§3.6), the tg1 template's `inject_allowed` + interrupt (§4.5) and the policy sha it rotates (§9)
+        s27 = (".args.pause_file", ".row.cleanup_status", ".runtime.policy.inject_allowed", ".runtime.scaffold_policy_sha256")
+        diffs = [d for d in _diff(facts[key], rec["facts"][key]) if not d.split(":", 1)[0].endswith(s27)]
+        assert not diffs, f"tg1 {key} facts differ from the baseline golden: " + "; ".join(diffs[:12])
 
 
 def _diff(a, b, path=""):

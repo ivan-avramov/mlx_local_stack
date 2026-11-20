@@ -22,11 +22,16 @@ GRADE_JOIN_OVERHEAD_S = 60                       # = tg1_runner.GRADE_JOIN_OVERH
 DEFAULT_BUDGETS = dict(thinking_budget=81920, max_tokens=102400, context="carrier")
 COMPACTION = ("off", "on_accounted")
 INJECT_KINDS = ("stall", "loop", "alloc")
+# S27 §4.5 (C373): the deterministic interrupt positive — no prompt addendum, no lowered constant; the harness itself stops the
+# item once the worker reports a generation in flight. Allowed by the tg1 / tg2 templates only (their identities rotate, §9).
+INTERRUPT_KIND = "interrupt"
+ALL_INJECT_KINDS = INJECT_KINDS + (INTERRUPT_KIND,)
 # C147 section 2: each inject kind lowers exactly ONE constant (copy of `tg1_runner.INJECT_POLICY`, tested equal).
 INJECT_POLICY = {
     "stall": {"gate": {"no_progress_requests": 4}, "hygiene": {}},
     "loop": {"gate": {"identical_calls": 3}, "hygiene": {}},
     "alloc": {"gate": {}, "hygiene": {"per_process": 512 * 1024**2}},
+    INTERRUPT_KIND: {"gate": {}, "hygiene": {}},
 }
 TRANSPORT_POLICIES = ("abort_restart", "incident_retry", "p426_continue")
 RESUME_POLICIES = ("restart_load", "new_segment")
@@ -197,8 +202,8 @@ class PolicyTemplate:
             raise ValueError("langs must be nonempty")
         if self.compaction not in COMPACTION:
             raise ValueError(f"compaction must be one of {COMPACTION}")
-        if any(k not in INJECT_KINDS for k in self.inject_allowed):
-            raise ValueError(f"inject_allowed must be drawn from {INJECT_KINDS}")
+        if any(k not in ALL_INJECT_KINDS for k in self.inject_allowed):
+            raise ValueError(f"inject_allowed must be drawn from {ALL_INJECT_KINDS}")
         wd = self.watchdog
         if not isinstance(wd, dict) or wd.get("mode") not in ("off", "on"):
             raise ValueError("watchdog.mode must be off or on")

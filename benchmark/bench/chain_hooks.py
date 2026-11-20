@@ -10,18 +10,22 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-KINDS = ("accept", "rerun_same_slot", "block", "pre_spawn_incident", "invalidate")
+KINDS = ("accept", "rerun_same_slot", "block", "pre_spawn_incident", "invalidate", "harness_fault", "accounting_fault", "hold")
 BEFORE_KINDS = ("accept", "pre_spawn_incident", "invalidate")
-AFTER_KINDS = ("accept", "rerun_same_slot", "block", "invalidate")
-_SLOT_DISPOSITION = {"accept": "accepted", "rerun_same_slot": "cheat", "block": "unclear"}
+AFTER_KINDS = ("accept", "rerun_same_slot", "block", "invalidate", "harness_fault", "accounting_fault", "hold")
+# S27 §5.3 / §8.2: an accounting fault keeps the item's outcome (an accepted attempt, flagged); a hold stops at an accepted
+# item. §5.2 / §5.7: a harness fault is its own attempt disposition (the same slot reruns once, rerun index 1).
+_SLOT_DISPOSITION = {"accept": "accepted", "rerun_same_slot": "cheat", "block": "unclear", "harness_fault": "harness_fault",
+                     "accounting_fault": "accepted", "hold": "accepted"}
 
 
 class HookInfrastructureError(Exception):
     """A hook could not decide because infrastructure failed (health probe unreachable ...): the transport class."""
 
-    def __init__(self, cause):
+    def __init__(self, cause, *, not_evaluated=()):
         super().__init__(cause)
         self.cause = cause
+        self.not_evaluated = tuple(not_evaluated)     # S27 X16: the checks the failing hook never reached (recorded only)
 
 
 @dataclass(frozen=True)
@@ -34,7 +38,8 @@ class Disposition:
         if self.kind not in KINDS:
             raise ValueError(f"disposition kind must be one of {KINDS}, got {self.kind!r}")
         need = {"rerun_same_slot": "reason", "block": "reason", "pre_spawn_incident": "cause",
-                "invalidate": "reason"}.get(self.kind)
+                "invalidate": "reason", "harness_fault": "reason", "accounting_fault": "reason",
+                "hold": "reason"}.get(self.kind)
         for name in ("reason", "cause"):
             value = getattr(self, name)
             if name == need and not (isinstance(value, str) and value):
@@ -63,9 +68,24 @@ class Disposition:
         """B2 (P426): a barrier check failed; the leg is INVALID (persisted, `.stop`, rc 2)."""
         return cls("invalidate", reason=reason)
 
+    @classmethod
+    def harness_fault(cls, reason):
+        """S27 §5.2: a pre-outcome harness fault; the same item reruns once (same seed) after the cache reset and settle."""
+        return cls("harness_fault", reason=reason)
+
+    @classmethod
+    def accounting_fault(cls, reason):
+        """S27 §5.3: a post-outcome accounting check failed after §4; the outcome is kept, a sidecar sealed, no rerun."""
+        return cls("accounting_fault", reason=reason)
+
+    @classmethod
+    def hold(cls, reason):
+        """S27 §8.2: hold at this accepted item boundary (`.stop` cleanup-only; the chain waits for the release)."""
+        return cls("hold", reason=reason)
+
     @property
     def stops_probe(self):
-        return self.kind != "accept"
+        return self.kind not in ("accept", "accounting_fault")
 
     def as_dict(self):
         out = dict(kind=self.kind)

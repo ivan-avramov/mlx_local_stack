@@ -141,7 +141,8 @@ def _find(doc, key):
 def test_fix_p426_invalid_is_a_list_of_records(tmp_path, monkeypatch):
     """§16.5: `p426_invalid` is list-shaped like the ledger (it was one dict)."""
     skew = S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[2]
-    rc, env = F.leg(tmp_path, monkeypatch, probe_env={"B2_SKEW_ITEMS": skew})
+    # S27 §5.9 (X18): an integrity mismatch at done (a token skew alone is now an accounting fault, the outcome kept)
+    rc, env = F.leg(tmp_path, monkeypatch, probe_env={"B2_FOREIGN_SESSION_ITEMS": skew})
     inv = F.chain_json(env).get("p426_invalid")
     assert rc == 2 and isinstance(inv, list) and len(inv) == 1 and inv[0]["stage"] == "done" and skew in json.dumps(inv)
 
@@ -527,7 +528,8 @@ def test_fix_p536_topology_a_makeup_leg_that_stops_early_records_its_unrun_occur
     occ = tmp_path / "occ.jsonl"
     occ.write_text("".join(json.dumps(o) + "\n" for o in (S.occurrence("s1", "python", order[1], 1001, "on", 1),
                                                             S.occurrence("s1", "python", order[3], 1001, "off", 3))))
-    T.worlds["off"]["ops"].extra_env["B2_SKEW_ITEMS"] = order[1]             # the first make-up item fails its reconciliation
+    # S27 §5.9 (X18): the first make-up item fails an INTEGRITY check at done (a token skew alone is now an accounting fault)
+    T.worlds["off"]["ops"].extra_env["B2_FOREIGN_SESSION_ITEMS"] = order[1]
     rc, err = T.run(T.argv("makeup", "--occurrences", str(occ)))
     root = tmp_path / "p426/wave2/tg1-p426-off-makeup.a1"
     rec = json.loads((root / "leg.json").read_text())

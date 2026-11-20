@@ -214,7 +214,8 @@ def namespace_root(namespace="wave2", lever="mtp"):
     return M76 / namespace if lever == "kv" else WAVE2.with_name(namespace)
 
 
-LEG_STATES = ("VALID", "VALID_WITH_DNF", "INVALID", "NOT_STARTED", "OVERRUN")
+LEG_STATES = ("VALID", "VALID_WITH_DNF", "INVALID", "NOT_STARTED", "OVERRUN", "PAUSED")
+NEVER_HARVESTED = ("PAUSED",)          # S27 §5.7: a paused leg (held, not finished) is resumed or archived, never harvested
 ATTEMPT_RE = re.compile(r"^(?P<leg>[A-Za-z0-9][A-Za-z0-9-]*)\.a(?P<n>[1-9][0-9]*)$")
 RUN_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{12}$")
 BARRIER_RE = re.compile(r"^(?P<base>.+)\.item(?P<k>[0-9]+)\.(?P<kind>ready|go|done|continue|stop)$")
@@ -510,6 +511,26 @@ class Entry:
                     **({"lossy_decode": self.lossy} if self.lossy else {}))
 
 
+_BOX_PATH = re.compile(r"(?:^|[\s\"'=:])/(?:Users|home|private|var|tmp|opt|Volumes)/")
+
+
+def portable_link(target, workdir, home=None):
+    """S27 §7.1: a symlink's target as a record may carry it: through the portable scrubber (`$STACK_WORKDIR` / `$HOME` for the
+    workdir / home prefixes); when the scrubbed target still names a box path (absolute, outside both), only its basename and the
+    sha256 of the raw target are recorded."""
+    raw = str(target)
+    text = raw
+    for root, token in sorted(((str(Path(workdir)), PORTABLE_ROOT), (str(home or Path.home()), "$HOME")),
+                              key=lambda rt: len(rt[0]), reverse=True):
+        if root and (text == root or text.startswith(root + "/")):
+            text = token + text[len(root):]
+            break
+    user = os.environ.get("USER") or ""
+    if text.startswith("/") or _BOX_PATH.search(text) or (user and user in text):
+        return dict(basename=Path(raw).name, sha256=_sha(raw.encode("utf-8", "surrogateescape")))
+    return text
+
+
 def _manifest_runs(leg_root, workdir, problems):
     """[(run id, run dir or None, evidence dir or None)] of every probe invocation this attempt's manifests name."""
     runs, seen = [], set()
@@ -548,6 +569,10 @@ def _inventory(leg_root, workdir, problems):
             source = f"{kind}:{rel}" if kind == "leg" else f"{kind}:{label}/{rel}"
             if statmod.S_ISLNK(mode):
                 if _in_final_tree(kind, rel):
+                    inv[source] = Entry(source, path, kind, rel, "excluded", "symlink", link=os.readlink(path))
+                elif kind == "run" and rel.split("/")[0] in PRIVATE_RUN_DIRS:
+                    # S27 §7.1 (D3): a link in a run's private state (npm's npx cache `.bin/*`, ...) is an excluded entry,
+                    # never followed; its target is recorded portable (or as basename + sha256 if it still names a box path)
                     inv[source] = Entry(source, path, kind, rel, "excluded", "symlink", link=os.readlink(path))
                 else:
                     problems.append(f"{source}: a symlink outside a final tree (never followed)")
@@ -668,6 +693,34 @@ def _check_row(row, what, workdir, roots, inv, problems):
             _ref(path, f"{what} artifact", workdir, roots, inv, problems, sha=digest)
 
 
+def _record_name(sf, rindex, suffix):
+    """S27 §5.7: item records keyed by rerun index (`<slot_file>.<suffix>`, `<slot_file>.r<i>.<suffix>`)."""
+    return f"{sf}.{suffix}" if not rindex else f"{sf}.r{rindex}.{suffix}"
+
+
+def _accounting_problems(chain, inv, led, sf, rindex, side):
+    """S27 §5.3 / Y4 / Z3: the inventoried accounting sidecar against the shared contract (`p426_hooks.accounting_problems`):
+    the ledger's slot attempt, its committed row (the invocation's inventoried rows file) and its item record beside the
+    sidecar (`read_item_record`: None only when nothing exists at its path; a symlink or unreadable file is never absent)."""
+    from bench import p426_hooks as ph
+    slot = led.get("slot")
+    try:
+        doc = _load_json(side)
+    except (HarvestError, OSError):
+        doc = None
+    row = None
+    invocation = ph.ledger_invocation(chain, led)
+    rows_entry = inv.get(f"leg:{invocation['file']}") if invocation is not None else None
+    if rows_entry is not None:
+        try:
+            rows = [json.loads(x) for x in _read_regular(rows_entry.path).splitlines() if x.strip()]
+            row = ph.row_for_slot([r for r in rows if isinstance(r, dict)], invocation, slot)
+        except (HarvestError, ValueError, OSError):
+            row = None
+    item = ph.read_item_record(Path(side.path).parent / _record_name(sf, rindex, "json"))
+    return ph.accounting_problems(doc, slot, rindex, row=row, item_record=item)
+
+
 def _check_references(leg_root, state, chain, inv, roots, workdir, problems):
     """Transitive references: chain.json → rows / manifests / item records / DNF sidecars → transcripts, sidecars, final trees,
     grader reports, and every object they name."""
@@ -693,11 +746,27 @@ def _check_references(leg_root, state, chain, inv, roots, workdir, problems):
             if schedules.schedule_sha256(_load_json(sched)) != sched_sha:
                 problems.append("schedule.json: not the schedule chain.json froze (schedule_sha256 differs)")
     ready_hashes = {}
+    harness = {d.get("slot"): d for d in chain.get("p426_harness_dnf") or [] if isinstance(d, dict)}
     for led in chain.get("p426_ledger") or []:
         sf = chain_rows.slot_file(led.get("slot"))
+        rindex = int(led.get("rerun_index") or 0)
+        if led.get("kind") == "dnf" and led.get("slot") in harness:
+            # S27 §5.7: a harness DNF (harness_fault_dnf / grade_fault) is the slot's terminal record: its sealed sidecar
+            side = need(f"items/{sf}.harness_dnf.json", f"ledger {sf} (harness DNF)")
+            if side is not None and _load_json(side).get("sha256") != harness[led["slot"]].get("sha256"):
+                problems.append(f"{side.source}: the harness DNF sidecar differs from chain.json's record")
+            continue
+        if led.get("accounting_fault") is True:                  # S27 §5.3: the accounting sidecar of a kept outcome
+            side = need(f"items/{_record_name(sf, rindex, 'accounting.json')}", f"ledger {sf} (accounting fault)")
+            if side is not None:
+                bad = _accounting_problems(chain, inv, led, sf, rindex, side)
+                if bad:
+                    problems.append(f"{side.source}: " + "; ".join(bad))
         if led.get("kind") in ("row", "dnf"):                    # every ledger entry, a DNF included, has its ready record
-            ready = need(f"items/{sf}.ready.json", f"ledger {sf}")
-            item = need(f"items/{sf}.json" if led.get("kind") == "row" else f"items/{sf}.dnf.json", f"ledger {sf}")
+            ready = need(f"items/{_record_name(sf, rindex, 'ready.json')}", f"ledger {sf}")
+            item = need(f"items/{_record_name(sf, rindex, 'json' if led.get('kind') == 'row' else 'dnf.json')}",
+                        f"ledger {sf}") if not (led.get("accounting_fault") and
+                                                inv.get(f"leg:items/{_record_name(sf, rindex, 'json')}") is None) else None
             if ready is not None:                                # the self-hash itself is checked with every immutable record below
                 ready_hashes[sf] = _load_json(ready).get("sha256")
             if item is not None:
@@ -754,9 +823,10 @@ def _check_barrier(state, chain, inv, problems):
         if stray:
             problems.append(f"NOT_STARTED leg carries launch artifacts: {', '.join(stray[:5])}")
         return
-    stops = 0
+    stops, s27_stops = 0, dict(harness_fault=0, hold=0)
     for (base, k), kinds in sorted(groups.items()):
         tag = f"{base}.item{k}"
+        stop_kind = _stop_disposition(inv, f"leg:{tag}.stop") if "stop" in kinds else None
         if "go" in kinds and "ready" not in kinds:
             problems.append(f"{tag}: a .go without its .ready")
         if "continue" in kinds and "done" not in kinds:
@@ -764,17 +834,38 @@ def _check_barrier(state, chain, inv, problems):
         if "done" in kinds and "ready" not in kinds:
             problems.append(f"{tag}: a .done without its .ready")
         if "stop" in kinds:
-            stops += 1
+            if stop_kind in s27_stops:           # S27 §5.2 / §8.2: a harness-fault or hold stop (the leg continues after it)
+                s27_stops[stop_kind] += 1
+            else:
+                stops += 1
             if not kinds & {"ready", "done"}:
                 problems.append(f"{tag}: a .stop that answers nothing")
         if state in ("VALID", "VALID_WITH_DNF"):
-            if "ready" in kinds and "go" not in kinds:
+            if "ready" in kinds and "go" not in kinds and stop_kind != "harness_fault":
                 problems.append(f"{tag}: a .ready never answered with .go in a {state} leg")
-            if "done" in kinds and "continue" not in kinds:
+            if "done" in kinds and "continue" not in kinds and stop_kind not in s27_stops:
                 problems.append(f"{tag}: a .done never answered with .continue in a {state} leg")
     invalidated = len(chain.get("p426_invalid") or [])
     if stops != invalidated:
         problems.append(f"barrier: {stops} .stop file(s) for {invalidated} invalidate record(s) in chain.json (one .stop per invalidate)")
+    attempts = (chain.get("progress") or {}).get("slot_attempts") or []
+    faulted = sum(1 for a in attempts if isinstance(a, dict) and a.get("disposition") == "harness_fault")
+    held = len(chain.get("p426_holds") or [])
+    if s27_stops["harness_fault"] > faulted:
+        problems.append(f"barrier: {s27_stops['harness_fault']} harness-fault .stop file(s) for {faulted} recorded harness fault(s)")
+    if s27_stops["hold"] > held:
+        problems.append(f"barrier: {s27_stops['hold']} hold .stop file(s) for {held} recorded hold episode(s)")
+
+
+def _stop_disposition(inv, source):
+    """The `disposition` a `.stop` barrier file carries (None when unreadable)."""
+    entry = inv.get(source)
+    if entry is None or entry.path is None:
+        return None
+    try:
+        return (json.loads(_read_regular(entry.path) or b"{}") or {}).get("disposition")
+    except (ValueError, AttributeError, HarvestError):
+        return None
 
 
 def _log_slices(leg_root, state, inv, worktree, problems):
@@ -937,6 +1028,9 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
     state = leg.get("state") if isinstance(leg, dict) else None
     if state not in LEG_STATES:
         raise HarvestError(f"leg.json: state {state!r} is not one of {', '.join(LEG_STATES)}")
+    if state in NEVER_HARVESTED:
+        raise HarvestError(f"leg.json: state {state}: a paused leg is resumed or archived by the designer, never harvested as "
+                           "a result (S27 §5.7)")
     if f"{leg.get('leg')}.a{leg.get('attempt')}" != name:
         raise HarvestError(f"leg.json: names attempt {leg.get('leg')}.a{leg.get('attempt')}, not the leg root {name}")
     chain = {}
@@ -970,6 +1064,8 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
                     e.sha = None if e.link is not None else _stream_sha(e.path)
                 if e.link is not None:
                     e.link = scrub.text(e.link)
+                    if e.kind == "run" and e.reason == "symlink":     # S27 §7.1: still a box path -> basename + sha256 only
+                        e.link = portable_link(e.link, workdir)
                 continue
             data = e.data if e.data is not None else _read_regular(e.path)
             e.data = None

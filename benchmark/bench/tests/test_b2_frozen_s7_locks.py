@@ -242,7 +242,8 @@ def test_new_an_s2_leg_runs_go_first_then_python_in_the_p426_orders(tmp_path, mo
 
 # ------------------------------------------------------------------------------------------------ invalidate at ready / done
 def test_new_a_failed_done_check_invalidates_after_that_item(tmp_path, monkeypatch):
-    rc, env = leg(tmp_path, monkeypatch, probe_env={"B2_SKEW_ITEMS": PILOT[2]})
+    # S27 §5.9 (X18): an integrity mismatch at done (a token skew alone is now an accounting fault, the outcome kept)
+    rc, env = leg(tmp_path, monkeypatch, probe_env={"B2_FOREIGN_SESSION_ITEMS": PILOT[2]})
     assert rc == 2
     assert has(env, ".item2.done") and has(env, ".item2.stop") and not has(env, ".item2.continue")
     assert not any(".item3." in f for f in barrier(env))

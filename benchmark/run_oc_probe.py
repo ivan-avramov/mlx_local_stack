@@ -68,7 +68,7 @@ def _parser():
     ap.add_argument("--chain-total", type=int, default=0)
     ap.add_argument("--a4-v2-receipt")
     ap.add_argument("--allow-version-drift", action="store_true")
-    ap.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+    ap.add_argument("--tg1-inject", choices=arm_runner.rc.ALL_INJECT_KINDS)
     ap.add_argument("--cancel-file")
     ap.add_argument("--manifest-ack")
     ap.add_argument("--sampling-profile", choices=("deployed",))
@@ -111,7 +111,7 @@ def _main(search):
         pre.add_argument("--print-identity", action="store_true")
         pre.add_argument("--universe", type=Path)
         pre.add_argument("--agent-system-file")
-        pre.add_argument("--tg1-inject", choices=("stall", "loop", "alloc"))
+        pre.add_argument("--tg1-inject", choices=arm_runner.rc.ALL_INJECT_KINDS)
         pre.add_argument("--sampling-profile", choices=("deployed",), default="deployed")
         known, _ = pre.parse_known_args()
         try:

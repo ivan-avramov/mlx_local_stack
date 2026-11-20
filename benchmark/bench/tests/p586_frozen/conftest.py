@@ -446,6 +446,9 @@ def bare_chain(tmp_path):
     c.a = SimpleNamespace(predictor="off")
     c.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[], abort_evidence=[])
     c.incidents, c.dnf, c.realized, c.p426_dnf, c.p426_ledger, c.p426_invalid = [], [], [], [], [], []
+    # S27 X14: the per-leg state `Chain.__init__` sets (no class-level defaults for a Chain built without it)
+    c.p426_harness_dnf, c.p426_faults, c.p426_accounting, c.p426_holds = [], [], [], []
+    c.p426_pending_hold, c.pause_path = None, None
     c.hooks = ch.ChainHooks()
     c.out_root = Path(tmp_path)
     c.saved, c.logged = [], []

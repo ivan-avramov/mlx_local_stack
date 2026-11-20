@@ -20,14 +20,16 @@ REPO = Path(__file__).resolve().parents[3]
 sys.path.insert(0, str(REPO / "benchmark"))
 from bench import chain_ops as co  # noqa: E402
 
-KINDS = ("stall", "loop", "alloc")
+from bench.run_config import ALL_INJECT_KINDS as KINDS  # noqa: E402 — S27 X1: the one shared kind list (+ interrupt, C373)
 SEED_BASES = (1001, 2002, 3003)
 ITEM_DRAW_SEED = 147          # random.Random(147).sample(sorted(python), 3): the three inject items (one per kind)
 MIN_FREE_MB = 4096
 
 
 def pick_items(names):
-    return dict(zip(KINDS, random.Random(ITEM_DRAW_SEED).sample(sorted(names["python"]), 3)))
+    items = dict(zip(KINDS[:3], random.Random(ITEM_DRAW_SEED).sample(sorted(names["python"]), 3)))
+    items["interrupt"] = items["stall"]               # the interrupt positive runs on the stall item (the draw is unchanged)
+    return items
 
 
 def build_cmd(py, probe, kind, item, seed, out, receipt):

@@ -80,6 +80,8 @@ P426_SEAMS = ("proc_argv", "proc_environ", "interpreter_inventory", "loaded_imag
               "interpreter_inventory_at")      # spec 16.2 / 16.4 / 16.6 (+ the path form for an interpreter without a process)
 P426_ENTRY_SEAMS = ("last_leg_end", "power_state", "start_state", "listeners")   # B2 s7: the ChainOps seams of the Entry row (spec 16.4); never skipped
 P426_POWER = dict(watts=140, volts=28, batt_above=20)                  # spec 8 / AGENTS: 140 W / 28 V, battery > 20 %
+MAX_HARNESS_DNF = 3             # S27 §5.6: harness_fault_dnf + grade_fault DNFs per leg (the 4th holds)
+HARNESS_FAULT_CAUSES = ("cleanup_uncertain", "grader_infra", "hook_infra")      # S27 §5.8: the typed abort stamps
 P426_EVIDENCE_POLICY = run_config.EvidencePolicy(namespace="opencode_transcripts", web_evidence=True, final_tree=True,
                                                  worker_receipts="absent", item_barrier="on").as_dict()
 
@@ -318,6 +320,11 @@ def barrier_signal(path, payload=None):
 
 # --------------------------------------------------------------------------- the chain
 class Chain:
+    @property
+    def paused_path(self):
+        """S27 §5.4: the PAUSED marker of this chain's output root."""
+        return Path(self.out_root) / "PAUSED"
+
     def __init__(self, config, args, ops, timers, log, *, repo, out_root, names, lifecycle_files, campaign=None, hooks=None,
                  needs_docker=None, inject_langs=None, docker_images=None, grader_timeout_s=None):
         """M76 B4b-1 (from the corpus; tg1 keeps the defaults): `inject_langs` = the R2 / R3 rehearsal targets' language
@@ -372,6 +379,11 @@ class Chain:
         self.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[], abort_evidence=[])
         self.incidents, self.dnf, self.realized = [], [], []
         self.p426_dnf, self.p426_ledger, self.p426_invalid = [], [], []      # `p426_continue`: DNF records, ledger, INVALID records
+        # S27 §5 / §8.2: harness DNF records (harness_fault_dnf / grade_fault), harness-fault episodes, accounting faults, and
+        # the hold / pause episodes {kind hold|paused, reason, start, end, ...}; `p426_pending_hold` is the one to wait on next
+        self.p426_harness_dnf, self.p426_faults, self.p426_accounting, self.p426_holds = [], [], [], []
+        self.p426_pending_hold = None
+        self.pause_path = Path(args.pause_file) if getattr(args, "pause_file", None) else None
         self.schedule, self.schedule_sha = None, None
         self.loads, self.snapshot_tools = [], {}
         self.loaded = None
@@ -943,6 +955,12 @@ class Chain:
         elif self.p426:
             self.p426_dnf, self.p426_ledger = list(previous.get("p426_dnf") or []), list(previous.get("p426_ledger") or [])
             self.p426_invalid = list(previous.get("p426_invalid") or [])
+            self.p426_harness_dnf = list(previous.get("p426_harness_dnf") or [])
+            self.p426_faults = list(previous.get("p426_harness_faults") or [])
+            self.p426_accounting = list(previous.get("p426_accounting_faults") or [])
+            self.p426_holds = list(previous.get("p426_holds") or [])
+            opened = [h for h in self.p426_holds if h.get("end") is None]
+            self.p426_pending_hold = opened[-1] if opened else None      # a resumed chain waits on its open episode first
         for rec in self.progress["invocations"]:
             stem, n = self.stem_attempt(rec)
             if stem is not None:
@@ -1128,7 +1146,10 @@ class Chain:
                 out.update(schedule_sha256=self.schedule_sha, realized=self.realized)
             if self.p426:
                 out.update(p426_dnf=self.p426_dnf, p426_ledger=self.p426_ledger, p426_invalid=self.p426_invalid,
-                           frozen_record=self.p426_frozen_record_ref(), inject=getattr(self.a, "inject", None))
+                           frozen_record=self.p426_frozen_record_ref(), inject=getattr(self.a, "inject", None),
+                           p426_harness_dnf=self.p426_harness_dnf, p426_harness_faults=self.p426_faults,
+                           p426_accounting_faults=self.p426_accounting, p426_holds=self.p426_holds,
+                           p426_harness_counts=self.p426_counts())
                 if getattr(getattr(self, "a", None), "mode", None) == "makeup":
                     out["p426_not_run"] = self.p426_not_run()
             return out
@@ -1475,8 +1496,18 @@ class Chain:
             raise co.ChainAbort(f"per-item ledger differs from the plan ({len(got)} entries, {len(want)} planned; "
                                 f"missing {missing[:3]}, duplicated/unplanned {extra[:3]}, or reordered)")
         ledger_dnf = [e["slot"] for e in self.p426_ledger if e.get("kind") == "dnf"]
-        if sorted(ledger_dnf) != sorted(d["slot"] for d in self.p426_dnf):
-            raise co.ChainAbort("per-item ledger: its DNF entries differ from the p426_dnf records")
+        # S27 §5.7: the transport DNFs (`p426_dnf`) and the harness DNFs (`p426_harness_dnf`) are both DNF ledger entries
+        if sorted(ledger_dnf) != sorted([d["slot"] for d in self.p426_dnf] + [d["slot"] for d in self.p426_harness_dnf]):
+            raise co.ChainAbort("per-item ledger: its DNF entries differ from the p426_dnf + p426_harness_dnf records")
+        # every harness fault is followed by its slot's rerun (a row of rerun index 1) or its harness DNF, and nothing else
+        # of that slot came between them
+        terminal = {e["slot"]: e for e in self.p426_ledger}
+        for fault in self.p426_faults:
+            entry = terminal.get(fault["slot"])
+            if entry is None:
+                raise co.ChainAbort(f"per-item ledger: the harness fault of {fault['slot']} has no rerun or DNF entry")
+            if entry.get("kind") == "row" and entry.get("rerun_index", 0) != fault.get("rerun_index", 0) + 1:
+                raise co.ChainAbort(f"per-item ledger: {fault['slot']}'s accepted row is not the rerun after its harness fault")
 
     def record_realized(self, leg):
         """Appended ONCE per leg key, in schedule order, when the leg's slots are all accounted."""
@@ -1740,6 +1771,8 @@ class Chain:
 
     # -- the slot table: `chain_rows` is the only reader
     def chain_doc(self):
+        if self.p426:
+            return dict(progress=self.progress, dnf=self.dnf, p426=True, p426_harness_dnf=self.p426_harness_dnf)
         return dict(progress=self.progress, dnf=self.dnf)
 
     def slot_table(self):
@@ -2313,6 +2346,11 @@ class Chain:
         if hook.get("disposition") == "invalidate":          # B2: a barrier check failed; the cleanup is verified, the leg INVALID
             self.require_certain_cleanup(att, view, "invalidate")
             raise LegInvalid(f"leg INVALID at {hook['slot']}: {hook.get('reason')}")
+        if self.p426 and hook.get("disposition") in ("harness_fault", "hold"):
+            # S27 §5.2 / §8.2: a harness-fault stop (the slot reruns, or its harness DNF is recorded) or a hold at an item
+            # boundary: the invocation is accepted for its prefix and the leg loop continues (after the release)
+            self.require_certain_cleanup(att, view, hook["disposition"])
+            return "hook"
         if hook["kind"] == "before":
             if self.p426:
                 raise co.ChainAbort("p426_continue: a before_attempt pre-spawn incident cannot occur (a hook "
@@ -2580,22 +2618,153 @@ class Chain:
         for inv in leg["invocations"]:
             while True:
                 self.check_stop("before launch")
+                if self.p426_pending_hold is not None:              # S27 §8.2 / §5.8: held or paused: nothing launches
+                    self.p426_wait_release(load)
                 slots = {e: cr.slot_for(leg["slot_base"], e) for e in inv["expect"]}
                 done = self.p426_accounted(slots.values())
                 todo = [e for e in inv["expect"] if slots[e] not in done]
                 if not todo:
                     break
-                step = dict(inv, names=[e.split("/", 1)[1] for e in todo], expect=todo,
-                            limit=len(todo) if inv.get("limit") is not None else None)
+                reruns = dict(self.slot_table().pending_reruns)
+                pending = [e for e in todo if slots[e] in reruns]
+                if pending and pending[0] != todo[0]:
+                    raise co.ChainAbort(f"p426_continue: a harness-fault rerun is pending for {pending[0]}, not the next slot")
+                if pending:
+                    # S27 §5.2: the SAME item reruns once, immediately (plan order), same seed, after the cache session reset
+                    # and the settle check; its records are keyed by the rerun index
+                    head = todo[0]
+                    self.p426_before_rerun(load, leg, slots[head])
+                    step = dict(inv, kind="rerun", phase="rerun", names=[head.split("/", 1)[1]], expect=[head], limit=None,
+                                rerun_index=reruns[slots[head]])
+                else:
+                    step = dict(inv, names=[e.split("/", 1)[1] for e in todo], expect=todo,
+                                limit=len(todo) if inv.get("limit") is not None else None)
                 load["rec"]["cursor"] = dict(leg_index=leg["li"], phase=step["phase"])
+                marks = (len(self.p426_faults), len(self.p426_holds))
                 res = self.run_invocation(load, leg, step)
-                if res not in ("ok", "dnf"):
+                if res not in ("ok", "dnf", "hook", "harness_fault", "paused"):
                     raise co.ChainAbort(f"p426_continue: the invocation ended {res!r}")
-                if len(self.p426_accounted(slots.values())) <= len(done):
+                progressed = len(self.p426_accounted(slots.values())) > len(done) or \
+                    (len(self.p426_faults), len(self.p426_holds)) != marks
+                if not progressed:
                     raise co.ChainAbort(f"p426_continue: the invocation of {leg['stem']} accounted for no slot")
         return "ok"
 
-    def p426_dnf_eligible(self, att, load, leg, cause, slot=None):
+    # -- S27: harness faults, accounting faults, holds (spec §5, §8.2)
+    def p426_counts(self):
+        """§5.6: the reported per-arm counts (one leg = one arm)."""
+        reruns = sum(1 for a in self.progress.get("slot_attempts", []) if a.get("rerun_index", 0) >= 1
+                     and a.get("status") != "archived")
+        return dict(harness_faults=len(self.p426_faults), reruns=reruns,
+                    harness_fault_dnf=sum(1 for d in self.p426_harness_dnf if d.get("kind") == "harness_fault_dnf"),
+                    grade_fault_dnf=sum(1 for d in self.p426_harness_dnf if d.get("kind") == "grade_fault"),
+                    accounting_faults=len(self.p426_accounting), holds=len(self.p426_holds))
+
+    def p426_settle_problems(self, load):
+        """§5.2 / §5.3: the settle check — worker `in_flight == 0`, the same worker identity, the owned `:8000` router."""
+        problems = list(self.p426_router_problems())
+        fl = co.in_flight(self.ops.worker_metrics() or {})
+        if fl != 0:
+            problems.append(f"worker in_flight={fl}")
+        cur = self.ops.worker_ident(load.get("model"))
+        if not cur or (cur["pid"], cur["create_time"]) != (load["worker"]["pid"], load["worker"]["create_time"]):
+            problems.append("owned worker identity changed or the worker is gone")
+        return problems
+
+    def p426_before_rerun(self, load, leg, slot):
+        """§5.2: before a harness-fault rerun: the cache session is reset (as the cheat path) and the settle check passes."""
+        self.ops.reset_cache_session(load["model"])
+        problems = self.p426_settle_problems(load)
+        if problems:
+            raise co.ChainAbort(f"harness-fault rerun of {slot}: the settle check failed ({'; '.join(problems)}); systemic")
+        self.log(f"RERUN {slot}: cache session reset, settle ok")
+
+    def p426_record_fault(self, slot, rindex, stage, reason, rec, load, *, kind_on_second="harness_fault_dnf"):
+        """§5.2: a PRE-outcome harness fault of `slot`'s attempt `rindex`. The first is a `harness_fault` attempt (the slot reruns
+        once); the second is the slot's terminal `harness_fault_dnf`. Returns "rerun" | "dnf" (and holds at the cap)."""
+        att = dict(slot=slot, rerun_index=rindex, disposition="harness_fault", reason=reason, stage=stage,
+                   load=load["idx"], load_gen=rec["load_gen"], invocation=rec["file"], at=co.utc_stamp())
+        self.progress["slot_attempts"].append(att)
+        if rindex < cr.MAX_P426_RERUN_INDEX:
+            self.p426_faults.append(dict(slot=slot, rerun_index=rindex, stage=stage, reason=reason, invocation=rec["file"],
+                                         at=att["at"]))
+            self.write_json("harness-fault")
+            self.log(f"HARNESS FAULT {slot} ({stage}): {reason}; the item reruns once")
+            return "rerun"
+        self.p426_harness_dnf_record(slot, kind_on_second, reason, rec, stage=stage, rindex=rindex)
+        return "dnf"
+
+    def p426_harness_dnf_record(self, slot, kind, reason, rec, *, stage, rindex):
+        """§5.7: a `harness_fault_dnf` / `grade_fault` DNF — in `chain.p426_harness_dnf` with its ledger `dnf` entry (chain.json
+        first), then the sealed sidecar `items/<slot>.harness_dnf.json`; scored strict 0. The cap (≤ 3 per leg) is enforced here,
+        synchronously: the 4th persists the DNF and the hold episode in ONE write and HOLDS."""
+        from bench import p426_hooks as ph
+        record = ph.seal(self.p426_persist(dict(slot=slot, kind=kind, reason=reason, stage=stage, rerun_index=rindex,
+                                                invocation=rec["file"], strict_fail=True, at=co.utc_stamp())))
+        self.p426_harness_dnf.append(record)
+        self.p426_ledger.append(dict(slot=slot, kind="dnf", dnf_kind=kind, invocation=rec["file"], index=len(self.p426_ledger)))
+        over = len(self.p426_harness_dnf) > MAX_HARNESS_DNF
+        if over:
+            self.p426_open_hold("paused", f"harness DNF cap: {len(self.p426_harness_dnf)} > {MAX_HARNESS_DNF} in the leg",
+                                slot=slot, write=False)
+        self.write_json("harness-dnf")
+        ph.write_exclusive(self.out_root / ph.ITEMS_DIR / (cr.slot_file(slot) + ".harness_dnf.json"), record)
+        self.log(f"HARNESS DNF {slot}: {kind} ({reason}); " + ("HOLD (cap)" if over else "the leg continues"))
+
+    def p426_open_hold(self, kind, reason, *, slot=None, write=True, **extra):
+        """§8.2 / §5.8: open a hold (`hold`: the PAUSE file at an item boundary) or pause (`paused`: the designer's release) episode;
+        the chain launches nothing until it is released (`p426_wait_release`). A pause writes `<out_root>/PAUSED`."""
+        ep = dict(kind=kind, reason=reason, slot=slot, start=co.utc_stamp(), start_t=time.time(), end=None, end_t=None,
+                  state_at_hold=self.p426_cache_state(), **extra)
+        self.p426_holds.append(ep)
+        self.p426_pending_hold = ep
+        if kind == "paused":
+            co.atomic_json(self.paused_path, dict(reason=reason, slot=slot, start=ep["start"]))
+        if write:
+            self.write_json("held" if kind == "hold" else "paused")
+        self.log(f"{'HOLD' if kind == 'hold' else 'PAUSED'}: {reason}")
+        return ep
+
+    def p426_cache_state(self):
+        try:
+            metrics = self.ops.worker_metrics() or {}
+        except Exception:  # noqa: BLE001 — evidence only
+            return None
+        summary = metrics.get("summary") if isinstance(metrics.get("summary"), dict) else metrics
+        return {k: summary.get(k) for k in ("in_flight", "requests_started", "requests_completed", "cache_sessions",
+                                            "session_cache") if k in summary} or None
+
+    def p426_held(self):
+        ep = self.p426_pending_hold
+        if ep is None:
+            return False
+        if ep["kind"] == "hold":
+            return self.pause_path is not None and self.pause_path.exists()
+        return self.paused_path.exists()
+
+    def p426_wait_release(self, load):
+        """Wait (no probe runs, nothing launches) until the episode is released — the PAUSE file removed (hold) or
+        `<out_root>/PAUSED` removed by the designer (paused); STOP ends the chain (exit 3, the leg stays PAUSED). On release the
+        leg-entry checks run again (worker identity, `:8000` owner, AC power, no other GPU job) before the next invocation."""
+        ep = self.p426_pending_hold
+        sleep = getattr(self.ops, "sleep", None) or time.sleep
+        while self.p426_held():
+            if self.stop_requested():
+                self.stop_info["where"] = "held"
+                raise Stopped("held")
+            sleep(self.tm.poll_s)
+        ep.update(end=co.utc_stamp(), end_t=time.time(), state_at_resume=self.p426_cache_state())
+        self.p426_pending_hold = None
+        self.write_json("released")
+        problems = self.p426_settle_problems(load)
+        if not self.ops.power_ok():
+            problems.append("power gate FAIL")
+        if problems:
+            raise co.ChainAbort("resume after the hold (systemic): " + "; ".join(problems))
+        self.p426_census("at resume", load)
+        self.log(f"RELEASED ({ep['kind']}): {ep['reason']}; the leg resumes with its remaining items")
+
+    def p426_dnf_eligible(self, att, load, leg, cause, slot=None, rindex=0):
         """None when the abort is an eligible item DNF, else the reason it is systemic: the owned worker identity is
         unchanged, the cleanup certain and, when the hooks reconcile (`dnf_problems`, spec 4.3's DNF rows), the DNF
         window of `slot` settled and reconciled against the abort manifest (its item record is kept in `p426_dnf_item`)."""
@@ -2616,7 +2785,7 @@ class Chain:
         except (OSError, ValueError) as exc:
             return f"the abort manifest is unreadable: {exc}"
         try:
-            found, record = reconcile(slot, manifest)
+            found, record = reconcile(slot, manifest, **({"rindex": rindex} if rindex else {}))
         except chain_hooks.HookInfrastructureError as exc:
             return f"hook infrastructure error: {exc.cause}"
         self.p426_dnf_item = record
@@ -2636,6 +2805,8 @@ class Chain:
         if not (worker_ok and router_ok):
             self.listing(att, view)
             raise co.ChainAbort("p426_continue: owned router / worker identity changed at the incident (systemic)")
+        if stamp.get("cause") in HARNESS_FAULT_CAUSES:
+            return self.p426_abort_route(load, leg, inv, rec, att, view, stamp)      # S27 §5.8: before the DNF-cause check
         cause = ci.classify_p426_dnf_cause(stamp_cause=stamp.get("cause"), worker_ok=worker_ok, router_ok=router_ok)
         if cause is None:
             self.listing(att, view)
@@ -2646,7 +2817,8 @@ class Chain:
         tentative = list(inv["expect"])[len(self.partial_ids(Path(view["out"])))] if len(
             self.partial_ids(Path(view["out"]))) < len(inv["expect"]) else None
         why = self.p426_dnf_eligible(att, load, view, cause,
-                                     slot=cr.slot_for(rec["slot_base"], tentative) if tentative is not None else None)
+                                     slot=cr.slot_for(rec["slot_base"], tentative) if tentative is not None else None,
+                                     **({"rindex": inv["rerun_index"]} if inv.get("rerun_index") else {}))
         if why:
             self.listing(att, view)
             raise co.ChainAbort(f"p426_continue: the abort is not an eligible item DNF: {why}")
@@ -2686,6 +2858,106 @@ class Chain:
         self.after_invocation(load, leg, inv, rec, cr.rows_if_present(out))
         return "dnf"
 
+    def p426_abort_route(self, load, leg, inv, rec, att, view, stamp):
+        """S27 §5.8: a typed abort stamp (`cleanup_uncertain` | `grader_infra` | `hook_infra`, with `stage`). The rows written
+        before the abort are the accepted prefix (`partial_incident`). Routing by stage: no outcome (`ready` / `generation`) ->
+        §5.2's one rerun (a second fault: `harness_fault_dnf`); `final_grade` (the in-probe regrades exhausted) -> the
+        `grade_fault` DNF; `done` (outcome present) -> §5.3's accounting fault. `cleanup_uncertain`: the chain's own second scan
+        (session id, hermetic root, container prefix; kill-and-verify, 60 s), then the settle check, then the rerun; anything
+        not proven -> PAUSED (no live probe is needed). Returns "harness_fault" | "dnf" | "paused"."""
+        cause, stage = stamp.get("cause"), stamp.get("stage") or "ready"
+        out = Path(view["out"])
+        ids = self.partial_ids(out)
+        expected = list(inv["expect"])
+        outcome = stage == "done" or bool(stamp.get("outcome_present"))
+        if ids != expected[:len(ids)] or len(ids) > len(expected) or (not outcome and len(ids) >= len(expected)) \
+                or (outcome and not ids):
+            raise co.ChainAbort(f"p426_continue: the aborted attempt's rows {ids} are not the prefix its stage {stage!r} implies")
+        self.validate_partial(view, out, ids, who="harness fault")
+        rec["accepted_slots"] = [cr.slot_for(rec["slot_base"], i) for i in ids]
+        rec["sha256"] = sha_file(out) if out.exists() else None
+        rec["status"] = "partial_incident"
+        failing = cr.slot_for(rec["slot_base"], ids[-1] if outcome else expected[len(ids)])
+        rindex = inv.get("rerun_index", 0)
+        reason = f"{cause} at {stage}: {str(stamp.get('error'))[:200]}"
+        evidence = dict(cause=cause, stage=stage, outcome_present=outcome, error=str(stamp.get("error"))[:300],
+                        cleanup_status=stamp.get("cleanup_status"), grader_faults=stamp.get("grader_faults"))
+        result = None
+        if cause == "cleanup_uncertain":
+            scan = self.p426_second_scan(att, view, failing)
+            evidence["second_scan"] = scan
+            if not scan.get("certain"):
+                self.p426_open_hold("paused", f"cleanup uncertain at {failing}; the chain's second scan did not prove it "
+                                              f"certain ({'; '.join(scan.get('problems') or []) or 'unverified processes'})",
+                                    slot=failing, write=False, evidence=self.p426_persist(evidence))
+                result = "paused"
+        else:
+            problems = cleanup_problems(stamp.get("cleanup_status"))
+            if problems:                                    # §5.4: never continue on a possibly live owned process
+                self.p426_open_hold("paused", f"{cause} at {failing} with an uncertain cleanup: {'; '.join(problems)}",
+                                    slot=failing, write=False, evidence=self.p426_persist(evidence))
+                result = "paused"
+        if result is None:
+            settle = self.p426_settle_problems(load)
+            if settle:
+                self.p426_open_hold("paused", f"{cause} at {failing}: the settle check failed ({'; '.join(settle)})",
+                                    slot=failing, write=False, evidence=self.p426_persist(evidence))
+                result = "paused"
+        if result is None and outcome:
+            # §5.3: the slot's row is committed (its outcome stands): an accounting fault, no rerun
+            row = next((r for r in cr.rows_if_present(out) if r["id"] == ids[-1]), None)
+            sealed = self.p426_write_accounting(failing, rindex, row or {}, None, [reason])
+            if not any(e["slot"] == failing for e in self.p426_ledger):
+                self.progress["slot_attempts"].append(dict(slot=failing, rerun_index=rindex, disposition="accepted",
+                                                           accounting_fault=True, reason=reason, load=load["idx"],
+                                                           load_gen=rec["load_gen"], invocation=rec["file"]))
+                self.p426_ledger.append(dict(slot=failing, kind="row", invocation=rec["file"], index=len(self.p426_ledger),
+                                             accounting_fault=True, **({"rerun_index": rindex} if rindex else {})))
+            self.p426_accounting.append(dict(slot=failing, rerun_index=rindex, reason=reason, at=co.utc_stamp(),
+                                             sidecar=f"items/{self.p426_record_name(failing, rindex, 'accounting.json')}"))
+            if not sealed:
+                self.p426_open_hold("paused", f"{reason}; the accounting sidecar cannot be written", slot=failing, write=False)
+                result = "paused"
+            else:
+                result = "harness_fault"
+        elif result is None and cause == "grader_infra" and stage == "final_grade":
+            self.progress["slot_attempts"].append(dict(slot=failing, rerun_index=rindex, disposition="harness_fault",
+                                                       reason=reason, stage=stage, load=load["idx"],
+                                                       load_gen=rec["load_gen"], invocation=rec["file"]))
+            self.p426_harness_dnf_record(failing, "grade_fault", reason, rec, stage=stage, rindex=rindex)    # §5.1
+            result = "dnf"
+        elif result is None:
+            result = "harness_fault" if self.p426_record_fault(failing, rindex, stage, reason, rec, load) == "rerun" else "dnf"
+        self.p426_faults_evidence(failing, evidence)
+        self.write_json("harness-abort-routed")
+        self.log(f"ABORT ROUTE {failing}: {cause} at {stage} -> {result}")
+        self.after_invocation(load, leg, inv, rec, cr.rows_if_present(out))
+        return result
+
+    def p426_faults_evidence(self, slot, evidence):
+        """The abort route's evidence (stamp, cleanup receipt, second scan) beside the leg's records, portable."""
+        directory = self.out_root / "harness_faults"
+        directory.mkdir(parents=True, exist_ok=True)
+        n = sum(1 for _ in directory.glob(f"{cr.slot_file(slot)}.*.json"))
+        co.atomic_json(directory / f"{cr.slot_file(slot)}.{n}.json", self.p426_persist(evidence))
+
+    def p426_second_scan(self, att, view, slot):
+        """§5.8: the chain's own second scan of a probe whose cleanup stayed uncertain: by the recorded probe session id (when
+        the probe led its session), the run's hermetic root and the container-name prefix; kill-and-verify, 60 s."""
+        man = self._manifest(view) or {}
+        ps = man.get("probe_session") if isinstance(man.get("probe_session"), dict) else {}
+        run_id = att.get("run_id") or man.get("run_id")
+        root = co.resolve_portable(ps["run_dir"], self.wd) if ps.get("run_dir") else None
+        scan = getattr(self.ops, "owned_scan", None)
+        if scan is None or not run_id:
+            return dict(certain=False, problems=["no owned_scan seam or no run id: the scan cannot run"])
+        try:
+            return scan(sid=ps.get("sid") if ps.get("leader") is True else None, not_before=ps.get("started"),
+                        roots=[root] if root else [],
+                        container_prefixes=[f"mlxbench-{run_id}-", f"mlxbench-run-{run_id}-"], deadline_s=60.0)
+        except Exception as exc:  # noqa: BLE001 — a scan that cannot run proves nothing: PAUSED
+            return dict(certain=False, problems=[f"the scan failed: {type(exc).__name__}: {exc}"[:300]])
+
     def p426_frozen_record_ref(self):
         """`{path, sha256}` of the frozen record this leg runs under (what a rehearsal / v8 binding checks, fix round 3 item 7);
         the path is persisted portably with the rest of `chain.json`."""
@@ -2719,6 +2991,7 @@ class Chain:
         (done) and the load context."""
         load = bar["load"]
         return dict(stage=stage, slot=slot, item=name, k=bar["k"], ready=bar.get("ready_record") or {}, row=row,
+                    rerun_index=bar.get("rindex", 0),             # S27 §5.7: item records are keyed by rerun index
                     load=dict(idx=load["idx"], load_gen=load["rec"]["load_gen"], worker=dict(load["worker"]),
                               session=bar["view"]["session"], model=bar["view"]["model"], arm=bar["view"]["arm"]))
 
@@ -2878,8 +3151,10 @@ class Chain:
                 try:
                     disp = self.hooks.run_before(slot, context=self.p426_hook_context(bar, slot, name, "ready"),
                                                  systemic=True)
-                except chain_hooks.HookInfrastructureError as exc:   # B2: systemic, never a `pre_spawn_incident`
-                    self.p426_invalidate(bar, slot, name, "ready", f"hook infrastructure error: {exc.cause}")
+                except chain_hooks.HookInfrastructureError as exc:
+                    # S27 §5.2: a hook infrastructure error at `ready` (no generation yet) is a PRE-outcome harness fault:
+                    # the probe stops before this item and the item reruns once; a second one is its harness_fault_dnf
+                    self.p426_barrier_harness_fault(bar, slot, name, "ready", f"hook infrastructure error: {exc.cause}")
                     return
                 if disp.kind == "invalidate":
                     self.p426_invalidate(bar, slot, name, "ready", disp.reason)
@@ -2905,21 +3180,39 @@ class Chain:
         web = self.web_record(row, self.web_rules(view["arm"]),
                               path.with_name(path.stem + ".web.jsonl") if path is not None else None)
         done = dict(done, web_evidence=web)
+        accounting = pause_reason = None
         if self.p426:
             tomb = (dict(slot=slot, rerun_index=bar["rindex"], path=web["path"], sha256=web["sha256"])
                     if isinstance(web, dict) and "path" in web else None)           # P588: the extraction the invalid slot leaves
             try:
                 disp = self.hooks.run_after(slot, done, context=self.p426_hook_context(bar, slot, name, "done", row=row))
-            except chain_hooks.HookInfrastructureError as exc:       # B2: systemic
-                self.p426_invalidate(bar, slot, name, "done", f"hook infrastructure error: {exc.cause}", web_evidence=tomb)
-                return
+            except chain_hooks.HookInfrastructureError as exc:
+                # S27 §5.3: a hook infrastructure error at `done` (the row exists) is an accounting fault when its sidecar can
+                # be persisted; if it cannot, the leg is PAUSED (the outcome is still kept: an accounting fault never reruns)
+                reason = f"hook infrastructure error at done: {exc.cause}"
+                if exc.not_evaluated:
+                    reason += f" (not evaluated: {', '.join(exc.not_evaluated)}; the next ready re-checks)"
+                if not self.p426_write_accounting(slot, bar["rindex"], row, None, [reason],
+                                                  not_evaluated=list(exc.not_evaluated)):
+                    pause_reason = f"{reason}; the accounting sidecar cannot be written"
+                disp = chain_hooks.Disposition.accounting_fault(reason)
             if disp.kind == "invalidate":
                 self.p426_invalidate(bar, slot, name, "done", disp.reason, web_evidence=tomb)
                 return
+            if disp.kind == "accounting_fault":
+                # S27 §5.3: the outcome is kept, the sealed sidecar is written (by the hook), the settle check runs before
+                # `.continue`; a failed settle is never continued on (PAUSED for the designer)
+                settle = self.p426_settle_problems(load)
+                if settle and pause_reason is None:
+                    pause_reason = f"accounting fault at {slot}: the settle check failed ({'; '.join(settle)})"
+                accounting = disp.reason
+                self.p426_accounting.append(dict(slot=slot, rerun_index=bar["rindex"], reason=disp.reason,
+                                                 sidecar=f"items/{self.p426_record_name(slot, bar['rindex'], 'accounting.json')}",
+                                                 at=co.utc_stamp()))
         else:
             disp = self.hooks.run_after(slot, done)
         rindex = bar["rindex"]
-        if disp.kind != "accept" and not self.per_arm:
+        if disp.kind not in ("accept", "accounting_fault") and not self.per_arm:
             raise co.ChainAbort(f"{disp.kind} for {slot}: this configuration has no same-slot re-run (tg2 step)")
         disposition = chain_hooks.slot_disposition(disp)
         if disp.kind == "rerun_same_slot" and rindex >= cr.MAX_RERUNS:
@@ -2929,18 +3222,76 @@ class Chain:
                        output_tokens=(row.get("gate") or {}).get("output_tokens_completed"), web_evidence=web)
         if disp.reason:
             att_rec["reason"] = disp.reason
+        if accounting is not None:
+            att_rec["accounting_fault"] = True
         self.progress["slot_attempts"].append(att_rec)
         self.write_json("slot-disposition")
         if disposition in ("accepted", "exhausted"):
             if self.p426:                       # B2 spec 7: the ledger is persisted at the barrier answer, BEFORE `.continue`
-                self.p426_ledger.append(dict(slot=slot, kind="row", invocation=rec["file"], index=len(self.p426_ledger)))
+                entry = dict(slot=slot, kind="row", invocation=rec["file"], index=len(self.p426_ledger))
+                if rindex:
+                    entry["rerun_index"] = rindex
+                if accounting is not None:
+                    entry["accounting_fault"] = True
+                self.p426_ledger.append(entry)
                 self.write_json("ledger")
+                if pause_reason is not None:
+                    self.p426_barrier_hold(bar, slot, name, "paused", pause_reason, accepted=True)
+                    return
+                if self.pause_path is not None and self.pause_path.exists():
+                    # S27 §8.2: the PAUSE file at an accepted item boundary: `.stop` (cleanup-only exit, the invocation
+                    # accepted for its prefix), the episode recorded; the chain waits for the release
+                    self.p426_barrier_hold(bar, slot, name, "hold", f"PAUSE file present at {slot}", accepted=True)
+                    return
             barrier_signal(self.barrier_path(bar, "continue"))
             bar["k"], bar["stage"] = bar["k"] + 1, "ready"
         else:
             barrier_signal(self.barrier_path(bar, "stop"), {"disposition": disposition})
             bar["stage"], bar["stop"] = "stopped", dict(kind="after", k=bar["k"], name=name, slot=slot,
                                                          disposition=disposition, reason=disp.reason)
+
+    def p426_record_name(self, slot, rindex, suffix):
+        """§5.7: item records are keyed by rerun index — `<slot_file>.<suffix>` for attempt 0, `<slot_file>.r<i>.<suffix>` after."""
+        return f"{cr.slot_file(slot)}.{suffix}" if not rindex else f"{cr.slot_file(slot)}.r{rindex}.{suffix}"
+
+    def p426_write_accounting(self, slot, rindex, row, item_record, checks, *, not_evaluated=None):
+        """§5.3: the sealed accounting sidecar `items/<slot>.accounting.json` (slot, row sha, item-record sha, the failed checks,
+        X16: the done checks never evaluated); False when it cannot be written (the caller PAUSES). An existing path counts as
+        written only when it is this attempt's sealed sidecar for this row (X4)."""
+        from bench import p426_hooks as ph
+        try:
+            ph.write_accounting(self.out_root, slot, rindex, row, item_record, checks, not_evaluated=not_evaluated)
+            return True
+        except FileExistsError:
+            # Y4 / Z3: a resumed chain's existing sidecar counts only when it binds this slot attempt, row and item record
+            return ph.accounting_sealed_for(self.out_root, slot, rindex, row)
+        except Exception:  # noqa: BLE001 — an unwritable sidecar PAUSES the leg (§5.3)
+            return False
+
+    def p426_barrier_harness_fault(self, bar, slot, name, stage, reason):
+        """§5.2 at a barrier: record the fault (or, on the rerun, the harness_fault_dnf), then `.stop` the probe
+        (`harness_fault`: cleanup-only exit, the prefix accepted); the leg loop reruns the item next."""
+        self.p426_record_fault(slot, bar["rindex"], stage, reason, bar["rec"], bar["load"])
+        if isinstance(bar.get("rec"), dict):
+            bar["rec"]["hook_disposition"] = "harness_fault"
+        self.write_json("harness-fault-stop")
+        barrier_signal(self.barrier_path(bar, "stop"), {"disposition": "harness_fault"})
+        bar["stage"] = "stopped"
+        bar["stop"] = dict(kind="before" if stage == "ready" else "after", k=bar["k"], name=name, slot=slot,
+                           disposition="harness_fault", reason=reason)
+
+    def p426_barrier_hold(self, bar, slot, name, kind, reason, *, accepted=False):
+        """§8.2 / §5.3: stop the probe at this barrier (`.stop` disposition `hold`, cleanup-only) and open the episode; the leg
+        loop waits for the release. `accepted`: the slot was accepted at this done barrier (its prefix includes it)."""
+        if self.p426_pending_hold is None or self.p426_pending_hold.get("end") is not None:
+            self.p426_open_hold(kind, reason, slot=slot, write=False)
+        if isinstance(bar.get("rec"), dict):
+            bar["rec"]["hook_disposition"] = "hold"
+        self.write_json("hold-stop")
+        barrier_signal(self.barrier_path(bar, "stop"), {"disposition": "hold"})
+        bar["stage"] = "stopped"
+        bar["stop"] = dict(kind="after" if accepted else "before", k=bar["k"], name=name, slot=slot, disposition="hold",
+                           reason=reason)
 
     @staticmethod
     def p426_read_json(path):
@@ -3023,6 +3374,9 @@ class Chain:
             if a.get("invocation") == rec["file"] and a.get("disposition") in ("cheat", "unclear") \
                     and a.get("status") != "archived":
                 return "after", a["slot"], a["disposition"]
+            if a.get("invocation") == rec["file"] and a.get("disposition") == "harness_fault" \
+                    and a.get("status") != "archived" and a.get("stage") == "ready":
+                return "before", a["slot"], "harness_fault"           # S27 §5.2: a ready-stage harness-fault stop
         for p in self.progress["pre_spawn"]:
             if p.get("invocation") == rec["file"] and p.get("status") != "archived":
                 return "before", p["slot"], None

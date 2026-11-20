@@ -68,10 +68,13 @@ class Digests:
         return self.value
 
 
-def _receipt(gate, repo, sha, digest=DIGEST, verdict="PASS"):
+def _receipt(gate, repo, sha, digest=DIGEST, verdict="PASS", pushed_base=None):
     gate.mkdir(parents=True, exist_ok=True)
     name = f"{repo}-{sha}-{digest[:12]}.json"
-    (gate / name).write_text(json.dumps(dict(repo=repo, sha=sha, verdict=verdict, policy_digest=digest)))
+    doc = dict(repo=repo, sha=sha, verdict=verdict, policy_digest=digest)
+    if pushed_base is not None:                  # S27 §12: a stack receipt's push binding
+        doc["pushed_base"] = pushed_base
+    (gate / name).write_text(json.dumps(doc))
     return name
 
 
@@ -180,7 +183,8 @@ def test_a_code_push_without_a_receipt_refuses(box, repo):
 @pytest.mark.parametrize("repo", REPOS)
 def test_a_code_push_with_a_PASS_receipt_for_the_sha_is_full(box, repo):
     sha = _commit(box.work, {"code.py": "x = 2\n"})
-    name = _receipt(box.gate, repo, sha)
+    # S27 §12: a stack receipt carries its pushed_base (the protected files are unchanged between it and <remote>/main)
+    name = _receipt(box.gate, repo, sha, pushed_base=box.base if repo == "stack" else None)
     digests = Digests()
     assert _level(box, sha, repo, digest_for=digests) == ("full", name, [])  # v1.1: detail = the receipt file name
     assert (repo, sha) in digests.calls

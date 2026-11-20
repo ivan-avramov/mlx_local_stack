@@ -13,7 +13,8 @@ from . import chain_ops as co
 INCIDENT_CAUSES = ("server_error", "connection", "dropped_stream", "timeout", "client_timeout", "worker_crash",
                    "router_error")
 CLEANUP_KEYS = ("survivors", "containers_remaining", "uncertain", "orphans_unattributed", "unknown", "completed")
-CLEANUP_LISTS = ("survivors", "containers_remaining", "orphans_unattributed", "unknown")
+CLEANUP_LISTS = ("survivors", "containers_remaining", "unknown")   # S27 §3.5: must be empty (`orphans_unattributed` left)
+CLEANUP_LISTS_1 = ("survivors", "containers_remaining", "orphans_unattributed", "unknown")    # the schema-1 rule
 P426_DNF_CAUSES = ("connection", "dropped_stream", "timeout", "client_timeout")      # B2 spec 5.1: an item DNF's stamp
 MAX_P426_DNF = 2                       # B2 spec 5.1: more than two DNF in a leg is systemic
 MAX_INCIDENTS = 2                     # the second incident of a slot is a `transport_dnf` row (spec 8.3)
@@ -37,16 +38,54 @@ def classify_p426_dnf_cause(*, stamp_cause, worker_ok, router_ok):
     return stamp_cause if (worker_ok and router_ok and stamp_cause in P426_DNF_CAUSES) else None
 
 
+CLEANUP_SCHEMA_2 = 2
+CLEANUP_KEYS_2 = CLEANUP_KEYS + ("schema", "foreign_new", "foreign_new_count", "unreadable_count")
+CLEANUP_OPTIONAL_2 = ("uncertain_records",)            # present only on an uncertain receipt (the chain scan's input)
+CLEANUP_LISTS_2 = CLEANUP_LISTS
+
+
 def cleanup_problems(receipt):
-    """Reasons a probe's cleanup receipt is not the exact certain / completed / empty `ProcessGuard.status()` (A7); [] = ok."""
+    """Reasons a probe's cleanup receipt is not certain and complete (A7; S27 §3.5); [] = ok. ONE validator for every refusal
+    site. Schema 1 (no `schema` key: old identities, harvest and freeze reads of existing records) keeps its rule: the exact
+    six keys, every list empty. Schema 2: `uncertain is False`, `completed is True`, `survivors`, `containers_remaining` and
+    `unknown` empty; `orphans_unattributed` (OURS escapees killed and verified) and `foreign_new` (recorded, never killed) may
+    be non-empty."""
     if not isinstance(receipt, dict):
         return ["no cleanup receipt recorded"]
+    if "schema" not in receipt:
+        return _cleanup_problems_1(receipt)
+    if receipt.get("schema") != CLEANUP_SCHEMA_2 or type(receipt.get("schema")) is not int:
+        return [f"cleanup receipt schema {receipt.get('schema')!r} is not 1 (absent) or {CLEANUP_SCHEMA_2}"]
+    why = []
+    keys = set(receipt)
+    extra = sorted(keys - set(CLEANUP_KEYS_2) - set(CLEANUP_OPTIONAL_2))
+    missing = sorted(set(CLEANUP_KEYS_2) - keys)
+    if extra or missing:
+        why.append(f"cleanup receipt is not the exact schema 2 (extra {extra}, missing {missing})")
+    for name in CLEANUP_LISTS_2:
+        if name in receipt and (not isinstance(receipt[name], list) or receipt[name]):
+            why.append(f"cleanup {name} is not an empty list")
+    for name in ("orphans_unattributed", "foreign_new"):
+        if name in receipt and not isinstance(receipt[name], list):
+            why.append(f"cleanup {name} is not a list")
+    for name in ("foreign_new_count", "unreadable_count"):
+        if name in receipt and (type(receipt[name]) is not int or receipt[name] < 0):
+            why.append(f"cleanup {name} is not a non-negative integer")
+    if "uncertain" in receipt and receipt["uncertain"] is not False:
+        why.append("cleanup uncertain flag is not false")
+    if "completed" in receipt and receipt["completed"] is not True:
+        why.append("cleanup did not complete")
+    return why
+
+
+def _cleanup_problems_1(receipt):
+    """The schema-1 rule (pre-S27 records): the exact six keys, every list empty, certain, completed."""
     why = []
     keys = set(receipt)
     if keys != set(CLEANUP_KEYS):
         extra, missing = sorted(keys - set(CLEANUP_KEYS)), sorted(set(CLEANUP_KEYS) - keys)
         why.append(f"cleanup receipt is not the exact schema (extra {extra}, missing {missing})")
-    for name in CLEANUP_LISTS:
+    for name in CLEANUP_LISTS_1:
         if name in receipt and (not isinstance(receipt[name], list) or receipt[name]):
             why.append(f"cleanup {name} is not an empty list")
     if "uncertain" in receipt and receipt["uncertain"] is not False:

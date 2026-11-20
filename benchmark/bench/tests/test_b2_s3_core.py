@@ -83,6 +83,13 @@ GOOD_CLEANUP = dict(survivors=[], containers_remaining=[], uncertain=False, orph
 WORKER = dict(pid=1, create_time=10)
 
 
+def s27_state(c, out_root):
+    """The S27 per-leg state `Chain.__init__` sets (X14: a Chain built without `__init__` gets it explicitly)."""
+    c.p426_harness_dnf, c.p426_faults, c.p426_accounting, c.p426_holds = [], [], [], []
+    c.p426_pending_hold, c.pause_path = None, None
+    return c
+
+
 def bare(tmp_path, policy="p426_continue", worker=WORKER, router_ok=True):
     c = core.Chain.__new__(core.Chain)
     c.config = SimpleNamespace(transport_policy=policy,
@@ -91,6 +98,7 @@ def bare(tmp_path, policy="p426_continue", worker=WORKER, router_ok=True):
     c.a = SimpleNamespace(predictor="off")                  # the leg's predictor arm (`p426_dnf.arm` is `off` / `on`, spec 16.8)
     c.progress = dict(loads=[], invocations=[], slot_attempts=[], pre_spawn=[], txns=[], abort_evidence=[])
     c.incidents, c.dnf, c.realized, c.p426_dnf, c.p426_ledger, c.p426_invalid = [], [], [], [], [], []
+    s27_state(c, tmp_path)
     c.hooks = ch.ChainHooks()
     c.out_root = tmp_path
     c.saved, c.logged = [], []
@@ -184,7 +192,7 @@ def test_after_a_dnf_the_remaining_items_run_in_order_on_the_same_loaded_instanc
     c = bare(tmp_path)
     scored, calls = set(), []
     c.check_stop = lambda where: None
-    c.slot_table = lambda: SimpleNamespace(scored=set(scored), blocked=set())
+    c.slot_table = lambda: SimpleNamespace(scored=set(scored), blocked=set(), pending_reruns=[])
     load = dict(rec=dict(cursor=None), worker=dict(WORKER))
 
     def run_invocation(ld, leg, inv):
@@ -205,7 +213,7 @@ def test_after_a_dnf_the_remaining_items_run_in_order_on_the_same_loaded_instanc
 def test_a_p426_leg_that_makes_no_progress_aborts_instead_of_looping(tmp_path):
     c = bare(tmp_path)
     c.check_stop = lambda where: None
-    c.slot_table = lambda: SimpleNamespace(scored=set(), blocked=set())
+    c.slot_table = lambda: SimpleNamespace(scored=set(), blocked=set(), pending_reruns=[])
     c.run_invocation = lambda *a: "ok"
     with pytest.raises(co.ChainAbort):
         c.run_p426_leg(dict(rec=dict(cursor=None)), leg_with([("pilot", ["python/a"])]))
@@ -288,6 +296,8 @@ def test_an_accepted_item_is_ledgered_before_the_continue_answer(tmp_path, monke
 
 @pytest.mark.parametrize("where", ["before", "after"])
 def test_a_p426_hook_infrastructure_error_is_systemic_never_a_pre_spawn_incident(tmp_path, monkeypatch, where):
+    """S27 (changed rule): the name is kept for history; a hook infrastructure error is now a harness fault (ready) or an
+    accounting fault (done), still never a pre-spawn incident."""
     class Broken(ch.ChainHooks):
         def before_attempt(self, slot, context=None):
             raise ch.HookInfrastructureError("metrics_unreadable")
@@ -307,10 +317,19 @@ def test_a_p426_hook_infrastructure_error_is_systemic_never_a_pre_spawn_incident
         monkeypatch.setattr(core.cr, "read_rows", lambda p: [{"id": "python/a", "gate": {}}])
         c.web_record, c.web_rules = (lambda *a, **k: {}), (lambda arm: None)
     c.pump_barrier(bar)
-    assert c.progress["pre_spawn"] == [] and c.incidents == []
-    assert c.p426_invalid[0]["stage"] == ("ready" if where == "before" else "done")
-    assert c.p426_invalid[0]["reason"].startswith("hook infrastructure error")
-    assert json.loads((tmp_path / "b.item0.stop").read_text()) == {"disposition": "invalidate"}
+    # never a pre-spawn incident (B2); S27 §5.2 / §5.3 (changed rule): never an invalidation either
+    assert c.progress["pre_spawn"] == [] and c.incidents == [] and c.p426_invalid == []
+    if where == "before":            # §5.2: a pre-outcome harness fault — the probe stops before the item, which reruns once
+        att, = c.progress["slot_attempts"]
+        assert att["disposition"] == "harness_fault" and att["stage"] == "ready" and att["rerun_index"] == 0
+        assert att["reason"].startswith("hook infrastructure error")
+        assert json.loads((tmp_path / "b.item0.stop").read_text()) == {"disposition": "harness_fault"}
+        assert bar["stop"]["kind"] == "before" and bar["stop"]["disposition"] == "harness_fault"
+    else:                            # §5.3: the row exists — an accounting fault (sidecar sealed, settle checked, continued)
+        att, = c.progress["slot_attempts"]
+        assert att["disposition"] == "accepted" and att["accounting_fault"] is True
+        assert (tmp_path / "items" / f"{core.cr.slot_file(BASE + '|a')}.accounting.json").exists()
+        assert c.p426_ledger[-1]["accounting_fault"] is True and (tmp_path / "b.item0.continue").exists()
 
 
 def test_a_legacy_chain_still_turns_a_hook_infrastructure_error_into_a_pre_spawn_incident(tmp_path):

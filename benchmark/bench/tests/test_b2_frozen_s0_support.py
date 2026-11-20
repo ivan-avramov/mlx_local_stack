@@ -403,7 +403,12 @@ def test_the_abort_manifest_fixture_extends_the_real_probe_stamp(tmp_path, monke
     real = S.manifest_of(f["out"])["transport_abort"]
     fake = S.abort_manifest([["m1", 10, 100, 81920]], in_flight="m2")["transport_abort"]
     assert set(real) - {"grade_reports"} <= set(fake)            # the tg1 stamp's keys, plus the §16.1 P426 keys
-    assert set(real["cleanup_status"]) == set(S.CLEANUP_EXACT)
+    # S27 §3.5: the real probe stamps receipt schema 2 (+ schema, foreign_new, foreign_new_count, unreadable_count); the
+    # fixture's schema-1 receipt still validates by the old rule, the real one by the new
+    from bench import chain_incident as ci
+    assert real["cleanup_status"].get("schema") == 2 and set(real["cleanup_status"]) == set(ci.CLEANUP_KEYS_2)
+    assert set(ci.CLEANUP_KEYS_2) == set(S.CLEANUP_EXACT) | {"schema", "foreign_new", "foreign_new_count", "unreadable_count"}
+    assert ci.cleanup_problems(dict(S.CLEANUP_EXACT)) == [] and set(fake["cleanup_status"]) == set(S.CLEANUP_EXACT)
 
 
 def test_the_a4_receipt_fixture_has_the_gate_shape_and_passes_its_own_predicate():

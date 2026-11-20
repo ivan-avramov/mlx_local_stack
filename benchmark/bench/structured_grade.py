@@ -14,7 +14,7 @@ import subprocess
 import tempfile
 import uuid
 import xml.etree.ElementTree as ET
-from .token_turn_gate import TransportAbort
+from .token_turn_gate import GraderInfraError, TransportAbort
 
 VERSION = "m62-structured-v3"      # v3 (P604): Go package-load errors of the model's own tree are scored build failures
 TIMEOUTS = {"python": 300, "go": 180}
@@ -200,7 +200,15 @@ GO_LOAD_ERROR = re.compile(
 
 
 def parse_go(text, rc, *, stderr="", timed_out=False):
-    if rc in (125, 126, 127) or re.search(
+    # S27 X6: `docker run`'s OWN exit statuses are the harness's failure, typed at the source and regraded (§5.1): 125 = the
+    # daemon could not create / start the container (daemon loss, image unavailable), 126 / 127 = the pinned image's command
+    # cannot run (`go test` itself exits 0 / 1 / 2). A stderr pattern alone is never typed (the container's stderr carries
+    # the agent's test output): it still aborts as before
+    if rc == 125:
+        raise GraderInfraError("Docker infrastructure failure (docker run rc=125): " + stderr[-300:], kind="spawn")
+    if rc in (126, 127):
+        raise GraderInfraError("Docker infrastructure failure (image command rc=%d): " % rc + stderr[-300:], kind="image")
+    if re.search(
         r"Cannot connect to the Docker daemon|daemon.*(?:error|not running)|"
         r"Unable to find image|pull access denied|Error response from daemon",
         stderr,
@@ -387,43 +395,63 @@ def _grade(lang, work, test, run, guard, timeout, name, tmp, directory, index, b
 
             p = subprocess.CompletedProcess(cmd, None, decode(exc.stdout), decode(exc.stderr))
         except OSError as exc:
+            if lang == "go":                       # S27 Y2: the harness's own docker launch failed (typed at the source)
+                raise GraderInfraError("Docker infrastructure failure (docker run launch): " + str(exc),
+                                       kind="spawn") from exc
             raise TransportAbort("missing grader interpreter/runtime: " + str(exc)) from exc
         if lang == "go":
             oom = guard.container_oom(name)
         mem = bool(guard and guard.grader_mem_kill)
         if oom or mem:
             artifacts = index("oom" if oom else "mem_kill")
-            return Grade(returncode=p.returncode, grader_mem_kill=mem, grader_oom=oom,
-                         outcome="oom" if oom else "mem_kill", artifacts=artifacts)
-        # Keep full output through parsing; no tail-based test accounting.
-        out_text = stdout_path.read_text(errors="replace")
-        err_text = stderr_path.read_text(errors="replace")
-        if lang == "python":
-            provisional = "timeout" if timed_out else "parsed" if report.exists() else "missing_report"
+            result = Grade(returncode=p.returncode, grader_mem_kill=mem, grader_oom=oom,
+                           outcome="oom" if oom else "mem_kill", artifacts=artifacts)
         else:
-            provisional = "timeout" if timed_out else "parsed"
-        artifacts = index(provisional)
+            result = _parse_outputs(lang, p, test, report, stdout_path, stderr_path, timed_out, index)
+    except BaseException as primary:
+        # S27 Z1: the primary (typed) fault propagates; a container-removal failure beside it is evidence, never a replacement
         if lang == "go":
-            result = parse_go(out_text, p.returncode, stderr=err_text, timed_out=timed_out)
-        else:
-            result = parse_python(
-                report.read_text() if report.exists() else "",
-                p.returncode,
-                str(test),
-                stderr=(p.stdout or "") + out_text + (p.stderr or "") + err_text,
-                timed_out=timed_out,
-            )
-        outcome = provisional
-        if lang == "python" and provisional == "missing_report":
-            # parse_python accepted a missing XML only for a collection/import error: a scored failure, typed.
-            outcome = "collection_error"
-            artifacts = index(outcome)
-        result.outcome = outcome
-        result.artifacts = artifacts
-        return result
-    finally:
-        if lang == "go":
+            try:
+                guard.remove_container(name)
+            except Exception as cleanup:  # noqa: BLE001 — recorded on the primary
+                primary.add_note("container cleanup failed: %s: %s" % (type(cleanup).__name__, cleanup))
+        raise
+    if lang == "go":
+        try:
             guard.remove_container(name)
+        except Exception as exc:  # noqa: BLE001 — the harness's own docker CLI step failed: typed (§5.1), regraded
+            raise GraderInfraError("container cleanup failed: %s: %s" % (type(exc).__name__, exc),
+                                   kind="transport") from exc
+    return result
+
+
+def _parse_outputs(lang, p, test, report, stdout_path, stderr_path, timed_out, index):
+    # Keep full output through parsing; no tail-based test accounting.
+    out_text = stdout_path.read_text(errors="replace")
+    err_text = stderr_path.read_text(errors="replace")
+    if lang == "python":
+        provisional = "timeout" if timed_out else "parsed" if report.exists() else "missing_report"
+    else:
+        provisional = "timeout" if timed_out else "parsed"
+    artifacts = index(provisional)
+    if lang == "go":
+        result = parse_go(out_text, p.returncode, stderr=err_text, timed_out=timed_out)
+    else:
+        result = parse_python(
+            report.read_text() if report.exists() else "",
+            p.returncode,
+            str(test),
+            stderr=(p.stdout or "") + out_text + (p.stderr or "") + err_text,
+            timed_out=timed_out,
+        )
+    outcome = provisional
+    if lang == "python" and provisional == "missing_report":
+        # parse_python accepted a missing XML only for a collection/import error: a scored failure, typed.
+        outcome = "collection_error"
+        artifacts = index(outcome)
+    result.outcome = outcome
+    result.artifacts = artifacts
+    return result
 
 
 REPORT_OUTCOMES = ("parsed", "timeout", "oom", "mem_kill", "missing_report", "collection_error", "tampered")

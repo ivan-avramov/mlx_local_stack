@@ -47,6 +47,7 @@ REHEARSAL_DEADLINE_S = 6 * 3600.0                    # rehearsal legs are not in
 POWER = dict(watts=140, volts=28, battery_above=20)  # spec 8 / AGENTS: checked before a launch (the chain checks it again at entry)
 VALID_STATES = ("VALID", "VALID_WITH_DNF")
 MAX_DNF = 2                                          # spec 5.1: more than 2 DNF in a leg is systemic
+MAX_HARNESS_DNF = 3                                  # S27 §5.6: harness_fault_dnf + grade_fault DNFs per leg
 SESSIONS = ("s1", "s2", "reload", "pilot", "makeup")
 KV_SESSIONS = SESSIONS + ("s3",)                     # M76 (lever kv): tg1 session s3 (seed 3003), erratum v1.2
 SESSION_ORDER = ("s1", "s2")
@@ -443,12 +444,11 @@ def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
         if rc is not None and (type(rc) is not int or rc != 0):
             # Sol P17: a nonzero probe exit is a probe failure, never PASS / DECLINED (the verify verdict stays recorded)
             entry["verdict"] = f"FAIL:probe_rc:{rc}"
-        elif verdict == "PASS":
-            row_file = _row_file(res["run"], kind, n)
-            if row_file.exists() or row_file.is_symlink():     # the box's PASS row always exists (inject_verify read it)
-                _, bad = verified_row(res["run"], kind, n, res.get("row_sha256"))
-                if bad:
-                    entry["verdict"], why = "FAIL:row_sha256", bad
+        elif verdict == "PASS" or (verdict == fz.PASS_NO_INFLIGHT and kind in fz.NO_INFLIGHT_KINDS):    # S27 §4.3
+            # X12: a PASS row always exists (inject_verify read it); a missing or changed row fails the entry (any kind)
+            _, bad = verified_row(res["run"], kind, n, res.get("row_sha256"))
+            if bad:
+                entry["verdict"], why = "FAIL:row_sha256", bad
         else:
             if kind in fz.DECLINE_MARKERS:
                 evidence, why = decline_evidence(res["run"], kind, n, verdict, wd, row_sha256=res.get("row_sha256"),
@@ -512,6 +512,15 @@ def cmd_positives(a, ops, wd, clock=time.time):
                     problems.append(f"{lang} {variant}: graded {'PASS' if g.get('passed') else 'FAIL'}, expected "
                                     f"{'PASS' if variant == 'reference' else 'FAIL'}")
         with ops.positives_session(worktree, frozen_prompt_date=a.frozen_prompt_date):
+            # S27 §4.5 (C373): FIRST the deterministic interrupt positive on the pilot item (of the first tg2 language): the
+            # harness stops it while the worker reports a generation in flight; the record is PASS only with its in-flight PASS
+            lang0 = TG2_LANGS[0]
+            entry, why = positive_entry(ops, wd, lang0, plan[lang0], fz.INTERRUPT_KIND)
+            if why:
+                entry["not_declined"] = he.portable(why)
+            injects.append(entry)
+            if not fz.inject_accepted(entry):
+                problems.append(f"{lang0} {fz.INTERRUPT_KIND}: {entry['verdict']}")
             for lang in TG2_LANGS:
                 for kind in fz.POSITIVE_KINDS:
                     entry, why = positive_entry(ops, wd, lang, plan[lang], kind, cancel_path_sha256=cancel_sha)
@@ -531,6 +540,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
                scaffold="opencode-v2-web-tg2", **{k: ident.get(k) for k in fz.IDENTITY_KEYS},
                draw_sha256=schedules.TG2_DRAW_SHA256, universe_sha256=schedules.TG2_UNIVERSE_SHA256,
                image_id=tg2_grade.pinned_image_id(), frozen_prompt_date=a.frozen_prompt_date, grades=grades, injects=injects,
+               proofs={f"{e.get('language')}/{e.get('kind')}": fz.proof_of(e) for e in injects},      # S27 §4.5
                problems=problems, host_env=env0, host_env_after=env1, verdict="PASS" if not problems else "FAIL",
                created=co.utc_stamp(clock()))
     try:
@@ -696,6 +706,11 @@ def classify_leg(root, rc, *, arm) -> dict:
         return dict(state="INVALID", **{"class": "systemic"}, reason=reason)
     if chain.get("p426_invalid"):
         return invalid(str(chain["p426_invalid"][-1].get("reason")))
+    # S27 §5.4 / §5.6 / §8.3: a leg with an open pause / hold episode is PAUSED (held, not finished): the designer resumes or
+    # archives it; it is never harvested as a result
+    opened = [h for h in chain.get("p426_holds") or [] if isinstance(h, dict) and h.get("end") is None]
+    if opened:
+        return dict(state="PAUSED", **{"class": "paused"}, reason=str(opened[-1].get("reason")))
     if rc != 0 or chain.get("status") != "finished":
         return invalid(f"chain rc {rc}, status {chain.get('status')!r}")
     open_inv = [i for i in (chain.get("progress") or {}).get("invocations") or [] if i.get("status") in ("running", "quarantined")]
@@ -711,12 +726,43 @@ def classify_leg(root, rc, *, arm) -> dict:
     dnf = len(chain.get("p426_dnf") or [])
     if dnf > MAX_DNF:
         return invalid(f"{dnf} DNF in the leg (more than {MAX_DNF})")
+    harness = len(chain.get("p426_harness_dnf") or [])
+    if harness > MAX_HARNESS_DNF:                     # S27 §5.6: the chain holds at the 4th; a finished leg never carries one
+        return invalid(f"{harness} harness DNF in the leg (more than {MAX_HARNESS_DNF})")
     problems = fz.leg_items_problems(root, arm)
     if problems:
         return invalid(problems[0])
-    if dnf:
-        return dict(state="VALID_WITH_DNF", **{"class": "dnf"}, reason=f"{dnf} transport DNF, settled")
+    if dnf or harness:
+        parts = ([f"{dnf} transport DNF"] if dnf else []) + ([f"{harness} harness DNF"] if harness else [])
+        return dict(state="VALID_WITH_DNF", **{"class": "dnf"}, reason=", ".join(parts) + ", settled")
     return dict(state="VALID", **{"class": "valid"}, reason="")
+
+
+def speed_tiers(chain) -> dict:
+    """S27 §8.3 (P14): what a VALID leg carries besides its quality — `speed_invalid` reasons (a hold, an accounting fault: that
+    item only) and the reported harness-fault counts (§5.6). Off-AC / watcher gaps / ALERTs come from the watch journal."""
+    holds = [h for h in chain.get("p426_holds") or [] if isinstance(h, dict)]
+    accounting = [a.get("slot") for a in chain.get("p426_accounting_faults") or [] if isinstance(a, dict)]
+    reasons = ([f"{len(holds)} hold episode(s)"] if holds else [])
+    return dict(speed_invalid=reasons, speed_invalid_items=accounting,
+                harness_counts=chain.get("p426_harness_counts") or {})
+
+
+def held_s(root, now) -> float:
+    """S27 §8.2: the seconds the leg has spent held or paused — every recorded episode of its `chain.json` (`start_t` / `end_t`,
+    epoch seconds), an open one up to `now`. 0 when there is none or the record is unreadable."""
+    try:
+        holds = json.loads((Path(root) / "chain.json").read_text()).get("p426_holds") or []
+    except (OSError, ValueError, AttributeError):
+        return 0.0
+    total = 0.0
+    for h in holds:
+        start, end = (h.get("start_t"), h.get("end_t")) if isinstance(h, dict) else (None, None)
+        if not isinstance(start, (int, float)):
+            continue
+        stop = end if isinstance(end, (int, float)) else now
+        total += max(0.0, float(stop) - float(start))
+    return total
 
 
 def tg2_strict_rows(leg_roots, session) -> dict:
@@ -1103,7 +1149,8 @@ class Sequencer:
         return self.ops.launch(argv, cwd=wt, pass_fds=())
 
     def supervise(self, spec, attempt, root, handle):
-        """Wait for the chain; poll the watcher; write `OVERRUN_PAUSED` at the deadline. Nothing is ever signalled."""
+        """Wait for the chain; poll the watcher; write `OVERRUN_PAUSED` at the deadline. Nothing is ever signalled. S27 §8.2: the
+        leg's deadline is suspended for its held / paused intervals (the chain's recorded episodes, the open one so far)."""
         deadline, t0 = self.deadline(spec), self.clock()
         watcher, watcher_dead, overrun = None, None, False
         while self.ops.alive(handle.pid, handle.start):
@@ -1113,7 +1160,7 @@ class Sequencer:
             if watcher is not None and watcher_dead is None and not self.ops.alive(watcher.pid, watcher.start):
                 watcher_dead = self.clock()
                 self.log(f"{spec['name']}.a{attempt}: the watcher died while the chain was running (the leg is speed-invalid)")
-            if not overrun and self.clock() - t0 >= deadline:
+            if not overrun and self.clock() - t0 - held_s(root, self.clock()) >= deadline:
                 overrun = True
                 atomic_text(self.out / OVERRUN_FILE, json.dumps(dict(leg=spec["name"], attempt=attempt, deadline_s=deadline,
                                                                     at=co.utc_stamp(self.clock())), sort_keys=True) + "\n")
@@ -1160,6 +1207,7 @@ class Sequencer:
             atomic_text(occurrences, "".join(json.dumps(m, sort_keys=True) + "\n" for m in self.canon))
         argv = leg_argv(spec, attempt, worktrees=self.worktrees, record_path=self.record_path(spec), out_base=self.out,
                         pair_receipt=first_receipt, occurrences=occurrences, identity=self.identity, lever=self.lever)
+        argv += ["--pause-file", str(self.pause)]           # S27 §8.2: the chain holds at item boundaries on the same PAUSE file
         entry = dict(leg=spec["name"], attempt=attempt, state="RUNNING")
         self.seq["legs"].append(entry)
         self.save()
@@ -1203,6 +1251,8 @@ class Sequencer:
         self.log(f"END {name}: rc {rc} state {cls['state']}" + (f" ({cls['reason']})" if cls["reason"] else ""))
         if not settled:
             raise Stop(1, f"STOP: the watcher of {name} is still alive {WATCHER_GRACE_S:.0f} s after the chain exited (not killed)")
+        if cls["state"] == "PAUSED":                   # S27 §5.7: held, not finished — the designer resumes or archives it
+            raise Stop(3, f"STOP: {name} is PAUSED ({cls['reason']}); the designer resumes or archives it (never harvested)")
         self.harvest(spec, entry)
         if overrun:
             raise Stop(3, f"STOP: {name} overran its deadline (OVERRUN_PAUSED); remove {OVERRUN_FILE} to resume")
@@ -1897,8 +1947,8 @@ class BoxSeqOps(fz.BoxOps):
         row, result = parse_inject_verify(done.stdout, kind)
         if row is None:
             verdict = f"FAIL:no_verdict:rc{done.returncode}"
-        elif row == "PASS" and done.returncode != 0:
-            verdict = f"FAIL:inconsistent:PASS:rc{done.returncode}"
+        elif row in ("PASS", fz.PASS_NO_INFLIGHT) and done.returncode != 0:     # S27 §4.3: both need exit 0
+            verdict = f"FAIL:inconsistent:{row}:rc{done.returncode}"
         else:
             verdict = row
         return dict(verdict=verdict, result=result, rc=done.returncode)

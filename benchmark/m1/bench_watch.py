@@ -437,7 +437,169 @@ def _chain_view(chain_json, planned=None, pred_s=None):
         eta=dict(mean_item_wall_s=mean, pred_item_s=pred, eta_s=eta, pred_eta_s=pred_eta, ratio=ratio, remaining=remaining),
         errors=errors, convergence=(sum(bool(r.get("converged")) for r in rows) / len(rows)) if rows else None,
         nonconv_kinds=kinds, tokens=dict(p50=_quantile(toks, .5), p90=_quantile(toks, .9), max=max(toks) if toks else None),
-        budget_hits=budget_hits, correction=correction, note=note)
+        budget_hits=budget_hits, correction=correction, note=note,
+        holds=len(doc.get("p426_holds") or []), harness_counts=doc.get("p426_harness_counts") or {})
+
+
+# --------------------------------------------------------------------------- S27 §8.1 (P14 / P15 / P17): measure, alert, never act
+SWAP_GROWTH_ALERT_MB = 2048            # swap growth > 2 GB in one tick
+FOREIGN_CPU_ALERT_PCT = 150.0          # a `foreign` process above 150 % CPU ...
+FOREIGN_CPU_ALERT_TICKS = 2            # ... for 2 consecutive ticks
+FRESH_EXEC_ALERT_S = 1.0               # the launch-latency probe's fresh-exec median above 1 s
+TOP_CPU_N = 5
+PRESSURE_LEVELS = {1: "normal", 2: "warn", 4: "critical"}       # kern.memorystatus_vm_pressure_level
+
+
+def _swap_used_mb(text):
+    """`sysctl vm.swapusage` -> used MB (None when unparseable)."""
+    m = re.search(r"used\s*=\s*([0-9.]+)([MG])", text or "")
+    if not m:
+        return None
+    return float(m.group(1)) * (1024.0 if m.group(2) == "G" else 1.0)
+
+
+def _fresh_exec_s(directory, runs=3):
+    """S27-P5: the launch-latency probe — the wall seconds of `runs` executions of a FRESHLY written script (each a new file,
+    what an endpoint agent checks first), plus one `/usr/bin/true`; the fresh ones' median is the alert input."""
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    fresh = []
+    for n in range(runs):
+        script = directory / f".exec_probe.{os.getpid()}.{time.time_ns()}.{n}.sh"
+        script.write_text("#!/bin/sh\nexit 0\n")
+        script.chmod(0o755)
+        t = time.monotonic()
+        try:
+            subprocess.run([str(script)], capture_output=True, timeout=30)
+            fresh.append(time.monotonic() - t)
+        except (OSError, subprocess.SubprocessError):
+            fresh.append(None)
+        finally:
+            script.unlink(missing_ok=True)
+    t = time.monotonic()
+    try:
+        subprocess.run(["/usr/bin/true"], capture_output=True, timeout=30)
+        true_s = time.monotonic() - t
+    except (OSError, subprocess.SubprocessError):
+        true_s = None
+    good = [x for x in fresh if x is not None]
+    return dict(fresh_s=fresh, fresh_median_s=st.median(good) if good else None, true_s=true_s)
+
+
+class BoxSampler:
+    """One box-state sample per tick (§8.1): swap used and its growth, the memory-pressure level, the top 5 CPU processes (pid,
+    sid, start time, executable basename + argc (never argument text), ownership class: `ours` = the driver chain and its
+    descendants — router, worker, probe,
+    client — and the probe sessions; `foreign`; `unknown` when unclassifiable) and the launch-latency probe. CPU is the
+    per-process time delta since the previous tick (never a 0 ms instantaneous read). Record only: nothing is ever signalled."""
+
+    def __init__(self, driver_pid, probe_dir, scrub=None):
+        self.driver_pid, self.probe_dir = driver_pid, probe_dir
+        if scrub is None:
+            from bench import host_env
+            user = os.environ.get("USER") or ""
+
+            def scrub(text):              # the watch journal is a `main` record: no home path, no user name
+                text = host_env.portable(text)
+                return text.replace(user, "<user>") if user else text
+        self.scrub = scrub
+        self.prev_cpu, self.prev_t = {}, None
+
+    def _ours(self, psutil):
+        """(pids, sids): the driver and its descendants; the sessions LED by a descendant (the probes run with
+        `start_new_session=True`). X7: never the driver's own session — the sequencer launches the chain in the ambient
+        (shell) session, whose other members are not ours."""
+        try:
+            driver = psutil.Process(self.driver_pid)
+            descendants = {c.pid for c in driver.children(recursive=True)}
+        except psutil.Error:
+            return None
+        sids = set()
+        for pid in descendants:
+            try:
+                if os.getsid(pid) == pid:
+                    sids.add(pid)
+            except OSError:
+                pass
+        return {self.driver_pid} | descendants, sids
+
+    def __call__(self):
+        out = dict(swap_used_mb=None, pressure=None, top_cpu=[], launch=None)
+        try:
+            out["swap_used_mb"] = _swap_used_mb(subprocess.run(["sysctl", "vm.swapusage"], capture_output=True, text=True,
+                                                               timeout=15).stdout)
+            level = subprocess.run(["sysctl", "-n", "kern.memorystatus_vm_pressure_level"], capture_output=True, text=True,
+                                   timeout=15).stdout.strip()
+            out["pressure"] = PRESSURE_LEVELS.get(int(level), level) if level.isdigit() else None
+        except (OSError, subprocess.SubprocessError, ValueError):
+            pass
+        try:
+            import psutil
+            now = time.monotonic()
+            owned = self._ours(psutil)
+            cpu, rows = {}, []
+            for p in psutil.process_iter():
+                try:
+                    t = p.cpu_times()
+                    total = t.user + t.system
+                    from bench.proc_guard import start_time
+                    cpu[p.pid] = (total, start_time(p))               # C151: the unadjusted identity
+                    prev = self.prev_cpu.get(p.pid)
+                    if self.prev_t is None or prev is None or prev[1] != cpu[p.pid][1]:
+                        continue
+                    pct = 100.0 * (total - prev[0]) / max(1e-6, now - self.prev_t)
+                    rows.append((pct, p))
+                except (psutil.Error, OSError):
+                    continue
+            self.prev_cpu, self.prev_t = cpu, now
+            for pct, p in sorted(rows, key=lambda r: r[0], reverse=True)[:TOP_CPU_N]:
+                try:
+                    sid = os.getsid(p.pid)
+                except OSError:
+                    sid = None
+                # Z6 (spec v1.5 §8.1; the journal is a `main` record): executable basename + argc, never argument text
+                from bench.proc_guard import exe_identity
+                name, argc = exe_identity(p)
+                if owned is None or sid is None:
+                    cls = "unknown"
+                else:
+                    cls = "ours" if (p.pid in owned[0] or sid in owned[1]) else "foreign"
+                out["top_cpu"].append(dict(pid=p.pid, sid=sid, start=cpu[p.pid][1], exe=self.scrub(name), argc=argc,
+                                           cpu_pct=round(pct, 1), ownership=cls))
+        except Exception:  # noqa: BLE001 — a failed sample is recorded as missing, never a watcher crash
+            pass
+        try:
+            out["launch"] = _fresh_exec_s(self.probe_dir)
+        except OSError:
+            out["launch"] = None
+        return out
+
+
+def box_alerts(sample, prev, foreign_streak):
+    """§8.1 ALERT rules (record only). `prev` = the previous tick's sample (or None); `foreign_streak` = {pid: consecutive ticks
+    above the CPU threshold} (updated in place). Returns the alert strings of this tick. An `unknown` process is never foreign."""
+    alerts = []
+    if not isinstance(sample, dict):
+        return alerts
+    used, before = sample.get("swap_used_mb"), (prev or {}).get("swap_used_mb")
+    if isinstance(used, (int, float)) and isinstance(before, (int, float)) and used - before > SWAP_GROWTH_ALERT_MB:
+        alerts.append(f"swap grew {used - before:.0f} MB in one tick (> {SWAP_GROWTH_ALERT_MB} MB)")
+    if sample.get("pressure") == "critical":
+        alerts.append("memory pressure critical")
+    hot = {r.get("pid"): r for r in sample.get("top_cpu") or [] if isinstance(r, dict) and r.get("ownership") == "foreign"
+           and isinstance(r.get("cpu_pct"), (int, float)) and r["cpu_pct"] > FOREIGN_CPU_ALERT_PCT}
+    for pid in list(foreign_streak):
+        if pid not in hot:
+            del foreign_streak[pid]
+    for pid, r in hot.items():
+        foreign_streak[pid] = foreign_streak.get(pid, 0) + 1
+        if foreign_streak[pid] >= FOREIGN_CPU_ALERT_TICKS:
+            alerts.append(f"foreign pid {pid} at {r['cpu_pct']:.0f} % CPU for {foreign_streak[pid]} ticks "
+                          f"({r.get('exe') or 'unknown'}, argc {r.get('argc')})")
+    median = (sample.get("launch") or {}).get("fresh_median_s")
+    if isinstance(median, (int, float)) and median > FRESH_EXEC_ALERT_S:
+        alerts.append(f"fresh-exec median {median:.2f} s (> {FRESH_EXEC_ALERT_S:.0f} s)")
+    return alerts
 
 
 def _power_problems(tick):
@@ -488,6 +650,10 @@ def _verdict(lines, interval_s=None):
         bad = _power_problems(t)
         if bad:
             problems.append(f"tick {n}: {', '.join(bad)}")
+        if t.get("alerts"):                             # S27 §8.3: an ALERT in the leg is speed-invalid (quality kept)
+            problems.append(f"tick {n}: ALERT {'; '.join(t['alerts'])[:200]}")
+        if t.get("holds"):                              # S27 §8.3: a hold in the leg is speed-invalid
+            problems.append(f"tick {n}: {t['holds']} hold episode(s) in the leg")
     interval = interval_s or next((x.get("interval_s") for x in ticks + ends if x.get("interval_s")), None)
     stamps = [_stamp(x) for x in ticks + (ends if ends and lines[-1] is ends[0] else [])]
     if None in stamps or interval is None:
@@ -588,14 +754,16 @@ def _initial_bound(args):
     return given if given is not None else _pid_start(args.driver_pid)
 
 
-def run_p426(args, *, power, clock, sleep, intervals=None) -> int:
+def run_p426(args, *, power, clock, sleep, intervals=None, box=None) -> int:
     """The tick loop. `power()` is the per-tick meter reading; the battery log is read once, at exit: by `intervals(lo, hi)` when
-    given (the default pmset source), else from the last reading's `on_battery_intervals` (an injected power source)."""
+    given (the default pmset source), else from the last reading's `on_battery_intervals` (an injected power source). S27 §8.1:
+    `box()` is the per-tick box-state sample (`BoxSampler`; record only) and its ALERTs."""
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     bound = _initial_bound(args)
     start, lines, n = clock(), [], 0
     last = {}
+    prev_box, streak = None, {}
     while True:
         state, bound = _driver_state(args.driver_pid, bound)
         try:
@@ -610,6 +778,16 @@ def run_p426(args, *, power, clock, sleep, intervals=None) -> int:
                                                       battery=reading.get("battery"))),
                     driver_alive={"alive": True, "gone": False}.get(state), driver=dict(pid=args.driver_pid, start=bound),
                     **{k: v for k, v in _chain_view(args.chain_json, args.planned, args.pred_s).items()})
+        if box is not None:
+            try:
+                sample = box()
+            except Exception:  # noqa: BLE001 — a failed sample is recorded as missing
+                sample = None
+            used, before = (sample or {}).get("swap_used_mb"), (prev_box or {}).get("swap_used_mb")
+            tick.update(box=sample, swap_growth_mb=(used - before) if isinstance(used, (int, float))
+                        and isinstance(before, (int, float)) else None,
+                        alerts=box_alerts(sample, prev_box, streak))
+            prev_box = sample if sample is not None else prev_box
         _append(out, tick)
         lines.append(tick)
         last = reading
@@ -738,8 +916,10 @@ def main(argv=None, *, power=None, clock=None, sleep=None) -> int:
         return run_capacity_watch(args, power=power or pmset_power, clock=clock or time.time, sleep=sleep or time.sleep,
                                   intervals=None if power else pmset_battery_intervals)
     if args.chain_json:
+        # S27 §8.1: the box-state sample (swap, pressure, top CPU with ownership, launch latency) on the real box only
+        box = None if power else BoxSampler(args.driver_pid, Path(os.environ.get("TMPDIR") or "/tmp") / "s27-exec-probe")
         return run_p426(args, power=power or pmset_power, clock=clock or time.time, sleep=sleep or time.sleep,
-                        intervals=None if power else pmset_battery_intervals)
+                        intervals=None if power else pmset_battery_intervals, box=box)
 
     models = [m for m in args.models.split(",") if m]
     state = {m: {"prev": None, "flat": 0, "rates": [], "started": False, "ticks": 0} for m in models}

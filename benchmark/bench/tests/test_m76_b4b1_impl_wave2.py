@@ -139,10 +139,19 @@ class PosOps:
         self.runs.append((lang, kind, attempt))
         if self.aborts.get((lang, kind), 0) >= attempt:
             return dict(transport_abort=True, run=f"run-{lang}-{kind}-{attempt}")
-        return dict(transport_abort=False, run=f"run-{lang}-{kind}-{attempt}", row_sha256="d" * 64, evidence_sha256="e" * 64)
+        # S27 X12: a PASS row always exists and must verify against the recorded sha (the writer no longer skips a missing
+        # row): the run directory lives under the test's STACK_WORKDIR; its name keeps the language at split("-")[1]
+        import hashlib
+        import os
+        run = Path(os.environ["STACK_WORKDIR"]) / f"run-{lang}-{kind}-{attempt}"
+        run.mkdir(parents=True, exist_ok=True)
+        raw = (json.dumps(dict(id=f"{lang}/{item}", kind=kind)) + "\n").encode()
+        (run / f"{kind}.attempt{attempt}.jsonl").write_bytes(raw)
+        return dict(transport_abort=False, run=str(run), rc=0, row_sha256=hashlib.sha256(raw).hexdigest(),
+                    evidence_sha256="e" * 64)
 
     def inject_verify(self, run, kind):
-        lang = run.split("-")[1]
+        lang = Path(run).name.split("-")[1]
         return "FAIL" if (lang, kind) in self.fail else "PASS"
 
 
@@ -169,8 +178,10 @@ def test_the_positives_record_is_sealed_and_complete(wd):
     assert doc["scaffold"] == "opencode-v2-web-tg2" and doc["frozen_prompt_date"] == DATE
     assert doc["draw_sha256"] == schedules.TG2_DRAW_SHA256 and doc["universe_sha256"] == schedules.TG2_UNIVERSE_SHA256
     assert doc["image_id"]
-    assert sorted((p["language"], p["kind"]) for p in doc["injects"]) == sorted((lang, k) for lang in LANGS
-                                                                               for k in ("stall", "loop", "alloc"))
+    # S27 §4.5 (C373): + ONE deterministic interrupt positive (the first tg2 language's pilot item), run first
+    assert sorted((p["language"], p["kind"]) for p in doc["injects"]) == sorted(
+        [(lang, k) for lang in LANGS for k in ("stall", "loop", "alloc")] + [(LANGS[0], "interrupt")])
+    assert doc["injects"][0]["kind"] == "interrupt" and doc["proofs"][f"{LANGS[0]}/interrupt"] == "in_flight"
     for p in doc["injects"]:
         assert p["item"] == perm(p["language"])[0] and p["seed"] == 1001 and p["verdict"] == "PASS"
         assert p["attempts"] == (2 if (p["language"], p["kind"]) == ("java", "loop") else 1)

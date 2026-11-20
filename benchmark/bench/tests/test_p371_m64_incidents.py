@@ -10,6 +10,7 @@ import json
 import pytest
 
 from bench import chain_core as core
+from bench import chain_incident as ci
 from bench import chain_rows as cr
 from bench.tests.m64_support import (  # noqa: F401  (fixture: env)
     FAP, PICK1, PICK2, SMOKE, SMOKE3, arg, calls, chain_json, env, invocations, log_has, run, schedule)
@@ -241,7 +242,9 @@ def test_the_fake_cleanup_receipt_is_the_real_process_guards_exact_key_set():
     from bench import proc_guard as pg
     guard = pg.ProcessGuard.__new__(pg.ProcessGuard)
     guard._status, guard.containers, guard.orphans_unattributed = None, set(), []
-    assert set(guard.status()) == set(FAP.cleanup_status()) == set(core.CLEANUP_KEYS)
+    # S27 §3.5: the receipt is schema 2 (the six keys + schema, foreign_new, foreign_new_count, unreadable_count)
+    assert set(guard.status()) == set(FAP.cleanup_status()) == set(ci.CLEANUP_KEYS_2)
+    assert ci.cleanup_problems(FAP.cleanup_status()) == []
 
 
 def test_a_partial_row_that_disagrees_with_its_manifest_refuses_the_incident(env):

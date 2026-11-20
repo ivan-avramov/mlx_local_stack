@@ -43,10 +43,14 @@ WATCHDOG_TICK_S = 1.0
 GRADE_JOIN_OVERHEAD_S = rc.GRADE_JOIN_OVERHEAD_S
 HEARTBEAT_INTERVAL_S = 30
 GRACEFUL_CLIENT_S = 15
+ABORT_GRADE_JOIN_S = 2 * GRACEFUL_CLIENT_S     # S27 §6 (C365): the abort path's bounded grade-worker join
+FINAL_REGRADES = 2                             # S27 §5.1: a final grade's infrastructure fault is retried up to 2 more times
+INTERRUPT_DEADLINE_S = 120.0                   # S27 §4.5: /metrics polled until in_flight >= 1, else the run aborts (retried)
+INTERRUPT_POLL_S = 0.5
 ACK_TIMEOUT_S = 300
 ACK_POLL_S = 0.5
-CLEAN_STATUS = dict(survivors=[], containers_remaining=[], uncertain=False, orphans_unattributed=[], unknown=[],
-                    completed=True)
+CLEAN_STATUS = dict(schema=pg.CLEANUP_SCHEMA, survivors=[], containers_remaining=[], uncertain=False, orphans_unattributed=[],
+                    unknown=[], completed=True, foreign_new=[], foreign_new_count=0, unreadable_count=0)   # S27 §3.5
 DEFAULT_UNIVERSE = REPO / "benchmark/m62/universe.json"
 
 
@@ -83,6 +87,23 @@ def gate_overrides_for(a, item):
     if getattr(a, "inject_stall_item", None) == item and getattr(a, "inject_stall_s", None) is not None:
         return {**(base or {}), "no_progress_requests": 1}
     return base
+
+
+def hermetic_markers(env, run_dir):
+    """S27 §3.2 (c): {HOME / XDG_*: value} of the item environment whose value lies under the probe's run directory (the run's
+    hermetic roots); a box-wide value (a hand run's real HOME) is never a marker."""
+    out = {}
+    try:
+        base = str(Path(run_dir).resolve())
+    except OSError:
+        return out
+    for key in pg.ENV_MARKER_KEYS:
+        value = (env or {}).get(key)
+        if isinstance(value, str) and value:
+            resolved = str(Path(value).resolve())
+            if resolved == base or resolved.startswith(base + "/"):
+                out[key] = value
+    return out
 
 
 def effective_policy(kind=None):
@@ -184,14 +205,30 @@ class GradeWorker:
         self.queued = None
         self.closed = False
         self.failure = None
+        self.cancelled = False          # S27 §6 (C365): set by the abort path before it kills the grader role
+        self.grade_cancelled = None     # a grade that failed AFTER the mark: recorded, never raised
         self.last_manifest = None
+        self.grading = None             # the boundary whose grade is running (None between grades)
         self.thread = threading.Thread(target=self._run, name="m62-grader", daemon=True)
 
     def start(self):
         self.thread.start()
 
+    def cancel(self):
+        """S27 §6 (C365): the abort path marks the worker cancelled BEFORE it kills the grader role: the queued capture is
+        cleared and nothing more is dequeued; a grade failing after this mark is `grade_cancelled`, never a fault. A failure
+        stored before the mark stays a fault."""
+        with self.condition:
+            self.cancelled = True
+            if self.queued is not None:
+                self.gate.pending.discard(self.queued)
+            self.queued = None
+            self.condition.notify()
+
     def notify(self, boundary):
         with self.condition:
+            if self.cancelled:
+                return
             try:
                 current = self.corpus.manifest(self.work)
             except (OSError, ValueError):
@@ -212,9 +249,9 @@ class GradeWorker:
             while True:
                 with self.condition:
                     self.condition.wait_for(
-                        lambda: self.queued is not None or self.closed
+                        lambda: self.queued is not None or self.closed or self.cancelled
                     )
-                    if self.queued is None:
+                    if self.queued is None or self.cancelled:
                         return
                     queued = self.queued
                     self.gate.pending.discard(queued)
@@ -228,6 +265,7 @@ class GradeWorker:
                         self.gate.stall_wait.add(boundary)
                     self.queued = None
                 # Capture began at the recorded completed-request observation, not an atomic step.
+                self.grading = boundary          # the capture in grading (a fault leaves it undischarged)
                 with self.corpus.snapshot(self.work, self.private, boundary) as snap:
                     failing = None
                     tampered = False
@@ -237,16 +275,38 @@ class GradeWorker:
                         if snap is not None and failing is not None and not tampered:
                             self.last_manifest = snap.manifest
                         self.gate.on_grade(boundary, failing, failing is not None, tampered)
+                        self.grading = None
         except BaseException as exc:
-            self.failure = exc
+            with self.condition:
+                if self.cancelled:          # C365: the abort killed this grade; recorded, never raised
+                    self.grade_cancelled = f"{type(exc).__name__}: {exc}"[:300]
+                else:
+                    self.failure = exc
+
+    def abort_join(self, timeout):
+        """The abort path's bounded join (C365): never raises; the fault stored before the cancel mark is returned."""
+        with self.condition:
+            self.closed = True
+            self.condition.notify()
+        if self.thread.ident is not None:
+            self.thread.join(timeout)
+        return self.failure
 
     def check(self):
-        if self.failure or (self.thread.ident is not None and not self.closed and not self.thread.is_alive()):
+        if self.failure or (self.thread.ident is not None and not self.closed and not self.cancelled
+                            and not self.thread.is_alive()):
+            if self.failure is not None and tg.grader_infra_fault(self.failure):
+                # S27 §5.1: an INTERIM grade's infrastructure fault is a pre-outcome harness fault (one rerun)
+                raise tg.GraderInfraAbort("grading worker failed: " + str(self.failure), stage="generation",
+                                          faults=[str(self.failure)[:300]]) from self.failure
             raise tg.TransportAbort(
                 "grading worker failed: " + str(self.failure)
             ) from self.failure
 
     def finish(self):
+        """Join the worker after the client exited. S27 X3: an interim grade's infrastructure fault seen here no longer
+        prevents the outcome (the final grade decides): it is returned for the record, never raised; any other failure
+        aborts as before."""
         with self.condition:
             self.closed = True
             self.condition.notify()
@@ -255,7 +315,20 @@ class GradeWorker:
             raise tg.TransportAbort(
                 "grading worker did not finish within grader timeout"
             )
+        if self.failure is not None and tg.grader_infra_fault(self.failure):
+            # S27 (clarification 2): the faulted capture is discharged as ungraded (no grade recorded), so the terminal
+            # decision is the one it would be had that capture never been graded; Z8: so is a capture queued after the
+            # worker died (never dequeued, never graded)
+            with self.lock:
+                for boundary in (self.grading, self.queued):
+                    if boundary is not None:
+                        self.gate.pending.discard(boundary)
+                        if self.gate.stall_wait is not None:
+                            self.gate.stall_wait.discard(boundary)
+                self.grading = self.queued = None
+            return self.failure
         self.check()
+        return None
 
 
 def validate_worker(model, health, metrics, budgets=None):
@@ -401,7 +474,7 @@ def run_item(p, adapter, *, ctx=None, **kwargs):
 def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evidence, limit, private, router, base,
               protected_pids=(), policy=None, cancel=None, ctx=None, frozen_date=None, gate_overrides=None,
               watchdog=None, compaction=False, join_timeout_s, receipts=None, attempt=None, header_sent=False,
-              controls=None, expected_worker=None, silence_s=None):
+              controls=None, expected_worker=None, silence_s=None, interrupt=False):
     work, entry = prepared.work, prepared.entry
     gate_policy, hygiene = policy if policy is not None else effective_policy()
     if gate_overrides:
@@ -414,9 +487,12 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     lock = threading.RLock()
     observations = []
     termination = dict(reason=None, killed=[], killed_verified=None, cancel_wait_s=None, in_flight_at_kill=None,
-                       worker_summary_before=None, worker_summary_after=None, client_stop=None, graceful_wait_s=None)
+                       worker_summary_before=None, worker_summary_after=None, client_stop=None, graceful_wait_s=None,
+                       # S27 §4.1: the ingested byte position / file size read under the count's lock, the SIGTERM size
+                       ingested_offset_at_count=None, events_size_at_count=None, signal_offset=None)
     if ctx is not None:
         ctx.update(termination=termination)      # abort manifests carry whatever the kill path recorded
+        ctx["stage"] = "generation"              # S27 §5.8: the lifecycle stage an abort stamp names
         ctx.pop("receipt_tokens", None)          # per item: an earlier item's fence totals never reach a later abort stamp
     silence_observer = pg.SilenceObserver()
     exit_hang = False
@@ -449,8 +525,9 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
     started = time.monotonic()
     stop = threading.Event()
     ingest_failure = []
+    markers = hermetic_markers(env, Path(private).parent)
     guard = pg.ProcessGuard(
-        adapter.guard_roots(work, env, private),
+        [*adapter.guard_roots(work, env, private), *markers.values()],    # S27 §3.2 (c): + the run's HOME / XDG_*
         run_id=Path(private).parent.name,
         item=entry.get("id", work.name),
         protected_pids=(*protected_pids, router.get("pid")),
@@ -459,6 +536,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         client_limit=hygiene["client_limit"],
         scrub=scrub,
         context=lambda: dict(completed_requests=len(gate.request_usage)),
+        env_markers=markers,
     )
 
     def grade(snap):
@@ -502,8 +580,15 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             if not killed:
                 gate.requests_at_kill = len(gate.request_usage)
                 gate.inflight_s_at_stop = (time.monotonic() - stream.started_at if stream.started_at else None)
+                # S27 §4.1: under the SAME lock as the count: the ingested byte position of the events stream (what the
+                # count was read from) and, supplementary, the file size
+                try:
+                    size = paths["events"].stat().st_size
+                except OSError:
+                    size = None
                 termination.update(reason=reason, requests_at_kill=gate.requests_at_kill,
-                                   inflight_s_at_stop=gate.inflight_s_at_stop)
+                                   inflight_s_at_stop=gate.inflight_s_at_stop,
+                                   ingested_offset_at_count=getattr(stream, "offset", None), events_size_at_count=size)
         killed = True
         heartbeat.set_phase("cancellation")
         if reason:
@@ -516,9 +601,12 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         errors = []
         killed_entries = []
 
+        signal_clock = {}
+
         def capture_cutoff():
             # Raw events-file position immediately before the actual SIGTERM; committed only once a signal was
             # really delivered (`commit_cutoff`), so a failed signal leaves the tolerance disabled.
+            signal_clock["at"] = time.time()             # S27 X2: the wall time just before the signal (worker epoch clock)
             try:
                 return paths["events"].stat().st_size
             except OSError:
@@ -526,6 +614,8 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
 
         def commit_cutoff(size):
             stream.signal_offset = size
+            termination["signal_offset"] = size          # S27 §4.1: persisted (None when no signal was delivered)
+            termination["signal_at"] = signal_clock.get("at")
 
         # C147: the client gets SIGTERM first so its own abort path can persist the in-flight assistant message;
         # survivors after GRACEFUL_CLIENT_S are SIGKILLed. Model-role processes are always SIGKILLed.
@@ -616,6 +706,8 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             ingester = threading.Thread(target=ingest, name="m62-ingestion", daemon=True)
             ingester.start()
             last_silence = 0
+            interrupt_deadline = time.monotonic() + INTERRUPT_DEADLINE_S if interrupt else None
+            last_interrupt_poll = 0.0
             while proc.poll() is None:
                 guard.check()
                 worker.check()
@@ -649,6 +741,14 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                         elif observed_reason:
                             gate.stop(observed_reason)
                     reason = gate.stop_reason or ("client_exit_hang" if exit_hang else None)
+                    if not reason and interrupt_deadline is not None and now - last_interrupt_poll >= INTERRUPT_POLL_S:
+                        # S27 §4.5 (C373): the harness itself stops the item once the worker reports a generation in flight
+                        last_interrupt_poll = now
+                        if pg.in_flight(worker_json("metrics")) >= 1:
+                            reason = "interrupt"
+                        elif now >= interrupt_deadline:
+                            raise tg.TransportAbort(f"interrupt positive: no generation in flight within "
+                                                    f"{INTERRUPT_DEADLINE_S:.0f} s (the run is retried once, then FAIL)")
                     if not reason and cancel is not None and cancel():
                         # Cooperative cancel (C147 section 3c): a gate stop decided at the same tick takes precedence.
                         reason = "runner_cancel"
@@ -687,7 +787,7 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             receipts_sha = wr.write_receipts_file(receipts_path, attempt, mark, fence)    # the raw fenced set, even if the join aborts
             owned = wr.owned_receipts(mark, fence)
         heartbeat.set_phase("terminal_grading")
-        worker.finish()
+        _record_finish(worker, termination, scrub)      # S27 X3: recorded; the final grade below (its own regrades) decides
         if guard.client_resource:
             gate.stop("client_resource")
         # Transcript acquisition is tracked, and the raw native IDs remain intact.
@@ -742,9 +842,12 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
             entry.get("id", work.name), len(tmp_found), sum(c["exact"] for c in tmp_found),
             sum(not c["exact"] for c in tmp_found), len(tmp_cleaned), json.dumps(tmp_kept)), flush=True)
         heartbeat.set_phase("terminal_grading")
+        if ctx is not None:
+            ctx["stage"] = "final_grade"
         with corpus.snapshot(work, private, final_boundary_actual) as snap:
             # A tampered / unsnapshottable tree runs no grader and still leaves a typed final receipt (the corpus).
-            final = corpus.grade(snap, prepared, private, guard, keep, next_seq(), final_boundary_actual, True)
+            final = final_grade(corpus, snap, prepared, private, guard, keep, next_seq, final_boundary_actual, termination,
+                                scrub)
             resources["grader_mem_kill"] |= final.resources["grader_mem_kill"]
             resources["grader_oom"] |= final.resources["grader_oom"]
             modified, failing = final.tampered, final.failing
@@ -752,6 +855,10 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
         if cancelled:
             ctx["cancelled"] = True
         termination_out = dict(termination)
+        termination_out["step_end_offsets"] = list(getattr(stream, "step_end_offsets", None) or [])     # S27 §4.1
+        termination_out["step_start_offsets"] = list(getattr(stream, "step_start_offsets", None) or [])  # S27 X2
+        starts = getattr(stream, "starts", None) or []
+        termination_out["last_step_start"] = starts[-1] if starts else None       # S27 §4.2: the stream's last step_start
         result = dict(
             gate=gate.report(),
             request_usage=gate.request_usage,
@@ -837,15 +944,30 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                     stop.set()
                     if ingester:
                         ingester.join(5)
-                    if sys.exc_info()[0] is not None:
+                    aborting = sys.exc_info()[0] is not None
+                    if aborting:
+                        # S27 §6 (C365): only with a primary exception in flight: the grade worker is marked cancelled
+                        # (queue cleared, no further dequeue) BEFORE its grader is killed, so the killed grade is
+                        # `grade_cancelled`, never a fault that replaces the original exception
+                        worker.cancel()
                         try:
                             guard.kill_role("grader")
                         except Exception:  # noqa: BLE001 — cleanup() below re-audits every tracked identity and
                             pass           # fails closed (survivors/uncertain); it must still run (C151 R18)
                     try:
                         heartbeat.set_phase("terminal_grading")
-                        if worker.thread.is_alive():
-                            worker.finish()
+                        if aborting:
+                            fault = worker.abort_join(ABORT_GRADE_JOIN_S)          # bounded; never raises
+                            if worker.grade_cancelled is not None:
+                                termination["grade_cancelled"] = worker.grade_cancelled
+                            if fault is not None:                                  # stored before the mark: a fault
+                                termination["grade_fault_before_abort"] = scrub(f"{type(fault).__name__}: {fault}")[:300]
+                            if worker.thread.is_alive():
+                                termination["grade_worker_alive_at_abort"] = True
+                            if ctx is not None:
+                                ctx["grade_cancelled"] = worker.grade_cancelled
+                        elif worker.thread.is_alive():
+                            _record_finish(worker, termination, scrub)             # Y5: recorded as on the main path
                     finally:
                         heartbeat.set_phase("cleanup")
                         try:
@@ -860,6 +982,66 @@ def _run_item(p, adapter, *, corpus, prepared, model, prompt, env, binary, evide
                             proc.wait(timeout=10)
         finally:
             heartbeat.close()
+
+
+def final_grade(corpus, snap, prepared, private, guard, keep, next_seq, boundary, termination, scrub=str):
+    """S27 §5.1: the item's FINAL grade, on the one snapshot taken for it (kept for the whole item). A grader INFRASTRUCTURE
+    fault (`tg.grader_infra_fault`: the closed list) is regraded here on that same snapshot, up to `FINAL_REGRADES` more times
+    — never a regeneration; the third fault raises `GraderInfraAbort(stage="final_grade")` (the chain's `grade_fault` DNF).
+    Any other exception propagates; a timeout / mem_kill / OOM / tamper is the grade's OUTCOME (returned, never retried). The
+    faults are recorded in `termination` (`final_grade_faults`, `final_regrades`)."""
+    faults = []
+    for attempt_no in range(1 + FINAL_REGRADES):
+        try:
+            final = corpus.grade(snap, prepared, private, guard, keep, next_seq(), boundary, True)
+            break
+        except tg.TransportAbort as exc:
+            if not tg.grader_infra_fault(exc):
+                raise
+            faults.append(dict(attempt=attempt_no + 1, error=scrub(f"{type(exc).__name__}: {exc}")[:300]))
+            termination["final_grade_faults"] = list(faults)
+            try:
+                guard.kill_role("grader")                  # the faulted grade's processes, before the next one
+            except Exception:  # noqa: BLE001 — cleanup() re-audits every tracked identity
+                pass
+            if attempt_no == FINAL_REGRADES:
+                raise tg.GraderInfraAbort(f"final grade: grader infrastructure fault x{len(faults)}: {exc}",
+                                          stage="final_grade", faults=[f["error"] for f in faults]) from exc
+    termination["final_grade_faults"] = list(faults)
+    termination["final_regrades"] = len(faults)
+    return final
+
+
+def _record_finish(worker, termination, scrub=str):
+    """S27 X3 / Y5: join the grade worker after the client exited; an interim grade's infrastructure fault it returns is
+    recorded in `termination` (never dropped), on every path that joins it."""
+    interim = worker.finish()
+    if interim is not None:
+        termination.setdefault("interim_grade_fault", scrub(f"{type(interim).__name__}: {interim}")[:300])
+    return interim
+
+
+def _own_start_time():
+    """This probe process's start time (`proc_guard.start_time`, the guard's identity clock); None when unreadable (the chain's
+    second scan then refuses to bound the session and proves nothing)."""
+    try:
+        import psutil
+        return pg.start_time(psutil.Process(os.getpid()))
+    except Exception:  # noqa: BLE001 — evidence only
+        return None
+
+
+def harness_fault_cause(exc):
+    """S27 §5.8: `(cause, stage or None)` of a harness fault that ends the probe — `cleanup_uncertain` (the owned cleanup could
+    not be shown certain), `grader_infra` (an interim grade's, or the final grade's after the in-probe regrades), `hook_infra`
+    (the chain did not answer an item barrier) — else None."""
+    if isinstance(exc, pg.CleanupUncertain):
+        return "cleanup_uncertain", None
+    if isinstance(exc, tg.GraderInfraAbort):
+        return "grader_infra", exc.stage
+    if isinstance(exc, ib.BarrierTimeout):
+        return "hook_infra", None
+    return None
 
 
 def _abort_fence(receipts, attempt, mark, receipts_path, ctx, proc):
@@ -1174,6 +1356,11 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                                 "the chain names one per leg attempt")
     man = provenance.gather(a.model, profile="deployed", runtime=ident, router=router)
     man.update(worker=before, run_id=run_id)
+    sid = os.getsid(0)
+    # S27 §3.1 / §5.8: the chain's second scan reads the session (when the probe leads it), bounded by the probe's own start
+    # (X10: a member older than the probe is another holder of a reused session id), and the run's hermetic root
+    man["probe_session"] = dict(sid=sid, leader=sid == os.getpid(), started=_own_start_time(),
+                                run_dir=p._portable(run_dir) if p is not None else str(run_dir))
     if getattr(a, "invocation_nonce", None):
         man.setdefault("runtime", {})["invocation_nonce"] = a.invocation_nonce      # P384: the chain's binding nonce
 
@@ -1189,14 +1376,15 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             _wait_for_ack(a.manifest_ack, cancel)
         for k, name in enumerate(names):
             item = a.lang + "/" + name
-            ctx.update(id=None)                          # F19: between items no item is current (a cancel here is a boundary)
+            ctx.update(id=None, stage=None)              # F19: between items no item is current (a cancel here is a boundary);
+            #                                              S27 X5: nor is the previous item's `done` stage
             ctx.pop("evidence_paths", None)              # never a previous item's evidence in this item's abort stamp
             if getattr(adapter, "report_requests_on_abort", False):
                 ctx.pop("gate_report", None)             # P426: nor a previous item's gate report or request evidence
                 ctx.pop("request_evidence", None)
             if cancel is not None and cancel():
                 raise RunnerCancelled()
-            ctx.update(id=item)
+            ctx.update(id=item, stage="ready")           # S27 §5.8: no generation yet
             current = worker_identity(p, a.model, router)
             pg.require_identity(before, current)
             with p._item_scratch_dir(name) as scratch:
@@ -1232,7 +1420,8 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     join_timeout_s=policy.grade_join_timeout_s, receipts=receipt_source, attempt=attempt,
                     header_sent=header_ctx is not None,
                     controls=receipt_controls(adapter, model, seed_of(item), policy.budgets),
-                    expected_worker=dict(pid=before["pid"], create_time=before["create_time"]))
+                    expected_worker=dict(pid=before["pid"], create_time=before["create_time"]),
+                    interrupt=kind == "interrupt")
                 after = worker_identity(p, a.model, router)
                 pg.require_identity(before, after)
                 check_env(env, overlay)
@@ -1277,9 +1466,11 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
                     snapshot_sha256=snapshot.sha256,
                     final_tree=final_tree,
                     token_accounting=accounting,
+                    cleanup_status=ctx.get("cleanup_status"),      # S27 §3.6: foreign_new + killed escapees, per item
                 )
                 rows.append(json.loads(p._scrub_pii(json.dumps(row))))
                 ctx["boundary_after"] = item
+                ctx["stage"] = "done"                      # S27 §5.8: the item has an outcome (its row is committed)
                 pg.atomic_write(out, ("".join(json.dumps(r) + "\n" for r in rows)).encode())
                 print(f'{item}: passed={passed} nonconv={row["nonconv_kind"]}', flush=True)
                 if barrier.enabled and barrier.done(k, _done_record(p, rows[-1], attempt, artifacts)) == "stop":
@@ -1314,11 +1505,19 @@ def _main(p, adapter, a, names, *, template, evidence, corpus, receipts):
             stamp["evidence"] = dict(id=ctx["id"], files={
                 k: dict(path=p._portable(v), sha256=p._sha_of(v) if Path(v).is_file() else None)
                 for k, v in ctx["evidence_paths"].items()})
-        cause = adapter.transport_cause(exc)
+        typed = harness_fault_cause(exc)          # S27 §5.8: the typed abort stamp, routed by the chain before its DNF check
+        cause = typed[0] if typed else adapter.transport_cause(exc)
         if cause is None and isinstance(exc, wr.ReceiptAbort):
             cause = exc.cause                    # a worker replaced mid-attempt: worker_crash (R21); other receipt faults: none
         if cause is not None:
             stamp["cause"] = cause                # spec 8.3: the incident class the chain retries on
+        if typed:
+            stage = typed[1] or ctx.get("stage") or "ready"
+            stamp.update(stage=stage, outcome_present=stage == "done")
+            if isinstance(exc, tg.GraderInfraAbort):
+                stamp["grader_faults"] = [p._scrub_pii(str(f)) for f in exc.faults]
+        if ctx.get("grade_cancelled"):
+            stamp["grade_cancelled"] = ctx["grade_cancelled"]
         man["transport_abort"] = stamp
         if isinstance(exc, RunnerCancelled) and exc.item:
             man["cancelled_item"] = {**exc.item, "cleanup_status": exc.item.get("cleanup_status") or status}

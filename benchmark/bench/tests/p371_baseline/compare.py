@@ -34,8 +34,16 @@ from __future__ import annotations
 import copy
 import re
 
+# S27 (harness robustness bundle, spec §3.5 / §3.6 / §4.1 / §5.1 / §5.8): the cleanup receipt's schema-2 keys, the per-item row
+# `cleanup_status`, the kill-time offsets, the final grade's regrade record, the probe session record
+S27_CLEANUP_KEYS = ("schema", "foreign_new", "foreign_new_count", "unreadable_count")
+S27_TERMINATION_KEYS = ("ingested_offset_at_count", "events_size_at_count", "signal_offset", "step_end_offsets",
+                        "last_step_start", "final_grade_faults", "final_regrades",
+                        # S27 review r1: the step start offsets and the signal's wall time (X2), the interim grade fault (X3)
+                        "step_start_offsets", "signal_at", "interim_grade_fault")
 TABLE = {
-    "row_additions": ["/config_id", "/arm", "/epoch_id", "/snapshot_sha256", "/token_accounting"],
+    "row_additions": ["/config_id", "/arm", "/epoch_id", "/snapshot_sha256", "/token_accounting", "/cleanup_status"]
+    + ["/termination/" + k for k in S27_TERMINATION_KEYS],
     "row_addition_prefixes": ["/final_tree/", "/final_tree"],
     "manifest_additions": ["/runtime/" + k for k in ("config_id", "arm", "epoch_id", "snapshot_sha256", "snapshot_complete",
                                                      "snapshot_fields", "evidence_policy")]
@@ -44,6 +52,11 @@ TABLE = {
     + ["/transport_abort/evidence", "/cancelled_item/evidence"]
     # P384 (review r4 F16): the chain-issued per-invocation nonce the probe writes into its manifest
     + ["/runtime/invocation_nonce"]
+    + ["/probe_session"]
+    + [f"{base}/cleanup_status/{k}" for base in ("", "/transport_abort", "/cancelled_item") for k in S27_CLEANUP_KEYS]
+    + [f"{base}/termination/{k}" for base in ("/transport_abort", "/cancelled_item")
+       for k in S27_TERMINATION_KEYS + ("grade_cancelled", "grade_fault_before_abort", "grade_worker_alive_at_abort")]
+    + ["/transport_abort/stage", "/transport_abort/outcome_present", "/transport_abort/grade_cancelled"]
     + ["/runtime/policy/" + k for k in ("budgets", "compaction", "config_id", "corpus_id", "corpus_identity",
                                          "inject_allowed", "langs", "watchdog")],
     "manifest_addition_prefixes": [],

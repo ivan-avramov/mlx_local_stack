@@ -88,7 +88,10 @@ def test_the_hooks_item_record_of_these_rows_is_the_baselines_apart_from_decode_
     ops.summary = copy.deepcopy(a)
     disp = hooks.after_attempt(kit.SLOT, dict(id=r["id"]), kit.ctx(r))
     rec = kit.item_record(out)
-    assert set(rec) == BASELINE_RECORD_KEYS, sorted(set(rec) ^ BASELINE_RECORD_KEYS)
+    # S27 §4.2 / §5.9: a kill boundary records its `order` (late record: `signal_order`, `late_record`); an invalid record
+    # its `fault_class` (accounting | integrity) — the only keys beside the baseline's
+    s27 = {"order", "signal_order", "late_record", "fault_class"}
+    assert BASELINE_RECORD_KEYS <= set(rec) <= BASELINE_RECORD_KEYS | s27, sorted(set(rec) ^ BASELINE_RECORD_KEYS)
     assert rec["case"] == g["case"] and rec["requests"] == g["requests"]
     assert {k: rec["checks"][k] for k in g["checks"]} == g["checks"]
     assert set(rec["checks"]) - set(g["checks"]) <= HOOK_EXTRA_CHECKS
@@ -97,7 +100,9 @@ def test_the_hooks_item_record_of_these_rows_is_the_baselines_apart_from_decode_
     assert {k: rec["totals"][k] for k in g["totals"]} == g["totals"]
     assert rec["problems"] == g["problems"]
     assert rec["verdict"] == ("reconciled" if g["ok"] else "invalid")
-    assert disp.kind == ("accept" if g["ok"] else "invalidate")
+    # S27 §5.3 / §5.9: a failure of only the item's own accounting checks keeps the outcome (accounting_fault, no rerun)
+    assert disp.kind == ("accept" if g["ok"] else
+                         "accounting_fault" if rec.get("fault_class") == "accounting" else "invalidate")
 
 
 def test_non_client_inactivity_reports_carry_no_client_abort_checks(kit):

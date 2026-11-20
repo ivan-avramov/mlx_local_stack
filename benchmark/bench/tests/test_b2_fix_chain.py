@@ -196,7 +196,9 @@ def test_the_settle_bound_comes_from_the_frozen_record_amendment_else_v8_base(tm
 
 # ------------------------------------------------------------------------------------------------ P21 the item record on every done outcome
 def test_an_invalidated_done_still_writes_its_item_record_before_the_answer(tmp_path, monkeypatch):
-    rc, env = run_leg(tmp_path, monkeypatch, extra_env={"B2_SKEW_ITEMS": S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[1]})
+    # S27 §5.9 (X18): an integrity mismatch at done (a token skew alone is now an accounting fault, the outcome kept)
+    rc, env = run_leg(tmp_path, monkeypatch,
+                      extra_env={"B2_FOREIGN_SESSION_ITEMS": S.p426_order([f"p{i}" for i in range(1, 7)], 1001)[1]})
     assert rc == 2
     records = sorted(p for p in Path(env["out"]).rglob("items/*.json") if not p.name.endswith((".ready.json", ".dnf.json")))
     invalid = [json.loads(p.read_text()) for p in records if json.loads(p.read_text())["verdict"] == "invalid"]

@@ -12,7 +12,8 @@ from m62 import inject_verify as iv                           # noqa: E402
 
 PER_PROCESS = 512 * 1024 ** 2
 RUN_IDS = {"stall": "20261010T120000-aaaaaaaaaaaa", "loop": "20261010T120000-bbbbbbbbbbbb",
-           "alloc": "20261010T120000-cccccccccccc"}
+           "alloc": "20261010T120000-cccccccccccc",
+           "interrupt": "20261010T120000-dddddddddddd"}       # S27 §4.5: the suite requires the interrupt positive
 
 
 def put(path, text):
@@ -33,7 +34,11 @@ def tool_event(mid, call_id, command, state_extra=None):
 
 def build_events(kind):
     lines = []
-    if kind == "stall":
+    if kind == "interrupt":                     # S27 §4.5: two finished steps, the third open when the harness stops it
+        for k in range(1, 3):
+            lines += [ev("step_start", f"m{k}", id=f"s{k}"), ev("step_finish", f"m{k}", id=f"f{k}")]
+        lines.append(ev("step_start", "m3", id="s3"))
+    elif kind == "stall":
         for k in range(1, 6):
             lines += [ev("step_start", f"m{k}", id=f"s{k}"), ev("step_finish", f"m{k}", id=f"f{k}")]
         lines.append(ev("step_start", "m6", id="s6"))
@@ -68,7 +73,12 @@ def make_row(kind, tmp, name):
                 baseline_failing=1, failing_trajectory=[[1, 1, False]], requests_completed=2)
     rec = dict(unmatched_export_messages=1, trailing="interrupted")
     mem = []
-    if kind in ("stall", "loop"):
+    if kind == "interrupt":
+        gate.update(stop_reason="interrupt", requests_completed=2)
+        term.update(reason="interrupt", killed=[dict(pid=10, create_time=1.0, role="client", argv=["opencode", "run"])],
+                    killed_verified=True, cancel_wait_s=2.5, in_flight_at_kill=1,
+                    worker_summary_before=summary_before, worker_summary_after=summary_after)
+    elif kind in ("stall", "loop"):
         stop = "stalled" if kind == "stall" else "looping"
         gate.update(stop_reason=stop, requests_completed=5 if kind == "stall" else 2)
         if kind == "stall":
@@ -290,7 +300,7 @@ def test_suite_pass_and_every_line_leads_with_the_attempt_stem(tmp_path):
     code, lines = run_suite(tmp_path)
     assert code == 0 and lines[-1] == "RESULT PASS"
     row_lines = [x for x in lines if x.split(":", 1)[0] in {f"{k}.attempt1" for k in iv.KINDS} and "note" not in x]
-    assert len(row_lines) == 3 and all(x.endswith("PASS") for x in row_lines)
+    assert len(row_lines) == len(iv.KINDS) and all(x.endswith("PASS") for x in row_lines)     # S27 §4.5: + interrupt
 
 
 def test_partial_run_directory_is_retryable_exit_4_unless_a_fail_exists(tmp_path):
@@ -311,6 +321,7 @@ def test_only_the_last_attempt_counts_and_earlier_ones_are_listed_as_retries(tmp
     write_attempt(tmp_path, "loop", 1, lambda r, m: r["gate"].update(stop_reason=None))
     write_attempt(tmp_path, "loop", 2)
     write_attempt(tmp_path, "alloc", 1)
+    write_attempt(tmp_path, "interrupt", 1)                     # S27 §4.5: the suite requires the interrupt positive
     code, lines = run_suite(tmp_path)
     assert code == 0
     assert any(x.startswith("loop.attempt1: not_observed") and "retry" in x for x in lines)
@@ -446,7 +457,7 @@ def test_live_checks_run_for_every_retained_attempt_and_leftovers_fail(tmp_path)
         seen.append("docker")
         return []
     assert run_suite(tmp_path, docker_ps=docker)[0] == 0
-    assert seen == ["docker"] * 3                                  # one live check per retained attempt
+    assert seen == ["docker"] * len(iv.KINDS)                      # one live check per retained attempt (S27: + interrupt)
     leftover = lambda: ["mlxbench-20261010T120000-aaaaaaaaaaaa-item-1"]                          # noqa: E731
     code, lines = run_suite(tmp_path, docker_ps=leftover)
     assert code == 1 and any(x.startswith("suite: stall:FAIL:containers") for x in lines)

@@ -55,8 +55,10 @@ PHASES = ("pilot", "full", "block", "rerun", "retry")
 INVOCATION_STATUSES = ("running", "validated", "partial_incident", "hook_stopped", "quarantined", "archived")
 COUNTED_STATUSES = ("validated", "partial_incident", "hook_stopped")
 LOAD_STATUSES = ("pending", "running", "done", "archived")
-SLOT_DISPOSITIONS = ("accepted", "cheat", "unclear", "exhausted")
+SLOT_DISPOSITIONS = ("accepted", "cheat", "unclear", "exhausted", "harness_fault")
 MAX_RERUNS = 2                                               # P202
+MAX_P426_RERUN_INDEX = 1                                     # S27 §5.7: P426 has no cheat rerun; one harness-fault rerun
+HARNESS_DNF_KINDS = ("harness_fault_dnf", "grade_fault")     # S27 §5.7: `chain.p426_harness_dnf`, scored strict 0
 FILE_RE = re.compile(r"\.L\d+\.(?:pilot|full|block|rerun|retry)\.a\d+\.jsonl$")
 INV_KEYS = ("leg_key", "phase", "attempt", "worker_n", "file", "manifest", "status", "expected_slots",
             "accepted_slots", "sha256", "load_gen", "slot_base")
@@ -178,10 +180,17 @@ def _is_int(v, minimum=0):
     return type(v) is int and v >= minimum
 
 
+def is_p426(doc):
+    """A `p426_continue` chain document (S27 §5.7: its own rerun bound and harness DNF list)."""
+    return isinstance(doc, dict) and (doc.get("p426") is True or "p426_ledger" in doc or
+                                      ((doc.get("chain_config") or {}).get("transport_policy") == "p426_continue"))
+
+
 def validate_progress(doc):
     """Shape checks of the progress document; returns it with the optional sections defaulted."""
     if not isinstance(doc, dict) or not isinstance(doc.get("progress"), dict):
         _fail("chain.json has no progress inventory")
+    p426 = is_p426(doc)
     progress = doc["progress"]
     for name in ("loads", "invocations", "slot_attempts", "pre_spawn"):
         progress.setdefault(name, [])
@@ -207,16 +216,27 @@ def validate_progress(doc):
         if not (isinstance(rec, dict) and isinstance(rec.get("slot"), str) and _is_int(rec.get("rerun_index"))
                 and rec.get("disposition") in SLOT_DISPOSITIONS and _is_int(rec.get("load_gen"))):
             _fail(f"slot attempt record malformed: {rec!r}")
-        if rec["rerun_index"] > MAX_RERUNS:
-            _fail(f"slot attempt re-run index {rec['rerun_index']} exceeds the re-run bound {MAX_RERUNS} (P202)")
-        if rec["disposition"] == "exhausted" and rec["rerun_index"] != MAX_RERUNS:
-            _fail("an exhausted disposition belongs to the last permitted attempt only")
+        if p426:
+            # S27 §5.7: a P426 slot's attempts are index 0 and (after a harness fault) 1; it has no cheat rerun
+            if rec["rerun_index"] > MAX_P426_RERUN_INDEX:
+                _fail(f"P426 slot attempt re-run index {rec['rerun_index']} exceeds {MAX_P426_RERUN_INDEX} (S27 §5.7)")
+            if rec["disposition"] in ("cheat", "exhausted"):
+                _fail(f"P426 slot attempt disposition {rec['disposition']!r}: P426 legs have no cheat rerun")
+        else:
+            if rec["disposition"] == "harness_fault":
+                _fail("a harness_fault attempt belongs to a P426 leg only (S27 §5.7)")
+            if rec["rerun_index"] > MAX_RERUNS:
+                _fail(f"slot attempt re-run index {rec['rerun_index']} exceeds the re-run bound {MAX_RERUNS} (P202)")
+            if rec["disposition"] == "exhausted" and rec["rerun_index"] != MAX_RERUNS:
+                _fail("an exhausted disposition belongs to the last permitted attempt only")
     for rec in progress["pre_spawn"]:
         if not (isinstance(rec, dict) and isinstance(rec.get("slot"), str) and rec.get("disposition") ==
                 "pre_spawn_incident" and isinstance(rec.get("cause"), str) and rec["cause"]):
             _fail(f"pre-spawn record malformed: {rec!r}")
     if not isinstance(doc.get("dnf", []), list):
         _fail("chain.json dnf must be a list")
+    if not isinstance(doc.get("p426_harness_dnf", []), list):
+        _fail("chain.json p426_harness_dnf must be a list")
     return doc
 
 
@@ -227,6 +247,8 @@ class AttemptRow:
     file: str | None
     disposition: str
     output_tokens: int | None = None
+    accounting_fault: bool = False           # S27 §5.3: the outcome is kept; tokens / latency / runaway tax descriptive only
+    reason: str | None = None
 
 
 @dataclass
@@ -239,6 +261,8 @@ class ScoredSlot:
     disposition: str = "accepted"
     strict_fail: bool = False
     segment: int = 0                 # legacy m64 `.w<n>`
+    accounting_fault: bool = False   # S27 §5.3: tokens / latency / runaway tax descriptive only (excluded from aggregates)
+    harness_faults: int = 0          # S27 §5.6: earlier attempts of this slot that ended `harness_fault`
 
 
 @dataclass
@@ -346,6 +370,20 @@ def _dnf_rows(doc, root):
     return by_slot
 
 
+def _harness_dnf_rows(doc):
+    """S27 §5.7: `{slot: record}` of `chain.p426_harness_dnf` (a `harness_fault_dnf` or a `grade_fault`, scored strict 0, a
+    sealed sidecar `items/<slot>.harness_dnf.json` beside it); one per slot."""
+    out = {}
+    for r in doc.get("p426_harness_dnf") or []:
+        if not (isinstance(r, dict) and isinstance(r.get("slot"), str) and r.get("kind") in HARNESS_DNF_KINDS
+                and isinstance(r.get("reason"), str) and r["reason"]):
+            _fail(f"chain.json p426_harness_dnf record malformed: {r!r}")
+        if r["slot"] in out:
+            _fail(f"duplicate harness DNF record for slot {r['slot']}")
+        out[r["slot"]] = r
+    return out
+
+
 def load_slots(chain_doc, root, *, check_unregistered=True):
     """Every slot's scored attempt from the progress inventory (see the module docstring). Raises `ChainRowsError`."""
     doc = validate_progress(chain_doc)
@@ -386,21 +424,36 @@ def load_slots(chain_doc, root, *, check_unregistered=True):
         if att is None:
             att = attempts[key] = AttemptRow(key[1], None, None, rec["disposition"])
         att.disposition = rec["disposition"]
+        att.accounting_fault = rec.get("accounting_fault") is True
+        att.reason = rec.get("reason")
         if _is_int(rec.get("output_tokens")):
             att.output_tokens = rec["output_tokens"]
+        if rec["disposition"] == "harness_fault" and not (isinstance(rec.get("reason"), str) and rec["reason"]):
+            _fail(f"slot {key[0]}: a harness_fault attempt carries no recorded reason (S27 §5.7)")
     for (slot, _), att in sorted(attempts.items(), key=lambda kv: (kv[0][0], kv[0][1])):
         table.attempts.setdefault(slot, []).append(att)
     dnf = _dnf_rows(doc, root)
+    harness_dnf = _harness_dnf_rows(doc)
     for slot, atts in table.attempts.items():
         last = max(atts, key=lambda a: a.rerun_index)
+        faults = sum(1 for a in atts if a.disposition == "harness_fault")
         if last.disposition in ("accepted", "exhausted"):
             if last.row is None:
                 _fail(f"slot {slot}: disposition {last.disposition} names no row (the attempt's row is missing)")
-            if slot in dnf:
-                _fail(f"duplicate slot {slot}: both a row and a transport_dnf record")
+            if slot in dnf or slot in harness_dnf:
+                _fail(f"duplicate slot {slot}: both a row and a DNF record")
+            if any(a.disposition != "harness_fault" for a in atts if a is not last) and is_p426(doc):
+                _fail(f"slot {slot}: an earlier attempt of an accepted P426 slot is not a harness_fault")
             table.scored[slot] = ScoredSlot(slot=slot, row=last.row, source="row", file=last.file,
                                             rerun_index=last.rerun_index, disposition=last.disposition,
-                                            strict_fail=last.disposition == "exhausted")
+                                            strict_fail=last.disposition == "exhausted",
+                                            accounting_fault=last.accounting_fault, harness_faults=faults)
+        elif last.disposition == "harness_fault":
+            if slot in harness_dnf:
+                continue                    # the second fault: the slot's terminal record is its harness DNF (below)
+            if last.rerun_index >= MAX_P426_RERUN_INDEX:
+                _fail(f"slot {slot}: a second harness fault must be recorded as a harness_fault_dnf (S27 §5.2)")
+            table.pending_reruns.append((slot, last.rerun_index + 1))
         elif last.disposition == "cheat":
             if last.rerun_index >= MAX_RERUNS:
                 _fail(f"slot {slot}: a cheat at the last permitted attempt must be recorded as exhausted")
@@ -411,6 +464,12 @@ def load_slots(chain_doc, root, *, check_unregistered=True):
         if slot in table.scored:
             _fail(f"duplicate slot {slot}: both a row and a transport_dnf record")
         table.scored[slot] = ScoredSlot(slot=slot, row=row_, source="dnf", file=None)
+    for slot, rec_ in harness_dnf.items():
+        if slot in table.scored:
+            _fail(f"duplicate slot {slot}: both a row and a harness DNF record")
+        table.scored[slot] = ScoredSlot(slot=slot, row=rec_, source="harness_dnf", file=None, disposition=rec_["kind"],
+                                        strict_fail=True,
+                                        harness_faults=sum(1 for a in table.attempts.get(slot, []) if a.disposition == "harness_fault"))
     table.pending_reruns.sort()
     table.blocked.sort()
     table.open_pre_spawn = _open_pre_spawn(progress)

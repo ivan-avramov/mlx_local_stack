@@ -57,7 +57,8 @@ def test_inv_a_clean_run_passes_and_records_the_host_before_and_after(tmp_path, 
     assert rc == 0 and doc["verdict"] == "PASS" and doc["problems"] == [] and ph.sealed_ok(doc)
     assert doc["host_env"] == doc["host_env_after"] == world.fingerprint()
     assert ops.host_calls >= 2
-    assert {(e["language"], e["kind"]): e["verdict"] for e in doc["injects"]} == {(lang, k): "PASS" for lang in X.LANGS for k in X.KINDS}
+    assert {(e["language"], e["kind"]): e["verdict"] for e in doc["injects"]} == {
+        **{(lang, k): "PASS" for lang in X.LANGS for k in X.KINDS}, (X.LANGS[0], "interrupt"): "PASS"}    # S27 §4.5
 
 
 # ---------------------------------------------------------------------------------------------------- the host guard
@@ -395,6 +396,17 @@ class HybridOps(W2.BoxSeqOps):
                                shape=(shapes or {}).get(kind))
             for suffix in (".jsonl", ".manifest.json"):
                 (prep / f"{kind}.attempt1{suffix}").write_bytes((prep / kind / f"{kind}.attempt1{suffix}").read_bytes())
+
+        def interrupted(row, manifest):               # S27 §4.5: the harness stopped it with a generation in flight
+            row["termination"].update(reason="interrupt", in_flight_at_kill=1,
+                                      worker_summary_before=dict(in_flight=1, requests_started=6, requests_completed=5),
+                                      worker_summary_after=dict(in_flight=0, requests_started=6, requests_completed=5))
+            row["reconciliation"] = dict(row.get("reconciliation") or {}, trailing="interrupted")
+            row["stop_reason"] = "interrupt"
+        X.write_inject_run(prep / "interrupt", self.wd, "interrupt", 1, stall_events(), gate_stop="interrupt", shape="keep",
+                           mutate=interrupted)
+        for suffix in (".jsonl", ".manifest.json"):
+            (prep / f"interrupt.attempt1{suffix}").write_bytes((prep / "interrupt" / f"interrupt.attempt1{suffix}").read_bytes())
         wt = self.tmp / "wt-n16"
         (wt / "benchmark/m62").mkdir(parents=True)
         os.symlink(X.BENCH / "m62" / "inject_verify.py", wt / "benchmark/m62/inject_verify.py")

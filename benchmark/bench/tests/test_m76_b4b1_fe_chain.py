@@ -252,7 +252,9 @@ def test_p426_continue_only_for_p426_configs():
 def test_tg2_runner_policy():
     from bench import run_config as rc, tg1_runner
     runner = S.bench_mod("tg2_runner")
-    assert runner.TG2_POLICY == rc.PolicyTemplate(config_id="tg2", langs=("rust", "javascript", "java", "cpp"))
+    # S27 §4.5 (C373): the tg2 template also allows the deterministic interrupt positive
+    assert runner.TG2_POLICY == rc.PolicyTemplate(config_id="tg2", langs=("rust", "javascript", "java", "cpp"),
+                                                  inject_allowed=rc.ALL_INJECT_KINDS)
     assert runner.TG1_P426_EVIDENCE == tg1_runner.TG1_P426_EVIDENCE
 
 

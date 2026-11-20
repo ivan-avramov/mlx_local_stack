@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 """C147 §2 verifier: the single, authoritative contract for injected-positive rows.
 
-    inject_verify.py --run <$STACK_WORKDIR/m62/inject> [--kind stall|loop|alloc] [--workdir DIR]
+    inject_verify.py --run <$STACK_WORKDIR/m62/inject> [--kind stall|loop|alloc|interrupt] [--workdir DIR]
 
 Reads every `<kind>.attempt<n>.jsonl` (+ `.manifest.json`) and prints one line per row, always led by the attempt
-stem:  `<stem>: PASS | FAIL:<why> | not_observed[:what] | competing_trigger:<reason>`.
+stem:  `<stem>: PASS | PASS_NO_INFLIGHT | FAIL:<why> | not_observed[:what] | competing_trigger:<reason>`.
+S27 §4.3 / §4.5: `PASS_NO_INFLIGHT` (stall / loop) is detection proven with no request in flight at the kill; the suite
+passes only with the `interrupt` positive's in-flight PASS.
 `--kind` limits the run to one kind and skips the suite-level rules (the driver's per-leg call).
 
 Cancellation proof: see `cancellation_consistent` (no cancelled counter exists on the worker; completed must not rise).
@@ -27,10 +29,16 @@ import subprocess
 import sys
 
 REPO = Path(__file__).resolve().parents[2]
-KINDS = ("stall", "loop", "alloc")
+sys.path.insert(0, str(REPO / "benchmark"))
+from bench.run_config import ALL_INJECT_KINDS as KINDS  # noqa: E402 — S27 X1: the one shared kind list (+ interrupt, C373)
 T_TOKENS = 81920
 RUN_ID = re.compile(r"^\d{8}T\d{6}-[0-9a-f]{12}$")          # the probe's `<YYYYMMDDTHHMMSS>-<12 hex>`
-ATTEMPT = re.compile(r"^(stall|loop|alloc)\.attempt(\d+)\.jsonl$")
+ATTEMPT = re.compile(r"^(stall|loop|alloc|interrupt)\.attempt(\d+)\.jsonl$")
+# S27 §4.3: stall / loop detection proven with NOTHING in flight at the kill (no cancellation to prove): a distinct verdict, so
+# a consumer that requires a cancellation proof can tell it apart. The interrupt positive (§4.5) never takes it.
+PASS_NO_INFLIGHT = "PASS_NO_INFLIGHT"
+PASSING = ("PASS", PASS_NO_INFLIGHT)
+INTERRUPTED_KINDS = ("interrupted", "interrupted_charged")
 EVIDENCE_PATHS = {"events": "events_path", "export": "transcript_path", "stderr": "stderr_path"}
 # M76 B4b-1 (change review L1): a v2 row (`arm_opencode.row_fields`) also records its date-freeze receipts and, when present,
 # its tool-window receipts; each recorded artifact has its path field and its digest. tg2 rows are always date-frozen.
@@ -172,8 +180,21 @@ def cancellation_consistent(term):
     return done_after == done_before
 
 
-def causal(kind, row, notes):
-    """None when the live stop -> kill -> cancel -> reconcile chain is evidenced; else a verdict string."""
+def no_inflight_consistent(term, row):
+    """S27 §4.3: the order-tolerant link with NO request in flight at the kill: `in_flight_at_kill == 0`, the worker's
+    `requests_started` unchanged from before to after, `after.in_flight == 0`, and the trailing message not an interrupted
+    kind."""
+    before, after = term.get("worker_summary_before"), term.get("worker_summary_after")
+    return (type(term.get("in_flight_at_kill")) is int and term["in_flight_at_kill"] == 0
+            and isinstance(before, dict) and isinstance(after, dict)
+            and type(before.get("requests_started")) is int and before.get("requests_started") == after.get("requests_started")
+            and after.get("in_flight") == 0
+            and (row.get("reconciliation") or {}).get("trailing") not in INTERRUPTED_KINDS)
+
+
+def causal(kind, row, notes, *, strict=False):
+    """None when the live stop -> kill -> cancel -> reconcile chain is evidenced; `PASS_NO_INFLIGHT` when (stall / loop) the kill
+    found nothing in flight (S27 §4.3); else a verdict string. `strict` (the interrupt positive): the in-flight proof only."""
     term, gate = row.get("termination") or {}, row["gate"]
     killed = term.get("killed") or []
     if term.get("reason") != gate["stop_reason"] or not any(k.get("role") == "client" for k in killed):
@@ -185,14 +206,24 @@ def causal(kind, row, notes):
     wait = term.get("cancel_wait_s")
     if not isinstance(wait, (int, float)) or isinstance(wait, bool) or wait > bound:
         return "FAIL:causal:cancel_wait_s"
-    if (row.get("reconciliation") or {}).get("trailing") not in ("interrupted", "unpublished", "interrupted_charged"):
+    if not strict and term.get("in_flight_at_kill") == 0 and type(term.get("in_flight_at_kill")) is int \
+            and no_inflight_consistent(term, row):
+        # S27 §4.3: order-tolerant — nothing was in flight at the kill (worker counters unchanged, trailing not interrupted);
+        # the loop's descendant kill is still required. Anything else takes the existing in-flight proof below.
+        if kind == "loop" and not any(k.get("role") == "model" and k.get("argv", [])[-2:] == ["sleep", "600"]
+                                      for k in killed):
+            return "not_observed:descendant"
+        notes.append("no_request_in_flight")
+        return PASS_NO_INFLIGHT
+    if (row.get("reconciliation") or {}).get("trailing") not in (
+            INTERRUPTED_KINDS if strict else ("interrupted", "unpublished", "interrupted_charged")):
         return "not_observed:trailing"      # the kill landed after the in-flight message was settled
     if kind == "loop" and not any(k.get("role") == "model" and k.get("argv", [])[-2:] == ["sleep", "600"]
                                   for k in killed):
         return "not_observed:descendant"
     if cancellation_consistent(term):
         notes.append("cancellation_consistent")
-    elif kind == "loop":
+    elif kind in ("loop", "interrupt"):
         return "not_observed:cancellation"
     else:
         notes.append("cancellation_not_shown")
@@ -221,6 +252,15 @@ def verify_row(kind, row, manifest, workdir, scaffold="opencode-v2-web-tg1"):
     gate = row["gate"]
     finished, calls = derive(load_events(resolve(row["events_path"], workdir)))
     stop = gate.get("stop_reason")
+    if kind == "interrupt":
+        # S27 §4.5 (C373): the harness stopped the item while the worker reported a generation in flight; PASS needs the
+        # existing in-flight proof (trailing interrupted, cancellation consistent, client kill verified, cancel_wait_s bound)
+        if stop and stop != "interrupt":
+            return f"competing_trigger:{stop}", notes
+        if stop != "interrupt":
+            return "not_observed", notes
+        failure = causal(kind, row, notes, strict=True)
+        return (failure or "PASS"), notes
     if kind == "stall":
         if stop == "stalled" and gate["no_progress_tokens"] >= T_TOKENS:
             return "competing_trigger:T", notes
@@ -377,10 +417,14 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
             out("suite: loop cancellation consistent, not correlated \u2014 see C149")
         if loop and loop.verdict == "PASS" and "cancellation_consistent" not in loop.notes:
             suite.append("not_observed:loop:cancellation")
+        interrupt = retained.get("interrupt")
+        if interrupt and interrupt.verdict != "PASS":
+            # S27 §4.5: the record passes only with the interrupt positive's in-flight proof; stall / loop prove detection
+            suite.append(f"not_observed:interrupt:{interrupt.verdict}")
         docker_ps = docker_ps or docker_names
         process_lister = process_lister or list_processes
         for kind, r in retained.items():
-            if r.verdict == "PASS":
+            if r.verdict in PASSING:
                 try:
                     suite += [f"{kind}:{p}" for p in live_checks(r.run_id, workdir, docker_ps, process_lister)]
                 except (RuntimeError, OSError, subprocess.SubprocessError) as exc:
@@ -391,9 +435,12 @@ def main(argv=None, *, docker_ps=None, process_lister=None, out=print):
     if any(v.split(":", 1)[0] == "FAIL" or ":FAIL" in v for v in verdicts):
         out("RESULT FAIL")
         return 1
-    if any(v != "PASS" for v in verdicts) or (a.kind is None and not retained):
+    if any(v not in PASSING for v in verdicts) or (a.kind is None and not retained):
         out("RESULT retryable (exit 4)")
         return 4
+    if a.kind is not None and retained[a.kind].verdict == PASS_NO_INFLIGHT:
+        out(f"RESULT {a.kind} {PASS_NO_INFLIGHT}")          # S27 §4.3: detection proven, nothing in flight at the kill
+        return 0
     out("RESULT PASS" if a.kind is None else f"RESULT {a.kind} PASS")
     return 0
 

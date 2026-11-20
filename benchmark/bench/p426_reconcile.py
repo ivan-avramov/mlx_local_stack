@@ -20,7 +20,14 @@ _REQUIRED = dict(started=("in_flight",), completed=("session", "backend", "promp
 _RENAME = dict(decode="decode_tok_s", prefill="prefill_tok_s")
 DRAFT_KEYS = ("draft_rounds", "draft_n", "draft_n_accepted", "draft_kind")
 KILL_CASES = ("kill_boundary", "kill_inflight_failed", "kill_completed_unaccounted",
-              "kill_client_aborted", "kill_client_aborted_completed_unaccounted")
+              "kill_client_aborted", "kill_client_aborted_completed_unaccounted", "kill_boundary_late_record")
+LATE_RECORD = "kill_boundary_late_record"          # S27 §4.2: the kill-boundary race reconciled in either order
+ORDERS = ("step_before_count", "step_after_count", "unpublished")
+SIGNAL_ORDERS = ("before_signal", "after_signal", "no_signal")
+# S27 §5.9 (closed table): failed checks that are the item's own ACCOUNTING (post-outcome: flagged, never rerun); every other
+# failed check — serial, session_backend, started_terminated, failed_lines / failed_line beyond the allowed variants,
+# worker_deltas, the hooks' preconditions / settle / metrics / parse / engagement / ready checks, anything unlisted — is INTEGRITY.
+ACCOUNTING_CHECKS = ("boundary_count", "unaccounted_count", "pairing")
 # P586: a client-aborted in-flight request (opencode's own 60-minute step cut, C154) with affirmative client provenance
 ABORT_MATCH_S = 5.0                 # |export abort time - the worker's failure / last-request time|
 TELEMETRY_GAP_S = 120.0             # the largest gap between two telemetry lines (and the close gap) of a live stream
@@ -78,6 +85,34 @@ class ItemReport:
     totals: dict = field(default_factory=dict)
     checks: dict = field(default_factory=dict)
     client_abort: dict | None = None         # P593: the ending / speed provenance block of the two client-abort cases
+    order: str | None = None                 # S27 §4.2: step_before_count | step_after_count | unpublished (kill boundaries)
+    signal_order: str | None = None          # S27 §4.2: before_signal | after_signal | no_signal (the offset shape)
+    late_record: dict | None = None          # S27 §4.2: the facts the late-record case was accepted on
+
+
+def fault_class(checks) -> str | None:
+    """S27 §5.9: None when every check holds; `accounting` when the failed checks are all in `ACCOUNTING_CHECKS`; else
+    `integrity` (closed table: anything not listed is integrity)."""
+    failed = {name for name, c in (checks or {}).items() if not (isinstance(c, dict) and c.get("ok"))}
+    if not failed:
+        return None
+    return "accounting" if failed <= set(ACCOUNTING_CHECKS) else "integrity"
+
+
+def late_facts(row) -> dict:
+    """The row's facts the late-record shapes read (S27 §4.1 / §4.2): the kill-time offsets, the step END offsets, the
+    trailing export message and the stream's event counts."""
+    term = row.get("termination") if isinstance(row.get("termination"), dict) else {}
+    rec = row.get("reconciliation") if isinstance(row.get("reconciliation"), dict) else {}
+    seen = row.get("event_types_seen") if isinstance(row.get("event_types_seen"), dict) else {}
+    return dict(ingested=term.get("ingested_offset_at_count"), size=term.get("events_size_at_count"),
+                signal=term.get("signal_offset"), ends=term.get("step_end_offsets"),
+                in_flight_at_kill=term.get("in_flight_at_kill"), summary_after=term.get("worker_summary_after"),
+                summary_before=term.get("worker_summary_before"),
+                trailing=rec.get("trailing"), unmatched=rec.get("unmatched_export_messages"),
+                step_starts=seen.get("step_start"), step_finishes=seen.get("step_finish"), errors=seen.get("error", 0),
+                requests_observed=row.get("requests_observed"), last_step_start=term.get("last_step_start"),
+                starts=term.get("step_start_offsets"), signal_at=term.get("signal_at"))
 
 
 @dataclass(frozen=True)
@@ -304,9 +339,87 @@ def _deltas(before, after, C, F, S, check):
     check("started_terminated", len(S) == len(C) + len(F), f"|S|={len(S)} != |C|+|F|={len(C) + len(F)}")
 
 
-def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, inflight_possible, client_abort=None):
+def _pairs(C, usage):
+    """Positions where the worker's completed lines and request_usage disagree on (generated, prompt) tokens."""
+    return [k for k, (x, u) in enumerate(zip(C, usage))
+            if (_int(x, "generated_tokens"), _int(x, "prompt_tokens")) != (u[1], u[2])]
+
+
+def _late_record(late, *, usage, C, F, S, lines, expected, after):
+    """S27 §4.2: `(order, signal_order, facts)` when a kill-boundary count mismatch is the inherent late-record race, else None.
+    Offset shape: |C| == n == expected + 1, positional pairing on all n, the n-th step_finish END offset > the ingested offset at
+    the count, no failed line or exactly one trailing STREAM_CLOSED failed line with |S| == |C| + 1. Unpublished shape (v1.4):
+    the n-th step never published a step_finish, the export's one trailing `unpublished` message is the stream's open step
+    (the probe's reconcile requires that equality), |S| == |C| == n, pairing on all n, nothing in flight at or after the kill.
+    The worker deltas are the shared `worker_deltas` check (they must hold either way)."""
+    if not isinstance(late, dict):
+        return None
+    n = len(usage)
+    if not (n >= 1 and len(C) == n and expected == n - 1) or _pairs(C, usage):
+        return None
+    ends, ingested, signal = late.get("ends"), late.get("ingested"), late.get("signal")
+    trailing_failed = (len(F) == 1 and lines and lines[-1].kind == "failed" and STREAM_CLOSED in lines[-1].fields["error"]
+                       and len(S) == len(C) + 1)
+    if (not F or trailing_failed) and isinstance(ends, list) and len(ends) >= n and _is_int(ends[n - 1]) \
+            and _is_int(ingested) and ends[n - 1] > ingested:
+        end = ends[n - 1]
+        sig = "no_signal" if signal is None else ("before_signal" if _is_int(signal) and end <= signal else "after_signal")
+        return "step_after_count", sig, dict(step_end_offset=end, ingested_offset_at_count=ingested,
+                                             events_size_at_count=late.get("size"), signal_offset=signal,
+                                             trailing_failed=bool(trailing_failed))
+    a_now, a_kill = _summary(after), late.get("summary_after")
+    flight_after = [s.get("in_flight") for s in (a_now, a_kill) if isinstance(s, dict) and "in_flight" in s]
+    errors = late.get("errors") or 0
+    last_id = late.get("last_step_start")
+    if (not F and len(S) == n and late.get("trailing") == "unpublished" and late.get("unmatched") == 1
+            and late.get("step_starts") == n and late.get("step_finishes") == n - 1 and late.get("requests_observed") == n
+            and _is_int(errors) and errors <= 1
+            and _is_int(late.get("in_flight_at_kill")) and late["in_flight_at_kill"] == 0
+            and flight_after and all(f == 0 for f in flight_after)
+            and isinstance(last_id, str) and bool(usage[-1]) and usage[-1][0] == last_id):     # X9: the id binds, never waived
+        return "unpublished", None, dict(trailing="unpublished", unmatched_export_messages=1, step_starts=n,
+                                         step_finishes=n - 1, in_flight_at_kill=0, message_id=usage[-1][0] if usage[-1] else None,
+                                         signal_offset=signal, ingested_offset_at_count=ingested)
+    return None
+
+
+def _open_step_at_signal(late, *, usage, C, F, S, lines, before, after):
+    """S27 X2: the facts that a kill's one trailing failed request is the client's next request, opened before the SIGTERM
+    landed, when the `/metrics` sample before the signal read 0 in flight (the two are independent events). Recorded evidence
+    only: a delivered signal; the stream's step starts / finishes by END offset with exactly one step open at the signal
+    (n finishes, n + 1 starts, the last start after the n-th finish and at or before the signal offset); |S| == |C| + 1; the
+    worker's failed delta 1; the failed line the window's last, STREAM_CLOSED, timed at or after the SIGTERM. -> facts | None."""
+    if not isinstance(late, dict):
+        return None
+    if not (_is_int(late.get("in_flight_at_kill")) and late["in_flight_at_kill"] == 0):
+        return None                         # Y1: replaces a sample that READ 0, never stands in for a missing one
+    n = len(usage)
+    sig, sig_at, starts, ends = late.get("signal"), late.get("signal_at"), late.get("starts"), late.get("ends")
+    if not (_is_int(sig) and type(sig_at) in (int, float) and isinstance(starts, list) and isinstance(ends, list)):
+        return None
+    if not (len(ends) == n and len(starts) == n + 1 and all(_is_int(x) for x in starts + ends)):
+        return None
+    if not ((n == 0 or ends[n - 1] <= starts[n]) and starts[n] <= sig):
+        return None
+    if not (len(F) == 1 and lines and lines[-1].kind == "failed" and STREAM_CLOSED in lines[-1].fields["error"]
+            and len(S) == len(C) + 1):
+        return None
+    try:
+        failed_delta = _summary(after)["requests_failed"] - _summary(before)["requests_failed"]
+    except (KeyError, TypeError):
+        return None
+    failed_at = _abort_time(after, "failed")
+    if failed_delta != 1 or failed_at is None or failed_at < sig_at:
+        return None
+    return dict(shape="open_step_at_signal", open_step_start_offset=starts[n], signal_offset=sig, signal_at=sig_at,
+                failed_at=failed_at, in_flight_at_kill=late.get("in_flight_at_kill"))
+
+
+def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, inflight_possible, client_abort=None,
+               late=None):
     """`kind` = 'completed' | 'kill' | 'dnf'; `expected` = the boundary request count the evidence states. `client_abort`
-    (P586) = `check(variant)`: the five `client_abort_*` checks that replace the in-flight evidence of a probe kill."""
+    (P586) = `check(variant)`: the five `client_abort_*` checks that replace the in-flight evidence of a probe kill. `late`
+    (S27 §4.2, `late_facts(row)`): the facts that reconcile a kill-boundary late record in either order."""
     check = _Checks()
     C = [x for x in lines if x.kind == "completed"]
     F = [x for x in lines if x.kind == "failed"]
@@ -319,15 +432,32 @@ def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, 
           f"{sorted({(x.fields['session'], x.fields['backend']) for x in C})}")
     prefix = {"completed": "", "kill": "kill_", "dnf": "dnf_"}[kind]
     case = {"": "completed"}.get(prefix, prefix + "boundary")
+    order = signal_order = late_record = None
+    found = _late_record(late, usage=usage, C=C, F=F, S=S, lines=lines, expected=expected, after=after) \
+        if kind == "kill" and client_abort is None else None
     unaccounted = len(C) == n + 1 and not F and (kind != "completed")
     inflight_failed = len(F) == 1 and kind != "completed"
-    if inflight_failed:
+    if found is not None:
+        case, (order, signal_order, late_record) = LATE_RECORD, found
+        if late_record.get("trailing_failed"):
+            check("failed_line", True, "one trailing failed line: the client had started the next request")
+        else:
+            check("failed_lines", not F, f"{len(F)} unexpected Request failed line(s) (allowed: none for this shape)")
+        check("boundary_count", True, f"late record ({order}): |C|={len(C)}, len(request_usage)={n}, the evidence states "
+                                      f"{expected} (the n-th step was ingested after the count)")
+    elif inflight_failed:
         case = prefix + "inflight_failed"
         if client_abort is not None:
             case = "kill_client_aborted"
             client_abort(check, "failed")
         else:
-            check("inflight_evidence", inflight_possible,      # §4.3: a boundary abort / kill with a trailing failed line is systemic
+            # §4.3: a boundary abort / kill with a trailing failed line is systemic — unless (X2, kill only) the recorded
+            # stream / signal / worker evidence shows the client opened that request before the SIGTERM
+            anchored = (_open_step_at_signal(late, usage=usage, C=C, F=F, S=S, lines=lines, before=before, after=after)
+                        if kind == "kill" and not inflight_possible else None)
+            if anchored is not None:
+                late_record = anchored
+            check("inflight_evidence", inflight_possible or anchored is not None,
                   "a trailing failed line, but the structured evidence says no request was in flight")
         last = lines[-1] if lines else None
         check("failed_line", last is not None and last.kind == "failed" and STREAM_CLOSED in last.fields["error"]
@@ -346,6 +476,8 @@ def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, 
         check("failed_lines", not F, f"{len(F)} unexpected Request failed line(s) (allowed: none for this outcome)")
         check("boundary_count", len(C) == n == expected,
               f"|C|={len(C)}, len(request_usage)={n}, the evidence states {expected}")
+        if kind == "kill" and len(C) == n == expected:
+            order = "step_before_count"                    # S27 §4.2: the existing kill boundary
     paired = C[:n]
     bad = [k for k, (x, u) in enumerate(zip(paired, usage))
            if (_int(x, "generated_tokens"), _int(x, "prompt_tokens")) != (u[1], u[2])]
@@ -361,7 +493,7 @@ def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, 
                   accepted=sum(r["draft_n_accepted"] for r in done if _is_int(r["draft_n_accepted"])),
                   proposed=sum(r["draft_n"] for r in done if _is_int(r["draft_n"])))
     return ItemReport(ok=not check.problems, case=case, problems=check.problems, requests=requests, totals=totals,
-                      checks=check.checks)
+                      checks=check.checks, order=order, signal_order=signal_order, late_record=late_record)
 
 
 def _last_assistant(export):
@@ -505,7 +637,7 @@ def reconcile_item(row, lines, before, after, *, client=None) -> ItemReport:
              if client is not None and row.get("nonconv_kind") == "client_inactivity" else None)
     report = _reconcile(usage=usage, session=row.get("session_id"), lines=lines, before=before, after=after,
                         kind="kill" if killed else "completed", killed=killed, expected=expected,
-                        inflight_possible=inflight_possible, client_abort=abort)
+                        inflight_possible=inflight_possible, client_abort=abort, late=late_facts(row) if killed else None)
     if report.ok and report.case in ("kill_client_aborted", "kill_client_aborted_completed_unaccounted"):
         report.client_abort = _client_abort_block(client.export, client, lines)
     return report

@@ -30,9 +30,12 @@ INJECT_ADDENDA = {
              "and only then start the task.",
 }
 INJECT_LABELS = {kind: SCAFFOLD + "-inject:" + kind for kind in INJECT_ADDENDA}
+INTERRUPT_KIND = "interrupt"          # S27 §4.5: the deterministic interrupt positive adds NO prompt text (the harness stops it)
 
 
 def inject_addendum_sha256(kind):
+    if kind == INTERRUPT_KIND:
+        return hashlib.sha256(b"").hexdigest()
     return hashlib.sha256(INJECT_ADDENDA[kind].encode()).hexdigest()
 
 
@@ -124,7 +127,7 @@ class Tg1Corpus(Corpus):
             "The specification is in .docs/instructions.md — read it first. "
             f'Do NOT modify {entry["test"]}. Do not create new files unless required by the spec.'
         )
-        if inject:
+        if inject and inject != INTERRUPT_KIND:
             if inject not in INJECT_ADDENDA:
                 raise ValueError(f"unknown inject kind {inject!r}")
             prompt += " " + INJECT_ADDENDA[inject]

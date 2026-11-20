@@ -419,8 +419,12 @@ def test_done_invalidates_on_a_reconciliation_violation_and_still_writes_the_rec
     hooks.before_attempt(SLOT, ctx())
     ops.serve(*req(prompt=100, gen=10, draft=ON_DRAFT))
     d = hooks.after_attempt(SLOT, dict(id="python/a"), ctx(row_of([(100, 11)])))
-    assert d.kind == "invalidate" and "position 0" in d.reason
-    assert json.loads((out / "items" / f"{SLOT_FILE}.json").read_text())["verdict"] == "invalid"
+    # S27 §5.3 / §5.9 (changed rule): a pairing mismatch is the item's own ACCOUNTING — outcome kept, sidecar sealed, no rerun
+    assert d.kind == "accounting_fault" and "position 0" in d.reason
+    record = json.loads((out / "items" / f"{SLOT_FILE}.json").read_text())
+    assert record["verdict"] == "invalid" and record["fault_class"] == "accounting"
+    side = json.loads((out / "items" / f"{SLOT_FILE}.accounting.json").read_text())
+    assert side["failed_checks"] == ["pairing"] and side["item_record_sha256"] == record["sha256"]
 
 
 def test_done_invalidates_an_on_request_without_draft_rounds(tmp_path):

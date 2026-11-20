@@ -976,6 +976,162 @@ class ChainOps:
         from bench import chain_rows
         return chain_rows.rows_if_present(path)
 
+    def owned_scan(self, *, sid=None, not_before=None, roots=(), container_prefixes=(), deadline_s=60.0, clock=time.monotonic):
+        """S27 §5.8: the chain's second, INDEPENDENT scan after a probe's `cleanup_uncertain`, on the guard's own ownership
+        rule (X10: `proc_guard.session_claim` / `env_claim` / `path_claim`). OURS = a same-uid process in the recorded probe
+        session (`sid`, given only when the probe led its session) that started at or after the probe (`not_before`, its
+        recorded start: a reused session id names someone else; without it a session cannot be bounded and the scan proves
+        nothing), or whose readable environment carries a HOME / XDG_* under one of the run's hermetic `roots`; a container
+        whose name starts with one of `container_prefixes`. Every OURS process / container is killed (removed) and verified
+        gone before the deadline. Every process the scan cannot read is LISTED (`unreadable`); one that is (or may be: an
+        unreadable session id) a probe-session member, or anything not verified gone, leaves the scan uncertain. A path-only
+        match is listed, never killed (identity only: pid, executable basename, argc).
+
+        Session reuse (Y3 / Z2): the process snapshot is taken FIRST and the session leader (pid == sid) is validated inside
+        it, never by an earlier read. A leader in the snapshot whose start is not the recorded probe's (`not_before`) is a
+        reused session: no session claim, recorded in `session_reused`, and any other process of that session id left
+        unclaimed (or whose session id is unreadable) leaves the scan uncertain; an unreadable leader claims nothing and
+        leaves the scan uncertain. A leader absent from the snapshot exited: its session's members stay bounded by the probe's
+        start. This rests on the kernel keeping a live session's id from reuse (a pid is not reassigned while a session or
+        process group of that id has a member), so a reused leader means the probe's session had emptied. The leader's start
+        is compared exactly (no tolerance) to the recorded value: both are the same unadjusted kernel read (`proc_guard.start_time`), so the
+        probe's own leader reads back equal, and any tolerance could admit a different process (fails closed on a mismatch).
+        Returns {certain, killed, containers, unverified, path_only, unreadable, problems, session_reused}."""
+        import psutil
+        from bench import proc_guard as pg
+        roots = pg.hermetic_homes(str(r) for r in roots if r)
+        uid, me = os.getuid(), {os.getpid(), os.getppid()}
+        end = clock() + float(deadline_s)
+        killed, unverified, path_only, problems, containers, unreadable = [], [], [], [], [], []
+        owner = sid
+        if sid is not None and type(not_before) not in (int, float):
+            problems.append("the probe's start is not recorded: its session's members cannot be bounded (session reuse)")
+            owner = None
+        denied = (psutil.AccessDenied, SystemError)
+        snapshot = []                                              # Z2: [(pid, Process | None when unreadable)], taken first
+        for pid in psutil.pids():
+            if pid in me:
+                continue
+            try:
+                snapshot.append((pid, psutil.Process(pid)))
+            except psutil.NoSuchProcess:
+                continue
+            except denied:
+                snapshot.append((pid, None))
+        session_reused, reused_sid = None, None
+        if owner is not None:
+            entries = [p for pid, p in snapshot if pid == owner]
+            lead_start = False                                     # False: the leader is not in the snapshot (it exited)
+            if entries and entries[0] is None:
+                lead_start = None                                  # None: unreadable
+            elif entries:
+                try:
+                    lead_start = pg.start_time(entries[0])
+                except psutil.NoSuchProcess:
+                    lead_start = False                             # exited after the snapshot: as if absent
+                except (*denied, pg.TransportAbort):
+                    lead_start = None
+            if lead_start is None:
+                problems.append(f"the probe session's leader pid {owner} is unreadable: session reuse cannot be excluded")
+                owner = None
+            elif lead_start is not False and lead_start != not_before:
+                session_reused = dict(pid=owner, create_time=lead_start, probe_started=not_before)
+                owner, reused_sid = None, owner
+
+        def listed(pid, reason, member):
+            unreadable.append(dict(pid=pid, reason=reason, session_member=member))
+            if member is not False and (owner is not None or reused_sid is not None):
+                problems.append(f"pid {pid}: {reason} (a possible member of the probe session or of its reused id)")
+        for pid, p in snapshot:
+            same = True
+            if p is not None:
+                try:
+                    same = p.uids().real == uid
+                except psutil.NoSuchProcess:
+                    continue
+                except denied:
+                    same = None
+            if same is False:
+                continue
+            try:
+                member = pg.session_claim(pid, owner)
+                # Z2 / Z7: True / None = a (possible) member of the reused session id, never claimed by session
+                stray = pg.session_claim(pid, reused_sid) if reused_sid is not None and pid != reused_sid else False
+            except ProcessLookupError:
+                continue
+            if p is None or same is None:
+                listed(pid, "process unreadable" if p is None else "uid unreadable",
+                       member if owner is not None else stray)
+                continue
+            if member is None or stray is None:
+                listed(pid, "session id unreadable", None)
+                continue
+            if member:
+                try:
+                    member = pg.start_time(p) >= not_before          # §3.2 (b) bounded by the probe's start (X10 / X22)
+                except psutil.NoSuchProcess:
+                    continue
+                except (*denied, pg.TransportAbort):
+                    listed(pid, "start time unreadable", True)
+                    continue
+            if not member:
+                try:
+                    member = pg.env_claim(p, roots)
+                    if not member and pg.path_claim(p, roots):
+                        # Y6 / Z5: identity only — the executable's basename (never argv text), capped, and argc (no
+                        # scrubber at this site: the scan result is made portable when the chain persists it)
+                        name, argc = pg.exe_identity(p)
+                        path_only.append(dict(pid=p.pid, argv=[name], argc=argc))
+                except psutil.NoSuchProcess:
+                    continue
+                except denied:
+                    # unclaimed + unreadable: listed, never a refusal (unless a member of the reused session id)
+                    listed(pid, "environment / cwd unreadable", stray or False)
+                    continue
+            if not member:
+                if stray:
+                    problems.append(f"pid {pid}: a member of the reused session id {reused_sid} left unclaimed")
+                continue
+            try:
+                ident = (p.pid, pg.start_time(p))                    # C151: the unadjusted identity
+                p.kill()
+                killed.append(dict(pid=ident[0], create_time=ident[1]))
+            except psutil.NoSuchProcess:
+                continue
+            except Exception:  # noqa: BLE001 — AccessDenied / SystemError / an unreadable identity: not proven gone
+                problems.append(f"pid {p.pid}: an owned process could not be killed")
+        for entry in killed:
+            while True:
+                try:
+                    from bench.proc_guard import start_time
+                    occupant = psutil.Process(entry["pid"])
+                    gone = start_time(occupant) != entry["create_time"] or occupant.status() == psutil.STATUS_ZOMBIE
+                except psutil.NoSuchProcess:
+                    gone = True
+                except Exception:  # noqa: BLE001 — unreadable: never "gone"
+                    gone = False
+                if gone or clock() >= end:
+                    break
+                self.sleep(0.1)
+            if not gone:
+                unverified.append(entry)
+        for prefix in container_prefixes:
+            listing = self.sh(["docker", "ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}"])
+            if listing.returncode:
+                problems.append(f"docker listing for {prefix} failed")
+                continue
+            for name in [n for n in listing.stdout.split() if n.startswith(prefix)]:
+                self.sh(["docker", "rm", "-f", name])
+                containers.append(name)
+            again = self.sh(["docker", "ps", "-a", "--filter", f"name={prefix}", "--format", "{{.Names}}"])
+            left = [n for n in again.stdout.split() if n.startswith(prefix)] if not again.returncode else None
+            if left is None or left:
+                problems.append(f"containers {prefix}*: not verified removed ({left})")
+        if clock() > end:
+            problems.append(f"the scan passed its {deadline_s:.0f} s deadline")
+        return dict(certain=not (problems or unverified), killed=killed, containers=containers, unverified=unverified,
+                    path_only=path_only, unreadable=unreadable, problems=problems, session_reused=session_reused)
+
     def leftovers(self, roots, run_ids=()):
         """Same-uid processes with a root in their argv and `mlxbench-<run_id>-*` containers: LISTED, never killed."""
         found = []

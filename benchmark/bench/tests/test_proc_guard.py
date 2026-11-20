@@ -78,7 +78,7 @@ def test_detached_shell_pid_reuse_and_rapid_orphan(tmp_path):
     processes[1] = reused
     g.cleanup()
     assert child.dead and root.dead and not reused.dead and not escaped.dead
-    assert {x["pid"] for x in g.orphans_unattributed} >= {13}
+    assert {x["pid"] for x in g.status()["foreign_new"]} >= {13}        # S27 §3.4: recorded, never killed
     g.cleanup()
 
 
@@ -291,8 +291,9 @@ def test_real_rapid_fork_detach_chdir_is_attributed_or_diagnostic(tmp_path):
         assert marker.exists()
         pid = int(marker.read_text())
         g.cleanup()
+        # S27 §3.4 / §3.7: tracked (killed), else the accepted residual (setsid + left every root): `foreign_new`
         assert any(key[0] == pid for key in g.tracked) or any(
-            entry["pid"] == pid for entry in g.orphans_unattributed
+            entry["pid"] == pid for entry in g.status()["foreign_new"]
         )
     finally:
         g.cleanup()

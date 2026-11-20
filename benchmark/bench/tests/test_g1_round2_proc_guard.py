@@ -9,6 +9,7 @@ from bench import proc_guard as pg
 from bench.token_turn_gate import TransportAbort
 from bench.tests.test_proc_guard import Process, guard as _guard
 from bench.tests.test_c157_proc_guard import Unreadable, _denied, guard
+from bench.tests.test_c157_proc_guard import FOREIGN, _claimed_by_the_probe_session  # noqa: F401  (S27 §3.2)
 
 pytestmark = pytest.mark.usefixtures("fake_guard_clock")
 
@@ -206,7 +207,7 @@ def test_p3_resolve_is_tri_state_and_inspection_failures_are_unresolved(tmp_path
     assert g._resolve(30, 10)[0] == "resolved"
     g.tracked.clear()
     young.directory = str(tmp_path / "work")
-    assert g._resolve(30, 10)[0] == "resolved"         # path-attributed: the scan owns it
+    assert g._resolve(30, 10)[0] == "unresolved"       # S27 §3.2: a path match alone owns (and resolves) nothing
     young.directory = "/elsewhere"
     denied = DeniesOnRead(30, created=10, deny={1})
     g2 = _guard(tmp_path, [denied])
@@ -565,6 +566,7 @@ def test_p12_every_post_eligibility_denied_read_keeps_cleanup_uncertain(tmp_path
 
 @pytest.mark.parametrize("name", ["cwd", "cmdline", "ppid", "status", "create_time", "start_order"])
 def test_p12_a_process_that_vanishes_at_any_read_may_vanish(tmp_path, name):
+    FOREIGN.add(70)                                      # S27 §3.2: a stranger of another session (never an obligation)
     g = guard(tmp_path, [Flaky(70, 1, created=10, gone={name: 2 if name in ("create_time", "start_order") else 1})])
     g.cleanup()
     assert g.status()["uncertain"] is False
@@ -577,9 +579,12 @@ def test_p13_a_same_uid_process_with_a_denied_status_is_an_obligation_in_tick(tm
 
 
 def test_p13_a_denied_uid_is_not_same_uid_and_may_be_skipped(tmp_path):
+    # S27 X11 (changed rule): a uid-denied pid is never dropped before ownership; of another (readable) session it is
+    # unclaimed -> counted (record only), the cleanup stays certain. (A probe-session member would be a claimed obligation.)
+    FOREIGN.add(70)
     g = guard(tmp_path, [Flaky(70, 1, created=10, deny={"uids": 1})])
     g.cleanup()
-    assert g.status()["uncertain"] is False
+    assert g.status()["uncertain"] is False and g.status()["unreadable_count"] == 1
 
 
 # ================================================================================ G1 round 5 (Cursor round 4, P18/P19)
@@ -587,6 +592,7 @@ def test_p18_an_untracked_denial_keeps_the_captured_key_and_a_replacement_is_not
     def exits_and_pid_reused(p):
         p.created = 99                                    # a reread of this (cached) object now sees the replacement
     stranger = Flaky(70, 2, created=10, deny_once={"cwd": 1}, on_deny=exits_and_pid_reused)
+    FOREIGN.add(70)                                       # S27 §3.2: another session's process
     g = guard(tmp_path, [stranger])
     g.cleanup()                                           # (70, 10) is gone; the replacement is young but not an orphan
     assert g.status()["uncertain"] is False
@@ -601,6 +607,7 @@ def test_p18_a_tracked_denial_is_not_a_sticky_unknown_identity(tmp_path):
         processes[0] = replacement
     owned.on_deny = exits_and_pid_reused
     processes.append(owned)
+    FOREIGN.add(70)                                       # S27 §3.2: the replacement belongs to another session
     g = guard(tmp_path, processes)
     g.tracked[(70, 10)] = "model"
     g.cleanup()                                           # the exact identity (70, 10) is gone: nothing sticky
