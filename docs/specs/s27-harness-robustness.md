@@ -1,4 +1,4 @@
-# S27 — harness robustness bundle (spec v1.3, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372)
+# S27 — harness robustness bundle (spec v1.4, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372; v1.4 = the §10.2 designer-check amendment to §4.2, S28-P4, not re-reviewed)
 
 Brief: C370 (P12–P17), C372 (the retry split, the escaped-process residual), the S27-P11 defects D1–D3, C365, C368 (1), C371 (2) push
 binding. One identity rotation (tg1 + tg2 probe and chain closures). Four-eyes STRICT (design review, blind test-writer, implementer
@@ -55,6 +55,13 @@ identity by §4.3); C338 / C339; C361 / C360; the frozen stage-3 panel; B4b-2 sp
    with no failed line, or with exactly one trailing failed line (`STREAM_CLOSED`, last) and `|S| == |C| + 1` (the client had started
    the next request). The row records `order` (`step_after_count` and, from `signal_offset`, `before_signal` / `after_signal` /
    `no_signal`). The existing `kill_boundary` records `order: "step_before_count"`.
+   **Second shape, `order: "unpublished"` (v1.4, from the §10.2 designer check — the recorded D1 case):** the n-th step_finish is
+   absent from the stream; the n-th request_usage entry is the export's one trailing `unpublished` message (`reconciliation.trailing
+   == "unpublished"`, `unmatched_export_messages == 1`), its message id equals the stream's last `step_start` (opened after the
+   (n−1)-th step_finish, no step_finish of its own; `tool_use` lines and one trailing client `error` event allowed), `|S| == |C| == n`,
+   positional pairing on all n entries passes (its generated / prompt tokens equal the worker's n-th completion), the worker deltas
+   hold (`requests_completed` delta == `requests_started` delta == n, `in_flight_at_kill == 0`, `after.in_flight == 0`). The offsets
+   are recorded but not required for this shape.
 3. **Positives (`m62/inject_verify.causal`, stall / loop).** Unchanged checks stay (stop reason, client kill, `killed_verified`,
    `cancel_wait_s` bound, and for loop the model-role `sleep 600` descendant kill). The in-flight link is order-tolerant: with a request
    in flight, the existing proof; with none — `in_flight_at_kill == 0`, worker `requests_started` unchanged from before to after,
@@ -189,6 +196,13 @@ positives (§4.3), rehearsal, v8, pilot, decider (C367's Go stands).
 2. Real-path checks on this box (no GPU): a detached daemon in another session during a fake item → `foreign_new`; the failed leg
    `tg2-m76-n16-s1.a1`'s run homes harvest with links excluded (dry run); the sgf-parsing events file shows where its 26th step
    ended relative to the bytes ingested before the kill decision (designer check before the freeze).
+   **Result (2026-11-20, S28-P4):** the 26th step never published a step_finish. Stream: step_start `msg_1f6b55ed0001…` at event
+   time 445.13, its shell `tool_use` 445.65–450.70, the client's transport `error` at 451.04 (the last line, byte 104595–104857); 25
+   step_finish lines. Worker: request 26 started 18:07:24.284, completed 18:07:28.071 (114 generated / 14579 prompt); before == after
+   at the kill (549 / 549, in_flight 0). The stop landed at ≈ 450.96 (`inflight_s_at_stop` 5.83 s after the step_start), before the
+   step_finish (prior steps: tool end → step_finish ≈ 1.1 s). `requests_at_kill` = 25 (stream count); the row's 26th entry came from
+   the export as trailing `unpublished` (114 / 14579, pairs with the worker). → §4.2's second shape (`order: "unpublished"`); the
+   red test uses these numbers.
 3. Stack gate PASS on the merged commit; then the tg2 chain from the gate.
 
 ## 12. Push binding (C371, S27-P2 option B)
