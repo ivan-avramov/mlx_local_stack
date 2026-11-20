@@ -63,7 +63,13 @@ identity by §4.3); C338 / C339; C361 / C360; the frozen stage-3 panel; B4b-2 sp
    loop; every consumer of the verdict strings gains `PASS_NO_INFLIGHT`: `p426_freeze.inject_accepted`, `cmd_v8_tg2`, the
    harvest, `m62/run_m62_live.py`'s results (red test: a record with `PASS_NO_INFLIGHT` freezes). C366's transfer is not used on the
    new identity.
-4. The implementer lists every other check comparing two independent events' order (search `at_kill`, `in_flight`, before / after
+5. **Interrupt positive (C373).** Each tg2 positives record (and tg1's positives, which share the cancel path) adds one deterministic
+   run, `interrupt`: on the pilot item, the harness itself issues the stop once the worker reports a generation in flight (`/metrics`
+   polled until `in_flight >= 1`, deadline 120 s, else the run is retried once, then FAIL), through the same `terminate_client` path.
+   PASS requires the existing in-flight proof (trailing interrupted, cancellation consistent, client kill verified, `cancel_wait_s`
+   bound). The record is PASS only if `interrupt` is PASS; stall / loop then prove detection (PASS or `PASS_NO_INFLIGHT`). v8 checks it;
+   the ship recommendation states which proof each record used.
+6. The implementer lists every other check comparing two independent events' order (search `at_kill`, `in_flight`, before / after
    samples) and makes each order-tolerant or justifies it in the change ledger.
 
 ## 5. Harness faults: rerun before the outcome, flag after it (P16 as refined by C372)

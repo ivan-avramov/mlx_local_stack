@@ -1,11 +1,11 @@
-# Handoff — 2026-11-19 (session 27 in progress: S25-P10 fixed (S27-P1); stack gate of `c34976a03` running; tg2 arms `m76-g2-*` built)
+# Handoff — 2026-11-20 (session 27 → 28: the A8 decider stopped on harness defects; the S27 robustness bundle is designed, ready to build)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C363, S26-P19 …
-S26-P1, C362 … C359). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
-wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box (C350).
-C359's "proceed on recs, stop only for major blockers" was SESSION 26 ONLY — ask again. Label points `S27-P<n>`.
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C373 … C364,
+S27-P11 … S27-P1). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance: guardrails prevent wrong data or
+wasted time, not ceremony; GPU time is the binding resource; run-time operational calls are the designer's (C353); all work on this box
+(C350). Session 27's "run the tg2 chain on your recs" (C364) was SESSION 27 ONLY — ask again. Label points `S28-P<n>`.
 
-Decisions: session 26 ruled C359–C363; session 27 C364–C369 (next **C370**). Session 27 ids used: S27-P1 … P8; next S27-P9.
+Decisions: session 27 ruled C364–C373 (next **C374**). Session 27 ids used: S27-P1 … P17.
 
 ## Goal
 
@@ -15,77 +15,79 @@ ship recommendation to the operator.
 
 ## FIRST
 
-**HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
-any Cellar change. Session 27 state of this line: tg2 decider STOPPED (S27-P11; no run live; upgrades allowed until the next launch).
-
-0. Session 27 (live): the A8 tg2 DECIDER is running (C367) — sequencer `$STACK_WORKDIR/m76/p426/wave2.tg2/` (`launch_decider.sh`,
-   pid file `sequencer.pid`; legs s1 N16 → X, s2 X → N16, reload X → N16), on v8 7e75cd66 / amendment (pilot pair VALID, gate PASS,
-   `7756726e`); sizing `docs/reviews/m76-s3b-sizing/SIZING.md` (decider 5.9 / 8.1 / 9.5 h per arm). No pytest, no code on `main`,
-   no `brew upgrade`, no BUSY pattern in any argv until it exits. After: harvest commits (data), the stage-3b evidence batch to
-   `evidence` (`wave2.tg2/scratch/evidence` + the pilot), B8 / signals for A8 (needs B4b-2), the ship recommendation.
-1. Pushed 2026-11-20 (C371): `main` to `9abef6a6`, `evidence` to `1c42f0ef`. Later `main` commits push after the S27 bundle's gate
-   (needs the operator's word again).
-2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
-
-## State
-
-- Stage 3a readout (committed, `benchmark/results/m76/`): `B8.json` (Wave 1 10 / 10 + A7 5 / 5 pairs), `SIGNALS-partial.md` (C363: the
-  panel readout; one Cursor verdict of 1152 failed, A2 39 / 40), `SIGNALS.md` (default sheet, panel not ingested). A1 +2.0 pp, loss bound
-  0.0; A5 0 / 72 discordant, loss bound 9.2 pp; A7 +1.6 pp [−3.9, +7.8], loss bound 3.9 pp; panel all Holm p ≥ 0.65; directional: tg1 code
-  quality leans N16 in all three sessions (0.40 / 0.43 / 0.49, none significant). README has a PROVISIONAL M76 row (update it with the panel).
-- S26 agent-env change on `main` (`5c5b00eab`, C363): host-env fingerprint guard (sequencer + tg2 positives), positives decline rule,
-  inject_verify alloc fix (S26-P14), bench-owned tg2 Gradle home (`$STACK_WORKDIR/tg2-gradle-home/`, prefilled + checked on this box, 45
-  / 45 offline), bootstrap 5b toolchains (installed: rust 1.100, openjdk@21 linked, cmake 4.5). Report `docs/reviews/s26-agent-env/REPORT.md`.
-- Also merged this session: S26-P8 (KV rehearsal harvest + watcher PYTHONPATH), S26-P15 / P15b (B8 rerun selection: a rerun only of a
-  not-clean attempt with a recorded reason), S26-P16 / b / c (hook data exemptions), S26-P17 / P17b (C362: KV panel leak = arm / box identity).
+1. **No run is live.** The A8 decider stopped after N16 s1 (S27-P11, INVALID, harvest refused). No waiters or loggers are running (the
+   S27-P5 launch-latency logger was stopped; restart it, `m76/p426/exec-latency/exec_latency.py`, before the next live run). The
+   operator upgrades Homebrew at each fresh session (memory) — fine now; HOLD upgrades once a Wave 2 / tg2 run is live (C360 fingerprint).
+2. Pushed (C371): `origin/main` = `9abef6a6`, `origin/evidence` = `1c42f0ef`. Local `main` is ~30 commits ahead (docs + C366 code +
+   the C365 test fixes): they push after the S27 bundle's gate, on the operator's word.
+3. Check power 140 W / 28 V; launch gates / legs with `env -u CLAUDE_CODE_CHILD_NOTES_DIR` (S27-P3); no BUSY pattern in any of your own
+   argv while a leg may start (S27-P7: check processes by port / pid file; a self-matching `pgrep` loop never ends).
 
 ## Next, in order
 
-1. Stack gate: FAIL on `c34976a03` (S27-P3). After the reboot / race fix, gate again (the gate sha must be the arms' base).
-2. DONE (session 27): tg2 arms `m76-g2-n16` (`c34976a03`) / `m76-g2-x` (`1b7833b6` = + cherry-pick `d4c44a9d`), venvs by
-   `p475_kv._ensure_venvs`; X's `.venv-bench` got the wrong `cv2` again (S26-P10), fixed by reinstalling `opencv-python-headless==4.13.0.92`;
-   pair inventory digests equal (`.venv` 8f21180f, `.venv-bench` b7e5d411, fork venv 370cbc5f; = the `m76-w2-*` arms). Both clean.
-3. tg2 positives (`p426_wave2 positives --corpus tg2 --lever kv`, out `<out-base>/run/positives.json`, record the frozen prompt date) under the
-   new rule; rehearsal (`p426_freeze rehearsal --corpus tg2` → `p426_wave2 rehearsal --corpus tg2`, out-base under
-   `$STACK_WORKDIR/m76/p426/rehearsal.tg2/`, `--main-root` a scratch clone, P576), v8 (`--corpus tg2 --positives …`), the pilot pair
-   (`p426_wave2 run --corpus tg2 --through tg2-m76-x-pilot`), the sizing report vs both budgets (S24-P9) → the stage-3b Go to the operator.
-4. B4b-2 design FINAL (spec v1.4, C369; reviews `docs/reviews/m76-b4b2/`). After the decider: publish `wave2.tg2/run/exec_latency.json`,
-   the javascript lock-file regrade tool (§3.7), then four-eyes strict implementation (blind test-writer first, implementer `claude -p`,
-   change review Sol + GLM + Sonnet, verify); the forward lock-file fix (C368) as its own change. The KV vision rubric fix (S26-P19)
-   before any next KV panel.
-5. Small fail-closed fixes still owed: the PII hook learning the username pattern from the machine config (C357). S27-P2 (push-time
-   binding of the receipt's `pushed_base`, rec B content binding) rides with the next gated code change if the operator agrees.
+1. **S27 harness robustness bundle** — design FINAL, `docs/specs/s27-harness-robustness.md` v1.3 (C370 principles, C372 retry split,
+   C373 interrupt positive; review rounds 1–3, ledgers `docs/reviews/s27-robustness/`). Build four-eyes STRICT: a fresh blind test-writer
+   (not the implementer's model) writes the §10 red tests first; implementer `claude -p` in a worktree; change review Sol + GLM + Sonnet
+   (rounds ≤ 3), verify; then the full stack gate (it rotates the tg1 + tg2 identities; stage-4 reuse loss accepted, C371). Includes:
+   ownership-based cleanup (`foreign_new`, receipt schema 2), order-tolerant reconciliation (`kill_boundary_late_record`,
+   `PASS_NO_INFLIGHT`), pre-outcome rerun / post-outcome `accounting_fault` / in-probe final-grade regrade, the abort route + PAUSED, the
+   C365 cancel, D3 harvest links, the C368 lock-file view, measure / ALERT / item-boundary hold, §12 push binding (C371 B), §4.5
+   interrupt positive. Designer check before the build freeze: the `java/sgf-parsing` events (§10.2).
+2. **B4b-2** (A8 consumers) — design FINAL, `docs/specs/m76-b4b2-a8-consumers.md` v1.4 (C368, C369; reviews `docs/reviews/m76-b4b2/`).
+   Build after (or with) the bundle; it reads the bundle's new row fields (`accounting_fault`, `cleanup_status`, rerun attempts, harness
+   DNFs). Its javascript lock-file regrade (§3.7) applies only to rows graded on the OLD identity; on the new identity the view omits the
+   lock (C368 forward fix), so new rows need no regrade.
+3. After the gate: rebuild the tg2 arms on the gated sha (`p475_kv._ensure_venvs`; check the gate inventory digest within the pair; the
+   opencv `cv2` race recurs — reinstall `opencv-python-headless==4.13.0.92` in X's `.venv-bench` when digests differ, S26-P10); then the
+   tg2 chain: positives (with the interrupt positive) → rehearsal → v8 → pilot pair → the decider (C367's Go stands; sizing
+   `docs/reviews/m76-s3b-sizing/SIZING.md`: decider ≈ 6–9.5 h per arm). Ask the operator for run-time autonomy again.
+4. Then: B8-A8 → signals → the A8 panel → the ship recommendation (stage 3b). The KV vision rubric fix (S26-P19) before any next KV panel.
+5. Small owed: the PII hook learning the username pattern from the machine config (C357).
+
+## State (session 27)
+
+- Gate PASS on `9abef6a6` (15331 passed, 3 h 42 min — the endpoint agent ThreatLocker roughly doubles process-launch cost, S27-P5).
+- tg2 positives: the 11-17 and 11-19 records committed (`benchmark/results/m76/tg2/positives-*`, evidence `1c42f0ef`); a PASS record
+  `3333fa6c` under C366 (transfer rule) — valid only for the OLD identity's arms.
+- tg2 pilot pair VALID / VALID, pilot gate PASS, amendment, v8 `7e75cd66` (`benchmark/results/m76/wave2.tg2/`, `7756726e`): all bound to
+  the old arms `m76-g2-*` @ `9abef6a6` / `e027dbb7` — superseded once the bundle rotates the identity (the chain restarts from the gate).
+- The failed decider leg `tg2-m76-n16-s1.a1` (scratch, `$STACK_WORKDIR/m76/p426/wave2.tg2/`) is NOT harvested (D3); keep it as the
+  bundle's real-path test input (§10.2), then archive.
+- Stage 3a readout unchanged (`benchmark/results/m76/`: `B8.json`, `SIGNALS-partial.md` per C363, `SIGNALS.md`); README's PROVISIONAL M76
+  row still to be updated with the panel.
 
 ## Worktrees and scratch (each: resolution)
 
-- `m76-w2-{n16,x}`: Wave 2 tg1 arms — outputs harvested (`benchmark/results/m76/wave2/`, evidence `8b45058f`); keep until stage 4 decides
-  whether X legs are reused. `m76-q-{n16,x}` (Wave 1) and `m76-f45-*` (stages 1–4): keep until the stage 4 harvest.
-- `m76-g2-{n16,x}`: tg2 arms for stage 3b (session 27) — keep through the A8 harvest.
-- Session 27 removed (resolved): `fe-s26-*`, `s26-review`, `s26-p9-guard`, `evidence-pub`, `s27-c366` (merged `2673ca47`),
-  `evidence-s27` (local `evidence` `1c42f0ef`), superseded tg2 arms `m76-g-{n16,x}` (+ branches).
-- Scratch: `$STACK_WORKDIR/review/{s25-p10,c365,c366,b4b2-design}/` (cold-read / design-review clones; harvested to `docs/reviews/`)
-  — remove; `gate/scratch/stack-67908a4b33eb-*` (2026-11-14, an unfinished gate run; regenerable) — remove; tg2 positives runs
-  `m65/inject/positives-2026111{7,9}T*` (cited files harvested to `main` + `evidence`) — keep until the A8 readout.
-- Scratch (keep): superseded first-pass Claude verdicts `m76/panel-claude-order2-first-pass/`, `panel-claude-order2-second-pass-A2/`
-  (S26-P18), `m76/panel-strays/`, the archived real `~/.gradle` `archive/s26-dot-gradle-20261117/`, `m76/p426/tg2/attempt1-FAIL/`.
+- `m76-g2-{n16,x}`: tg2 arms on the OLD identity — remove after the new arms exist (their positives / pilot / v8 are superseded).
+- `m76-w2-{n16,x}`, `m76-q-{n16,x}`, `m76-f45-*`: stage 3a / stage 1–4 arms — keep until the stage 4 decision (Wave 2 X reuse is lost,
+  C371; stage 4 reruns its X legs if it runs).
+- Scratch: `$STACK_WORKDIR/review/{s25-p10,c365,c366,b4b2-design,s27-robust}/` (review clones; harvested to `docs/reviews/`) — remove;
+  `gate/scratch/stack-67908a4b33eb-*` (2026-11-14, unfinished gate run) — remove; `m65/inject/positives-2026111{7,9}T*`,
+  `m76/p426/{tg2,tg2-s27,rehearsal.tg2,wave2.tg2}/` — keep until the A8 readout; `m76/p426/exec-latency/` — keep (S27-P5 data).
+- Scratch (keep): `m76/panel-claude-order2-first-pass/`, `panel-claude-order2-second-pass-A2/` (S26-P18), `m76/panel-strays/`,
+  `archive/s26-dot-gradle-20261117/`, `m76/p426/tg2/attempt1-FAIL/`.
 
-## Rules learned (session 26)
+## Rules learned (session 27)
 
-- An inject positive that asks the model to misbehave measures compliance; before calling a non-PASS a decline, check whether the model ran it.
-- An agentic leg can mutate the host; the JVM ignores `$HOME` (Gradle needs `GRADLE_USER_HOME`).
-- A judge context never holds both orders of one item; never declare a batch of helpers done without each one's report.
-- A panel is frozen once, against the final B8; a pre-registered instrument rule changed after seeing data goes to the operator.
-- Check new arms with the gate's inventory digest, not `pip freeze`; v8 needs a gate receipt for exactly the reference arm's commit.
-- Each harvest re-imports `bench` from `main`'s working tree: while legs run, `main` takes docs commits only; helper briefs on stdin, never a
-  BUSY marker in any argv; read-only reviews only between leg censuses.
-- `brew uninstall` autoremoves orphans; a refused commit leaves files staged for the next one (check `git status` before committing).
+- A guard checks what the harness owns and does; environmental noise is measured and recorded, enforced only when it can change the
+  measured outcome; a harness fault reruns that one item, never the leg (C370, AGENTS.md). Before a post-outcome retry ask whether the
+  trigger correlates with the outcome (C372: rerun only before the outcome; flag after it).
+- No pytest from the moment a sequencer or positives run launches until it exits, pre-leg idle included (S27-P8); main stays code-free
+  while legs run — park uncommitted code as a patch / worktree.
+- The Claude Code session exports `CLAUDE_CODE_CHILD_NOTES_DIR` (a home path): unset it for gates and legs.
+- A pre-registered pass rule changed after seeing data goes to the operator, and a borrowed proof must be bound to the code it relies on
+  (C366 digest) and committed (not scratch).
+- An agentic run can turn a cache into symlinks (npx), a package manager into a "tampered" verdict (npm lock): test every language's own
+  tooling path on the real box before a long leg.
 
-## Rules learned (sessions 18–25, condensed; full text in git history of this file)
+## Rules learned (sessions 18–26, condensed; full text in git history of this file)
 
-- Four-eyes implementers run named tests only; the full suite runs once as the gate. Allowlist exact command forms. A test timeout is a
-  margin over a measured duration. "checked" names the check. Sweep docs for the username. A history rewrite renames later commits.
-- Waiters match emitted names; run the real path early; refusals never echo PII. `bench.*` modules run from `benchmark/`.
-- GPU stages and helpers running pytest cannot overlap. Measure memory per process. After a reboot start OrbStack before any gate.
+- Inject positives that ask the model to misbehave measure compliance; check whether it ran the command before calling a decline. An agentic
+  leg can mutate the host (the JVM ignores `$HOME`). A judge context never holds both orders. A panel is frozen once, against the final B8.
+  Check arms with the gate's inventory digest. Each harvest re-imports `bench` from `main`'s working tree. `brew uninstall` autoremoves.
+- Four-eyes implementers run named tests only; the full suite runs once as the gate. A test timeout is a margin over a measured duration.
+  Waiters match emitted names. `bench.*` modules run from `benchmark/`. GPU stages and pytest helpers never overlap. After a reboot start
+  OrbStack before any gate.
 
 ## Archives (local, no push)
 
