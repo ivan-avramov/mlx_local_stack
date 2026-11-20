@@ -72,7 +72,10 @@ def test_a_branch_push_that_bumps_mlx_serve_needs_a_fork_receipt_paired_with_it(
     work, base, head = _stack_with_gitlinks(tmp_path, SERVE_NEW)
     gate = tmp_path / "gate"
     (gate).mkdir()
-    (gate / f"stack-{head}-{D[:12]}.json").write_text(json.dumps(dict(repo="stack", sha=head, verdict="PASS", policy_digest=D)))
+    # S27 §12: a stack PASS receipt carries the `pushed_base` the gate ran against; `base` is `origin/main`, so the protected
+    # paths are unchanged since it and the push binding passes — this test checks only the mlx-serve pairing
+    (gate / f"stack-{head}-{D[:12]}.json").write_text(json.dumps(dict(repo="stack", sha=head, verdict="PASS", policy_digest=D,
+                                                                      pushed_base=base)))
     _fork_receipt(gate, FORK, paired=SERVE_OLD)
     line = f"refs/heads/main {head} refs/heads/main {base}"
     out = G.check_lines("stack", work, "origin", [line], gate_dir=gate, digest_for=lambda repo, sha: D)

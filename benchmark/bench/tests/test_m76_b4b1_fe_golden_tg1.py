@@ -179,10 +179,20 @@ def test_b8_regenerates_byte_identical(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ closure identities
-def _identity(tmp_path):
+def _identity(tmp_path, inject_allowed=None):
+    """The probe's `--print-identity`; with `inject_allowed`, the tg1 template's `inject_allowed` replaced by it (and nothing else)."""
     env = dict(os.environ, PYTHONPATH=str(S.BENCH), STACK_WORKDIR=os.environ.get("STACK_WORKDIR", str(tmp_path)))
-    proc = subprocess.run([sys.executable, str(S.BENCH / "run_tg1_probe.py"), "--print-identity"], cwd=S.REPO, capture_output=True,
-                          text=True, timeout=300, env=env)
+    probe = str(S.BENCH / "run_tg1_probe.py")
+    if inject_allowed is None:
+        argv = [sys.executable, probe, "--print-identity"]
+    else:
+        code = ("import dataclasses, runpy, sys\n"
+                "from bench import tg1_runner as t\n"
+                f"t.TG1_POLICY = dataclasses.replace(t.TG1_POLICY, inject_allowed={tuple(inject_allowed)!r})\n"
+                f"sys.argv = [{probe!r}, '--print-identity']\n"
+                f"runpy.run_path({probe!r}, run_name='__main__')\n")
+        argv = [sys.executable, "-c", code]
+    proc = subprocess.run(argv, cwd=S.REPO, capture_output=True, text=True, timeout=300, env=env)
     assert proc.returncode == 0, (proc.stderr or proc.stdout)[-800:]
     return json.loads(proc.stdout)
 
@@ -201,7 +211,13 @@ def _scrub(doc):
 
 # (b) the tg1 probe identity equals the baseline's in every field that is not closure-derived
 # (a) and the closure-derived ones change: the shared core (arm_runner / chain_core / ... , C178) is edited, so tg1's closure rotates
-INVARIANT_FIELDS = ("arm", "config_id", "scaffold", "scaffold_policy_sha256", "polyglot_sha")     # not closure-derived, not box-bound
+INVARIANT_FIELDS = ("arm", "config_id", "scaffold", "polyglot_sha")     # not closure-derived, not box-bound
+# S27 §4.5 / §9: the tg1 template's `inject_allowed` gains `interrupt` (the deterministic interrupt positive), which the generation
+# policy hashes: `scaffold_policy_sha256` rotates. It is an S27 difference, not an invariant: it must differ from the baseline's,
+# and the policy built with the baseline's `inject_allowed` (`PRE_S27_INJECT_ALLOWED`) must reproduce the baseline's exactly — so the
+# rotation is caused by `inject_allowed` alone.
+S27_POLICY_FIELD = "scaffold_policy_sha256"
+PRE_S27_INJECT_ALLOWED = ("stall", "loop", "alloc")
 BASELINE_CLOSURE = {"probe_code_sha256": "28ce3add173f6540fe37f17864b9caf730f7566338920de7aeb583c2ab25ec21"}      # recorded on the baseline
 
 
@@ -215,6 +231,10 @@ def test_tg1_identity_unchanged_except_the_closure_fields(tmp_path):
     assert set(got) - box == set(want) - box, sorted((set(got) ^ set(want)) - box)
     assert {k: got[k] for k in INVARIANT_FIELDS} == {k: want[k] for k in INVARIANT_FIELDS}
     assert want["probe_code_sha256"] == BASELINE_CLOSURE["probe_code_sha256"]
+    # S27 §4.5 / §9: the policy identity rotates, and ONLY through `inject_allowed`
+    assert got[S27_POLICY_FIELD] != want[S27_POLICY_FIELD], "the S27 interrupt positive did not rotate the tg1 policy identity"
+    pre = _scrub(_identity(tmp_path, inject_allowed=PRE_S27_INJECT_ALLOWED))
+    assert pre[S27_POLICY_FIELD] == want[S27_POLICY_FIELD], "the tg1 policy differs from the baseline beyond inject_allowed"
 
 
 # (a) C178: the shared-core edit rotates tg1's probe closure (`probe_code_sha256`); `generation_identity_sha256` / `arm_identity_sha256` /

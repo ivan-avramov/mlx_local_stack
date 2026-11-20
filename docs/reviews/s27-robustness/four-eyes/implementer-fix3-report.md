@@ -80,3 +80,62 @@ Before/after counts for `test_s27_impl_r3fix.py`: first run on candidate 3 had 3
 
 - Q1: Is C1 (the absolute-alias rule) acceptable to the designer, or should Z5 be strict and the frozen x10 conflict go to the operator?
 - Q2: Is C5's rule right, that a reused session's unclaimed members make the scan uncertain? It PAUSES the leg. The kernel guarantee (Z9 docstring) implies those members belong to the new session, so this is fail-closed beyond what the guarantee needs.
+
+## Clarification (gate)
+
+The copy is candidate 4. Nothing was staged, committed, reset or pushed. No frozen file was touched.
+
+### 1. `test_m76_b4b1_fe_golden_tg1.py::test_tg1_identity_unchanged_except_the_closure_fields`
+
+Change (`test_m76_b4b1_fe_golden_tg1.py:182-200, 216-245`):
+- `scaffold_policy_sha256` is removed from `INVARIANT_FIELDS`; the remaining fields (`arm`, `config_id`, `scaffold`, `polyglot_sha`) stay exact.
+- It is named as the S27 §4.5 / §9 difference (`S27_POLICY_FIELD`), with a comment naming the clause.
+- The test now asserts two things. The field differs from the golden. Recomputed with the baseline's `inject_allowed` (`PRE_S27_INJECT_ALLOWED = ("stall", "loop", "alloc")`), it equals the golden exactly. So the exemption is checked, not just declared.
+- `_identity` gains an `inject_allowed=` option. It runs the same `run_tg1_probe.py --print-identity` in a subprocess, with only `tg1_runner.TG1_POLICY.inject_allowed` replaced (`dataclasses.replace`).
+
+Verification (`../scratch/verify_policy_rotation.py`, run with the bench interpreter, CPython 3.12.15):
+- This session has no `docker` CLI (`which docker` → `docker not found`), and the brief excludes docker. So the script supplies the golden's recorded `grader_image_id` in place of the `docker inspect` read; every other identity input is computed live. `toolchain_matches_golden: true` confirms the substitution reproduces the golden's toolchain.
+- Output, verbatim:
+  - `current_inject_allowed: ["stall","loop","alloc","interrupt"]`
+  - `current_policy_sha: 16a948bef2f238a74c0399e033f8b12ca280f037336fea403c2e5062c57b12b5` (the gate's value)
+  - `pre_s27_policy_sha: f56705f93546d0c3b310e3414b3442f0dc9f2a08f1a412523ca1a2138a581e33`
+  - `golden_policy_sha: f56705f93546d0c3b310e3414b3442f0dc9f2a08f1a412523ca1a2138a581e33`
+  - `pre_reproduces_golden: true`
+  - `identity_keys_differing_current_vs_pre: ["generation_identity_sha256", "scaffold_policy_sha256"]`
+- Conclusion: the rotation is caused only by `inject_allowed`. The second key, `generation_identity_sha256`, is derived from the policy sha.
+- The pre-S27 identity still differs from the golden in other keys: `generation_identity_sha256`, `opencode_exe_sha256`, `probe_code_sha256`, `scoring_code_sha256` and the `snapshot_*` fields. These are the closure-derived and box-bound fields the test already excludes.
+- Caveat: the edited test itself needs docker. In this session it fails with `bench.toolchain.ToolchainError: cannot inspect grader image aider-benchmark: FileNotFoundError` before reaching its assertions, so it has not passed here. It is expected to pass on the gate box, which has docker; that is not yet observed.
+
+### 2. `test_m81_gate_pairing.py::test_a_branch_push_that_bumps_mlx_serve_needs_a_fork_receipt_paired_with_it`
+
+Change (`test_m81_gate_pairing.py:75-79`):
+- The stack PASS receipt now carries `pushed_base=base`. `base` is the commit already pushed to `origin/main`, so the protected paths are unchanged since it and the §12 binding passes.
+- A comment names S27 §12.
+- The refusal assertion for the unpaired fork receipt (`"not paired with src/mlx-serve"`) and the acceptance once a paired receipt exists are unchanged.
+- Result: it passes in the run below.
+
+### 3. One invocation of the requested families
+
+Files: `test_local_gate*`, `test_m76_b4b1_*`, `test_m80_*` / `test_m81_*` (the `test_m8*` matches), `test_p541*`, `test_s25_p10*`, all `test_s27_impl_*`, and the frozen `test_s27_fe_*`. Run with `-rfEs`. Result: **5 failed, 1418 passed in 1331.53s**, no tests skipped. Failures, verbatim:
+
+```
+FAILED bench/tests/test_m76_b4b1_fe_corpus.py::test_probe_without_universe_defaults_to_the_tg2_universe
+FAILED bench/tests/test_m76_b4b1_fe_corpus.py::test_probe_identity_with_an_inject_kind
+FAILED bench/tests/test_m76_b4b1_fe_golden_tg1.py::test_b8_regenerates_byte_identical
+FAILED bench/tests/test_m76_b4b1_fe_golden_tg1.py::test_tg1_identity_unchanged_except_the_closure_fields
+FAILED bench/tests/test_m76_b4b1_fe_golden_tg1.py::test_tg1_probe_closure_identity_rotates
+```
+
+Causes:
+- **`test_b8_regenerates_byte_identical`:** `AssertionError: REFUSED: frozen stack_head_on f2b61127c55f0436b6c6c777bec5384ce004d62d does not resolve: git rev-parse failed`. The commit is absent from this copy. Same as round 3, caveat 3.
+- **The other four** (re-run singly; all four tracebacks identical): `bench.toolchain.ToolchainError: cannot inspect grader image aider-benchmark: FileNotFoundError`. There is no `docker` CLI in this session, and `--print-identity` reads the grader image id through it.
+  - These are missing-tool failures, not skips. The tests do not skip when docker is absent.
+  - Three of the four are tests I did not edit.
+  - The gate's run (with docker) reported only items 1 and 2 as failing, which suggests these four depend only on the environment.
+
+Still skipping for a missing corpus or tool: none (0 skipped). The polyglot corpus is present, and nothing in this set skipped for it.
+
+Files changed in this clarification:
+- `benchmark/bench/tests/test_m76_b4b1_fe_golden_tg1.py` — item 1.
+- `benchmark/bench/tests/test_m81_gate_pairing.py` — item 2.
+- `../scratch/verify_policy_rotation.py` — the verification script; not in the repo.
