@@ -1,4 +1,4 @@
-# S27 — harness robustness bundle (spec v1.1, 2026-11-20; design review r1 applied, ledger R1–R16; C372)
+# S27 — harness robustness bundle (spec v1.2, 2026-11-20; design review r1–r2 applied, ledgers R, V; C372)
 
 Brief: C370 (P12–P17), C372 (the retry split, the escaped-process residual), the S27-P11 defects D1–D3, C365, C368 (1), C371 (2) push
 binding. One identity rotation (tg1 + tg2 probe and chain closures). Four-eyes STRICT (design review, blind test-writer, implementer
@@ -24,8 +24,9 @@ identity by §4.3); C338 / C339; C361 / C360; the frozen stage-3 panel; B4b-2 sp
    (b) `getsid(pid) == probe_session` (when 3.1 applies) → OURS; (c) cwd / argv under a guard root (`work`, `TMPDIR`,
    `grading-private`, the run's `HOME` / `XDG_*`) or the readable environment carrying the run's `HOME` / `XDG_*` → OURS only with
    corroboration (a or b, or the environment match); a path-only match without corroboration → `foreign_new` with `path_match: true`;
-   (d) anything else → `foreign_new`. A denied cwd / environ read on a process that (a) and (b) do not claim → `foreign_new` with
-   `unreadable: true` (never `uncertain`); a denied read on a process (a) or (b) claims → `uncertain` (as today). A container named
+   (d) anything else → `foreign_new`. Any denied read (start order, liveness, cwd, environ) on a process that (a) and (b) do not
+   claim → `foreign_new` with `unreadable: true` (never `uncertain`); a denied read on a process (a) or (b) claims, or an
+   unreadable session id, → `uncertain` (as today). The ownership tests run before any read that can mark a process unreadable. A container named
    `mlxbench-<run_id>-…` is OURS.
 3. **Cleanup:** every OURS process still alive is killed and verified gone (one kill-and-verify loop for tracked and untracked OURS
    alike); one not verified gone → `uncertain`. The `_sweep_excluded` same-session skip is removed (3.1 guards it).
@@ -43,11 +44,13 @@ identity by §4.3); C338 / C339; C361 / C360; the frozen stage-3 panel; B4b-2 sp
 
 ## 4. Order-tolerant reconciliation (P13; D1, the positives)
 
-1. `terminate_client` records, at the moment it reads `requests_at_kill`, the events-file size (`events_size_at_count`); it keeps
+1. `terminate_client` records, under the same lock as `requests_at_kill`, the ingested byte position of the events stream
+   (`ingested_offset_at_count`) and the file size (`events_size_at_count`, supplementary); it keeps
    `signal_offset` (size at SIGTERM, `None` when no signal was delivered); the gate records each step's END offset; all three persist
    in `termination` / the row.
 2. `p426_reconcile` kill cases gain **`kill_boundary_late_record`**: `|C| == n == expected + 1`, positional pairing passes, the n-th
-   `step_finish` END offset > `events_size_at_count` (the step's line completed after the count was read), the worker deltas hold;
+   `step_finish` END offset > `ingested_offset_at_count` (the step was ingested after the count was read, whether its bytes were
+   written before or after), the worker deltas hold;
    with no failed line, or with exactly one trailing failed line (`STREAM_CLOSED`, last) and `|S| == |C| + 1` (the client had started
    the next request). The row records `order` (`step_after_count` and, from `signal_offset`, `before_signal` / `after_signal` /
    `no_signal`). The existing `kill_boundary` records `order: "step_before_count"`.
@@ -56,40 +59,62 @@ identity by §4.3); C338 / C339; C361 / C360; the frozen stage-3 panel; B4b-2 sp
    in flight, the existing proof; with none — `in_flight_at_kill == 0`, worker `requests_started` unchanged from before to after,
    `after.in_flight == 0`, `trailing` not an interrupted kind — the verdict is **`PASS_NO_INFLIGHT`** (distinct; consumers that require a
    cancellation proof can tell it apart). The tg2 positives rule (`p426_wave2`, v8) accepts `PASS` and `PASS_NO_INFLIGHT` for stall /
-   loop; C366's transfer is not used on the new identity.
+   loop; every consumer of the verdict strings gains `PASS_NO_INFLIGHT`: `p426_freeze.inject_accepted`, `cmd_v8_tg2`, the
+   harvest, `m62/run_m62_live.py`'s results (red test: a record with `PASS_NO_INFLIGHT` freezes). C366's transfer is not used on the
+   new identity.
 4. The implementer lists every other check comparing two independent events' order (search `at_kill`, `in_flight`, before / after
    samples) and makes each order-tolerant or justifies it in the change ledger.
 
 ## 5. Harness faults: rerun before the outcome, flag after it (P16 as refined by C372)
 
-1. **PRE-OUTCOME harness fault** (the item has no outcome yet): a grader infrastructure / transport error, a hook infrastructure
-   error, an owned-cleanup `uncertain` that a second, independent cleanup scan then proves certain (survivors, containers and
-   unknown empty; worker `in_flight == 0`; worker identity unchanged). → disposition `harness_fault`: the SAME item reruns once,
+1. **Grade-only fault → regrade, never regenerate.** A grader INFRASTRUCTURE fault — a closed list: container spawn failure, docker
+   daemon / transport loss, image unavailable, a grader-path connection loss — on an item whose generation has finished is retried by
+   re-grading the retained final snapshot (the final tree and evidence are kept), up to 2 times; a third → the item is a recorded
+   `grade_fault` DNF (strict fail), the leg continues. A grader TIMEOUT, `mem_kill`, OOM or tamper result is the item's OUTCOME
+   (unchanged), never a fault.
+2. **PRE-OUTCOME harness fault** (before the generation finished): a hook infrastructure error at `ready`, or an owned-cleanup
+   `uncertain` that a second, independent scan then proves certain (§5.8). → disposition `harness_fault`: the SAME item reruns once,
    immediately (plan order), same seed, after the cache session is reset (as the cheat path) and the settle check (worker
-   `in_flight == 0`, same identity) passes. A second pre-outcome fault on that item → a recorded harness-fault DNF (strict fail), the
-   leg continues.
-2. **POST-OUTCOME accounting fault** (the item has an outcome — `passed` / `converged` known from its row — and reconciliation still
-   fails after §4): NO rerun. The item keeps its outcome; the row is flagged `accounting_fault` with the failed checks; its tokens,
-   latency and runaway-tax figures are descriptive only (excluded from token / latency aggregates, counted and listed per arm). Each
-   item runs in its own session, so no state carries to the next item.
-3. **Uncertain cleanup that stays uncertain** after the second scan → no rerun, no continuation: the chain HOLDS the leg (§8.2) for the
+   `in_flight == 0`, same identity, `:8000` owner) passes. A second pre-outcome fault on that item → a recorded `harness_fault_dnf`
+   (strict fail), the leg continues.
+3. **POST-OUTCOME accounting fault** (the item has an outcome and a §5.9 accounting check still fails after §4): NO rerun. Disposition
+   `accounting_fault` (new): the done hook writes a sealed sidecar `items/<slot>.accounting.json` (slot, row sha, item-record sha,
+   the failed checks) and continues after the settle check (worker `in_flight == 0`, same identity, `:8000` owner; a failed settle →
+   integrity, HOLD). `chain_rows` exposes the row with `accounting_fault: true`; its tokens, latency and runaway-tax figures are
+   descriptive only (excluded from aggregates, listed per arm).
+4. **Uncertain cleanup that stays uncertain** after the second scan → no rerun, no continuation: the leg is PAUSED (§5.8) for the
    designer; never continues on a possibly live owned process.
-4. **INTEGRITY faults** still invalidate the leg (unchanged): wrong model / registry / weights, worker identity drift, the agent host
+5. **INTEGRITY faults** still invalidate the leg (unchanged): wrong model / registry / weights, worker identity drift, the agent host
    fingerprint changing (C360), a contaminated work tree outside the item, a receipt-chain break, an unexplained worker / receipt /
    session-backend inconsistency that is not the item's own accounting.
-5. **Caps and reporting:** 1 rerun per item; harness-fault DNFs per leg ≤ 3, enforced synchronously in the chain at the item barrier
+6. **Caps and reporting:** 1 rerun per item; `harness_fault_dnf` + `grade_fault` DNFs per leg ≤ 3, enforced synchronously in the chain at the item barrier
    (before `.continue`): the 4th persists the DNF and the hold episode atomically and HOLDS. Per-arm counts of harness faults, reruns,
    harness-fault DNFs and accounting faults are reported fields; a pre-registered sensitivity analysis scores every item with a
    harness fault or accounting fault (either arm) as missing in both arms.
-6. **Machinery (P426 chain):** `chain_hooks.KINDS` / `AFTER_KINDS` gain `harness_fault` and `hold`; `chain_rows.SLOT_DISPOSITIONS` gains
-   `harness_fault` with a `slot_table` branch that queues `(slot, rerun_index + 1)` (separate from `MAX_RERUNS` / `cheat`;
-   fault-then-cheat and cheat-then-fault each consume their own cap); `pump_barrier` accepts both in P426 mode; `run_p426_leg` runs a
+7. **Machinery (P426 chain):** `chain_hooks.KINDS` / `AFTER_KINDS` gain `harness_fault`, `accounting_fault` and `hold`;
+   `chain_rows.SLOT_DISPOSITIONS` gains `harness_fault` with a `slot_table` branch that queues `(slot, 1)`; P426 legs have no cheat
+   rerun (their done path accepts or invalidates only), so a P426 slot's rerun index is 0 or 1 and `validate_progress` checks that
+   bound for P426 (`MAX_RERUNS` / `exhausted` unchanged for per-arm legs); `harness_fault_dnf` and `grade_fault` are DNF records
+   (sealed sidecars + a ledger kind `dnf`, scored strict 0, counted under the cap above, separate from `MAX_P426_DNF`'s transport
+   DNFs); `pump_barrier` accepts both in P426 mode; `run_p426_leg` runs a
    rerun step with its `rerun_index` and accepts `"hook"` for these; item records (`ready.json`, `items/<slot>`) are keyed by rerun
    index; `check_p426_ledger` accepts the rerun immediately after its fault; faulted attempts never enter `p426_invalid`. Consumers
    (`p426_freeze.leg_items_problems`, the harvest's `_check_references` / `_check_barrier`, B8 / B8-A8) accept exactly one accepted
-   attempt per slot with earlier attempts each `harness_fault` and a recorded reason; a `PAUSED` leg state (held, not finished) is
+   attempt per slot with earlier attempts each `harness_fault` and a recorded reason, OR a `harness_fault_dnf` / `grade_fault` DNF as
+   the slot's terminal record; a `PAUSED` leg state (held, not finished) is
    added to `LEG_STATES`, `classify_leg` and the harvest's rule table (a paused leg is resumed or archived by the designer, never
    harvested as a result).
+
+8. **The abort route.** An uncertain cleanup or a grader / hook infrastructure fault that ends the probe writes a typed abort stamp
+   (`cause: cleanup_uncertain | grader_infra | hook_infra`, with the cleanup receipt); `handle_p426_incomplete` routes these BEFORE its
+   DNF-cause check. For `cleanup_uncertain` the CHAIN runs the second scan itself (by the recorded probe session id when it led its
+   session, the run's hermetic roots, the container-name prefix; deadline 60 s; evidence persisted), then requires worker
+   `in_flight == 0` and an unchanged identity → `harness_fault` rerun; otherwise the leg is PAUSED: `chain.json` records the episode,
+   the chain launches nothing, and resumes only on the designer's release (no live probe is needed for a pause). `grader_infra` on a
+   finished generation → §5.1's regrade; `hook_infra` → §5.2.
+9. **Accounting vs integrity (closed table).** After the §4 order-tolerant cases have been tried: `boundary_count`, `unaccounted_count`,
+   `pairing` → accounting (§5.3). `serial`, `session_backend`, `started_terminated`, `failed_lines` beyond the allowed variants, and
+   `worker_deltas` beyond the late-record explanation → integrity (§5.5). Any check not in this table → integrity.
 
 ## 6. C365 — abort vs an in-flight grade
 
@@ -118,9 +143,9 @@ with a slow-grader seam.
    reason), and waits; the leg's deadline is suspended for the held interval in both the chain and `Sequencer.supervise` (which reads
    the open episode and subtracts it). On release the chain re-runs the leg-entry checks (worker identity, `:8000` owner, AC power, no
    other GPU job; cache-session state recorded at hold and resume) before resuming the remaining items as the next invocation.
-3. **Tiers (P14)** in `classify_leg` and the watcher: INVALIDATE = §5.4; SPEED-INVALID (quality kept) = off AC, watcher gaps, an ALERT in
-   the leg, a hold, an accounting fault (that item only); RECORD = `foreign_new`, background CPU below the threshold; PAUSED = §5.3 /
-   §5.5 until the designer resumes or archives.
+3. **Tiers (P14)** in `classify_leg` and the watcher: INVALIDATE = §5.5; SPEED-INVALID (quality kept) = off AC, watcher gaps, an ALERT in
+   the leg, a hold, an accounting fault (that item only); RECORD = `foreign_new`, background CPU below the threshold; PAUSED = §5.4 /
+   §5.6 until the designer resumes or archives.
 
 ## 9. Identity and consequences
 
@@ -134,23 +159,32 @@ positives (§4.3), rehearsal, v8, pilot, decider (C367's Go stands).
    foreign daemon → `foreign_new unreadable`; a path-only match without corroboration → not killed; a hand-run (non-leader) probe →
    ownership by ancestry only; an owned survivor → killed, verified, recorded, certain; schema-1 records still validate; the recorded
    `java/sgf-parsing` numbers → `kill_boundary_late_record`; the trailing-failed variant; a genuine count mismatch on an item with an
-   outcome → `accounting_fault`, outcome kept, no rerun; a pre-outcome grader transport error → rerun once → accepted; twice → DNF,
-   leg continues; 4 DNFs → held; an uncertain cleanup → second scan certain → rerun, else held; an integrity fault → leg INVALID;
-   stall with nothing in flight → `PASS_NO_INFLIGHT`, loop without the descendant kill → not observed; the C365 slow-grader case;
+   outcome → `accounting_fault`, outcome kept, sidecar sealed, settle checked, no rerun; a worker-delta mismatch beyond the late-record
+   case → integrity; a grader transport fault on a finished item → regrade (no regeneration) → accepted; three → `grade_fault` DNF;
+   a grader timeout / mem_kill → the outcome, no regrade; a hook infrastructure fault at ready → rerun once; twice →
+   `harness_fault_dnf`, leg continues; the ingest-lag order (step bytes before the count, ingested after) → late record accepted; 4 DNFs → held; an uncertain cleanup → second scan certain → rerun, else held; an integrity fault → leg INVALID;
+   stall with nothing in flight → `PASS_NO_INFLIGHT` (and it freezes in v8), loop without the descendant kill → not observed; a
+   denied start-order read on a foreign daemon → `foreign_new unreadable`; the abort route (`cleanup_uncertain` → chain scan →
+   rerun, or PAUSED with no live probe); the C365 slow-grader case;
    the npx-cache links harvested as excluded with scrubbed targets; nested lock omitted; the HOLD round trip incl. the outer deadline;
    the push binding (§12).
 2. Real-path checks on this box (no GPU): a detached daemon in another session during a fake item → `foreign_new`; the failed leg
-   `tg2-m76-n16-s1.a1`'s run homes harvest with links excluded (dry run); the sgf-parsing events file confirms which side of
-   `events_size_at_count` its 26th step ended (designer check before the freeze).
+   `tg2-m76-n16-s1.a1`'s run homes harvest with links excluded (dry run); the sgf-parsing events file shows where its 26th step
+   ended relative to the bytes ingested before the kill decision (designer check before the freeze).
 3. Stack gate PASS on the merged commit; then the tg2 chain from the gate.
 
 ## 12. Push binding (C371, S27-P2 option B)
 
-`local_gate.push_level` (stack, full level): after `check`'s fetch, the PASS receipt must carry `pushed_base`, and
-`git diff --no-renames --name-only <pushed_base> <remote>/main -- <the four protected paths>` must be empty (the tg1 carrier JSON,
-`noretry.js`, `toolbounds.js`, `datefreeze.js`); else refuse with a regate hint. Forks and tags unchanged. Red tests: a moved remote
+Hazard covered: the gate's closure test proved "the build does not edit the protected files" against the base the gate saw; if the
+remote `main` moved and changed a protected file since, that proof no longer describes the push. `local_gate.push_level` (stack,
+`full` level, non-evidence refs only; `docs-only` / `data-only` return earlier): after `check`'s fetch, one helper reads the PASS
+receipt DOCUMENT; it must carry `pushed_base`, the commit must exist in the repo (else refuse), and
+`git diff --no-renames --name-only <pushed_base> <remote>/main -- <PROTECTED_PUSH_PATHS>` must succeed and be empty; any git error
+refuses; a refusal prints a regate hint. `PROTECTED_PUSH_PATHS` (a constant in `local_gate.py`, beside the closure test's own list):
+`benchmark/opencode_bench_v2_web_tg1.json`, `benchmark/opencode_plugins/noretry.js`, `benchmark/opencode_plugins/toolbounds.js`,
+`benchmark/opencode_plugins/datefreeze.js`. Forks and tags unchanged. Red tests: a moved remote
 `main` with the protected files unchanged → accepted; a moved remote `main` that edits `datefreeze.js` → refused; no `pushed_base` →
-refused.
+refused; a `pushed_base` absent from the repo → refused; a non-`main` pushed ref at level `full` → the same rule.
 
 ## 11. Out of scope
 
