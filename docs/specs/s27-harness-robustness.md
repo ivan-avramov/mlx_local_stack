@@ -94,7 +94,7 @@ propagates with its cleanup record. Red test with a slow-grader seam.
 tg1 and tg2 probe identities and chain closures rotate (proc_guard, arm_runner, token_turn_gate, chain_*, p426_reconcile, p426_hooks,
 corpus_tg2, m62/inject_verify). Consequences: stage 4 cannot reuse Wave 2 X legs (operator acknowledgement pending); C366's transfer is
 refused on the new identity (`CANCEL_PATH` changes) and §4.3 replaces it; the tg2 chain restarts from the gate: new arms, positives,
-rehearsal, v8, pilot, decider. S27-P2's push binding (if ruled B) rides with this gate.
+rehearsal, v8, pilot, decider; stage-4 reuse loss accepted (C371). S27-P2 option B (C371) is built here: §12.
 
 ## 10. Acceptance (pre-registered)
 
@@ -107,6 +107,14 @@ rehearsal, v8, pilot, decider. S27-P2's push binding (if ruled B) rides with thi
 2. Real-path checks on this box (no GPU): a detached daemon started in another session during a fake item is `foreign_new`; the
    failed leg `tg2-m76-n16-s1.a1`'s run homes harvest with the links excluded (dry run).
 3. The full stack gate PASS on the merged commit; then the tg2 chain from the gate (C367's Go stands for the decider).
+
+## 12. Push binding (C371, S27-P2 option B)
+
+`local_gate.push_level` (stack, full level): after `check`'s fetch, the PASS receipt must carry `pushed_base`, and
+`git diff --no-renames --name-only <pushed_base> <remote>/main -- <the four protected paths>` must be empty (the tg1 carrier JSON,
+`noretry.js`, `toolbounds.js`, `datefreeze.js`); else refuse with a regate hint. Forks and tags unchanged. Red tests: a moved remote
+`main` with the protected files unchanged → accepted; a moved remote `main` that edits `datefreeze.js` → refused; no `pushed_base` →
+refused.
 
 ## 11. Out of scope
 

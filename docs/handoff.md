@@ -23,8 +23,8 @@ any Cellar change. Session 27 state of this line: tg2 decider STOPPED (S27-P11; 
    `7756726e`); sizing `docs/reviews/m76-s3b-sizing/SIZING.md` (decider 5.9 / 8.1 / 9.5 h per arm). No pytest, no code on `main`,
    no `brew upgrade`, no BUSY pattern in any argv until it exits. After: harvest commits (data), the stage-3b evidence batch to
    `evidence` (`wave2.tg2/scratch/evidence` + the pilot), B8 / signals for A8 (needs B4b-2), the ship recommendation.
-1. Not pushed: `main` is ~46 commits ahead of `origin/main` (`3fc079ca`); the local `evidence` branch has `8b45058f` (Wave 2 evidence) on
-   top of the remote. Pushing waits for the operator's word; the pre-push gate needs a stack-gate PASS receipt for the pushed `main`.
+1. Pushed 2026-11-20 (C371): `main` to `9abef6a6`, `evidence` to `1c42f0ef`. Later `main` commits push after the S27 bundle's gate
+   (needs the operator's word again).
 2. Box idle (no legs, no helpers). Check power 140 W / 28 V and `pgrep -fl "claude -p"` before anything. docker lives in `~/.orbstack/bin`.
 
 ## State
