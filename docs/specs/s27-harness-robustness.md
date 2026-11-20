@@ -1,4 +1,4 @@
-# S27 — harness robustness bundle (spec v1.4, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372; v1.4 = the §10.2 designer-check amendment to §4.2, S28-P4, not re-reviewed; approved C375)
+# S27 — harness robustness bundle (spec v1.5 (§8.1 identity only, C377); v1.4, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372; v1.4 = the §10.2 designer-check amendment to §4.2, S28-P4, not re-reviewed; approved C375)
 
 Brief: C370 (P12–P17), C372 (the retry split, the escaped-process residual), the S27-P11 defects D1–D3, C365, C368 (1), C371 (2) push
 binding. One identity rotation (tg1 + tg2 probe and chain closures). Four-eyes STRICT (design review, blind test-writer, implementer
@@ -157,7 +157,7 @@ with a slow-grader seam.
 ## 8. Measure, alert, hold (P14, P15, P17)
 
 1. **Watcher ticks** add: swap used and its growth, the memory-pressure level, the top 5 CPU processes with pid, sid, start time,
-   scrubbed argv and an ownership class (OURS by the chain's router / worker / probe identities and §3 attribution; `foreign`; `unknown`
+   executable basename + argc (v1.5, C377: never argument text) and an ownership class (OURS by the chain's router / worker / probe identities and §3 attribution; `foreign`; `unknown`
    when unclassifiable), and the launch-latency probe (S27-P5). **ALERT** (record only) when: swap growth > 2 GB in a tick, pressure
    "critical", a `foreign` process > 150 % CPU for 2 ticks, fresh-exec median > 1 s.
 2. **Hold** = the existing PAUSE file, extended to item boundaries: the chain checks it at each accepted `done` (before `.continue`),
