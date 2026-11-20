@@ -1,4 +1,4 @@
-# S27 — harness robustness bundle (spec v1.4, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372; v1.4 = the §10.2 designer-check amendment to §4.2, S28-P4, not re-reviewed)
+# S27 — harness robustness bundle (spec v1.4, 2026-11-20; FINAL design — review r1–r3 applied, ledgers R, V, W; C372; v1.4 = the §10.2 designer-check amendment to §4.2, S28-P4, not re-reviewed; PENDING the operator)
 
 Brief: C370 (P12–P17), C372 (the retry split, the escaped-process residual), the S27-P11 defects D1–D3, C365, C368 (1), C371 (2) push
 binding. One identity rotation (tg1 + tg2 probe and chain closures). Four-eyes STRICT (design review, blind test-writer, implementer
