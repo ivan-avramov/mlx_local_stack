@@ -16,7 +16,7 @@ ship recommendation to the operator.
 ## FIRST
 
 **HOMEBREW: when a Wave 2 / tg2 run is live (see 0 below), do NOT `brew upgrade` until it ends** — C360's fingerprint stops the run on
-any Cellar change. Session 27 state of this line: **tg2 DECIDER LIVE** (C367; `$STACK_WORKDIR/m76/p426/wave2.tg2/`, launched 2026-11-19 22:48Z, ≈ 13–20 h).
+any Cellar change. Session 27 state of this line: tg2 decider STOPPED (S27-P11; no run live; upgrades allowed until the next launch).
 
 0. Session 27 (live): the A8 tg2 DECIDER is running (C367) — sequencer `$STACK_WORKDIR/m76/p426/wave2.tg2/` (`launch_decider.sh`,
    pid file `sequencer.pid`; legs s1 N16 → X, s2 X → N16, reload X → N16), on v8 7e75cd66 / amendment (pilot pair VALID, gate PASS,
