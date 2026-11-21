@@ -181,7 +181,7 @@ The A8 decider, its pilot and positives all run on the new identity (S27 §9): n
 3. **Rerun attempts (S27 §5.2, §5.7):** per slot exactly one accepted attempt (rerun index 0 or 1); an earlier attempt's disposition
    is `harness_fault` with its recorded reason; B8-A8 reads the accepted attempt's row and records (`ready` / item record keyed by rerun
    index) and lists the reruns per arm. Anything else for a slot → a REASON.
-4. **Accounting faults (S27 §5.3):** a row with `accounting_fault: true` keeps its outcome; its sealed sidecar
+4. **Accounting faults (S27 §5.3):** an item the chain records as an accounting fault (its slot attempt, its ledger entry and its sealed sidecar agree; a row marker or `p426_accounting_faults` entry, where present, must agree too; v1.5.1 wording, C1 of the fix round: the runner never writes a row marker) keeps its outcome; its sealed sidecar
    (`items/<slot>.accounting.json`) is checked with the shared validator (`p426_hooks.accounting_problems`); its tokens, latency and
    runaway-tax figures leave every aggregate (decode, walls, tax) and are listed per arm.
 5. **Sensitivity (S27 §5.6, pre-registered):** beside the A8 verdict, the sheet prints the same `axis_verdict` computed with every

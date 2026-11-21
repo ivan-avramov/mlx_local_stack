@@ -28,3 +28,12 @@ test-writer's model). Judged by the designer, intent first (S28-P5).
 | B15 | `v8.arms` reason unreachable: `a8_applies` already requires `TG2_PAIR` (m3) | adopted | keep one place: `a8_applies` decides applicability by corpus / lever, the arms mismatch is a REASON on the record. |
 | B16 | `b8_a8_sha256 or _sha_doc(...)` falls back to a canonical-JSON sha, not the file's bytes (m5) | adopted | the file sha everywhere (header, panel freeze); no fallback. |
 | — | M1 = B8; m1 = B6; m4 = B9; n1 = B2 | merged | |
+
+## Fix round 1 outcome (fresh Claude Opus `…`, 2026-11-21)
+
+B1–B10, B14–B16 fixed with 38 red tests (all failing first on candidate 1); the real-pilot acceptance passes on the real records
+(B2 / B4 / B10 hold on them). Designer rulings: **C1 accepted** (accounting agreement = slot attempt + ledger + sidecar; row marker /
+chain list bound when present; spec §9.4 wording corrected); **C2–C9 accepted**. Frozen v2: 35 / 140 conflict with B4 / B10 (the
+synthetic World's v8 lacks the identity its manifests carry; its seeds are not `rowschema.sample_seed`), B3 (a `harness_fault`
+attempt without its invocation), B2 (`edit_row` without re-hashing) — fixture amendments for the test-writer (delivery 3);
+`test_reload_control_refuses_when_seeds_differ` is re-staged to B10's stronger outcome (B8-A8 rejects the reload).
