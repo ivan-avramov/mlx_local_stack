@@ -21,12 +21,17 @@ CLI: `python -m bench.p426_verify a7 --results-root <dir> --out <B8.json>`; rc 0
 Step 2 (`docs/specs/p613-step2-contract.md`): `verify_wave1` (A1 math500, A2 cjudge, A3 vision, A4 reasoning, M1; rules
 1-4 and 7 per (kind, block)), `cross_wave` (rule 6) and `verify_all` (one record: A7 + Wave 1 + rule 6).
 CLI: `python -m bench.p426_verify all --results-root <p426 dir> --rows-root <results dir> --repo <git top> --out <B8.json>`.
+
+M76 B4b-2 (`docs/specs/m76-b4b2-a8-consumers.md` v1.5): `--lever kv all --pair n16,x` also writes `B8-A8.json` beside `--out`
+when `m76/wave2.tg2/run` holds the tg2 KV pair's v8 record (`verify_a8_kv`); `B8.json` never includes A8.
 """
 from __future__ import annotations
 
 import argparse
 import hashlib
 import json
+import math
+import os
 import re
 import sys
 from pathlib import Path
@@ -328,11 +333,11 @@ def schedule_plan_sha(schedule):
     return hashlib.sha256(json.dumps(doc, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
 
 
-def harvest_manifests(att, prefix=REPO_PREFIX):
+def harvest_manifests(att, prefix=REPO_PREFIX, namespace=WAVE):
     """{id: [(run_id, published_sha256)]} of the attempt's HARVEST destination-"main" final-tree manifests
-    (`<REPO_PREFIX>wave2/<attempt>/evidence/<run_id>/<language>__<item>.final_tree/manifest.json`; M76 lever kv:
-    `prefix` = `KV_REPO_PREFIX`)."""
-    pat = re.compile(r"^" + re.escape(f"{prefix}{WAVE}/{att['name']}/evidence/")
+    (`<REPO_PREFIX><namespace>/<attempt>/evidence/<run_id>/<language>__<item>.final_tree/manifest.json`; M76 lever kv:
+    `prefix` = `KV_REPO_PREFIX`; B4b-2: `namespace` = the axis' (`KV_AXES`))."""
+    pat = re.compile(r"^" + re.escape(f"{prefix}{namespace}/{att['name']}/evidence/")
                      + r"([^/]+)/([^/]+?)__([^/]+)\.final_tree/manifest\.json$")
     out = {}
     files = att["harvest"].get("files") if isinstance(att["harvest"], dict) else None
@@ -368,10 +373,10 @@ def manifest_sha(row, rid=None, manifests=None):
     return sha
 
 
-def pair_keys(session, off, on, prefix=REPO_PREFIX):
+def pair_keys(session, off, on, prefix=REPO_PREFIX, namespace=WAVE):
     """Rule 3 + rule 7. Returns (accepted [{key, identical, off_manifest_sha256, on_manifest_sha256}], rejected)."""
     accepted, rejected = [], []
-    man_off, man_on = harvest_manifests(off, prefix), harvest_manifests(on, prefix)
+    man_off, man_on = harvest_manifests(off, prefix, namespace), harvest_manifests(on, prefix, namespace)
     ids = sorted(set(off["rows"]) | set(off["dnf"]) | set(on["rows"]) | set(on["dnf"]))
     for rid in ids:
         key = [session, rid]
@@ -497,16 +502,16 @@ def _pair_arms(record):
     return {k: v for k, v in record.items() if k not in PAIR_RECORD_META and isinstance(v, str) and ".a" in v}
 
 
-def _sequence_pair_and_superseded(seq, session):
+def _sequence_pair_and_superseded(seq, session, namespace=WAVE):
     """S26-P15: (the pair record of `session` whose attempts are, per arm, the highest-numbered attempt of that leg in sequence.json's
     legs; the superseded records' arms). A labelled rerun adds a record per attempt; exactly one record must name the latest attempts,
     else refuse (never fall back to an earlier attempt)."""
     pairs = seq.get("pairs") if isinstance(seq, dict) else None
     if not isinstance(pairs, list):
-        raise RefusalError("wave2/run/sequence.json has no pairs list")
+        raise RefusalError(f"{namespace}/run/sequence.json has no pairs list")
     hits = [p for p in pairs if isinstance(p, dict) and p.get("pair") == session]
     if not hits:
-        raise RefusalError(f"wave2/run/sequence.json names 0 pair records for {session} (need exactly 1)")
+        raise RefusalError(f"{namespace}/run/sequence.json names 0 pair records for {session} (need exactly 1)")
     latest = {}
     for leg in seq.get("legs") or []:
         if isinstance(leg, dict) and isinstance(leg.get("leg"), str) and isinstance(leg.get("attempt"), int):
@@ -520,13 +525,13 @@ def _sequence_pair_and_superseded(seq, session):
             return False
     chosen = [p for p in hits if is_latest(p)]
     if len(chosen) != 1:
-        raise RefusalError(f"wave2/run/sequence.json names {len(chosen)} pair records of the latest attempts for {session} "
+        raise RefusalError(f"{namespace}/run/sequence.json names {len(chosen)} pair records of the latest attempts for {session} "
                            f"(need exactly 1; {len(hits)} record(s) for {session})")
     return chosen[0], [_pair_arms(p) for p in hits if p is not chosen[0]]
 
 
 
-def _supersede_reasons(reader, seq, superseded, chosen, where):
+def _supersede_reasons(reader, seq, superseded, chosen, where, namespace=WAVE):
     """S26-P15b (r1 Sol P1–P4): for each arm's chosen attempt `<leg>.aN`, every earlier attempt `<leg>.a1 … a(N-1)` must exist with a
     self-hash-verified leg.json that is NOT clean (state not VALID, or speed_valid not True), and sequence.json `reruns` must record a
     non-empty reason for EVERY hop k -> k+1. Anchored on the chosen name (already member-validated), never on which pair records
@@ -538,9 +543,9 @@ def _supersede_reasons(reader, seq, superseded, chosen, where):
         leg, n = leg_name(name), attempt_no(name)
         for k in range(1, n):
             old = f"{leg}.a{k}"
-            att = reader.root / WAVE / old
-            if att.is_symlink() or not att.is_dir() or att.resolve().parent != (reader.root / WAVE).resolve():
-                reasons.append(f"rule 3: {name} replaced {old}, which is missing or outside wave2/")
+            att = reader.root / namespace / old
+            if att.is_symlink() or not att.is_dir() or att.resolve().parent != (reader.root / namespace).resolve():
+                reasons.append(f"rule 3: {name} replaced {old}, which is missing or outside {namespace}/")
                 doc = False
             else:
                 try:
@@ -1441,16 +1446,25 @@ KV_DENY_PATTERNS = (
 )
 KV_ATTEMPT_RE = re.compile(r"^tg1-m76-(n16|x|v)-(pilot|s1|s2|s3|reload)\.a(\d+)$")
 KV_ALLOWED_DIFFERENCES = ("argv.worker",)
+# B4b-2 §3.1: the Wave 2 axes of the KV lever — the namespace under `m76/`, the corpus, the attempt names and the arm-worktree
+# prefixes of the foreign-worktree guard. A7 calls pass "wave2" (its outputs unchanged).
+KV_AXES = {
+    "A7": dict(namespace="wave2", corpus="tg1", attempt_re=KV_ATTEMPT_RE, worktrees=("m76-f45", "m76-q")),
+    "A8": dict(namespace="wave2.tg2", corpus="tg2", attempt_re=re.compile(r"^tg2-m76-(n16|x)-(pilot|s1|s2|reload)\.a(\d+)$"),
+               worktrees=("m76-g2",)),
+}
+KV_A7_WORKTREES = KV_AXES["A7"]["worktrees"]
 
 
-def _kv_path_re(arm):
-    """The leg's OWN arm worktree component (`m76-f45-<arm>` from `p475_kv prepare`, or `m76-q-<arm>`) normalises."""
-    return re.compile(rf"(?:m76-f45|m76-q)-{re.escape(arm)}(?=/|$)")
+def _kv_path_re(arm, worktrees=KV_A7_WORKTREES):
+    """The leg's OWN arm worktree component (`m76-f45-<arm>` from `p475_kv prepare`, or `m76-q-<arm>`; A8 `m76-g2-<arm>`)
+    normalises."""
+    return re.compile(rf"(?:{'|'.join(re.escape(w) for w in worktrees)})-{re.escape(arm)}(?=/|$)")
 
 
-def _kv_foreign(tokens, arm):
+def _kv_foreign(tokens, arm, worktrees=KV_A7_WORKTREES):
     others = [a for a in ("n16", "x", "v") if a != arm]
-    return sorted(t for t in tokens if any(_kv_path_re(o).search(t) for o in others))
+    return sorted(t for t in tokens if any(_kv_path_re(o, worktrees).search(t) for o in others))
 
 
 def kv_leg_of(kind, arm, label):
@@ -1745,27 +1759,28 @@ def _kv_strings(obj):
     return [obj] if isinstance(obj, str) else []
 
 
-def _kv_own_paths(obj, arm):
+def _kv_own_paths(obj, arm, worktrees=KV_A7_WORKTREES):
     """v1.1 F1.1: every string leaf with the arm's OWN worktree component normalised (`m76-q-ARM` / `m76-f45-ARM`)."""
     if isinstance(obj, dict):
-        return {k: _kv_own_paths(v, arm) for k, v in obj.items()}
+        return {k: _kv_own_paths(v, arm, worktrees) for k, v in obj.items()}
     if isinstance(obj, list):
-        return [_kv_own_paths(v, arm) for v in obj]
+        return [_kv_own_paths(v, arm, worktrees) for v in obj]
     if isinstance(obj, str):
-        return _kv_path_re(arm).sub(lambda m: m.group(0)[:m.group(0).rfind("-")] + "-ARM", obj)
+        return _kv_path_re(arm, worktrees).sub(lambda m: m.group(0)[:m.group(0).rfind("-")] + "-ARM", obj)
     return obj
 
 
-def kv_provenance_problems(ma, mb, a, b):
+def kv_provenance_problems(ma, mb, a, b, worktrees=KV_A7_WORKTREES):
     """Every difference between the two arms' normalized provenance outside the whitelist (the KV / mode keys, the arm commit).
     v1.1 F1.1: each arm's own worktree component normalised per arm first; a leaf naming another arm's worktree is a problem.
-    Content hashes beside paths stay compared; `result_file` / `result_sha256` are per-arm integrity (`_kv_result_reasons`)."""
+    Content hashes beside paths stay compared; `result_file` / `result_sha256` are per-arm integrity (`_kv_result_reasons`).
+    B4b-2 §3.1: `worktrees` = the axis' arm-worktree prefixes (`KV_AXES`)."""
     pa, pb = kv_provenance(ma), kv_provenance(mb)
     if pa.get("fingerprint_version") is None:
         return [f"{a}: manifest has no fingerprint_version"]
     out = [f"{arm} manifest names another arm's worktree: {foreign[:3]}"
-           for arm, prov in ((a, pa), (b, pb)) for foreign in [_kv_foreign(set(_kv_strings(prov)), arm)] if foreign]
-    pa, pb = _kv_own_paths(pa, a), _kv_own_paths(pb, b)
+           for arm, prov in ((a, pa), (b, pb)) for foreign in [_kv_foreign(set(_kv_strings(prov)), arm, worktrees)] if foreign]
+    pa, pb = _kv_own_paths(pa, a, worktrees), _kv_own_paths(pb, b, worktrees)
     return out + [f"{'.'.join(map(str, p))} differs ({a} {x!r}, {b} {y!r})" for p, x, y in _leaf_diffs(pa, pb)
                   if tuple(p) not in KV_PROVENANCE_WHITELIST]
 
@@ -1801,17 +1816,27 @@ def _kv_result_reasons(reader, kind, a, b):
 # the stamps written after the run) — never provenance; on top of KV_PROVENANCE_EXCLUDED
 KV_A7_INVOCATION_KEYS = ("run_id", "worker", "cleanup_status", "continuation_history", "router_history")
 KV_A7_INVOCATION_RUNTIME_KEYS = ("invocation_nonce",)
+# fix round 4 (T1): the new identity's per-invocation probe session (S27 §3.1) — run directory, process id, start time; any
+# other `probe_session` key stays compared
+KV_INVOCATION_PROBE_SESSION_KEYS = ("run_dir", "sid", "started")
 # the observed worker fingerprint (`bench.arm_identity`) carries the KV delta: compared with only these removed
 KV_A7_ARM_IDENTITY_FLAGS = ("--kv-bits", "--tq4-attention", "--kv-quant-scheme")
 KV_A7_ARM_IDENTITY_ENTRY = ("kv_bits", "tq4_attention")
 
 
-def kv_a7_normalise(manifest):
-    """A tg1 invocation manifest with its per-invocation identity removed and its arm fingerprint reduced to the non-KV part
-    (`arm_identity_sha256` is that fingerprint's hash, so it is dropped and the reduced fingerprint compared instead)."""
+def kv_normalise(manifest):
+    """A Wave 2 (tg1 / tg2) invocation manifest with its per-invocation identity removed and its arm fingerprint reduced to the
+    non-KV part (`arm_identity_sha256` is that fingerprint's hash, so it is dropped and the reduced fingerprint compared
+    instead). Corpus-neutral (B4b-2 §3.4): no key is dropped for one corpus only."""
     m = json.loads(json.dumps(manifest)) if isinstance(manifest, dict) else {}
     for k in KV_A7_INVOCATION_KEYS:
         m.pop(k, None)
+    ps = m.get("probe_session")
+    if isinstance(ps, dict):
+        for k in KV_INVOCATION_PROBE_SESSION_KEYS:
+            ps.pop(k, None)
+        if not ps:
+            m.pop("probe_session")
     rt = m.get("runtime")
     if isinstance(rt, dict):
         for k in KV_A7_INVOCATION_RUNTIME_KEYS:
@@ -1824,6 +1849,9 @@ def kv_a7_normalise(manifest):
             if isinstance(ident.get("entry"), dict):
                 ident["entry"] = {k: v for k, v in ident["entry"].items() if k not in KV_A7_ARM_IDENTITY_ENTRY}
     return m
+
+
+kv_a7_normalise = kv_normalise        # A7's name (kept)
 
 
 def _kv_a7_manifests(reader, att, session, where):
@@ -1844,9 +1872,10 @@ def _kv_a7_manifests(reader, att, session, where):
     return out
 
 
-def kv_a7_provenance_reasons(reader, session, atts, ref, test):
-    """Erratum v1.3: both arms' per-invocation provenance manifests, compared per language with `kv_provenance_problems` (the
-    Wave 1 normalisation and whitelist, after `kv_a7_normalise`); any other difference rejects the session pair."""
+def kv_provenance_reasons(reader, session, atts, ref, test, worktrees=KV_A7_WORKTREES):
+    """Erratum v1.3: both arms' per-invocation provenance manifests, compared per `runtime.lang` with `kv_provenance_problems`
+    (the Wave 1 normalisation and whitelist, after `kv_normalise`); any other difference rejects the session pair. B4b-2 §3.4:
+    corpus-neutral (A7 and A8); `worktrees` = the axis' arm-worktree prefixes."""
     reasons, by_lang = [], {}
     for arm in (ref, test):
         mans = _kv_a7_manifests(reader, atts[arm], session, f"pair {session} {arm}")
@@ -1864,11 +1893,14 @@ def kv_a7_provenance_reasons(reader, session, atts, ref, test):
                 reasons.append(f"rule 2d: {arm} {session} has no provenance manifest for language {lang!r}")
         for na, ma in cell.get(ref, []):
             for nb, mb in cell.get(test, []):
-                for p in kv_provenance_problems(kv_a7_normalise(ma), kv_a7_normalise(mb), ref, test):
+                for p in kv_provenance_problems(kv_normalise(ma), kv_normalise(mb), ref, test, worktrees):
                     if p not in seen:
                         seen.add(p)
                         reasons.append(f"rule 2d: {session} manifest provenance ({lang}: {na} / {nb}): {p}")
     return reasons
+
+
+kv_a7_provenance_reasons = kv_provenance_reasons      # A7's name (kept)
 
 
 def _kv_manifest_reasons(ma, mb, a, b, where=""):
@@ -2105,16 +2137,84 @@ def kv_sessions():
         raise RefusalError(f"A7 plan: {exc}") from None
 
 
-def _kv_check_member(name, where, arms):
-    if not isinstance(name, str) or "/" in name or name.startswith(".") or not KV_ATTEMPT_RE.match(name):
-        raise RefusalError(f"{where}: {name!r} is not a tg1-m76-<arm>-<session>.a<k> attempt name")
+def _kv_check_member(name, where, arms, axis="A7"):
+    rx = KV_AXES[axis]["attempt_re"]
+    if not isinstance(name, str) or "/" in name or name.startswith(".") or not rx.match(name):
+        raise RefusalError(f"{where}: {name!r} is not a {KV_AXES[axis]['corpus']}-m76-<arm>-<session>.a<k> attempt name")
     for pattern, what in KV_DENY_PATTERNS:
         if pattern.search(name):
             raise RefusalError(f"{where}: {name} is deny-listed ({what})")
-    m = KV_ATTEMPT_RE.match(name)
+    m = rx.match(name)
     if m.group(1) not in arms:
         raise RefusalError(f"{where}: {name} is not an attempt of the pair's arms {list(arms)}")
     return m
+
+
+def _run_id_of(tree, rid):
+    """The run id a row's `final_tree.manifest` path names (`…/<stem>.<run_id>/<lang>__<item>.final_tree/manifest.json`), or None."""
+    mpath = tree.get("manifest") if isinstance(tree, dict) else None
+    lang, _, item = (rid or "").partition("/")
+    if not isinstance(mpath, str):
+        return None
+    p = Path(mpath)
+    if p.name == "manifest.json" and p.parent.name == f"{lang}__{item}.final_tree" and "." in p.parent.parent.name:
+        return p.parent.parent.name.rsplit(".", 1)[1] or None
+    return None
+
+
+def discarded_runs(reader, att):
+    """r1 B3: {(item id, run id)} of the attempt's discarded slot attempts (`slot_attempts` disposition `harness_fault`, S27
+    §5.7), each bound by its own record: the attempt names its invocation, that invocation's provenance manifest names the run
+    id, and the chain's `seen_run_ids` holds it. Only that (item, run) may have a published final tree beside the row's."""
+    chain = att.get("chain") or {}
+    progress = chain.get("progress") if isinstance(chain.get("progress"), dict) else {}
+    seen = {r for r in progress.get("seen_run_ids") or [] if isinstance(r, str)}
+    invs = {i.get("file"): i for i in progress.get("invocations") or [] if isinstance(i, dict) and isinstance(i.get("file"), str)}
+    out = set()
+    for a in progress.get("slot_attempts") or []:
+        if not (isinstance(a, dict) and a.get("disposition") == "harness_fault" and a.get("status") != "archived"
+                and isinstance(a.get("slot"), str) and a["slot"].count("|") >= 2):
+            continue
+        mrel = (invs.get(a.get("invocation")) or {}).get("manifest")
+        if not isinstance(mrel, str) or mrel.startswith("/") or ".." in mrel.split("/"):
+            continue
+        man = reader.read_json(att["path"] / mrel, f"{att['name']} {mrel}") if (att["path"] / mrel).is_file() else None
+        run = man.get("run_id") if isinstance(man, dict) else None
+        if isinstance(run, str) and run in seen:
+            out.add(("/".join(a["slot"].split("|")[-2:]), run))
+    return out
+
+
+def final_tree_reasons(arm, att, prefix=KV_REPO_PREFIX, namespace=WAVE):
+    """B4b-2 §3.3 (both axes, fail-closed): every non-DNF row names its final tree (`final_tree.manifest` and
+    `manifest_sha256`), exactly one HARVEST destination-main final-tree manifest exists for that row's run id and item, and its
+    `published_sha256` is the row's; a published manifest of a row's item under another run id is an orphan unless it is that
+    slot's own discarded attempt (`att["discarded_runs"]`, `discarded_runs`). Each failure is a rule-7 REASON (the session is
+    rejected); DNF slots are exempt."""
+    man = harvest_manifests(att, prefix, namespace)
+    discarded = att.get("discarded_runs") or set()
+    reasons = []
+    for rid in sorted(att["rows"]):
+        tree = att["rows"][rid].get("final_tree")
+        where = f"rule 7: {arm} {att['name']} {rid}"
+        if not (isinstance(tree, dict) and isinstance(tree.get("manifest"), str) and isinstance(tree.get("manifest_sha256"), str)):
+            reasons.append(f"{where}: the row has no final_tree.manifest / manifest_sha256")
+            continue
+        run_id = _run_id_of(tree, rid)
+        if run_id is None:
+            reasons.append(f"{where}: final_tree.manifest names no run directory")
+            continue
+        cands = [c for c in man.get(rid, []) if c[0] == run_id]
+        if len(cands) != 1:
+            reasons.append(f"{where}: {len(cands)} HARVEST main final-tree manifests for run {run_id} (need exactly 1)")
+        elif cands[0][1] != tree["manifest_sha256"]:
+            reasons.append(f"{where}: HARVEST final-tree manifest published_sha256 {cands[0][1]} != the row's "
+                           f"{tree['manifest_sha256']}")
+        for other, _sha in man.get(rid, []):
+            if other != run_id and (rid, other) not in discarded:
+                reasons.append(f"{where}: an orphan final-tree manifest of run {other} (not the row's run, not this slot's own "
+                               "discarded attempt)")
+    return reasons
 
 
 def verify_a7_kv(results_root, pair):
@@ -2135,19 +2235,20 @@ def verify_a7_kv(results_root, pair):
         v8_reasons.append(f"rule 2: v8_base.json lever {v8.get('lever')!r} != 'kv'")
     out_pairs = []
     paired = kv_sessions()           # erratum v1.2: the sessions of B7's A7 plan; a missing planned session refuses
+    ns = KV_AXES["A7"]["namespace"]
     for session in paired + SESSIONS_DIAGNOSTIC:
-        sp, superseded = _sequence_pair_and_superseded(seq, session)
+        sp, superseded = _sequence_pair_and_superseded(seq, session, namespace=ns)
         names, atts = {}, {}
         for arm in (ref, test):
             m = _kv_check_member(sp.get(arm), f"pair {session} {arm}", (ref, test))
             if m.group(1) != arm or m.group(2) != session:
                 raise RefusalError(f"pair {session} {arm}: attempt {sp.get(arm)} is not a {arm}-{session} attempt")
             names[arm] = sp[arm]
-            path = reader.root / WAVE / names[arm]
-            if not path.is_dir() or path.resolve().parent != (reader.root / WAVE).resolve():
-                raise RefusalError(f"pair {session} {arm}: attempt {WAVE}/{names[arm]} is missing or outside {WAVE}/")
-            atts[arm] = _kv_load_attempt(reader, names[arm], session, f"pair {session} {arm} {names[arm]}")
-        reasons = list(v8_reasons) + _supersede_reasons(reader, seq, superseded, names, f"pair {session}")
+            path = reader.root / ns / names[arm]
+            if not path.is_dir() or path.resolve().parent != (reader.root / ns).resolve():
+                raise RefusalError(f"pair {session} {arm}: attempt {ns}/{names[arm]} is missing or outside {ns}/")
+            atts[arm] = _kv_load_attempt(reader, names[arm], session, f"pair {session} {arm} {names[arm]}", namespace=ns)
+        reasons = list(v8_reasons) + _supersede_reasons(reader, seq, superseded, names, f"pair {session}", namespace=ns)
         for arm in (ref, test):
             reasons += _leg_reasons(arm, atts[arm]) + _sequence_leg_reasons(seq, arm, names[arm])
             reasons += _commit_reasons(v8, arm, atts[arm])
@@ -2155,12 +2256,14 @@ def verify_a7_kv(results_root, pair):
         dossier_rel = sp.get("dossier") or f"pairs/{session}__{ref}-a1__{test}-a1.json"
         if not isinstance(dossier_rel, str) or not dossier_rel.startswith("pairs/") or ".." in dossier_rel.split("/"):
             raise RefusalError(f"pair {session}: sequence dossier path {dossier_rel!r} is not under wave2/pairs/")
-        reasons += _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts)
-        reasons += kv_a7_provenance_reasons(reader, session, atts, ref, test)
+        reasons += _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts, namespace=ns)
+        reasons += kv_provenance_reasons(reader, session, atts, ref, test, KV_AXES["A7"]["worktrees"])
         plans ={arm: schedule_plan_sha(atts[arm]["schedule"]) for arm in (ref, test)}
         if plans[ref] != plans[test]:
             reasons.append(f"rule 3: schedules differ ({ref} plan {plans[ref]}, {test} plan {plans[test]})")
-        keys, keys_rejected = pair_keys(session, atts[ref], atts[test], prefix=KV_REPO_PREFIX)
+        for arm in (ref, test):                     # B4b-2 §3.3: the per-row final-tree identity, fail-closed
+            reasons += final_tree_reasons(arm, atts[arm], KV_REPO_PREFIX, ns)
+        keys, keys_rejected = pair_keys(session, atts[ref], atts[test], prefix=KV_REPO_PREFIX, namespace=ns)
         keys = [dict(key=k["key"], identical=k["identical"], manifest_sha256={ref: k["off_manifest_sha256"],
                                                                               test: k["on_manifest_sha256"]}) for k in keys]
         keys_rejected = [dict(k, reason=k["reason"].replace("absent in off", f"absent in {ref}")
@@ -2181,8 +2284,8 @@ def verify_a7_kv(results_root, pair):
                              gitlinks=v8.get("gitlinks")), allowed_differences=list(KV_ALLOWED_DIFFERENCES))
 
 
-def _kv_load_attempt(reader, name, session, where):
-    path = reader.root / WAVE / name
+def _kv_load_attempt(reader, name, session, where, namespace=WAVE):
+    path = reader.root / namespace / name
     leg = reader.read_json(path / "leg.json", f"{where} leg.json")
     chain = reader.read_json(path / "chain.json", f"{where} chain.json")
     harvest = reader.read_json(path / "HARVEST.json", f"{where} HARVEST.json")
@@ -2194,8 +2297,10 @@ def _kv_load_attempt(reader, name, session, where):
     dnf = load_dnf(chain, rows, session, where)
     count, ids = check_planned(rows, dnf, schedule, where)
     items = load_items(reader, path / "items", session, rows, dnf, where)
-    return dict(name=name, path=path, leg=leg, chain=chain, harvest=harvest, schedule=schedule, rows=rows, dnf=dnf, items=items,
-                planned=count, planned_ids=ids, schedule_sha256=reader.inputs[reader.rel(path / "schedule.json")])
+    att = dict(name=name, path=path, leg=leg, chain=chain, harvest=harvest, schedule=schedule, rows=rows, dnf=dnf, items=items,
+               planned=count, planned_ids=ids, schedule_sha256=reader.inputs[reader.rel(path / "schedule.json")])
+    att["discarded_runs"] = discarded_runs(reader, att)
+    return att
 
 
 def _harvest_reasons_kv(reader, arm, att):
@@ -2219,14 +2324,14 @@ def _harvest_reasons_kv(reader, arm, att):
     return reasons
 
 
-def _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts):
-    path = reader.root / WAVE / dossier_rel
+def _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts, namespace=WAVE):
+    path = reader.root / namespace / dossier_rel
     data = reader.try_read_bytes(path)
     if data is None:
-        return [f"rule 5: dossier {WAVE}/{dossier_rel} is missing"]
-    doc = _parse_json(data, f"dossier {WAVE}/{dossier_rel}")
+        return [f"rule 5: dossier {namespace}/{dossier_rel} is missing"]
+    doc = _parse_json(data, f"dossier {namespace}/{dossier_rel}")
     if not isinstance(doc, dict):
-        return [f"rule 5: dossier {WAVE}/{dossier_rel} is not an object"]
+        return [f"rule 5: dossier {namespace}/{dossier_rel} is not an object"]
     reasons = []
     if not self_hash_ok(doc):
         reasons.append(f"rule 5: dossier self-hash {doc.get('sha256')!r} != {_canon_sha(doc)}")
@@ -2270,7 +2375,7 @@ def verify_all_kv(rows_root, repo, pair, kinds=None, build="s3"):
             raise RefusalError(str(exc)) from None
     axes = dict(wave1=w1)
     union = dict(w1["inputs"])
-    if (Path(rows_root) / KV_ROOT / WAVE / "run").is_dir():
+    if (Path(rows_root) / KV_ROOT / KV_AXES["A7"]["namespace"] / "run").is_dir():   # B4b-2 §3.5: never A8 (`B8-A8.json`)
         a7 = verify_a7_kv(Path(rows_root) / KV_ROOT, pair)
         axes["A7"] = a7
         for k, v in a7["inputs"].items():
@@ -2280,6 +2385,730 @@ def verify_all_kv(rows_root, repo, pair, kinds=None, build="s3"):
             union[key] = v
     return dict(generator="bench.p426_verify", version="m76-b3", lever="kv", pair=list(pair), label=w1["label"], axes=axes,
                 inputs=dict(sorted(union.items())))
+
+
+# ===================================================================================================== M76 B4b-2: A8 (tg2)
+# `docs/specs/m76-b4b2-a8-consumers.md` v1.5 (§3 as amended by §9): a separate record `B8-A8.json` beside `B8.json` (which never
+# includes A8). Per session the A7 rules on the `wave2.tg2` namespace, the per-row final-tree identity, the plan binding to the
+# pinned tg2 draw, the S27 slot records (harness DNFs, reruns, accounting faults), PAUSED legs; the runner's re-checks are labels.
+A8_AXIS = "A8"
+A8_NS = KV_AXES["A8"]["namespace"]
+A8_DIAGNOSTIC = ("pilot", "reload")
+A8_VERSION = "m76-b4b2"
+A8_RECHECK_GATES = {"s1": ("s1",), "s2": ("s1", "s2")}        # `p426_wave2.RECHECK_GATES` (the runner's; never edited)
+A8_LATENCY_FIELDS = ("t", "fresh_ms", "repeat_ms", "true_ms", "threatlocker_cpu")
+A8_RECHECK_LABEL = "the runner's interim re-check (descriptive, never a verdict)"
+TG2_DRAW_REL = "benchmark/m65/tg2_draw.json"
+TG2_DRAW_PATH = Path(__file__).resolve().parents[1] / "m65" / "tg2_draw.json"
+
+
+def kv_a8_sessions():
+    """A8's confirmatory sessions from B7's plan (`m76_rule.axis_plan("A8")`: one look, `sessions` paired sessions) —
+    `("s1", "s2")` today; any other count refuses (the tg2 runner has no third session)."""
+    from bench import m76_rule
+
+    try:
+        plan = m76_rule.axis_plan("A8")
+    except ValueError as exc:
+        raise RefusalError(f"A8 plan: {exc}") from None
+    n = plan.get("sessions")
+    if n != 2 or len(plan.get("looks") or ()) != 1:
+        raise RefusalError(f"A8 plan: {n!r} sessions / {len(plan.get('looks') or ())} look(s); the tg2 runner has s1, s2 and one look")
+    return ("s1", "s2")
+
+
+def a8_applies(results_root):
+    """§3.2: B8-A8 is built only when `m76/wave2.tg2/run` exists and its v8 record is a tg2 KV record (lever kv, corpus tg2).
+    r1 B15: the arms are not an applicability test — `v8.arms != ["n16", "x"]` is a REASON on the record (§3.6). An absent v8
+    record → False; an unreadable one refuses."""
+    path = Path(results_root) / A8_NS / "run" / "v8_base.json"
+    if not (Path(results_root) / A8_NS / "run").is_dir() or not path.is_file():
+        return False
+    try:
+        v8 = json.loads(path.read_bytes().decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise RefusalError(f"{A8_NS}/run/v8_base.json is unreadable") from None
+    return isinstance(v8, dict) and v8.get("lever") == "kv" and v8.get("corpus") == "tg2"
+
+
+def _slot_iid(slot):
+    parts = str(slot).split("|")
+    return f"{parts[-2]}/{parts[-1]}" if len(parts) >= 3 else None
+
+
+def _slot_session(slot):
+    parts = str(slot).split("|")
+    return parts[-3] if len(parts) >= 3 else None
+
+
+def _a8_inventory(reader, path, chain, session, where):
+    """r1 B2: the attempt's slots from the ONE inventory authority, `chain_rows.load_slots` (`validate_progress`: dispositions,
+    rerun indices ≤ 1, a reason on every `harness_fault`; the rows of each counted invocation re-hashed against its record;
+    `_harness_dnf_rows`: one record per slot, kind and reason; an accepted slot whose earlier attempt is not a harness fault or
+    a slot with both a row and a DNF refuses). On top: an unregistered rows file holding rows refuses (an empty one carries no
+    slot); every slot is this session's; each harness DNF's sealed sidecar `items/<slot>.harness_dnf.json` equals chain.json's
+    record exactly; a transport DNF (`chain.p426_dnf`) beside a row or a harness DNF refuses.
+    Returns (rows {id: row}, files {id: rows file}, transport DNF {id: record}, harness DNF {id: record}, slots
+    {id: {slot, index, accounting_fault, reruns}}, reasons)."""
+    from bench import p426_hooks as ph
+
+    try:
+        table = cr.load_slots(chain, path, check_unregistered=False)
+    except cr.ChainRowsError as exc:
+        raise RefusalError(f"{where}: chain.json slot inventory: {exc}") from None
+    registered = {cr._rel(path, i["file"]) for i in chain["progress"]["invocations"]}
+    for f in sorted(path.glob("*/*.jsonl")):
+        rel = f.relative_to(path).as_posix()
+        if cr.FILE_RE.search(f.name) and rel not in registered and f.read_bytes().strip():
+            raise RefusalError(f"{where}: unregistered rows file {rel} holds rows no progress record names")
+    rows, files, hdnf, tdnf, slots, reasons = {}, {}, {}, {}, {}, []
+    for slot, s in sorted(table.scored.items()):
+        if _slot_session(slot) != session:
+            raise RefusalError(f"{where}: chain.json scores slot {slot} of another session (not {session})")
+        iid = _slot_iid(slot)
+        faults = sorted((a for a in table.attempts.get(slot, []) if a.disposition == "harness_fault"),
+                        key=lambda a: a.rerun_index)
+        rec = dict(slot=slot, index=s.rerun_index, accounting_fault=s.accounting_fault,
+                   reruns=[dict(index=a.rerun_index, reason=a.reason) for a in faults])
+        if s.source == "row":
+            row = s.row
+            if row.get("id") != iid:
+                raise RefusalError(f"{where}: slot {slot} holds the row of {row.get('id')!r}")
+            seed = row.get("sampler_seed")
+            if not isinstance(seed, int) or isinstance(seed, bool):
+                raise RefusalError(f"{where}: {s.file}: row {iid} has no integer sampler_seed")
+            reader.read_bytes(path / s.file, f"{where} rows")          # the input sha (load_slots re-hashed it already)
+            if [a.rerun_index for a in faults] != list(range(s.rerun_index)):
+                reasons.append(f"rule 9.3: {iid}: accepted at rerun index {s.rerun_index} with harness-fault attempts "
+                               f"{[a.rerun_index for a in faults]} (each earlier attempt one harness_fault)")
+            rows[iid], files[iid] = row, cr._rel(path, s.file)
+        elif s.source == "harness_dnf":
+            data = reader.try_read_bytes(path / "items" / f"{cr.slot_file(slot)}.harness_dnf.json")
+            try:
+                doc = json.loads(data.decode("utf-8")) if data is not None else None
+            except (UnicodeDecodeError, ValueError):
+                doc = None
+            if not (ph.sealed_ok(doc) and doc == s.row):
+                raise RefusalError(f"{where}: {iid}: the harness DNF sidecar is missing, unsealed or not chain.json's record")
+            hdnf[iid] = dict(s.row, harness_dnf=True)
+        else:
+            tdnf[iid] = s.row
+        slots[iid] = rec
+    for iid, drec in load_dnf(dict(p426_dnf=chain.get("p426_dnf")), {}, session, where).items():
+        if iid in rows or iid in hdnf:
+            raise RefusalError(f"{where}: {iid} has a transport DNF record beside its {'row' if iid in rows else 'harness DNF'}")
+        tdnf[iid] = drec
+        faults = [a for a in table.attempts.get(drec.get("slot"), []) if a.disposition == "harness_fault"]
+        slots.setdefault(iid, dict(slot=drec.get("slot"), index=0, accounting_fault=False,
+                                   reruns=[dict(index=a.rerun_index, reason=a.reason) for a in faults]))
+    return rows, files, tdnf, hdnf, slots, reasons
+
+
+_ITEM_SUFFIXES_SKIPPED = (".ready.json", ".harness_dnf.json", ".accounting.json")
+
+
+def _a8_load_items(reader, idir, session, rows, dnf, slots, where):
+    """{id: item record} of the accepted attempt (records keyed by rerun index: `<slot>.json`, `<slot>.r<i>.json`, S27 §5.7);
+    a record of a discarded (harness-fault) attempt is read and ignored; a missing record of a row refuses unless the row is an
+    accounting fault whose sidecar stands for it (S27 Z3: checked by `_a8_accounting`, which runs first and records the slot's
+    `accounting_fault` as the chain's accounting record says)."""
+    found = {}
+    files = sorted(idir.glob("*.json")) if idir.is_dir() else []
+    for f in files:
+        if f.name.endswith(_ITEM_SUFFIXES_SKIPPED) or _is_dnf_file(f):
+            continue
+        rel = reader.rel(f)
+        rec = reader.read_json(f, f"{where} item record")
+        slot = rec.get("slot") if isinstance(rec, dict) else None
+        if not isinstance(slot, str) or slot.count("|") < 2:
+            raise RefusalError(f"{where}: item record {rel} has no slot")
+        base = cr.slot_file(slot)
+        m = re.fullmatch(re.escape(base) + r"(?:\.r(\d+))?\.json", f.name)
+        if m is None:
+            raise RefusalError(f"{where}: item record {rel} is mis-slotted: file name does not match slot {slot!r}")
+        if _slot_session(slot) != session:
+            raise RefusalError(f"{where}: item record {rel} is mis-slotted: slot session {_slot_session(slot)!r} != {session!r}")
+        iid, k = _slot_iid(slot), int(m.group(1) or 0)
+        if iid not in rows and iid not in dnf:
+            raise RefusalError(f"{where}: item record {rel} is mis-slotted: ({session}, {iid}) is not a planned slot")
+        if (iid, k) in found:
+            raise RefusalError(f"{where}: duplicate item record for ({session}, {iid}, rerun {k})")
+        found[(iid, k)] = rec
+    items = {}
+    for (iid, k), rec in found.items():
+        want = (slots.get(iid) or {}).get("index", 0)
+        if k == want:
+            items[iid] = rec
+        elif k not in [r.get("index") for r in (slots.get(iid) or {}).get("reruns") or []]:
+            raise RefusalError(f"{where}: item record of {iid} at rerun index {k} names no attempt of the slot")
+    missing = sorted(i for i in rows if i not in items and not (slots.get(i) or {}).get("accounting_fault"))
+    if missing:
+        raise RefusalError(f"{where}: no item record for row(s) {missing}")
+    return items
+
+
+def _a8_rerun_index(x, what):
+    """r2 D4: a recorded rerun index is a non-negative int (`type(x) is int`); anything else refuses."""
+    if type(x) is not int or x < 0:
+        raise RefusalError(f"{what}: rerun_index {x!r} is not a non-negative integer")
+    return x
+
+
+_LEDGER_KIND = dict(row="row", harness_dnf="dnf", transport_dnf="dnf")
+
+
+def _a8_ledger(chain, rows, dnf, slots, where):
+    """r3 E1: {slot: ledger entry}. Every `p426_ledger` entry is an object with a string slot, a kind `row` | `dnf` and, when
+    present, a valid rerun index; counted over ALL entries before any filtering, each scored slot of the attempt has exactly
+    one entry (the runner writes one per slot: `check_p426_ledger`), its kind the slot's scored source (a row: `row`, a
+    transport / harness DNF: `dnf`) and its rerun index (absent: 0) the scored attempt's (a DNF entry carries none: when
+    present it must match)."""
+    entries = chain.get("p426_ledger")
+    if entries is None:
+        entries = []
+    if not isinstance(entries, list):
+        raise RefusalError(f"{where}: chain.json p426_ledger is not a list")
+    by_slot = {}
+    for i, e in enumerate(entries):
+        if not isinstance(e, dict) or not isinstance(e.get("slot"), str):
+            raise RefusalError(f"{where}: p426_ledger entry {i} is not a {{slot, kind}} object")
+        if e.get("kind") not in ("row", "dnf"):
+            raise RefusalError(f"{where}: p426_ledger entry {i} ({e['slot']}) has kind {e.get('kind')!r} (row | dnf)")
+        if "rerun_index" in e:
+            _a8_rerun_index(e["rerun_index"], f"{where}: p426_ledger entry of {e['slot']}")
+        by_slot.setdefault(e["slot"], []).append(e)
+    out = {}
+    for iid, s in sorted(slots.items()):
+        source = "row" if iid in rows else ("harness_dnf" if (dnf.get(iid) or {}).get("harness_dnf") else "transport_dnf")
+        slot, k = s["slot"], s["index"]
+        got = by_slot.get(slot, [])
+        if len(got) != 1:
+            raise RefusalError(f"{where}: {iid}: {len(got)} p426_ledger entries for the slot (exactly one, rerun {k})")
+        e = got[0]
+        if e["kind"] != _LEDGER_KIND[source]:
+            raise RefusalError(f"{where}: {iid}: the p426_ledger entry has kind {e['kind']!r}, the slot is scored by a "
+                               f"{source.replace('_', ' ')} ({_LEDGER_KIND[source]!r})")
+        if (e["kind"] == "row" or "rerun_index" in e) and e.get("rerun_index", 0) != k:
+            raise RefusalError(f"{where}: {iid}: the p426_ledger entry names rerun {e.get('rerun_index', 0)}, the scored "
+                               f"attempt is rerun {k} (exactly one entry per slot and rerun index)")
+        out[slot] = e
+    return out
+
+
+def _a8_accounting(reader, path, chain, rows, dnf, slots, where):
+    """§9.4 (r1 B5, r3 E2): {id: {rerun_index, failed_checks}} of the accounting-fault rows. When the chain carries the
+    `p426_accounting_faults` list (the runner always does), the chain's accounting record is the recorded fact: a row is an
+    accounting fault iff its list entry AND its sealed sidecar `items/<slot>[.r<i>].accounting.json` exist; a list entry
+    without its sidecar or a sidecar without its list entry refuses; the markers (the slot attempt's, the ledger entry's, the
+    row's `accounting_fault`), where present, must be True for an accounting fault and a True marker without the record
+    refuses (the runner's abort route records the fault on a slot already ledgered without marking the attempt or the ledger
+    entry: `chain_core.p426_abort_route`). A chain without the list: the slot state, the ledger entry and the sidecar (plus the
+    row's marker where present) must agree exactly. The sidecar passes the shared validator (`p426_hooks.accounting_problems`);
+    a sidecar that does not stand, or a record of no accounting-fault row (an orphan), refuses."""
+    from bench import p426_hooks as ph
+
+    ledger = _a8_ledger(chain, rows, dnf, slots, where)
+    raw_attempts = {}
+    for a in (chain.get("progress") or {}).get("slot_attempts") or []:
+        if isinstance(a, dict) and a.get("status") != "archived":
+            raw_attempts[(a.get("slot"), a.get("rerun_index"))] = a
+    listed = None
+    if "p426_accounting_faults" in chain:              # r2 D1: every entry an object, unique, naming its expected sidecar
+        entries = chain.get("p426_accounting_faults")
+        if not isinstance(entries, list):
+            raise RefusalError(f"{where}: chain.json p426_accounting_faults is not a list")
+        listed = set()
+        for i, a in enumerate(entries):
+            if not isinstance(a, dict) or not isinstance(a.get("slot"), str) or "rerun_index" not in a:
+                raise RefusalError(f"{where}: p426_accounting_faults entry {i} is not a {{slot, rerun_index, sidecar}} object")
+            k = _a8_rerun_index(a["rerun_index"], f"{where}: p426_accounting_faults entry {i}")
+            want = f"items/{ph.record_name(a['slot'], k, 'accounting.json')}"
+            if a.get("sidecar") != want:
+                raise RefusalError(f"{where}: p426_accounting_faults entry {i} names sidecar {a.get('sidecar')!r}, not {want!r}")
+            if (a["slot"], k) in listed:
+                raise RefusalError(f"{where}: p426_accounting_faults lists {a['slot']} (rerun {k}) more than once")
+            listed.add((a["slot"], k))
+    out, expected = {}, set()
+    for iid, s in sorted(slots.items()):
+        if iid not in rows:
+            continue
+        slot, k = s["slot"], s["index"]
+        side = path / "items" / ph.record_name(slot, k, "accounting.json")
+        has_side = os.path.lexists(side)
+        if listed is not None:                          # r3 E2: the chain's accounting record (list entry + sidecar) decides
+            in_list = (slot, k) in listed
+            if in_list != has_side:
+                raise RefusalError(f"{where}: {iid}: the accounting record is incomplete (p426_accounting_faults entry: "
+                                   f"{in_list}, sidecar: {has_side}; both or neither)")
+            fault = in_list
+            marks = {}
+            att = raw_attempts.get((slot, k)) or {}
+            for name, rec in (("slot_attempt", att), ("ledger", ledger[slot]), ("row", rows[iid])):
+                if "accounting_fault" in rec:
+                    marks[name] = rec["accounting_fault"] is True
+            if any(v != fault for v in marks.values()):
+                raise RefusalError(f"{where}: {iid}: an accounting_fault marker disagrees with the chain's accounting record "
+                                   f"(record: {fault}; markers {json.dumps(marks, sort_keys=True)})")
+        else:
+            marks = dict(slot_state=s["accounting_fault"] is True, ledger=ledger[slot].get("accounting_fault") is True,
+                         sidecar=has_side)
+            if "accounting_fault" in rows[iid]:
+                marks["row"] = rows[iid]["accounting_fault"] is True
+            if len(set(marks.values())) != 1:
+                raise RefusalError(f"{where}: {iid}: the accounting-fault records disagree ({json.dumps(marks, sort_keys=True)})")
+            fault = marks["slot_state"]
+        s["accounting_fault"] = fault                   # the recorded fact, for every later consumer of the slot table
+        if not fault:
+            continue
+        expected.add(side.name)
+        data = reader.try_read_bytes(side) if not side.is_symlink() else None
+        try:
+            doc = json.loads(data.decode("utf-8")) if data is not None else None
+        except (UnicodeDecodeError, ValueError):
+            doc = None
+        ipath = path / "items" / ph.record_name(slot, k, "json")
+        item = ph.read_item_record(ipath)
+        problems = ph.accounting_problems(doc, slot, k, row=rows.get(iid), item_record=item)
+        if problems:
+            raise RefusalError(f"{where}: {iid}: the accounting-fault sidecar does not stand: " + "; ".join(problems))
+        out[iid] = dict(rerun_index=k, failed_checks=list(doc.get("failed_checks") or []))
+    orphans = sorted(p.name for p in (path / "items").glob("*.accounting.json") if p.name not in expected)
+    orphans += sorted(f"p426_accounting_faults {s} (rerun {k})" for s, k in listed or ()
+                      if not isinstance(s, str) or ph.record_name(s, k, "accounting.json") not in expected)
+    if orphans:
+        raise RefusalError(f"{where}: accounting record(s) of no accounting-fault row: {orphans}")
+    return out
+
+
+def _a8_tampered(rows):
+    """§9.1: {id: tamper receipt} of the rows whose final grade (`grade_reports[-1]`, final) is `tampered` — an outcome like any
+    other, listed with its receipt (the final report's phase and its artifact names / sha256s)."""
+    out = {}
+    for rid, row in sorted(rows.items()):
+        reports = row.get("grade_reports")
+        last = reports[-1] if isinstance(reports, list) and reports and isinstance(reports[-1], dict) else None
+        if last and last.get("final") is True and last.get("outcome") == "tampered":
+            arts = last.get("artifacts") if isinstance(last.get("artifacts"), dict) else {}
+            out[rid] = dict({k: last.get(k) for k in ("seq", "boundary", "final", "outcome")},
+                            artifacts={n: (a or {}).get("sha256") for n, a in sorted(arts.items()) if isinstance(a, dict)})
+    return out
+
+
+def _a8_load_attempt(reader, name, session, where):
+    """One harvested A8 attempt: its records, rows (+ source files), DNF slots (transport `p426_dnf` + S27 harness DNFs),
+    accepted-attempt item records, slot table, accounting faults and the slot REASONS (`slot_reasons`). A missing
+    leg / chain / HARVEST / schedule record refuses (contradictory)."""
+    path = reader.root / A8_NS / name
+    docs = {}
+    for what in ("leg", "chain", "HARVEST", "schedule"):
+        docs[what] = reader.read_json(path / f"{what}.json", f"{where} {what}.json")
+        if not isinstance(docs[what], dict):
+            raise RefusalError(f"{where}: {what}.json is not an object")
+    chain = docs["chain"]
+    if not (path / session).is_dir():
+        raise RefusalError(f"{where}: session directory {reader._safe_rel(path / session)} is missing")
+    rows, files, dnf, hdnf, slots, slot_reasons = _a8_inventory(reader, path, chain, session, where)
+    all_dnf = dict(dnf, **hdnf)
+    count, ids = check_planned(rows, all_dnf, docs["schedule"], where)
+    accounting = _a8_accounting(reader, path, chain, rows, all_dnf, slots, where)     # r3 E2: sets each slot's recorded fact
+    items = _a8_load_items(reader, path / "items", session, rows, all_dnf, slots, where)
+    att = dict(name=name, path=path, leg=docs["leg"], chain=chain, harvest=docs["HARVEST"], schedule=docs["schedule"], rows=rows,
+               row_files=files, dnf=all_dnf, transport_dnf=sorted(dnf), harness_dnf=sorted(hdnf), items=items, planned=count,
+               planned_ids=ids, slots=slots, slot_reasons=slot_reasons, accounting=accounting,
+               reruns=sorted(i for i, s in slots.items() if s.get("reruns")),
+               schedule_sha256=reader.inputs[reader.rel(path / "schedule.json")])
+    att["discarded_runs"] = discarded_runs(reader, att)
+    return att
+
+
+def _a8_plan_reasons(arm, att, session, v8, draw):
+    """§3.6 (C368 S1): the attempt's schedule is the pinned draw's leg (`schedules.check_tg2_p426`; its `TransportAbort` is a
+    REASON), `chain.tg2_leg` is the session, `chain.frozen_record.sha256` is v8's."""
+    from bench import schedules
+    from bench.token_turn_gate import TransportAbort
+
+    reasons, name = [], att["name"]
+    try:
+        schedules.check_tg2_p426(att["schedule"], draw, session)
+    except TransportAbort as exc:
+        reasons.append(f"rule 3.6: {arm} {name} schedule.json is not the pinned tg2 draw's {session} leg: {exc}")
+    except (KeyError, TypeError, ValueError) as exc:
+        reasons.append(f"rule 3.6: {arm} {name} schedule.json cannot be checked against the pinned draw ({type(exc).__name__})")
+    if att["chain"].get("tg2_leg") != session:
+        reasons.append(f"rule 3.6: {arm} {name} chain.json tg2_leg {att['chain'].get('tg2_leg')!r} != {session!r}")
+    fr = att["chain"].get("frozen_record")
+    got = fr.get("sha256") if isinstance(fr, dict) else None
+    if got is None or got != v8.get("sha256"):
+        reasons.append(f"rule 3.6: {arm} {name} chain.json frozen_record.sha256 {got!r} != v8_base sha256 {v8.get('sha256')!r}")
+    return reasons
+
+
+# r1 B4: the v8 identity each invocation manifest must carry — (v8 key, the manifest's value at that path)
+A8_V8_IDENTITY = (
+    ("probe_code_sha256", ("runtime", "probe_code_sha256")),
+    ("scaffold_policy_sha256", ("runtime", "scaffold_policy_sha256")),
+    ("generation_identity_sha256", ("runtime", "generation_identity_sha256")),
+    ("tg2_draw_sha256", ("runtime", "policy", "corpus_identity", "draw_sha256")),
+    ("tg2_universe_sha256", ("runtime", "policy", "corpus_identity", "universe_sha256")),
+    ("tg2_image_id", ("runtime", "policy", "corpus_identity", "image")),
+    ("grader_image_id", ("runtime", "policy", "toolchain", "grader_image_id")),
+)
+
+
+def _get(doc, path):
+    for k in path:
+        doc = doc.get(k) if isinstance(doc, dict) else None
+    return doc
+
+
+def a8_v8_pin_reasons(v8, draw_sha256):
+    """r1 B4: the v8 record's tg2 pins are the committed ones — its draw sha is `schedules.TG2_DRAW_SHA256` and the sha of the
+    draw file B8-A8 read, its universe sha `schedules.TG2_UNIVERSE_SHA256`."""
+    from bench import schedules
+
+    reasons = []
+    if not (v8.get("tg2_draw_sha256") == schedules.TG2_DRAW_SHA256 == draw_sha256):
+        reasons.append(f"rule 3.6: v8_base.json tg2_draw_sha256 {str(v8.get('tg2_draw_sha256'))[:16]} is not the pinned draw "
+                       f"(TG2_DRAW_SHA256 {schedules.TG2_DRAW_SHA256[:16]}, file {str(draw_sha256)[:16]})")
+    if v8.get("tg2_universe_sha256") != schedules.TG2_UNIVERSE_SHA256:
+        reasons.append(f"rule 3.6: v8_base.json tg2_universe_sha256 {str(v8.get('tg2_universe_sha256'))[:16]} != "
+                       f"TG2_UNIVERSE_SHA256 {schedules.TG2_UNIVERSE_SHA256[:16]}")
+    return reasons
+
+
+def a8_v8_identity_reasons(reader, arm, att, session, v8):
+    """r1 B4 (one v8-binding validator per attempt): every invocation manifest of the attempt carries v8's identity
+    (`A8_V8_IDENTITY`: probe code, scaffold policy, generation identity, draw / universe / grader-image pins) and names the
+    registry pick `ENTRY` (r2 D3), as does every row and the schedule's first pick; a missing value on either side is a
+    mismatch. Each mismatch is a REASON."""
+    name, want_model = att["name"], ENTRY                # r2 D3: the registry pick, not the attempt's own schedule
+    reasons = []
+    picks = att["schedule"].get("picks")
+    if not (isinstance(picks, list) and picks and picks[0] == ENTRY):
+        reasons.append(f"rule 3.6: {arm} {name} schedule.json picks {picks!r} do not name the registry pick {ENTRY!r} first")
+    for fname, man in sorted(_kv_a7_manifests(reader, att, session, f"A8 {session} {arm}").items()):
+        if not isinstance(man, dict):
+            continue                                    # a missing manifest is provenance's reason (rule 2d)
+        for key, path in A8_V8_IDENTITY:
+            got, want = _get(man, path), v8.get(key)
+            if want is None or got != want:
+                reasons.append(f"rule 3.6: {arm} {name} {fname}: {'.'.join(path)} {str(got)[:24]!r} != v8_base {key} "
+                               f"{str(want)[:24]!r}")
+        if man.get("model") != want_model:
+            reasons.append(f"rule 3.6: {arm} {name} {fname}: model {man.get('model')!r} != the registry pick {want_model!r}")
+    bad = sorted(rid for rid, row in att["rows"].items() if row.get("model") != want_model)
+    if bad:
+        reasons.append(f"rule 3.6: {arm} {name}: {len(bad)} row(s) name another model than the registry pick {want_model!r}: "
+                       f"{bad[:5]}")
+    return reasons
+
+
+def a8_seed_reasons(arm, att, session):
+    """r1 B10: every row's `sampler_seed` is the plan's — `rowschema.sample_seed(id, 0, TG2_P426_LEGS[session] seed)` — one
+    REASON per attempt listing the rows that differ."""
+    from bench import schedules
+    from bench.rowschema import sample_seed
+
+    base = schedules.TG2_P426_LEGS[session][1]
+    bad = sorted(rid for rid, row in att["rows"].items() if row.get("sampler_seed") != sample_seed(rid, 0, base))
+    if not bad:
+        return []
+    return [f"rule 3.6: {arm} {att['name']}: {len(bad)} row(s) whose sampler_seed is not the plan's "
+            f"(rowschema.sample_seed(id, 0, {base})): {bad[:5]}"]
+
+
+def _a8_reload_reasons(atts_reload, draw):
+    """§3.6 (C368 S2): the reload's key set = the first 5 items per language of s1 (the pinned draw's s1 leg)."""
+    from bench import schedules
+
+    try:
+        want = sorted(i for lang in schedules.TG2_LANGS for i in
+                      draw["languages"][lang]["permutation"][:schedules.TG2_P426_LEGS["s1"][3]][:schedules.TG2_RELOAD_ITEMS])
+    except (KeyError, TypeError):
+        return ["rule 3.6: the pinned draw has no per-language permutation"]
+    reasons = []
+    for arm, att in atts_reload.items():
+        got = sorted(att["planned_ids"])
+        if got != want:
+            reasons.append(f"rule 3.6: {arm} {att['name']} reload keys are not the first {schedules.TG2_RELOAD_ITEMS} items per "
+                           f"language of s1 ({len(got)} keys, {len(set(got) - set(want))} outside)")
+    return reasons
+
+
+def _a8_leg_state(seq, arm, session):
+    """The latest sequence.json state of `tg2-m76-<arm>-<session>` (None when the sequencer has not started it)."""
+    leg = f"tg2-m76-{arm}-{session}"
+    entries = [e for e in seq.get("legs") or [] if isinstance(e, dict) and e.get("leg") == leg and isinstance(e.get("attempt"), int)]
+    return max(entries, key=lambda e: e["attempt"]).get("state") if entries else None
+
+
+def _a8_incomplete(session, reasons, ref, test):
+    return dict(pair=session, arms=[ref, test], status="incomplete", accepted=False, reasons=list(reasons), keys_accepted=0,
+                keys_rejected=[], keys=[], identical=0, role="diagnostic" if session in A8_DIAGNOSTIC else "pair")
+
+
+def _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test):
+    """One A8 session record: `incomplete` (no pair record, a leg not harvested, a PAUSED leg) or the A7 rules + §3.3 / §3.6 /
+    §9 on its two attempts (`accepted` / `rejected` with every reason). Returns (record, {arm: attempt} | None)."""
+    for arm in (ref, test):
+        if _a8_leg_state(seq, arm, session) == "PAUSED":
+            return _a8_incomplete(session, [f"tg2-m76-{arm}-{session} is PAUSED (held for the designer; never a result)"],
+                                  ref, test), None
+    pairs = seq.get("pairs") if isinstance(seq.get("pairs"), list) else None
+    if pairs is None:
+        raise RefusalError(f"{A8_NS}/run/sequence.json has no pairs list")
+    if not any(isinstance(p, dict) and p.get("pair") == session for p in pairs):
+        return _a8_incomplete(session, [f"no pair record for {session} in {A8_NS}/run/sequence.json (the decider has not "
+                                        "reached it, or stopped)"], ref, test), None
+    sp, superseded = _sequence_pair_and_superseded(seq, session, namespace=A8_NS)
+    names, atts = {}, {}
+    for arm in (ref, test):
+        m = _kv_check_member(sp.get(arm), f"A8 pair {session} {arm}", (ref, test), axis=A8_AXIS)
+        if m.group(1) != arm or m.group(2) != session:
+            raise RefusalError(f"A8 pair {session} {arm}: attempt {sp.get(arm)} is not a {arm}-{session} attempt")
+        names[arm] = sp[arm]
+    for arm in (ref, test):
+        path = reader.root / A8_NS / names[arm]
+        if path.is_symlink() or (path.exists() and path.resolve().parent != (reader.root / A8_NS).resolve()):
+            raise RefusalError(f"A8 pair {session} {arm}: attempt {A8_NS}/{names[arm]} resolves outside {A8_NS}/")
+        if not path.is_dir():
+            return _a8_incomplete(session, [f"{names[arm]} is not harvested (no {A8_NS}/{names[arm]}/)"], ref, test), None
+    for arm in (ref, test):
+        leg = reader.read_json(reader.root / A8_NS / names[arm] / "leg.json", f"A8 pair {session} {arm} leg.json")
+        if isinstance(leg, dict) and leg.get("state") == "PAUSED":
+            return _a8_incomplete(session, [f"{names[arm]} is PAUSED (held for the designer; never a result)"], ref, test), None
+    for arm in (ref, test):
+        atts[arm] = _a8_load_attempt(reader, names[arm], session, f"A8 pair {session} {arm} {names[arm]}")
+    reasons = list(v8_reasons) + _supersede_reasons(reader, seq, superseded, names, f"A8 pair {session}", namespace=A8_NS)
+    for arm in (ref, test):
+        a = atts[arm]
+        reasons += _leg_reasons(arm, a) + _sequence_leg_reasons(seq, arm, names[arm]) + _commit_reasons(v8, arm, a)
+        reasons += _harvest_reasons_kv(reader, arm, a)
+        reasons += _a8_plan_reasons(arm, a, session, v8, draw)
+        reasons += a8_v8_identity_reasons(reader, arm, a, session, v8) + a8_seed_reasons(arm, a, session)
+        reasons += [f"{arm} {a['name']} {r}" for r in a["slot_reasons"]]
+        reasons += final_tree_reasons(arm, a, KV_REPO_PREFIX, A8_NS)
+    dossier_rel = sp.get("dossier") or f"pairs/{session}__{ref}-a1__{test}-a1.json"
+    if not isinstance(dossier_rel, str) or not dossier_rel.startswith("pairs/") or ".." in dossier_rel.split("/"):
+        raise RefusalError(f"A8 pair {session}: sequence dossier path {dossier_rel!r} is not under {A8_NS}/pairs/")
+    reasons += _kv_dossier_reasons(reader, session, dossier_rel, ref, test, atts, namespace=A8_NS)
+    reasons += kv_provenance_reasons(reader, session, atts, ref, test, KV_AXES["A8"]["worktrees"])
+    plans = {arm: schedule_plan_sha(atts[arm]["schedule"]) for arm in (ref, test)}
+    if plans[ref] != plans[test]:
+        reasons.append(f"rule 3: schedules differ ({ref} plan {plans[ref]}, {test} plan {plans[test]})")
+    keys, keys_rejected = pair_keys(session, atts[ref], atts[test], prefix=KV_REPO_PREFIX, namespace=A8_NS)
+    keys = [dict(key=k["key"], identical=k["identical"], manifest_sha256={ref: k["off_manifest_sha256"],
+                                                                          test: k["on_manifest_sha256"]}) for k in keys]
+    keys_rejected = [dict(k, reason=k["reason"].replace("absent in off", f"absent in {ref}")
+                          .replace("absent in on", f"absent in {test}")) for k in keys_rejected]
+    if keys_rejected:
+        reasons.append(f"rule 3: {len(keys_rejected)} planned key(s) rejected — the session pair is incomplete: "
+                       + "; ".join(f"{k['key'][1]}: {k['reason']}" for k in keys_rejected[:5]))
+    speed_valid = all(atts[a]["leg"].get("speed_valid") is True for a in (ref, test))
+    holds = {a: len(atts[a]["chain"].get("p426_holds") or []) for a in (ref, test)}
+    rec = dict(pair=session, arms=[ref, test], attempts=names, **({"superseded": superseded} if superseded else {}),
+               status="accepted" if not reasons else "rejected", accepted=not reasons, reasons=reasons,
+               keys_accepted=len(keys), keys_rejected=keys_rejected, keys=keys, identical=sum(1 for k in keys if k["identical"]),
+               speed_valid=speed_valid, labels=[] if speed_valid else ["power-invalid"], dossier=f"{A8_NS}/{dossier_rel}",
+               role="diagnostic" if session in A8_DIAGNOSTIC else "pair",
+               speed_reason={a: atts[a]["leg"].get("speed_reason") for a in (ref, test)},
+               legs={a: dict(started=atts[a]["leg"].get("started"), ended=atts[a]["leg"].get("ended"), holds=holds[a])
+                     for a in (ref, test)},
+               faults={a: dict(transport_dnf=atts[a]["transport_dnf"], harness_dnf=atts[a]["harness_dnf"],
+                               reruns=atts[a]["reruns"], accounting_faults=sorted(atts[a]["accounting"]))
+                       for a in (ref, test)},
+               tampered={a: _a8_tampered(atts[a]["rows"]) for a in (ref, test)})
+    return rec, atts
+
+
+def _a8_recheck(reader, seq, pairs, ref, test):
+    """§5: the runner's sealed re-checks (`run/recheck-s1.json`, `run/recheck-s2.json`) as LABELS. Each is checked with the
+    sequencer's own field comparison (`p426_wave2.Sequencer.check_recheck_doc`: gate, axis, sessions, ref, test, attempts =
+    B8-A8's selected attempts), its seal, the sha `sequence.json` records, the committed simulation report's sha, and for s1 the
+    ack rule; a record that fails any refuses (contradictory). A missing record, or a gate whose sessions B8-A8 has not
+    selected, labels only that re-check `incomplete`."""
+    from bench import m76_rule
+    from bench import p426_hooks as ph
+
+    _rep, report_sha = m76_rule.load_report()
+    recorded = seq.get("rechecks") if isinstance(seq.get("rechecks"), dict) else {}
+    out = {}
+    for gate, sessions in A8_RECHECK_GATES.items():
+        path = reader.root / A8_NS / "run" / f"recheck-{gate}.json"
+        data = reader.try_read_bytes(path)
+        label = dict(gate=gate, label=A8_RECHECK_LABEL)
+        if data is None:
+            out[gate] = dict(label, status="incomplete", reason=f"run/recheck-{gate}.json is not sealed yet")
+            continue
+        try:
+            doc = json.loads(data.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise RefusalError(f"{A8_NS}/run/recheck-{gate}.json is unreadable") from None
+        if not ph.sealed_ok(doc):
+            raise RefusalError(f"{A8_NS}/run/recheck-{gate}.json does not verify as a sealed re-check record")
+        missing = [s for s in sessions if not (pairs.get(s) or {}).get("attempts")]
+        if missing:
+            out[gate] = dict(label, status="incomplete", sha256=doc["sha256"],
+                             reason=f"session(s) {missing} have no selected attempts to bind the re-check to")
+            continue
+        want = dict(gate=gate, axis=A8_AXIS, sessions=list(sessions), ref=ref, test=test,
+                    attempts={arm: [pairs[s]["attempts"][arm] for s in sessions] for arm in (ref, test)})
+        bad = [k for k, v in want.items() if doc.get(k) != v]
+        if bad or not isinstance(doc.get("recheck"), dict):
+            raise RefusalError(f"{A8_NS}/run/recheck-{gate}.json: its {', '.join(bad) or 'recheck'} is not this re-check's over "
+                               "B8-A8's selected attempts (a rerun since?)")
+        rec = recorded.get(gate) if isinstance(recorded.get(gate), dict) else {}
+        if rec.get("sha256") != doc["sha256"]:
+            raise RefusalError(f"{A8_NS}/run/recheck-{gate}.json is not the sealed re-check sequence.json records "
+                               f"(rechecks.{gate}.sha256 {str(rec.get('sha256'))[:16]})")
+        result = doc["recheck"]
+        if result.get("report_sha256") != report_sha:
+            raise RefusalError(f"{A8_NS}/run/recheck-{gate}.json was computed on another simulation report "
+                               f"({str(result.get('report_sha256'))[:16]} != the committed {str(report_sha)[:16]})")
+        inside, review = bool(result.get("inside")), bool(result.get("operator_review"))
+        if gate == "s1" and (not inside or review) and not (isinstance(rec.get("ack"), dict) and rec["ack"].get("sha256") == doc["sha256"]):
+            raise RefusalError(f"{A8_NS}/run/recheck-s1.json is outside the committed grid or needs operator review and "
+                               "sequence.json records no operator ack (rechecks.s1.ack)")
+        out[gate] = dict(label, status="ok", sha256=doc["sha256"], inside=inside, operator_review=review,
+                         alpha_star_applied=result.get("alpha_star_applied"), report_sha256=report_sha,
+                         acknowledged=bool(rec.get("ack")))
+    return out
+
+
+def _a8_latency(reader):
+    """§4.2: the sealed launch-latency record `run/exec_latency.json` (rows `{t, fresh_ms, repeat_ms, true_ms,
+    threatlocker_cpu}`, published by the designer after the decider); absent → `incomplete` (descriptive only, never a
+    refusal); present but unsealed or malformed refuses."""
+    from bench import p426_hooks as ph
+
+    path = reader.root / A8_NS / "run" / "exec_latency.json"
+    data = reader.try_read_bytes(path)
+    if data is None:
+        return dict(status="incomplete", reason="run/exec_latency.json is not published yet")
+    try:
+        doc = json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise RefusalError(f"{A8_NS}/run/exec_latency.json is unreadable") from None
+    if not ph.sealed_ok(doc):
+        raise RefusalError(f"{A8_NS}/run/exec_latency.json does not verify as a sealed record")
+    rows = doc.get("rows")
+    if not isinstance(rows, list) or not all(isinstance(r, dict) and all(k in r for k in A8_LATENCY_FIELDS) for r in rows):
+        raise RefusalError(f"{A8_NS}/run/exec_latency.json: rows are not {{{', '.join(A8_LATENCY_FIELDS)}}} records")
+    for i, r in enumerate(rows):                         # r1 B7: t a UTC time, every figure a finite non-negative number
+        bad = ([] if a8_utc_seconds(r["t"]) is not None else ["t"]) + [
+            k for k in A8_LATENCY_FIELDS[1:] if not (isinstance(r[k], (int, float)) and not isinstance(r[k], bool)
+                                                     and math.isfinite(r[k]) and r[k] >= 0)]
+        if bad:
+            raise RefusalError(f"{A8_NS}/run/exec_latency.json row {i}: {', '.join(bad)} not a UTC time / finite non-negative "
+                               "number")
+    return dict(status="present", sha256=doc["sha256"], path=f"{A8_NS}/run/exec_latency.json",
+                rows=[{k: r[k] for k in A8_LATENCY_FIELDS} for r in rows])
+
+
+def a8_utc_seconds(t):
+    """r1 B7: a latency-row / leg time as UTC epoch seconds — a finite non-negative number, or an ISO-8601 string ending `Z` or
+    carrying its offset (a naive time has no zone and is None); anything else None."""
+    from datetime import datetime
+
+    if isinstance(t, (int, float)) and not isinstance(t, bool):
+        return float(t) if math.isfinite(t) and t >= 0 else None
+    if not isinstance(t, str):
+        return None
+    try:
+        d = datetime.fromisoformat(t[:-1] + "+00:00" if t.endswith("Z") else t)
+        s = d.timestamp() if d.tzinfo is not None else None
+    except (ValueError, OverflowError):
+        return None
+    return s if s is not None and math.isfinite(s) and s >= 0 else None       # r2 D2: the numeric `t` rule
+
+
+def verify_a8_kv(results_root, base_b8_sha256=None, draw_path=None):
+    """B8-A8 (`<results_root>` = `benchmark/results/m76`): one record per A8 session (B7's confirmatory sessions, then pilot /
+    reload, diagnostic) of the tg2 pair (N16, X); `status` complete only when every confirmatory session is accepted (r1 B9);
+    `recheck` labels, `latency`, `base_b8_sha256` (the B8.json it accompanies: r1 B1 — the sha of `<results_root>/B8.json`,
+    absent refuses; an explicit value is the CLI's seam, the sha of the B8.json it writes) and `inputs` (every file read,
+    rows-root relative, with its sha) + `repo_inputs` (the pinned draw)."""
+    from bench import p426_freeze as fz
+    from bench.p426_plan import pair_label
+
+    ref, test = fz.TG2_PAIR
+    if base_b8_sha256 is None:
+        try:
+            base_b8_sha256 = hashlib.sha256((Path(results_root) / "B8.json").read_bytes()).hexdigest()
+        except OSError:
+            raise RefusalError("B8-A8 needs the B8.json it accompanies: B8.json is missing beside the results root") from None
+    if not (isinstance(base_b8_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", base_b8_sha256)):
+        raise RefusalError("B8-A8 needs the sha256 of the B8.json it accompanies")
+    if not a8_applies(results_root):
+        raise RefusalError(f"{A8_NS}/run/v8_base.json is not the tg2 KV pair's record (no A8 to verify)")
+    reader = Reader(results_root)
+    run = reader.root / A8_NS / "run"
+    v8 = reader.read_json(run / "v8_base.json", f"{A8_NS}/run/v8_base.json")
+    seq = reader.read_json(run / "sequence.json", f"{A8_NS}/run/sequence.json")
+    if not isinstance(seq, dict):
+        raise RefusalError(f"{A8_NS}/run/sequence.json is not an object")
+    v8_reasons = [] if self_hash_ok(v8) else [f"rule 2: v8_base.json self-hash {v8.get('sha256')!r} != {_canon_sha(v8)}"]
+    if v8.get("arms") != [ref, test]:
+        v8_reasons.append(f"rule 3.6: v8_base.json arms {v8.get('arms')!r} != {[ref, test]}")
+    draw_file = Path(draw_path) if draw_path is not None else TG2_DRAW_PATH
+    try:
+        draw_bytes = draw_file.read_bytes()
+        draw = json.loads(draw_bytes.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise RefusalError(f"the pinned tg2 draw ({TG2_DRAW_REL}) is missing or unreadable") from None
+    v8_reasons += a8_v8_pin_reasons(v8, hashlib.sha256(draw_bytes).hexdigest())
+    confirm = kv_a8_sessions()
+    out_pairs, atts = [], {}
+    for session in confirm + A8_DIAGNOSTIC:
+        rec, a = _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test)
+        out_pairs.append(rec)
+        if a is not None:
+            atts[session] = a
+    if "reload" in atts and atts["reload"] is not None:
+        extra = _a8_reload_reasons(atts["reload"], draw)
+        if extra:
+            rec = next(p for p in out_pairs if p["pair"] == "reload")
+            rec["reasons"] += extra
+            rec["accepted"], rec["status"] = False, "rejected"
+    by = {p["pair"]: p for p in out_pairs}
+    recheck = _a8_recheck(reader, seq, by, ref, test)
+    latency = _a8_latency(reader)
+    status = "complete" if all(by[s]["accepted"] is True for s in confirm) else "incomplete"
+    inputs = {f"{KV_ROOT}/{k}": v for k, v in reader.inputs.items()}
+    return dict(axis=A8_AXIS, lever="kv", corpus="tg2", version=A8_VERSION, pair=[ref, test], label=pair_label(ref, test),
+                generator="bench.p426_verify", status=status, sessions=list(confirm), pairs=out_pairs, recheck=recheck,
+                latency=latency, base_b8_sha256=base_b8_sha256, inputs=dict(sorted(inputs.items())),
+                repo_inputs={TG2_DRAW_REL: hashlib.sha256(draw_bytes).hexdigest()},
+                v8_base=dict(sha256=v8.get("sha256"), **{f"{a}_commit": v8.get(f"{a}_commit") for a in (ref, test)},
+                             gitlinks=v8.get("gitlinks")), allowed_differences=list(KV_ALLOWED_DIFFERENCES))
+
+
+STACK_REPO = Path(__file__).resolve().parents[2]        # the repo whose committed draw B8-A8 reads (`TG2_DRAW_PATH`)
+
+
+def check_b8_a8(rows_root, b8_a8, b8_sha256, repo_root):
+    """§4.4 / §6.1: a consumer's check of B8-A8 before using it — its `base_b8_sha256` is the B8.json it accompanies and every
+    `inputs` (rows-root relative) / `repo_inputs` (relative to `repo_root`, passed explicitly: r1 B14; the producer reads the
+    draw from `STACK_REPO`) file re-hashes to its recorded sha; else refused, naming the input and its root."""
+    if not isinstance(b8_a8, dict) or b8_a8.get("axis") != A8_AXIS or b8_a8.get("lever") != "kv":
+        raise RefusalError("B8-A8.json is not an A8 verifier record")
+    if b8_a8.get("base_b8_sha256") != b8_sha256:
+        raise RefusalError(f"B8-A8.json accompanies another B8.json (base_b8_sha256 {str(b8_a8.get('base_b8_sha256'))[:16]} != "
+                           f"{str(b8_sha256)[:16]})")
+    inputs, repo_inputs = b8_a8.get("inputs"), b8_a8.get("repo_inputs")
+    if not isinstance(inputs, dict) or not inputs or not isinstance(repo_inputs, dict):
+        raise RefusalError("B8-A8.json has no inputs map")
+    for root, table, what in ((Path(rows_root), inputs, "rows_root"), (Path(repo_root), repo_inputs, "repo")):
+        for rel, sha in sorted(table.items()):
+            if not isinstance(rel, str) or rel.startswith("/") or ".." in rel.split("/"):
+                raise RefusalError(f"B8-A8.json input {rel!r} is not a {what}-relative path")
+            try:
+                got = hashlib.sha256((root / rel).read_bytes()).hexdigest()
+            except OSError:
+                raise RefusalError(f"B8-A8 {what} input {rel} is missing under the {what} root passed to the check") from None
+            if got != sha:
+                raise RefusalError(f"B8-A8 input {rel} changed: sha256 {got} != B8-A8 {sha}")
+    return b8_a8
 
 
 def dumps(doc):
@@ -2324,6 +3153,14 @@ def main(argv=None):
             except ValueError as exc:
                 raise RefusalError(str(exc)) from None
             doc = verify_all_kv(args.rows_root, args.repo, pair)
+            text = dumps(doc)
+            write_atomic({args.out: text})          # r1 B6 (§3.5 / L2): B8.json first; a B8-A8 refusal leaves it written
+            from bench import p426_freeze as fz
+            results_root = Path(args.rows_root) / KV_ROOT
+            if tuple(pair) == tuple(fz.TG2_PAIR) and a8_applies(results_root):     # B4b-2 §3.5: B8-A8.json beside B8.json
+                a8 = verify_a8_kv(results_root, hashlib.sha256(text.encode("utf-8")).hexdigest())
+                write_atomic({Path(args.out).with_name("B8-A8.json"): dumps(a8)})
+            return 0
         elif args.axis == "all" and args.pair:
             raise RefusalError("--pair is a lever kv flag")
         elif args.axis == "all":

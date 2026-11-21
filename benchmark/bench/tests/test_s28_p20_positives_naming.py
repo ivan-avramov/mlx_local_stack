@@ -34,3 +34,14 @@ def test_harvested_tg2_positives_run_records_are_data_not_prose(path):
 def test_paths_outside_a_positives_run_stay_checked(path):
     diff = f"+++ b/{path}\n@@ -0,0 +1 @@\n+\"optiq/metadata.json\": \"bfaba2b3\"\n"  # allow-shorthand: the test names the flagged path segment
     assert [v.path for v in MN.diff_violations(diff)] == [path]
+
+
+
+def test_the_b4b2_pilot_manifest_fixtures_are_data_and_their_neighbours_stay_checked():
+    """S28: the B4b-2 test-writer's sha-pinned byte copies of real tg2 pilot manifests (as `_M76_B3_REGISTRY_FIXTURE`)."""
+    base = "benchmark/bench/tests/fixtures/m76_b4b2_fe/pilot_manifests"
+    line = '+"optiq/metadata.json": "bfaba2b3"\n'  # allow-shorthand: the test names the flagged path segment
+    data = f"+++ b/{base}/n16/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed.pilot.opencode_cpp.L3.full.a1.manifest.json\n@@ -0,0 +1 @@\n" + line
+    prose = f"+++ b/{base}/README.md\n@@ -0,0 +1 @@\n" + line
+    assert MN.diff_violations(data) == []
+    assert [v.path for v in MN.diff_violations(prose)] == [f"{base}/README.md"]

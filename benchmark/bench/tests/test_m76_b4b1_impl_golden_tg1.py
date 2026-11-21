@@ -28,6 +28,12 @@ ENTRY = "Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed"
 WD = Path("/wd-golden")
 CLOSURE_ROW = ("generation_identity_sha256",)
 CLOSURE_RUNTIME = ("probe_code_sha256", "generation_identity_sha256")
+# M76 B4b-2 (spec v1.5 §3.3; change review r1 B8): the b8 facts whose sha moves because the KVWorld rows now name their final tree
+# by path — exactly these 16 rows files' input shas (the `_diff` paths: 2 arms x pilot L0, reload L0, s1 / s2 / s3 L0 + L1)
+B4B2_CHANGED_INPUTS = tuple(
+    f".b8.inputs.wave2/tg1-m76-{arm}-{s}.a1/{s}/{ENTRY}.{s}.opencode.L{leg}.full.a1.jsonl"
+    for arm in ("n16", "x") for s, legs in (("pilot", (0,)), ("reload", (0,)), ("s1", (0, 1)), ("s2", (0, 1)), ("s3", (0, 1)))
+    for leg in legs)
 
 
 def _chain():
@@ -228,8 +234,11 @@ def test_regen_or_compare(monkeypatch, tmp_path):
         # S27 (spec v1.4): the only allowed differences — the chain entry's `--pause-file` (§8.2), the row's `cleanup_status`
         # (§3.6), the tg1 template's `inject_allowed` + interrupt (§4.5) and the policy sha it rotates (§9)
         s27 = (".args.pause_file", ".row.cleanup_status", ".runtime.policy.inject_allowed", ".runtime.scaffold_policy_sha256")
-        diffs = [d for d in _diff(facts[key], rec["facts"][key]) if not d.split(":", 1)[0].endswith(s27)]
-        assert not diffs, f"tg1 {key} facts differ from the baseline golden: " + "; ".join(diffs[:12])
+        # B4b-2 (spec v1.5 §3.3; r1 B8): the KVWorld rows name their final tree by path, so exactly these rows files' input
+        # shas move (pinned, never a pattern)
+        diffs = [d for d in _diff(facts[key], rec["facts"][key])
+                 if not d.split(":", 1)[0].endswith(s27) and not (key == "b8" and d.split(":", 1)[0] in B4B2_CHANGED_INPUTS)]
+        assert not diffs, f"tg1 {key} facts differ from the baseline golden: " + "; ".join(diffs)
 
 
 def _diff(a, b, path=""):

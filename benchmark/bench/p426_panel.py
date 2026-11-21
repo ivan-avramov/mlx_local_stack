@@ -549,7 +549,7 @@ def _a7_final_tree(ctx, att, row, rid, b8_sha, top, ref):
     run = _run_id(row, rid)
     if not re.fullmatch(r"[A-Za-z0-9_\-]+", run):
         raise _refusal(f"row {rid}: run id {run!r} is not a plain name")
-    stem = f"{V.WAVE}/{att['name']}/evidence/{run}/{lang}__{item}"
+    stem = f"{ctx.get('namespace', V.WAVE)}/{att['name']}/evidence/{run}/{lang}__{item}"   # B4b-2: A8 reads `wave2.tg2`
     mpath = ctx["root"] / f"{stem}.final_tree" / "manifest.json"
     try:
         mbytes = mpath.read_bytes()
@@ -1235,15 +1235,25 @@ KV_A5_RULE = ("chain-4 items both strict (exact AND converged at the row's own r
               "both-correct retrieval pair is the same five codes in both arms (nothing to judge)")
 
 
-def kv_members(sessions=None):
-    """The KV panel family: A1 … A5 and one A7 member per planned tg1 session (`p426_plan.kv_a7_sessions`)."""
+def kv_members(sessions=None, a8_sessions=None):
+    """The KV panel family: A1 … A5, one A7 member per planned tg1 session (`p426_plan.kv_a7_sessions`) and (B4b-2 §6.1) one
+    A8 member per B8-A8-accepted confirmatory session (`a8_sessions`; None → none, the output unchanged)."""
     from bench.p426_plan import kv_a7_sessions
 
-    return KV_WAVE1_MEMBERS + tuple(f"A7-{s}" for s in (sessions if sessions is not None else kv_a7_sessions()))
+    return (KV_WAVE1_MEMBERS + tuple(f"A7-{s}" for s in (sessions if sessions is not None else kv_a7_sessions()))
+            + tuple(f"A8-{s}" for s in (a8_sessions or ())))
 
 
 def kv_rubric(member):
-    return "code" if member.startswith("A7-") else KV_MEMBER_RUBRIC[member]
+    return "code" if member.startswith(("A7-", "A8-")) else KV_MEMBER_RUBRIC[member]
+
+
+def kv_a8_member_sessions(b8_a8):
+    """The A8 members' sessions of a B8-A8 record: its confirmatory sessions B8-A8 accepted (in plan order)."""
+    if not isinstance(b8_a8, dict):
+        return ()
+    acc = {p.get("pair") for p in b8_a8.get("pairs") or [] if isinstance(p, dict) and p.get("accepted")}
+    return tuple(s for s in b8_a8.get("sessions") or [] if s in acc)
 
 
 def kv_tunes(ref, test):
@@ -1418,7 +1428,8 @@ KV_INPUT_SOURCE = {"A1": "math500 problem (bench.benchmarks math500)", "A2": "cj
                    "A3": "vision_gate turn-1 question + corpus image (vision_gate)",
                    "A4": "vartrack question of the task seed (bench.reasoning; never the context)",
                    "A5": "vartrack question of the item's task seed (bench.reasoning; never the context)",
-                   "A7": "polyglot start-tree task (_a7_packet)"}
+                   "A7": "polyglot start-tree task (_a7_packet)",
+                   "A8": "the tg2 runner's prompt (corpus_tg2.prompt, E1) rebuilt from the pinned polyglot root (_a8_packet)"}
 
 
 class KVInputSources:
@@ -1833,27 +1844,263 @@ def kv_a7_context(results_root, b8):
     return dict(root=Path(results_root), by_session=by_session, atts=atts, prefix=V.KV_REPO_PREFIX)
 
 
+# ------------------------------------------------------------------------------------------------- A8 (M76 B4b-2 §6)
+A8_TASK_GRADER = "### Grader\n\nBoth solutions pass every test."
+
+
+def _kv_b8_a8(b8_a8_path):
+    try:
+        data = Path(b8_a8_path).read_bytes()
+        doc = json.loads(data.decode("utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError):
+        raise _refusal("B8-A8.json is missing or unreadable") from None
+    return doc, hashlib.sha256(data).hexdigest()
+
+
+def kv_a8_context(results_root, b8_a8, b8_sha256, repo_root):
+    """The `_a8_packet` context (the A7 analogue): B8-A8 verified first (`p426_verify.check_b8_a8`: its `base_b8_sha256` is
+    this B8.json, every input re-hashed — rows-root inputs under `results_root/..`, repo inputs under `repo_root`, r1 B14);
+    reference = `off`, treatment = `on` slots; the KV harvest prefix and the `wave2.tg2` namespace; the accepted confirmatory
+    sessions loaded (`p426_verify._a8_load_attempt`)."""
+    from bench import p426_verify as V
+
+    V.check_b8_a8(Path(results_root).parent, b8_a8, b8_sha256, repo_root)
+    ref, test = b8_a8["pair"]
+    reader = V.Reader(Path(results_root))
+    sessions = kv_a8_member_sessions(b8_a8)
+    by_session, atts = {}, {}
+    for p in b8_a8.get("pairs") or []:
+        s = p.get("pair")
+        keys = [dict(key=k["key"], identical=k["identical"], off_manifest_sha256=(k.get("manifest_sha256") or {}).get(ref),
+                     on_manifest_sha256=(k.get("manifest_sha256") or {}).get(test)) for k in p.get("keys") or []]
+        by_session[s] = dict(p, keys=keys)
+        if s in sessions:
+            atts[s] = {slot: V._a8_load_attempt(reader, p["attempts"][arm], s, f"A8 {s} {arm}")
+                       for slot, arm in (("off", ref), ("on", test))}
+    for rel, sha in reader.inputs.items():
+        if b8_a8["inputs"].get(f"{V.KV_ROOT}/{rel}") != sha:
+            raise _refusal(f"input {V.KV_ROOT}/{rel} is not covered by B8-A8.json")
+    return dict(root=Path(results_root), by_session=by_session, atts=atts, prefix=V.KV_REPO_PREFIX, namespace=V.A8_NS)
+
+
+def a8_corpus(polyglot_root, polyglot_sha=None, universe_path=None):
+    """The tg2 corpus on the pinned polyglot root (`corpus_tg2.Tg2Corpus`): its universe verified by its recorded facts."""
+    from bench import corpus_tg2
+    from bench.token_turn_gate import TransportAbort
+
+    corpus = corpus_tg2.Tg2Corpus(universe_path, polyglot_root=Path(polyglot_root), polyglot_sha=polyglot_sha)
+    try:
+        corpus.load_universe()
+    except TransportAbort as exc:
+        raise _refusal(f"tg2 universe: {exc}") from None
+    return corpus
+
+
+def _a8_entry(corpus, rid):
+    entry = (corpus.universe or {}).get("items", {}).get(rid)
+    if not isinstance(entry, dict) or entry.get("status") != "valid" or not isinstance(entry.get("prepared"), dict):
+        raise _refusal(f"the tg2 universe has no valid entry (prepared / solutions) for {rid}")
+    lang, _, name = rid.partition("/")
+    return {**entry, "lang": lang, "id": rid}
+
+
+def a8_prompt(corpus, rid):
+    """The runner's prompt (`corpus_tg2.Tg2Corpus.prompt`, E1: the helper sentence H, no inject addendum) rebuilt from the pinned
+    polyglot root: the checkout at the universe's `polyglot_sha`, each blob against `inputs_sha256` (`verify_source`)."""
+    from types import SimpleNamespace
+
+    from bench.token_turn_gate import TransportAbort
+
+    entry = _a8_entry(corpus, rid)
+    lang, _, name = rid.partition("/")
+    try:
+        return corpus.prompt(SimpleNamespace(entry=entry, lang=lang, name=name)), entry
+    except TransportAbort as exc:
+        raise _refusal(f"A8 {rid}: the prompt cannot be rebuilt from the pinned polyglot root: {exc}") from None
+
+
+def _a8_export(ctx, att, row, rid, top_ref):
+    """The HARVEST-bound session export of a row from the evidence ref: exactly one evidence record names it, its raw sha is
+    the row's `evidence_sha256.export` and the published bytes hash to its `published_sha256`."""
+    lang, _, item = rid.partition("/")
+    run = _run_id(row, rid)
+    published = f"{ctx['prefix']}{ctx['namespace']}/{att['name']}/evidence/{run}/{lang}__{item}.json"
+    want = (row.get("evidence_sha256") or {}).get("export") if isinstance(row.get("evidence_sha256"), dict) else None
+    recs = [f for f in (att["harvest"].get("files") or []) if isinstance(f, dict) and f.get("published") == published
+            and f.get("destination") == "evidence"]
+    if len(recs) != 1 or recs[0].get("sha256") != want:
+        raise _refusal(f"{att['name']} {rid}: no single HARVEST evidence record binds the session export to the row's "
+                       "evidence_sha256.export")
+    top, ref = top_ref
+    data = _git_show(top, ref, published)
+    if hashlib.sha256(data).hexdigest() != recs[0].get("published_sha256"):
+        raise _refusal(f"{att['name']} {rid}: the session export on the evidence ref is not the HARVEST-published bytes")
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise _refusal(f"{att['name']} {rid}: the session export is unreadable JSON") from None
+
+
+def _a8_first_user_text(export):
+    msgs = export.get("messages") if isinstance(export, dict) else None
+    for m in msgs if isinstance(msgs, list) else []:
+        if isinstance(m, dict) and (m.get("type") == "user" or (m.get("info") or {}).get("role") == "user"):
+            if isinstance(m.get("text"), str):
+                return m["text"]
+            parts = [p.get("text") for p in m.get("parts") or [] if isinstance(p, dict) and p.get("type") == "text"]
+            return "".join(t for t in parts if isinstance(t, str)) if parts else None
+    return None
+
+
+def a8_prompt_check(ctx, att, row, rid, corpus, top_ref):
+    """§6.2: the rebuilt prompt equals the first user message of the HARVEST-bound evidence export, either exactly or as opencode
+    2.0.20 records the run argument: enclosed in double quotes with each embedded `"` escaped as `\\"` (fix round 4, T2);
+    nothing looser. Else refused. Returns (prompt, universe entry)."""
+    prompt, entry = a8_prompt(corpus, rid)
+    text = _a8_first_user_text(_a8_export(ctx, att, row, rid, top_ref))
+    if text not in (prompt, '"' + prompt.replace('"', '\\"') + '"'):
+        raise _refusal(f"{att['name']} {rid}: the rebuilt tg2 prompt != the first user message of the evidence export")
+    return prompt, entry
+
+
+def _a8_start_tree(corpus, rid, entry):
+    """{rel: bytes} of `tg2_materialize.prepare_tree` from the pinned root, its manifest required equal to `prepared`."""
+    import tempfile
+
+    from bench import structured_grade as sg
+    from bench import tg2_materialize as mat
+
+    lang, _, slug = rid.partition("/")
+    with tempfile.TemporaryDirectory(prefix="a8-start-") as tmp:
+        dest = Path(tmp) / "tree"
+        try:
+            mat.prepare_tree(corpus.polyglot_root(), lang, slug, dest)
+        except (mat.FreezeError, OSError) as exc:
+            raise _refusal(f"A8 {rid}: the start tree cannot be prepared ({type(exc).__name__}: {exc})") from None
+        if sg.manifest(dest) != entry["prepared"]:
+            raise _refusal(f"A8 {rid}: the prepared start tree differs from the universe's `prepared`")
+        return {rel: (dest / rel).read_bytes() for rel in entry["prepared"]}
+
+
+def _utf8(data):
+    try:
+        data.decode("utf-8")
+        return True
+    except UnicodeDecodeError:
+        return False
+
+
+def _a8_diff(entry, tree, missing, start, where):
+    """(unified diffs of every new or changed file of the final tree, sorted by path (+ the declared solutions it lists
+    missing), [non-UTF-8 files as "<path> (<n> bytes)"]). The final tree is the grader's `accepted_files`: a path of
+    `structured_grade.protected_manifest(prepared, solutions)` other than a Rust `Cargo.toml` that is new or changed refuses;
+    a changed `Cargo.toml` is diffed as content."""
+    from bench import structured_grade as sg
+
+    prepared, lang = entry["prepared"], entry["lang"]
+    protected = sg.protected_manifest(prepared, entry["solutions"])
+    diffs, binary = [], []
+    for rel in sorted(set(tree) | set(missing)):
+        _safe_rel(rel, where)
+        new, old = tree.get(rel), start.get(rel) if rel in prepared else None
+        if new == old:
+            continue
+        if rel in protected and not (lang == "rust" and rel == "Cargo.toml"):
+            raise _refusal(f"{where}: protected path {rel} is new or changed in the final tree (not a grader-accepted file)")
+        if (new is not None and not _utf8(new)) or (old is not None and not _utf8(old)):
+            binary.append(f"{rel} ({len(new) if new is not None else 0} bytes)")
+            continue
+        diffs.append(_udiff(rel, old, new))
+    return "".join(diffs), binary
+
+
+def _a8_response(diff, binary, tools):
+    f = _fence(diff)
+    out = f"### Solution (unified diff against the exercise start tree)\n\n{f}diff\n{diff}{f}\n\n"
+    if binary:
+        out += "### Non-UTF-8 files (path and size; content not shown)\n\n" + "".join(f"- {b}\n" for b in binary) + "\n"
+    return out + f"### Tool use (tool-call names and counts)\n\n{tools}"
+
+
+def _a8_packet(ctx, item, corpus, top_ref):
+    """{"task", "off", "on", "len_off", "len_on"} of one (session, id) A8 item — never `_StartTree`: the task is the runner's
+    prompt (`a8_prompt_check`, checked against the evidence export), the start tree `tg2_materialize.prepare_tree`, the final
+    trees B8-verified (manifest on `main`, objects / events on the evidence ref), the diff every new or changed file."""
+    session, rid = item
+    if session not in ctx["atts"]:
+        raise _refusal(f"A8 item {session}/{rid}: session {session} is not a B8-A8-accepted confirmatory session")
+    keys = {tuple(k["key"]): k for k in ctx["by_session"][session].get("keys") or []
+            if isinstance(k, dict) and isinstance(k.get("key"), list)}
+    krec = keys.get((session, rid))
+    if krec is None:
+        raise _refusal(f"A8 item {session}/{rid} is not a B8-A8-accepted key")
+    top, ref = top_ref
+    prompt = entry = start = None
+    out = {}
+    for arm in ("off", "on"):
+        att = ctx["atts"][session][arm]
+        row = att["rows"].get(rid)
+        where = f"{att['name']} {rid}"
+        if row is None or row.get("passed") is not True:
+            raise _refusal(f"{where}: not a passing row (A8 packets are both-pass)")
+        p, entry = a8_prompt_check(ctx, att, row, rid, corpus, top_ref)
+        if prompt is not None and p != prompt:
+            raise _refusal(f"{where}: the two arms' prompts differ")
+        prompt = p
+        if start is None:
+            start = _a8_start_tree(corpus, rid, entry)
+        tree, missing, events = _a7_final_tree(ctx, att, row, rid, krec.get(f"{arm}_manifest_sha256"), top, ref)
+        diff, binary = _a8_diff(entry, tree, missing, start, where)
+        if not diff and not binary:
+            raise _refusal(f"{where}: the final tree does not differ from the start tree (empty diff)")
+        out[arm] = _a8_response(diff, binary, _a7_tools(events, where))
+        out[f"len_{arm}"] = len(diff) + sum(len(b) for b in binary)
+    out["task"] = f"### Task\n\n{prompt}\n\n{A8_TASK_GRADER}"
+    return out
+
+
+def a8_leak_report(packets):
+    """§6.3: {item: [pattern names]} of every identity hit in an item's task or responses (C362's KV list, the registry names,
+    the box identity, template tags); empty when clean. Pattern names only — never the matched text."""
+    names = {n.lower() for n in _leak_names()}
+    out = {}
+    for rid, pkt in sorted(packets.items()):
+        hits = set()
+        for text in (pkt["task"], pkt["off"], pkt["on"]):
+            for h in _kv_leaks(text):
+                hits.add("registry-name" if h.lower() in names else h)
+        if hits:
+            out[rid] = sorted(hits)
+    return out
+
+
 def kv_export(rows_root, b8_path, judges_path, out_dir, prompts=None, *, members=None, images=None, single_family_label=None,
-              a7_inputs=None, sources=None):
+              a7_inputs=None, sources=None, b8_a8_path=None, a8_inputs=None):
     """Per member a fresh `<out_dir>/<member>/` (built as `.<member>.partial`, renamed on success): packets, manifest and
     FROZEN.json bound to B8.json's sha. Every packet input is derived by the tool (erratum v1.3): Wave 1 from the benchmark
     inputs of the items B8 covers (`kv_member_inputs`, `sources` = `KVInputSources()` by default), A7 from the polyglot start
     tree; each item's input record (prompt, sha256s) is frozen in FROZEN.json `inputs`. `prompts` ({member: {item: prompt}})
     and `images` ({item: image path}, A3) are only validated against the derived inputs, never used. `a7_inputs` = {results_root,
-    evidence_ref, repo, polyglot_root, universe} for the A7 members. Returns {member: FROZEN}."""
+    evidence_ref, repo, polyglot_root, universe} for the A7 members. B4b-2 §6: `b8_a8_path` (`B8-A8.json`, verified against
+    this B8.json) adds the A8 members, frozen against B8-A8's sha; `a8_inputs` = {results_root, evidence_ref, repo,
+    polyglot_root[, polyglot_sha, universe]} (the tg2 universe by default). Returns {member: FROZEN}."""
     import os
     import shutil
 
     sources = sources if sources is not None else KVInputSources()
     b8, b8_sha = _kv_b8(b8_path)
     ref, test = b8["pair"]
+    b8_a8, b8_a8_sha = _kv_b8_a8(b8_a8_path) if b8_a8_path is not None else (None, None)
+    a8_sessions = kv_a8_member_sessions(b8_a8) if b8_a8 is not None else None
     out = Path(out_dir)
     if not out.is_dir():
         raise _refusal(f"{out} is not a directory (the panel root)")
-    members = tuple(members) if members is not None else kv_members()
-    unknown = [m for m in members if m not in kv_members()]
+    family = kv_members(a8_sessions=a8_sessions)
+    members = tuple(members) if members is not None else family
+    unknown = [m for m in members if m not in family]
     if unknown:
-        raise _refusal(f"members {unknown} are not in the KV family {list(kv_members())}")
+        raise _refusal(f"members {unknown} are not in the KV family {list(family)}")
+    a8_ctx = a8_corpus_ = None
     done = {}
     for member in members:
         dest, partial = out / member, out / f".{member}.partial"
@@ -1883,6 +2130,33 @@ def kv_export(rows_root, b8_path, judges_path, out_dir, prompts=None, *, members
             items = [(rid, packets[rid]["off"], packets[rid]["on"]) for rid in sel_ids]
             inputs = {rid: (_input_record(member, rid, packets[rid]["task"], KV_INPUT_SOURCE["A7"]), None) for rid in sel_ids}
             lengths = {rid: (packets[rid]["len_off"], packets[rid]["len_on"]) for rid in sel_ids}
+        elif member.startswith("A8-"):
+            if b8_a8 is None or not a8_inputs:
+                raise _refusal(f"{member}: the A8 packets need --b8-a8 / --results-root / --evidence-ref / --repo / --polyglot-root")
+            from bench import p426_verify as V
+
+            session = member.split("-", 1)[1]
+            if a8_ctx is None:
+                a8_ctx = kv_a8_context(a8_inputs["results_root"], b8_a8, b8_sha, V.STACK_REPO)
+                a8_corpus_ = a8_corpus(a8_inputs["polyglot_root"], a8_inputs.get("polyglot_sha"), a8_inputs.get("universe"))
+            if session not in a8_ctx["atts"]:
+                raise _refusal(f"{member}: session {session} is not a B8-A8-accepted confirmatory session")
+            top = V.repo_top(a8_inputs["repo"])
+            top_ref = (top, V.resolve_commit(top, a8_inputs["evidence_ref"], "--evidence-ref"))
+            rec, both = a8_ctx["by_session"][session], {}
+            for k in rec["keys"]:          # §6.2 / §9.1: selection as A7 on the row's own `passed` (both arms pass)
+                both[k["key"][1]] = all(_passed(a8_ctx["atts"][session][slot], k["key"][1]) for slot in ("off", "on"))
+            identical = [k["key"][1] for k in rec["keys"] if k.get("identical") and both[k["key"][1]]]
+            sel_ids = [k["key"][1] for k in rec["keys"] if not k.get("identical") and both[k["key"][1]]]
+            excluded = {"not both pass": [k["key"][1] for k in rec["keys"] if not both[k["key"][1]]]}
+            packets = {rid: _a8_packet(a8_ctx, (session, rid), a8_corpus_, top_ref) for rid in sel_ids}
+            leaks = a8_leak_report(packets)
+            if leaks:                       # §6.3: refused, reported per item by pattern name; never excluded or redacted
+                raise _refusal(f"{member}: packet export refused: packet leak (identity visible to a judge) per item: "
+                               + "; ".join(f"{i}: {', '.join(p)}" for i, p in sorted(leaks.items())))
+            items = [(rid, packets[rid]["off"], packets[rid]["on"]) for rid in sel_ids]
+            inputs = {rid: (_input_record(member, rid, packets[rid]["task"], KV_INPUT_SOURCE["A8"]), None) for rid in sel_ids}
+            lengths = {rid: (packets[rid]["len_off"], packets[rid]["len_on"]) for rid in sel_ids}
         else:
             cap = {}
             items, excluded, identical = kv_wave1_select(rows_root, b8, member, capture=cap)
@@ -1900,7 +2174,8 @@ def kv_export(rows_root, b8_path, judges_path, out_dir, prompts=None, *, members
             excluded = dict(excluded, rule=[KV_A5_RULE])
         the_pairs = kv_make_pairs(items, ref, test)
         test_tune = kv_tunes(ref, test)[1]
-        meta = dict(member=member, pair=[ref, test], b8_sha256=b8_sha, identical=sorted(identical), excluded=excluded,
+        meta = dict(member=member, pair=[ref, test], b8_sha256=b8_a8_sha if member.startswith("A8-") else b8_sha,
+                    identical=sorted(identical), excluded=excluded,
                     items=[dict(item=p["item_id"], test_slot="A" if f"@{test_tune}::" in p["a_key"] else "B",
                                 len_ref=lengths[p["item_id"]][0], len_test=lengths[p["item_id"]][1]) for p in the_pairs],
                     inputs={i: rec for i, (rec, _a) in sorted(inputs.items())})
@@ -1923,19 +2198,22 @@ def _kv_a7_packet(ctx, item, a7_inputs, top_ref):
     return _a7_packet(ctx, item, a7_inputs["polyglot_root"], a7_inputs["universe"], top_ref)
 
 
-def kv_panel_members(panel_dir, ref, test, b8_sha256, sessions=None):
+def kv_panel_members(panel_dir, ref, test, b8_sha256, sessions=None, a8_sessions=None, b8_a8_sha256=None):
     """{member: {judged, identical, vector, mean, excluded, report, length_adjusted, single_family}} of every member directory:
     each FROZEN re-checked (`kv_check_frozen`) and bound to THIS B8 record and pair; verdicts admitted only through the frozen
-    packets with one valid verdict per frozen judge x order; the vector = admitted scores − 0.5 plus 0 per identical item."""
+    packets with one valid verdict per frozen judge x order; the vector = admitted scores − 0.5 plus 0 per identical item.
+    B4b-2 §6.1: the A8 members (`a8_sessions`) are bound to B8-A8's sha (`b8_a8_sha256`), A1–A7 to B8's."""
     panel_dir = Path(panel_dir)
     out = {}
-    for member in kv_members(sessions):
+    for member in kv_members(sessions, a8_sessions=a8_sessions):
         d = panel_dir / member
         if not d.is_dir():
             continue
         frozen, rows, report = kv_ingest(d)
-        if frozen.get("b8_sha256") != b8_sha256:
-            raise _refusal(f"panel {member}: FROZEN.json is bound to another B8 record ({frozen.get('b8_sha256')} != {b8_sha256})")
+        want = b8_a8_sha256 if member.startswith("A8-") else b8_sha256
+        if frozen.get("b8_sha256") != want:
+            raise _refusal(f"panel {member}: FROZEN.json is bound to another {'B8-A8' if member.startswith('A8-') else 'B8'} "
+                           f"record ({frozen.get('b8_sha256')} != {want})")
         if list(frozen.get("pair") or ()) != [ref, test]:
             raise _refusal(f"panel {member}: FROZEN.json is the pair {frozen.get('pair')}, not {[ref, test]}")
         admitted, excluded = admit(rows, [j["label"] for j in frozen["judges"]])
@@ -1959,9 +2237,10 @@ def kv_panel_members(panel_dir, ref, test, b8_sha256, sessions=None):
     return out
 
 
-def kv_expected_members(b8, sessions=None):
+def kv_expected_members(b8, sessions=None, b8_a8=None):
     """The members a lever-kv B8 record expects (erratum v1.3): each Wave 1 member with at least one B8-accepted pair of its
-    kind, and `A7-<session>` for every planned session B8 accepted."""
+    kind, and `A7-<session>` for every planned session B8 accepted; B4b-2: `A8-<session>` for every confirmatory session
+    B8-A8 accepted."""
     w1 = [p for p in (b8.get("axes", {}).get("wave1") or {}).get("pairs") or [] if p.get("accepted")]
     kinds = {p.get("kind") for p in w1}
     out = [m for m in KV_WAVE1_MEMBERS if KV_MEMBER_KIND[m] in kinds]
@@ -1970,6 +2249,8 @@ def kv_expected_members(b8, sessions=None):
         acc = {p.get("pair") for p in a7.get("pairs") or [] if p.get("accepted")}
         planned = list(a7.get("sessions") or []) if sessions is None else list(sessions)
         out += [f"A7-{s}" for s in planned if s in acc]
+    if b8_a8 is not None:
+        out += [f"A8-{s}" for s in kv_a8_member_sessions(b8_a8)]
     return out
 
 
@@ -2034,6 +2315,8 @@ def main(argv=None):
     kx.add_argument("--single-family-label", default=None, help="the operator's label admitting a single-family judge set")
     for flag in ("--results-root", "--evidence-ref", "--repo", "--polyglot-root", "--universe"):
         kx.add_argument(flag, default=None, help="A7 members")
+    kx.add_argument("--b8-a8", default=None, help="M76 B4b-2: the B8-A8.json beside --b8; adds the A8 members (with "
+                                                  "--results-root / --evidence-ref / --repo / --polyglot-root; the tg2 universe)")
     kc = sub.add_parser("kv-cursor", help="--lever kv: the frozen cursor-agent judge of one member directory")
     kc.add_argument("--out", required=True)
     kc.add_argument("--judge", required=True)
@@ -2062,10 +2345,12 @@ def main(argv=None):
                 except (OSError, ValueError):
                     raise V.RefusalError(f"{what} is missing or unreadable") from None
             a7 = {k: getattr(args, k) for k in ("results_root", "evidence_ref", "repo", "polyglot_root", "universe")}
+            a8 = {k: getattr(args, k) for k in ("results_root", "evidence_ref", "repo", "polyglot_root")}
             done = kv_export(args.rows_root, args.b8, args.judges, args.out, _json(args.prompts, "--prompts"),
                              members=tuple(m for m in args.members.split(",") if m) if args.members else None,
                              images=_json(args.images, "--images"), single_family_label=args.single_family_label,
-                             a7_inputs=a7 if all(a7.values()) else None)
+                             a7_inputs=a7 if all(a7.values()) else None, b8_a8_path=args.b8_a8,
+                             a8_inputs=a8 if args.b8_a8 and all(a8.values()) else None)
             print(json.dumps({m: f["counts"] for m, f in done.items()}, sort_keys=True))
             return 0
         if args.cmd == "kv-cursor":

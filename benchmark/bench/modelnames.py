@@ -58,6 +58,8 @@ _REVIEW_OUTPUT = re.compile(
 _PINNED_OFF_FIXTURE = "benchmark/bench/tests/fixtures/p426_off/"
 # M76 B3 (C341, as C246): the sha256-pinned verbatim copies of the four M76 arms' committed registries — data, not prose.
 _M76_B3_REGISTRY_FIXTURE = re.compile(r"^benchmark/bench/tests/fixtures/m76_b3_fe/(n16|x|v|xo)_main_models\.yaml$")
+# M76 B4b-2 (S28): the sha256-pinned verbatim copies of real tg2 pilot invocation manifests (the test-writer's fixture) — data.
+_M76_B4B2_PILOT_FIXTURE = re.compile(r"^benchmark/bench/tests/fixtures/m76_b4b2_fe/pilot_manifests/(n16|x)/[^/]+\.manifest\.json$")
 
 # A line that DOCUMENTS the rule must be able to name the forms it bans, or the rule could never be
 # written down. Verbose so it cannot be typed by accident; greppable so misuse is auditable:
@@ -294,7 +296,7 @@ def diff_violations(diff: str, *, root: str | None = None) -> list[Violation]:
             # EvalPlus grader output *_samples_eval_results.json, which embeds the
             # model's solution code ('low' blocked the S2b mbpp commit, 2026-09-07).
             # P437: harvested Wave-1 evidence is a verbatim, sha-manifested copy (registry, receipts, logs) — data too.
-            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or _M76_WAVE2.match(path) or _M76_TG2_POSITIVES.match(path) or _PANEL_PACKET.match(path) or _PANEL_FROZEN.match(path) or _REVIEW_OUTPUT.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or _M76_B3_REGISTRY_FIXTURE.match(path) or path.startswith("benchmark/results/") and (
+            is_result_rows = _P426_WAVE1.match(path) or _P426_WAVE2.match(path) or _M76_WAVE2.match(path) or _M76_TG2_POSITIVES.match(path) or _PANEL_PACKET.match(path) or _PANEL_FROZEN.match(path) or _REVIEW_OUTPUT.match(path) or path.startswith(_PINNED_OFF_FIXTURE) or _M76_B3_REGISTRY_FIXTURE.match(path) or _M76_B4B2_PILOT_FIXTURE.match(path) or path.startswith("benchmark/results/") and (
                 path.endswith(".jsonl")
                 or path.endswith("_samples_eval_results.json")
                 or ("/result/" in path and path.endswith("_result.json"))

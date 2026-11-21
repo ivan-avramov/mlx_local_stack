@@ -26,6 +26,9 @@ def _rerun(w, arm="x", session="pilot", record=True, latest_record=True, a1_spee
         doc = json.loads((a2 / name).read_text())
         doc.pop("sha256", None)
         doc["attempt"] = 2
+        if name == "HARVEST.json":       # B4b-2 §3.3: a2's harvest publishes a2's own files (as the real rerun's did)
+            for f in doc.get("files") or []:
+                f["published"] = f["published"].replace(f"/{a1.name}/", f"/{a2.name}/")
         (a2 / name).write_text(dumps(sealed(doc)))
     seq_path = wave / "run" / "sequence.json"
     seq = json.loads(seq_path.read_text())

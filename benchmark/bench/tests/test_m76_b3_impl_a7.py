@@ -196,9 +196,12 @@ class KVWorld:
             mp = self.root / mrel
             mp.parent.mkdir(parents=True, exist_ok=True)
             mp.write_text(dumps(dict(files={"sol.txt": f"{arm}|{s}|{rid}"}, item=rid)))
+            # B4b-2 §3.3: a row names its final tree by path (the run directory) as the real rows do
             row = dict(bench="opencode", schema_version=3, id=rid, model=MODEL, sample=0, passed=True, acc=1, converged=True,
                        nonconv_kind=None, nonconv_flags=[], sampler_seed=SEED[s] * 1000 + k, seed_base=SEED[s],
-                       final_tree=dict(manifest_sha256=sha_bytes(mp.read_bytes()), files={}, missing=[]))
+                       final_tree=dict(manifest=f"$STACK_WORKDIR/opencode_transcripts/{MODEL}/{MODEL}.{s}.opencode.L0.full.a1."
+                                                f"{run}/{lang}__{item}.final_tree/manifest.json",
+                                       manifest_sha256=sha_bytes(mp.read_bytes()), files={}, missing=[]))
             row.update((self.rows.get((arm, s)) or {}).get(rid, {}))
             lines.append(json.dumps(row, sort_keys=True))
             files.append(dict(destination="main", published=f"{PREFIX}/{mrel}", published_sha256=sha_bytes(mp.read_bytes()),

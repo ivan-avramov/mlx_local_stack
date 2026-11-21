@@ -1313,7 +1313,7 @@ KV_GATE_ACC = 0.85                  # AGENTS.md effective context: each arm's pe
 KV_GATE_POINT_PP = -5.0             # the per-task point estimate floor
 KV_SESSION = "s1"                   # the single "session" of a single-draw axis (A1 / A5) in B7's item → {session: 0/1} maps
 KV_BLOCKING = ("size_warning", "session_interaction", "loss", "undecided", "a5_gate", "panel_holm_reference_better",
-               "panel_single_family", "panel_incomplete")
+               "panel_single_family", "panel_incomplete", "hold")
 
 
 def kv_b7():
@@ -1339,12 +1339,14 @@ def _jsonable(x):
     return x
 
 
-def kv_axis_verdict(axis, look, a, b):
+def kv_axis_verdict(axis, look, a, b, languages=None):
     """`bench.m76_rule.axis_verdict(axis, look, a, b)` (a = treatment, b = reference; item → {session: 0/1}) as a plain record;
-    a B7 refusal (mismatched items / sessions, a missing plan) refuses the sheet."""
+    a B7 refusal (mismatched items / sessions, a missing plan) refuses the sheet. A8: `languages` = {item: language} (the
+    HOLD)."""
     m76_rule, _ = kv_b7()
     try:
-        res = m76_rule.axis_verdict(axis, look, a, b)
+        res = (m76_rule.axis_verdict(axis, look, a, b) if languages is None
+               else m76_rule.axis_verdict(axis, look, a, b, languages=languages))
     except ValueError as exc:
         raise RefusalError(f"bench.m76_rule.axis_verdict({axis!r}, look {look}): {exc}") from None
     return _jsonable(dict(res))
@@ -1504,14 +1506,15 @@ def kv_a7(test, ref, ref_arm, look=None):
     return v
 
 
-def kv_panel_family(members):
+def kv_panel_family(members, a8_sessions=None):
     """The subjective family: members with >= 5 judged items are tested (permutation p on score − 0.5, identical items 0),
-    Holm-adjusted across the tested members; the others are reported, not tested."""
+    Holm-adjusted across the tested members; the others are reported, not tested. B4b-2 §6.4: `a8_sessions` (the B8-A8
+    accepted confirmatory sessions) adds the A8 members (raw A1–A7 statistics unchanged; only the Holm column moves)."""
     from bench import stats
     from bench.p426_panel import kv_members
 
     out = {}
-    family = [m for m in kv_members() if m in members]
+    family = [m for m in kv_members(a8_sessions=a8_sessions) if m in members]
     for m in family:
         rec = dict(members[m])
         rec["tested"] = rec.get("judged", 0) >= SUBJ_MIN_JUDGED
@@ -1588,25 +1591,28 @@ def _kv_decode_wave1(kind, recs, leg, ref, test):
 KV_PANEL_PARTIAL = "PARTIAL — operator-requested ingestion of an incomplete panel (--partial)"
 
 
-def kv_panel_section(panel, b8, ref, test, b8_sha256, partial=False):
+def kv_panel_section(panel, b8, ref, test, b8_sha256, partial=False, b8_a8=None, b8_a8_sha256=None):
     """The `panel` record (erratum v1.3): the frozen members (`kv_panel_members`) checked for completeness against B8
     (`kv_expected_members`: every expected member, every frozen judge x order slot admitted). An incomplete panel is not
     ingested — `status` incomplete + its completeness record (→ the blocking `panel_incomplete` flag) — unless `partial`, which
-    ingests it under the PARTIAL label (the flag stays)."""
+    ingests it under the PARTIAL label (the flag stays). B4b-2 §6: with `b8_a8` the A8 members (frozen against B8-A8's sha)."""
     from bench import p426_panel as P
 
-    members = P.kv_panel_members(panel, ref, test, b8_sha256)
-    comp = P.kv_panel_completeness(members, P.kv_expected_members(b8))
+    a8_sessions = P.kv_a8_member_sessions(b8_a8) if b8_a8 is not None else None
+    members = P.kv_panel_members(panel, ref, test, b8_sha256, a8_sessions=a8_sessions, b8_a8_sha256=b8_a8_sha256)
+    comp = P.kv_panel_completeness(members, P.kv_expected_members(b8, b8_a8=b8_a8))
     if comp["complete"]:
-        return dict(kv_panel_family(members), status="complete", completeness=comp)
+        return dict(kv_panel_family(members, a8_sessions=a8_sessions), status="complete", completeness=comp)
     if partial:
-        return dict(kv_panel_family(members), status=KV_PANEL_PARTIAL, mode="partial", completeness=comp)
+        return dict(kv_panel_family(members, a8_sessions=a8_sessions), status=KV_PANEL_PARTIAL, mode="partial", completeness=comp)
     return dict(status="incomplete (not ingested; --partial ingests it, labelled)", completeness=comp)
 
 
-def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
+def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False, b8_a8=None, b8_a8_sha256=None):
     """The KV signals record (`benchmark/results/m76/SIGNALS.json`) from a lever-kv B8 record; every input re-verified.
-    `partial` (erratum v1.3): ingest an incomplete panel, labelled (its `panel_incomplete` flag stays blocking)."""
+    `partial` (erratum v1.3): ingest an incomplete panel, labelled (its `panel_incomplete` flag stays blocking). B4b-2 §4.4:
+    `b8_a8` (the `B8-A8.json` record) adds the A8 section and flags — verified first (`base_b8_sha256` is this B8.json, every
+    input re-hashed); without it the record is unchanged."""
     from bench import p426_signals_wave1 as W
     from bench.p426_plan import check_kv_pair
 
@@ -1617,6 +1623,12 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
     V.kv_check_roots(rows_root)
     _kv_check_b8_inputs(rows_root, b8)
     b8_sha256 = b8_sha256 or _sha_doc(b8)
+    if b8_a8 is not None:
+        V.check_b8_a8(rows_root, b8_a8, b8_sha256, V.STACK_REPO)
+        if [ref, test] != list(b8_a8.get("pair") or []):
+            raise RefusalError(f"B8-A8.json is the pair {b8_a8.get('pair')}, not B8's {[ref, test]}")
+        if not (isinstance(b8_a8_sha256, str) and re.fullmatch(r"[0-9a-f]{64}", b8_a8_sha256)):
+            raise RefusalError("B8-A8.json needs its file sha256 (b8_a8_sha256): the sheet and the panel bind the file's bytes")
     sig = kv_sheet_skeleton((ref, test))
     reader = V.Reader(rows_root, confine=True)
     ids = V.load_kv_ids(reader)
@@ -1703,8 +1715,12 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
         sig["axes"]["A7"], decode["A7"] = _kv_a7_section(rows_root, b8["axes"]["A7"], ref, test)
     else:
         sig["axes"]["A7"] = dict(status="pending (no Wave 2 record)")
+    if b8_a8 is not None:                         # B4b-2 §4: the A8 section (absent → the record is unchanged, never "pending")
+        sig["axes"]["A8"], a8_decode = _kv_a8_section(rows_root, b8_a8, ref, test)
+        if a8_decode is not None:
+            decode["A8"] = a8_decode
     if panel is not None:
-        sig["panel"] = kv_panel_section(panel, b8, ref, test, b8_sha256, partial=partial)
+        sig["panel"] = kv_panel_section(panel, b8, ref, test, b8_sha256, partial=partial, b8_a8=b8_a8, b8_a8_sha256=b8_a8_sha256)
     else:
         sig["panel"] = dict(status="pending (panel not run)")
     sig["decode"], sig["coverage"] = decode, coverage
@@ -1715,6 +1731,10 @@ def compute_kv(rows_root, b8, b8_sha256=None, panel=None, partial=False):
     sig["inputs"] = dict(sorted(b8["inputs"].items()))
     sig["header"].update(b8_sha256=b8_sha256, inputs_sha256=_sha_doc(sig["inputs"]), n_inputs=len(sig["inputs"]),
                          rng=dict(seed=SEED, iters=ITERS))
+    if b8_a8 is not None:
+        sig["inputs_a8"] = dict(sorted(b8_a8["inputs"].items()))
+        sig["header"].update(b8_a8_sha256=b8_a8_sha256, a8_inputs_sha256=_sha_doc(sig["inputs_a8"]),
+                             n_a8_inputs=len(sig["inputs_a8"]))
     return sig
 
 
@@ -1764,7 +1784,7 @@ def kv_flags(sig):
     for member, text in sorted(((sig.get("coverage") or {}).get("incomplete") or {}).items()):
         flags.append(dict(flag="wave1_incomplete", member=member, value=None, items=[], blocking=True,
                           text=f"Wave 1 {member}: planned pair {text}"))
-    for axis in ("A1", "A5", "A7"):
+    for axis in ("A1", "A5", "A7", "A8"):          # A8 (B4b-2 §4.3): only when the sheet has an A8 section
         rec = sig["axes"].get(axis) or {}
         looks = ([lk for lk in rec.get("looks") or [] if "verdict" in lk] if axis in ("A1", "A5") and "looks" in rec
                  else [_final_of(axis, rec)])
@@ -1782,10 +1802,15 @@ def kv_flags(sig):
         elif v == "UNDECIDED":
             flags.append(dict(flag="undecided", member=axis, value=final.get("loss_bound"), items=[], blocking=True,
                               text=f"{axis}: {final.get('label')}"))
-        if axis == "A7" and final.get("interaction_flag"):
+        if axis in ("A7", "A8") and final.get("interaction_flag"):
             p = (final.get("interaction") or {}).get("pvalue")
-            flags.append(dict(flag="session_interaction", member="A7", value=p, items=[], blocking=True,
-                              text=f"A7 session × arm interaction p {p} (blocks a ship recommendation)"))
+            flags.append(dict(flag="session_interaction", member=axis, value=p, items=[], blocking=True,
+                              text=f"{axis} session × arm interaction p {p} (blocks a ship recommendation)"))
+        hold = final.get("hold") if axis == "A8" else None
+        if isinstance(hold, dict) and hold.get("hold"):
+            flags.append(dict(flag="hold", member="A8", value=hold.get("languages"), items=[], blocking=True,
+                              text=f"A8 HOLD (C339): language point estimate(s) below {100 * hold.get('threshold', -0.2):.0f} pp: "
+                                   + ", ".join(f"{ln} {100 * hold['per_language'][ln]:+.1f} pp" for ln in hold.get("languages") or [])))
     if (sig["axes"].get("A5") or {}).get("tier_mismatch"):
         w = sig["axes"]["A5"]["tier_mismatch"]
         flags.append(dict(flag="size_warning", member="A5", value=w, items=[], blocking=True, text=f"A5: {w}"))
@@ -1839,6 +1864,223 @@ def _kv_a7_section(rows_root, a7, ref, test):
     return dict(rec, items=len(common), sessions=planned), decode
 
 
+KV_A8_LANGS = ("rust", "javascript", "java", "cpp")
+KV_A8_SENSITIVITY = "sensitivity (pre-registered, S27 §5.6; descriptive, never the verdict)"
+KV_A8_DESCRIPTIVE = "descriptive (unadjusted, α 0.025 one-sided per language; no verdict)"
+
+
+def _a8_language(item):
+    lang = str(item).split("/", 1)[0]
+    if lang not in KV_A8_LANGS:
+        raise RefusalError(f"A8 item {item!r}: its language {lang!r} is not a tg2 language {list(KV_A8_LANGS)}")
+    return lang
+
+
+def _a8_strict_maps(atts, sessions, items, arm):
+    return {i: {s: _strict(atts[s][arm]["rows"].get(i)) for s in sessions} for i in items}
+
+
+def _a8_bound(test, ref, alpha):
+    """`m76_rule.loss_bound` as numbers only (descriptive: its verdict is dropped)."""
+    from bench import m76_rule
+
+    try:
+        r = m76_rule.loss_bound(test, ref, alpha=alpha)
+    except ValueError as exc:
+        raise RefusalError(f"bench.m76_rule.loss_bound (A8 descriptive): {exc}") from None
+    return {k: r.get(k) for k in ("delta", "lo", "hi", "loss_bound", "n_items", "n_sessions", "discordant_items")}
+
+
+def _a8_faulted(atts, sessions, arms):
+    """§9.5: every item with a harness fault (a rerun or a harness DNF) or an accounting fault in EITHER arm of any confirmatory
+    session."""
+    out = set()
+    for s in sessions:
+        for arm in arms:
+            a = atts[s][arm]
+            out |= set(a["harness_dnf"]) | set(a["reruns"]) | set(a["accounting"])
+    return out
+
+
+def _a8_speed_invalid(rec):
+    """§9.6: the speed-invalid tiers of a session (an ALERT / watcher gap / off AC → the leg's `speed_valid` False; a hold
+    episode in the chain); quality is unaffected."""
+    why = [] if rec.get("speed_valid") else [f"leg speed-invalid ({json.dumps(rec.get('speed_reason'), sort_keys=True)})"]
+    for arm in rec["arms"]:
+        n = ((rec.get("legs") or {}).get(arm) or {}).get("holds") or 0
+        if n:
+            why.append(f"{arm}: {n} hold episode(s)")
+        acct = ((rec.get("faults") or {}).get(arm) or {}).get("accounting_faults") or []
+        if acct:                                     # r1 B5 (§9.6): an accounting fault is a speed-invalid tier of its leg
+            why.append(f"{arm}: {len(acct)} accounting fault(s)")
+    return why
+
+
+def _a8_walls(atts_s, ref, test, keys):
+    """Per language: Σ row `wall_s` per arm over the items both arms hold (walls within the pair only, S27-P5)."""
+    out = {}
+    for lang in KV_A8_LANGS:
+        ids = [i for i in keys if i.startswith(lang + "/")]
+        w = {arm: [atts_s[arm]["rows"][i].get("wall_s") for i in ids] for arm in (ref, test)}
+        if not ids or any(not _num(x) for arm in w for x in w[arm]):
+            out[lang] = dict(n=len(ids), status="no walls" if not ids else "a row has no wall_s")
+            continue
+        tot = {arm: float(sum(w[arm])) for arm in (ref, test)}
+        out[lang] = dict(n=len(ids), wall_s=tot, ratio=(tot[test] / tot[ref] if tot[ref] > 0 else None))
+    return out
+
+
+def _a8_time(t):
+    """r1 B7: UTC epoch seconds (`p426_verify.a8_utc_seconds`: ISO `Z` / offset strings as UTC, never local time)."""
+    return V.a8_utc_seconds(t)
+
+
+def _a8_latency(latency, pairs):
+    """§4.2: the launch-latency summary per leg window (rows of `B8-A8.latency` whose `t` falls in the leg's started..ended);
+    absent → incomplete (descriptive only)."""
+    import statistics
+
+    if (latency or {}).get("status") != "present":
+        return dict(status="incomplete", reason=(latency or {}).get("reason"))
+    rows = [dict(r, _t=_a8_time(r.get("t"))) for r in latency.get("rows") or []]
+    out = {}
+    for s, p in pairs.items():
+        for arm, leg in sorted((p.get("legs") or {}).items()):
+            a, b = _a8_time(leg.get("started")), _a8_time(leg.get("ended"))
+            inside = [r for r in rows if a is not None and b is not None and r["_t"] is not None and a <= r["_t"] <= b]
+            summ = dict(n=len(inside))
+            for k in ("fresh_ms", "repeat_ms", "true_ms"):
+                vals = [r[k] for r in inside if _num(r.get(k))]
+                summ[f"median_{k}"] = statistics.median(vals) if vals else None
+            cpu = [r["threatlocker_cpu"] for r in inside if _num(r.get("threatlocker_cpu"))]
+            summ["max_threatlocker_cpu"] = max(cpu) if cpu else None
+            out[f"{s}/{arm}"] = summ
+    return dict(status="present", sha256=latency.get("sha256"), label="descriptive only", windows=out)
+
+
+def _a8_reload_control(atts, pairs, ref, test):
+    """§4.2: X reload vs X s1 and N16 reload vs N16 s1 on the shared items (per-item equal `sampler_seed` asserted where both
+    rows exist, else "refused: seeds differ"), and X vs N16 within reload."""
+    if not ((pairs.get("reload") or {}).get("accepted") and (pairs.get("s1") or {}).get("accepted")):
+        return dict(status="not computed: reload and s1 must both be B8-A8-accepted")
+    shared = sorted({k["key"][1] for k in pairs["reload"]["keys"]} & {k["key"][1] for k in pairs["s1"]["keys"]})
+    bad = []
+    for arm in (ref, test):
+        for i in shared:
+            r, s = atts["reload"][arm]["rows"].get(i), atts["s1"][arm]["rows"].get(i)
+            if r is not None and s is not None and r.get("sampler_seed") != s.get("sampler_seed"):
+                bad.append(f"{arm} {i}")
+    if bad:
+        return dict(status="refused: seeds differ", items=bad[:10], n=len(shared))
+    out = dict(status="computed", n=len(shared))
+    for arm in (ref, test):
+        out[f"{arm}_reload_vs_s1"] = dict(n=len(shared), discordant=sum(
+            1 for i in shared if _strict(atts["reload"][arm]["rows"].get(i)) != _strict(atts["s1"][arm]["rows"].get(i))))
+    out["within_reload"] = dict(n=len(shared), discordant=sum(
+        1 for i in shared if _strict(atts["reload"][ref]["rows"].get(i)) != _strict(atts["reload"][test]["rows"].get(i))))
+    return out
+
+
+def _a8_counts(pairs, ref, test):
+    """Per session and arm: transport / harness DNFs, reruns, accounting faults (listed) and final-tampered rows (with their
+    receipts), from B8-A8."""
+    out = {}
+    for s, p in pairs.items():
+        if "faults" not in p:
+            continue
+        out[s] = {arm: dict(p["faults"][arm], tampered=(p.get("tampered") or {}).get(arm, {})) for arm in (ref, test)}
+    return out
+
+
+def _kv_a8_section(rows_root, a8, ref, test):
+    """(A8 record, decode) — B4b-2 §4 / §9. The verdict ONLY from `m76_rule.axis_verdict("A8", 1, X, N16, languages=…)` over
+    item → {session: 0/1} strict maps of B7's confirmatory sessions, and only when B8-A8 is complete with every confirmatory
+    session accepted on equal key sets (else "incomplete", no verdict). Beside it, descriptive: per-language loss bounds, the
+    HOLD line, the paired session delta, the per-session estimates, the noise floor, the reload control, decode / walls per
+    session (accounting-fault items excluded; speed-invalid tiers labelled), the launch-latency summary, the S27 counts and the
+    pre-registered sensitivity line; the runner's re-checks as labels."""
+    from bench import m76_rule
+
+    _, stats = kv_b7()
+    sessions = list(a8.get("sessions") or [])
+    pairs = {p["pair"]: p for p in a8.get("pairs") or []}
+    head = dict(sessions=sessions, recheck=a8.get("recheck"), latency=_a8_latency(a8.get("latency"), pairs),
+                session_status={s: p.get("status") for s, p in pairs.items()}, counts=_a8_counts(pairs, ref, test))
+    if a8.get("status") != "complete":
+        return dict(head, status=f"incomplete: B8-A8 status {a8.get('status')!r} (no verdict on incomplete evidence)"), None
+    bad = [s for s in sessions if not (pairs.get(s) or {}).get("accepted")]
+    if bad:
+        return dict(head, status=f"incomplete: confirmatory session(s) {bad} not B8-A8-accepted (no verdict on incomplete "
+                                 "evidence)"), None
+    reader = V.Reader(Path(rows_root) / V.KV_ROOT)
+    atts = {s: {arm: V._a8_load_attempt(reader, p["attempts"][arm], s, f"A8 {s} {arm}") for arm in (ref, test)}
+            for s, p in pairs.items() if p.get("accepted")}
+    for rel, digest in reader.inputs.items():
+        if a8["inputs"].get(f"{V.KV_ROOT}/{rel}") != digest:
+            raise RefusalError(f"input {V.KV_ROOT}/{rel} is not covered by B8-A8.json")
+    keysets = [{k["key"][1] for k in pairs[s]["keys"]} for s in sessions]
+    if any(ks != keysets[0] for ks in keysets):
+        return dict(head, status="incomplete: the confirmatory sessions hold different item sets"), None
+    common = sorted(keysets[0])
+    languages = {i: _a8_language(i) for i in common}
+    test_map, ref_map = _a8_strict_maps(atts, sessions, common, test), _a8_strict_maps(atts, sessions, common, ref)
+    plan = kv_plan("A8")
+    lk = plan["looks"][-1]
+    v = kv_axis_verdict("A8", lk["look"], test_map, ref_map, languages=languages)
+    try:
+        d = stats.paired_session_delta(test_map, ref_map, iters=ITERS, seed=SEED, interval_alpha=2 * lk["alpha"],
+                                       exact_alpha=lk["alpha"])
+    except ValueError as exc:
+        raise RefusalError(f"bench.stats.paired_session_delta: {exc}") from None
+    v["descriptive"] = dict(statistic="paired_session_delta (descriptive)", delta=d["delta"], lo=d["lo"], hi=d["hi"])
+    per_lang = {}
+    for lang in KV_A8_LANGS:
+        ids = [i for i in common if languages[i] == lang]
+        if ids:
+            per_lang[lang] = dict(_a8_bound({i: test_map[i] for i in ids}, {i: ref_map[i] for i in ids},
+                                            m76_rule.PER_SESSION_ALPHA), label=KV_A8_DESCRIPTIVE)
+    within = {}
+    for x, s in enumerate(sessions):
+        for t in sessions[x + 1:]:
+            within[f"{s}-{t}"] = dict(n=len(common), discordant=sum(1 for i in common if ref_map[i][s] != ref_map[i][t]))
+    noise = dict(n16_within=within, test_vs_ref=dict(n=len(common) * len(sessions), discordant=sum(
+        1 for i in common for s in sessions if test_map[i][s] != ref_map[i][s])), note="diagnostic only (S22-P9)")
+    faulted = sorted(_a8_faulted(atts, sessions, (ref, test)) & set(common))
+    if not faulted:
+        sens = dict(label=KV_A8_SENSITIVITY, status="no faulted items", removed=[])
+    else:
+        keep = [i for i in common if i not in faulted]
+        if not keep:
+            sens = dict(label=KV_A8_SENSITIVITY, status="no item remains", removed=faulted)
+        else:
+            sv = kv_axis_verdict("A8", lk["look"], {i: test_map[i] for i in keep}, {i: ref_map[i] for i in keep},
+                                 languages={i: languages[i] for i in keep})
+            sens = dict(label=KV_A8_SENSITIVITY, status="computed", removed=faulted, n_items=sv["n_items"],
+                        verdict_label=sv.get("label"),
+                        **{k: sv.get(k) for k in ("verdict", "delta", "lo", "hi", "loss_bound", "alpha", "hold")})
+    decode, walls, tax = {}, {}, {}
+    for s, p in sorted(pairs.items()):
+        if not p.get("accepted") or s not in atts:
+            continue
+        a = atts[s]
+        excluded = sorted(set(a[ref]["accounting"]) | set(a[test]["accounting"]))
+        # r1 B5 (§9.4): runaway tax per arm with the arm's accounting-fault rows left out (descriptive, no interval)
+        tax[s] = dict({arm: _tax(dict(rows={i: r for i, r in a[arm]["rows"].items() if i not in a[arm]["accounting"]}))
+                       for arm in (ref, test)}, accounting_excluded=excluded, label="descriptive (pooled counts, no interval)")
+        keys = sorted(k["key"][1] for k in p["keys"] if k["key"][1] not in excluded
+                      and a[ref]["rows"].get(k["key"][1]) is not None and a[test]["rows"].get(k["key"][1]) is not None)
+        invalid = _a8_speed_invalid(p)
+        sp = _speed(keys, a[ref], a[test], inference=bool(p.get("speed_valid")) and not invalid)
+        decode[s] = dict(sp, arms=dict(off=ref, on=test), estimator="P426 T2 (Σ(generated − requests) / Σ decode_s per item)",
+                         accounting_excluded=excluded, speed_invalid=invalid,
+                         label="descriptive-invalid (speed tier)" if invalid else "descriptive")
+        walls[s] = dict(per_language=_a8_walls(a, ref, test, keys), accounting_excluded=excluded, speed_invalid=invalid,
+                        label="descriptive-invalid (speed tier)" if invalid else "descriptive (within the pair only)")
+    rec = dict(v, **head, items=len(common), per_language=per_lang, noise_floor=noise,
+               reload_control=_a8_reload_control(atts, pairs, ref, test), walls=walls, tax=tax, sensitivity=sens)
+    return rec, decode
+
+
 def _kv_fmt_verdict(v):
     if "verdict" not in v:
         return f"{v.get('status', 'pending')}"
@@ -1852,6 +2094,55 @@ def _kv_fmt_verdict(v):
             f"({v.get('label')}){warn}{d}")
 
 
+def _render_a8(a8, lab):
+    """The `## A8 tg2` lines (B4b-2 §4): the verdict or the incomplete status, then the descriptive lines, the S27 counts, the
+    sensitivity line and the runner's re-check labels."""
+    js = lambda x: json.dumps(x, sort_keys=True, default=str)  # noqa: E731
+    lines = []
+    if "verdict" in a8:
+        lines.append(f"- sessions {a8['sessions']}: {_kv_fmt_verdict(a8)}")
+        hold = a8.get("hold") or {}
+        lines.append(f"- HOLD (C339, blocking; any language point < {100 * hold.get('threshold', -0.2):.0f} pp): "
+                     f"{'HOLD ' + str(hold.get('languages')) if hold.get('hold') else 'no'}; per-language points "
+                     f"{js({k: round(100 * x, 4) for k, x in sorted((hold.get('per_language') or {}).items())})} pp")
+        lines.append(f"- per language ({KV_A8_DESCRIPTIVE}): {js(a8.get('per_language'))}")
+        inter = a8.get("interaction") or {}
+        lines.append(f"- session × arm interaction: flag {a8.get('interaction_flag')}, p {inter.get('pvalue')}")
+        lines.append(f"- per session (descriptive, α {a8.get('per_session_alpha')}): {js(a8.get('per_session'))}")
+        nf = a8.get("noise_floor") or {}
+        lines.append(f"- noise floor (diagnostic): N16 within-arm {js(nf.get('n16_within'))}; {lab} discordant "
+                     f"{(nf.get('test_vs_ref') or {}).get('discordant')} / {(nf.get('test_vs_ref') or {}).get('n')}")
+        lines.append(f"- reload control (diagnostic): {js(a8.get('reload_control'))}")
+        sens = a8.get("sensitivity") or {}
+        if sens.get("status") == "computed":
+            lines.append(f"- {sens['label']}: without {_list(sens['removed'])} ({sens['n_items']} items): delta {_pp(sens['delta'])}, "
+                         f"loss bound {_pp(sens['loss_bound'])} → {sens['verdict']} ({sens['verdict_label']})")
+        else:
+            lines.append(f"- {sens.get('label', KV_A8_SENSITIVITY)}: {sens.get('status')}")
+        for s, w in sorted((a8.get("walls") or {}).items()):
+            lines.append(f"- walls {s} ({w['label']}): {js(w['per_language'])}")
+        for s, t in sorted((a8.get("tax") or {}).items()):
+            lines.append(f"- runaway tax {s} ({t['label']}; accounting-fault items excluded {_list(t['accounting_excluded'])}): "
+                         + "; ".join(f"{arm} {js(v['counts'])} union {v['union']}" for arm, v in sorted(t.items())
+                                     if isinstance(v, dict)))
+    else:
+        lines.append(f"- {a8.get('status', 'incomplete')}")
+        lines.append(f"- session status: {js(a8.get('session_status'))}")
+    for s, arms in sorted((a8.get("counts") or {}).items()):
+        for arm, c in sorted(arms.items()):
+            lines.append(f"- {s} {arm}: transport DNF {_list(c['transport_dnf'])}; harness DNF {_list(c['harness_dnf'])}; reruns "
+                         f"{_list(c['reruns'])}; accounting faults (tokens / latency / tax descriptive only) "
+                         f"{_list(c['accounting_faults'])}; final-tampered {js(c['tampered'])}")
+    lat = a8.get("latency") or {}
+    lines.append(f"- launch latency (descriptive only): {lat.get('status')}"
+                 + (f" {js(lat.get('windows'))}" if lat.get("status") == "present" else ""))
+    for gate, r in sorted((a8.get("recheck") or {}).items()):
+        lines.append(f"- re-check {gate} ({r.get('label')}): {r.get('status')}"
+                     + (f"; inside {r.get('inside')}, operator_review {r.get('operator_review')}, α* applied "
+                        f"{r.get('alpha_star_applied')}" if r.get("status") == "ok" else f"; {r.get('reason')}"))
+    return lines
+
+
 def render_kv(sig):
     h = sig["header"]
     lab = h["label"]
@@ -1860,8 +2151,11 @@ def render_kv(sig):
              f"`bench.m76_rule.axis_verdict` (B7; α from its committed plan); `paired_delta` / `paired_session_delta` are "
              f"descriptive columns only.", ""]
     if "b8_sha256" in h:
-        lines += [f"- B8.json sha256: `{h['b8_sha256']}`; inputs sha set `{h['inputs_sha256']}` ({h['n_inputs']} files)",
-                  f"- RNG (descriptive columns): seed {h['rng']['seed']}, {h['rng']['iters']} resamples", ""]
+        lines += [f"- B8.json sha256: `{h['b8_sha256']}`; inputs sha set `{h['inputs_sha256']}` ({h['n_inputs']} files)"]
+        if "b8_a8_sha256" in h:
+            lines.append(f"- B8-A8.json sha256: `{h['b8_a8_sha256']}`; inputs sha set `{h['a8_inputs_sha256']}` "
+                         f"({h['n_a8_inputs']} files)")
+        lines += [f"- RNG (descriptive columns): seed {h['rng']['seed']}, {h['rng']['iters']} resamples", ""]
     ax = sig["axes"]
     a1 = ax.get("A1") or {}
     lines += [f"## A1 Math500 ({lab}; `axes.A1`)", ""]
@@ -1907,6 +2201,8 @@ def render_kv(sig):
                          f"discordant {nf['test_vs_ref']['discordant']} / {nf['test_vs_ref']['n']}")
     else:
         lines.append(f"- {a7.get('status', 'pending')}")
+    if "A8" in ax:                                  # B4b-2 §4.3: after A7; absent → the sheet is unchanged
+        lines += ["", f"## A8 tg2 ({lab}; `axes.A8`)", ""] + _render_a8(ax["A8"], lab)
     lines += ["", "## A2 / A3 / A4 / M1 (panel / descriptive)", ""]
     for axis in ("A2", "A3", "A4", "M1"):
         lines.append(f"- {axis}: {json.dumps(ax.get(axis), sort_keys=True, default=str)}")
@@ -1919,6 +2215,14 @@ def render_kv(sig):
                 p = ds["primary"]
                 lines.append(f"- A7 {s}: treatment / reference {_f(p['geomean_ratio'])} [{_f(p['lo'])}, {_f(p['hi'])}] (n {p['n']}); "
                              f"acceptance {_f(ds['acceptance']['off']['acceptance'])} / {_f(ds['acceptance']['on']['acceptance'])}")
+            continue
+        if k == "A8":                               # B4b-2 §4.3: per session; accounting-fault items excluded, speed tiers labelled
+            for s, ds in sorted(d.items()):
+                p = ds["primary"]
+                lines.append(f"- A8 {s} ({ds['label']}): treatment / reference {_f(p['geomean_ratio'])} [{_f(p['lo'])}, "
+                             f"{_f(p['hi'])}] (n {p['n']}); acceptance {_f(ds['acceptance']['off']['acceptance'])} / "
+                             f"{_f(ds['acceptance']['on']['acceptance'])}; accounting-fault items excluded "
+                             f"{_list(ds['accounting_excluded'])}")
             continue
         both = d["both"]
         lines.append(f"- {k}: treatment / reference {_f(both['geomean_ratio'])} [{_f(both['lo'])}, {_f(both['hi'])}] (n {both['n']}; "
@@ -1971,6 +2275,8 @@ def main(argv=None):
                     help="M76 B3: kv = the M76 sheet of a lever-kv B8 (--results-root <rows>/m76; verdicts by B7)")
     al.add_argument("--partial", action="store_true",
                     help="lever kv: ingest an incomplete panel, labelled PARTIAL (its panel_incomplete flag stays blocking)")
+    al.add_argument("--b8-a8", type=Path, default=None,
+                    help="lever kv: the B8-A8.json beside --b8 (M76 B4b-2): adds the A8 section and flags; absent → unchanged")
     args = ap.parse_args(argv)
     try:
         V.check_out_dirs([args.out_md, args.out_json])
@@ -1986,11 +2292,21 @@ def main(argv=None):
                 raise RefusalError("--evidence-ref is the P426 step-4 sheet's (lever mtp)")
             if args.partial and args.panel is None:
                 raise RefusalError("--partial requires --panel")
+            b8_a8 = b8_a8_sha = None
+            if args.b8_a8 is not None:
+                try:
+                    a8_bytes = args.b8_a8.read_bytes()
+                    b8_a8 = json.loads(a8_bytes.decode("utf-8"))
+                except (OSError, UnicodeDecodeError, ValueError):
+                    raise RefusalError("B8-A8.json is missing or unreadable") from None
+                b8_a8_sha = hashlib.sha256(a8_bytes).hexdigest()
             signals = compute_kv(args.rows_root, b8, b8_sha256=hashlib.sha256(b8_bytes).hexdigest(), panel=args.panel,
-                                 partial=args.partial)
+                                 partial=args.partial, b8_a8=b8_a8, b8_a8_sha256=b8_a8_sha)
             md = render_kv(signals)
         elif getattr(args, "partial", False):
             raise RefusalError("--partial is the lever-kv sheet's")
+        elif getattr(args, "b8_a8", None) is not None:
+            raise RefusalError("--b8-a8 is the lever-kv sheet's")
         elif args.axis == "all":
             signals = compute_all(args.results_root, args.rows_root, b8,
                                   b8_sha256=hashlib.sha256(b8_bytes).hexdigest(), panel=args.panel,
