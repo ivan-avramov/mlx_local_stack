@@ -18,7 +18,8 @@ recommendation.
 
 1. **Gate running** on `main` @ `d9ec9ec8b` (S27 bundle `72e5626a5` already gated; on top: S28-P20 naming fix `43029a1bd` + fixture
    classification, S28-P29 sequencer `--rerun-attempt` `55f09bc21`, B4b-2 `d9ec9ec8b`); log `$STACK_WORKDIR/gate-logs/stack-d9ec9ec8.log`.
-   On PASS: push `main` (operator authorized the push, C379 / C380), push `evidence` (`b909ceb72`, data-only), then resume the decider.
+   On PASS: push `main` only (operator authorized, C379 / C380); the `evidence` push (`b909ceb72`, 37,762 scrubbed files, ≈ 134 MB of
+   verbatim model output to the public repo) needs the operator's own word; then resume the decider.
 2. **The A8 decider (C367 / C374 autonomy, session 28 only)** — out-base `$STACK_WORKDIR/m76/p426/wave2.tg2/`: pilot pair VALID /
    VALID, s1 N16 VALID (80 / 80, no faults), X s1 a1 / a2 INVALID before any item (vmmap census timeout while a root filesystem scan
    stalled `vmmap` box-wide, S28-P24 / P25). Resume with `wave2.tg2/rerun_x_s1_a3.sh` **plus `--rerun-attempt 2`** (C381); the sequencer
