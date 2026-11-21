@@ -19,3 +19,12 @@ test-writer's model). Judged by the designer, intent first (S28-P5).
 | B11 | Real packet / export acceptance (§7.3) unverified on real bytes (Sol P6, Sonnet P7, GLM F5) | covered (designer) | runs on the new-identity pilot pair once harvested, before the panel freeze; regrade only. |
 | B12 | The frozen suite does not exercise `_a8_packet` / `kv_export` (GLM F4) | adopted (test-writer) | the signatures now exist; scenario tests in delivery 3. |
 | B13 | `_sequence_*` gained a message-only `namespace` parameter (GLM F2); extra B8-A8 keys (GLM F3) | declined | no behaviour change; the extra keys bind the draw (`repo_inputs`) and are descriptive. |
+
+## Test-writer delivery 2 (same round; 140 / 140 amended tests pass on candidate 1; "fix then merge")
+
+| id | finding | disposition | why |
+|---|---|---|---|
+| B14 | `check_b8_a8` re-hashes `repo_inputs` at `rows_root.parents[1]` (layout assumption) (m2) | adopted | pass the repo root explicitly; the refusal names the missing input. |
+| B15 | `v8.arms` reason unreachable: `a8_applies` already requires `TG2_PAIR` (m3) | adopted | keep one place: `a8_applies` decides applicability by corpus / lever, the arms mismatch is a REASON on the record. |
+| B16 | `b8_a8_sha256 or _sha_doc(...)` falls back to a canonical-JSON sha, not the file's bytes (m5) | adopted | the file sha everywhere (header, panel freeze); no fallback. |
+| — | M1 = B8; m1 = B6; m4 = B9; n1 = B2 | merged | |
