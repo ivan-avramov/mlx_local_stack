@@ -39,6 +39,52 @@ from pathlib import Path
 ZERO = "0" * 40
 CANONICAL = {"stack": "ivan-avramov/mlx_local_stack", "mlx-vlm": "ivan-avramov/mlx-vlm", "mlx-serve": "ivan-avramov/mlx-serve"}
 UPSTREAM_VLM = "https://github.com/Blaizzy/mlx-vlm.git"
+MLX_VLM_ORIGIN_URLS = (
+    f"git@github.com:{CANONICAL['mlx-vlm']}",
+    f"git@github.com:{CANONICAL['mlx-vlm']}.git",
+    f"https://github.com/{CANONICAL['mlx-vlm']}",
+    f"https://github.com/{CANONICAL['mlx-vlm']}.git",
+)
+# P8: approved scanner finding fingerprints for the upstream sync through fd6404fb3261102600541127d59103dac65c2756.
+MLX_VLM_UPSTREAM_SCAN_EXCEPTIONS = {
+    "08b7fd8765148a6a541839fec3a7bddce23f8587": "a799baffeff4d9a8fb30f7c3d0d797d3dc2ed040f95d8eed747d4c0261ad39a3",
+    "09b95b17281a40611d23acb62b9a66a91d879d11": "635f16604040e94df262d33f8914f1a711abf8c094c8b30c6a9fad555d75285a",
+    "1009b626859e09844446be1b8dc434dfb83719ff": "1da4c448f52c601474e514d8220b62e27075d33c5afa9107e5fafca495647886",
+    "168a299d41755b8a3bf7a94610702e9bb4c01c09": "323c304e33ddbad85ab6663aef07576009e3522bb9ae3b4fc9dae53b44767d9e",
+    "1c84b33d3ea9a0a015932fb13d55d450e3a256f2": "5ecf231915e26d306e96f1a6cf64f600015a8fafaa591826c3f5ba44fd3ba8b2",
+    "24ec162ad92b70998e2f4b3b30bc229267944148": "0273389a3f14cf93e2b0e1a0e00bcfa44b759577a8277f022535452504c2c732",
+    "25ead5d2c72f509c03ff570cae2041cbf54fa408": "21aca868b0bcde776bc58441f24495dd63c24e02e58d487e89a123d156135370",
+    "2d8095467a1a72f7bc3d145abfd9e3a1466d988c": "e3bfa7b9d1ac48f327b054c095835f17cf16afe3de96488b4102e20ea19313d7",
+    "2e52f924a204608c6177b19e5897766a6a0a424c": "a83707512f6190460485ea3339f35625d89c9ec60490a8b027f30936dd2d3f62",
+    "3070dcc31948f48f9d8639b606af7bc019494fac": "dd5523332af1d8e05c34027e3866db2ed37236aa3cb270dbd258177ff1371558",
+    "3ba1383d67006c3da9bd8e6590ab5777ff3e1fce": "bb84d19bbde1ca10e2e69510dafeab97d51a28fbc6a3d0e33a7ccb0a63e304b4",
+    "3d461369b70c7fda4977154562fe247bdea057be": "689e865bc35d630e6a6649e068c55e2822d305ae3148ab0461e4cc6558ddb0b0",
+    "3d58bac96aed22e2046ae71d03b7e43ce0578418": "4b069fc7ce456e8c8f4b7e6b55509c89a0b34f7fd03d6855056c8f13b79964d8",
+    "4a991d7f8aaad61e5b7834eb86206f957074b660": "53388dff6c0d5afe534f6876840b7e79c6e3020b78570bea9a8b6ce68bfc57a2",
+    "4feb2d9e30b2fef62b9c6630111ff2e590806724": "4cfe5af53c4ab7094e9cf1daf405b6fcea747d740d9bbbb0c326aa10f3ff4cef",
+    "5061bd7f3848f720cb2ba8d0bc1a1a181d733359": "f16f1560add64cc19fd37ac0df1c65a840289146c1dd6de9f5f228072788d1f2",
+    "5d65a184762bf1fe8decc2b9b6a4b9a100cffa0b": "027114a8ca7bb8d3b6ed1f44fd8efa5e57c34e830f509223774fdc37d1281b09",
+    "626e3e7dae8812dab939c4837e192bd0be9f549f": "0e8bda7e25cc34b813d88bcf6f6db1a93f122b63ba585539410c1d86293cb7ae",
+    "6b64f19713faeea64cba82d2878585074e5f6014": "736dc90f1b04218fb6e85a84b61c764f2be631aa4de6b8d8d3a3dc7dca834f82",
+    "6dc15626a1c82e88df2198ce397a6aef3349c579": "b247f0bb2af9bdef130beb33fe6a06c815ffabc3673b2a8cd9d56a39fdcb89d9",
+    "7b197478718fcb9d3b164523a4134b062b1ac62c": "20968bb0a4e5c42d05c654ba7d8cb5e2ae7676a0b5c9812e025943e1f9763d4c",
+    "820b067c4276e39eeb1ce819510ef42d3c8f47e6": "168e97c00d2ad7a0df0e92db11cf1f443bcf6d96e971ebd824fddba9f39f4531",
+    "89b0aebf083d88d1ada0d8fca79bc4a7abd2ed10": "7f3db265aceb249ccfb8f99966bc31f8ba2243b95241fb34504d22cab83d0913",
+    "8b7c99094fa14c2b5a28fbf9f8d1fecb62ddf605": "8a76b516c01988ad5e28274fb98ab06ec892641a831bcf503e1b01e936a7d169",
+    "9543e2f2ab51276d01da977aa93e8aa0503370b5": "a15a7d7d724725b111d88543ed69516c7c3e4aeab99634b4713b5f9e60372909",
+    "9be4b98f6bbdbd5081901868e676dd766710a92e": "8205cfed38b99636fbcd78fc992d368f1cb93c50c2d98da0bd142c63326516bf",
+    "9f76a9bfbb7093cfc54f3de55a8976d3756fcc3d": "5e25e68008824666c23d659e3e82e7a2cf557db3ac69784707a6dab1c93331ba",
+    "a704c3b70816df4390232e6abae4f15311e118bc": "de8d613f70ba9127385545c6501175a38b4d6d51e7bf8c369885555b08302051",
+    "a78e7ef60b431492209569d1e3452c62f20b6696": "173e26f6476e2816c81ecf5e5f10fb48206e01181676639d09f8cbb2530b3cf5",
+    "b167017e17ae901538d498989db74a40912d6bd0": "4f6b2b6bac992f1b53128bba645a85ecb64ff28a9ca48a16f6e92d7a669a5383",
+    "ba9259b9b0a19855c6f9cfb71c2bf12e8a332ed0": "c3f670facedd42b6e5db81e24f7aacacedd9049a865493dc2fee14ce583652f2",
+    "bdc6bd733acfbb7a0916cfd38e7ed68536056b19": "0b03c430ef8de7f144f572e127a28c4a6fdafddddbfa15bda26faec9401d0784",
+    "c0980db2182d57e7e76d05cbcba8d04a194e6b17": "1ee0ccaf74464d8bb7cb2b0327a18871a4fa3e4add44f2f322546db97b015647",
+    "d3a16c344b9cb9311060fb189019a9582b202fdd": "d8527729c2f56cabf6ce630ed50f4e3be95bf9eefd692625be35eb5df54d3324",
+    "dcdb3e81debe46f99e143abe37d6a2d977c89c3c": "73a6430cdb86590ca4b0970ac2d941fda3baa14397b1d7fefcbf1670b7b1b4fe",
+    "e5fea63fe65a31d740fbf72911d468ce3ac9d832": "0236b05b4ae8d60963312ed619b229683adb8e240947020fad54e72a848dcdc8",
+    "fb8a76b7e287d314bcf9621b2d0337c5ea7cb3b2": "9af84f3f1d1e275bb759169894a31aa3ba4723408698141bcf48fe6576ca5b9c",
+}
 AUDITS = ("check_upstream_parity.py", "check_upstream_symbols.py", "check_upstream_deletions.py", "check_fork_markers.py",
           "check_dead_helpers.py", "check_body_divergence.py", "check_upstream_registries.py", "check_call_arguments.py")
 GITLINKS = {"src/mlx-vlm": "mlx-vlm", "src/mlx-serve": "mlx-serve"}
@@ -737,17 +783,22 @@ def introduced(repo_dir, remote, sha, exclude_evidence=False):
     return _git(repo_dir, "rev-list", sha, "--not", *ex, f"--remotes={remote}").split()
 
 
-def _scan(repo_dir, commits, naming=True):
+def _scan(repo_dir, commits, naming=True, *, exceptions=None):
     from bench import modelnames, piicheck
 
     out = []
     for c in commits:
         diff = _git(repo_dir, "show", "--format=", "--unified=0", "--root", c)
-        out += [f"{c[:8]} PII: {v}" for v in piicheck.diff_violations(diff)]
+        findings = [f"{c[:8]} PII: {v}" for v in piicheck.diff_violations(diff)]
         if naming:
             msg = _git(repo_dir, "show", "-s", "--format=%B", c)
-            out += [f"{c[:8]} naming: {v}" for v in modelnames.diff_violations(diff)]
-            out += [f"{c[:8]} message: {v}" for v in modelnames.message_violations(msg)]
+            findings += [f"{c[:8]} naming: {v}" for v in modelnames.diff_violations(diff)]
+            findings += [f"{c[:8]} message: {v}" for v in modelnames.message_violations(msg)]
+        if exceptions is not None and c in exceptions:
+            payload = json.dumps(findings, ensure_ascii=True, separators=(",", ":")).encode("utf-8")
+            if hashlib.sha256(payload).hexdigest() == exceptions[c]:
+                continue
+        out += findings
     return out
 
 
@@ -796,7 +847,7 @@ def _gitlinks_at(repo_dir, sha):
     return links, out
 
 
-def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=None, levels=None):
+def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=None, levels=None, remote_url=None):
     """P541: every pushed ref (branch, or fork tag) passes a level (`push_level`, which also owns the P447 evidence orphan
     rule) and the per-commit scans; a stack TAG must be SemVer `vX.Y.Z` and carries the release rule (P448: PASS receipt for
     the tagged commit under the current policy + both gitlinks' receipts and reachability). `levels`, when a list, receives
@@ -814,8 +865,12 @@ def check_lines(repo, repo_dir, remote, lines, *, gate_dir, digest_for, forks=No
         sha = _git(repo_dir, "rev-parse", f"{local_sha}^{{commit}}")
         ref_out, shown = [], None
         evidence = repo == "stack" and remote_ref == EVIDENCE_REF  # P447: data — PII only
+        exceptions = None
+        if (repo == "mlx-vlm" and remote == "origin" and remote_url in MLX_VLM_ORIGIN_URLS
+                and remote_ref == "refs/heads/main"):
+            exceptions = MLX_VLM_UPSTREAM_SCAN_EXCEPTIONS
         ref_out += _scan(repo_dir, introduced(repo_dir, remote, sha, exclude_evidence=remote_ref != EVIDENCE_REF),
-                         naming=not evidence)
+                         naming=not evidence, exceptions=exceptions)
         if repo == "stack" and remote_ref.startswith("refs/tags/"):
             name = remote_ref[len("refs/tags/"):]
             if not SEMVER_TAG.match(name):
@@ -993,7 +1048,8 @@ def main(argv=None):
         repo = identity(_git(args.repo_dir, "remote", "get-url", "origin"))
         levels = []
         problems = check_lines(repo, args.repo_dir, args.remote, sys.stdin.read().splitlines(), gate_dir=gate_dir,
-                               digest_for=lambda rp, sha: digest_for(rp, sha, live[rp], _baselines()), levels=levels)
+                               digest_for=lambda rp, sha: digest_for(rp, sha, live[rp], _baselines()), levels=levels,
+                               remote_url=args.url)
     except GateError as exc:
         print(f"[local_gate] REFUSED: {exc}", file=sys.stderr)
         return 1
