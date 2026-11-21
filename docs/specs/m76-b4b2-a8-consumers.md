@@ -1,9 +1,9 @@
-# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.4, 2026-11-19; FINAL — design review r1–r3, ledgers L, M, N; C368, C369)
+# M76 B4b-2 — the A8 (tg2) consumers: B8, signals, panel (spec v1.5, 2026-11-20 — v1.4 FINAL (design review r1–r3, ledgers L, M, N; C368, C369) + the §9 amendment for the S27 bundle (C378, C379); §9 not re-reviewed)
 
 Parent: `docs/specs/m76-b4b-tg2-runner.md` (B4b-1), `docs/specs/m76-tq4-certification.md` §A8 / §Panel / §Noise floor,
 `docs/specs/m76-b7-statistics.md`, PLAN M83. Four-eyes STRICT (design review, change review, verify; panel Sol + GLM + Claude Sonnet;
-a fresh blind test-writer, not the implementer's model). Implementation and every pytest run start only after the A8 decider's
-sequencer exits (S27-P8). Ledger: `docs/reviews/m76-b4b2/design-ledger-r1.md`.
+a fresh blind test-writer, not the implementer's model). The build runs in clones while legs run (C379 (3); S27-P8 stays for the
+live arms' trees). Ledger: `docs/reviews/m76-b4b2/design-ledger-r1.md`.
 
 ## 1. Goal
 
@@ -166,6 +166,33 @@ re-check label `incomplete`. The sheet labels each as the runner's interim re-ch
    a write to `babel.config.js` → stays; `echo x > package.json` → stays; `npx jest -u` / `--coverage` → stays; `CI=true npx jest` →
    stays; `node setup.js` → stays; an unknown tool name → stays; an eligible row with no regrade
    record → `incomplete`; a record whose re-derived eligibility differs → refuse; the effective-passed accessor in panel selection.
+
+## 9. Amendment v1.5 — the S27 bundle (C378, C379); supersedes the clauses it names
+
+The A8 decider, its pilot and positives all run on the new identity (S27 §9): no A8 row on `main` is graded under the old view.
+
+1. **§3.7 is removed** (the javascript lock-file regrade, `a8_regrade_eligibility`, the regrade tool and records, `a8_passed`): the
+   new view omits a javascript `package-lock.json` absent from the prepared tree (S27 §7.2), so the lock file never makes a row
+   `tampered`. Effective passed = the row's `passed` everywhere (signals, counts, panel selection). §7.3's "regrade pending" and §7.6
+   are removed. A final-`tampered` javascript row is an outcome like any other (listed per arm with its tamper receipt).
+2. **Harness DNFs (S27 §5.7):** a slot whose terminal record is a `harness_fault_dnf` or `grade_fault` (in `chain.p426_harness_dnf`,
+   sealed sidecar `items/<slot>.harness_dnf.json`) scores 0 like a `p426_dnf` slot (§2); B8-A8 verifies each sidecar against
+   `chain.json` (as the harvest does) and counts them per arm and session.
+3. **Rerun attempts (S27 §5.2, §5.7):** per slot exactly one accepted attempt (rerun index 0 or 1); an earlier attempt's disposition
+   is `harness_fault` with its recorded reason; B8-A8 reads the accepted attempt's row and records (`ready` / item record keyed by rerun
+   index) and lists the reruns per arm. Anything else for a slot → a REASON.
+4. **Accounting faults (S27 §5.3):** a row with `accounting_fault: true` keeps its outcome; its sealed sidecar
+   (`items/<slot>.accounting.json`) is checked with the shared validator (`p426_hooks.accounting_problems`); its tokens, latency and
+   runaway-tax figures leave every aggregate (decode, walls, tax) and are listed per arm.
+5. **Sensitivity (S27 §5.6, pre-registered):** beside the A8 verdict, the sheet prints the same `axis_verdict` computed with every
+   item that has a harness fault, rerun, harness DNF or accounting fault in EITHER arm (any confirmatory session) removed from both
+   arms — labelled sensitivity, descriptive, never the verdict; with no such item it prints "no faulted items".
+6. **Leg states (S27 §5.7, §8):** a PAUSED leg is never a result (`incomplete` with the reason); speed-invalid tiers (an ALERT, a hold,
+   an accounting fault, watcher gaps) mark that leg's speed figures descriptive-invalid in the sheet, quality unaffected.
+7. **Acceptance additions (red tests first):** a harness DNF scores 0 and its sidecar mismatch refuses; a rerun slot reads its accepted
+   attempt, a slot with two accepted attempts refuses; an accounting-fault row keeps its outcome and leaves the decode aggregate; the
+   sensitivity line on a fixture with one faulted item and with none; a PAUSED leg → incomplete. §7.3 runs on the new-identity pilot
+   pair once it is harvested.
 
 ## 8. Out of scope
 
