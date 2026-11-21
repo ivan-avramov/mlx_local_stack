@@ -1,0 +1,84 @@
+#include "parallel_letter_frequency.h"
+
+#include <array>
+#include <cctype>
+#include <thread>
+#include <vector>
+
+namespace parallel_letter_frequency {
+
+namespace {
+
+constexpr int kLetterCount = 26;  // 'a' .. 'z'
+
+// Number of worker threads to use, clamped to the number of texts so we never
+// spawn more threads than there is work to do.
+size_t workerCount(size_t texts) {
+    size_t n = std::thread::hardware_concurrency();
+    if (n == 0) {
+        n = 1;
+    }
+    if (n > texts) {
+        n = texts;
+    }
+    return n;
+}
+
+}  // namespace
+
+std::map<char, int> frequency(const std::vector<std::string_view>& texts) {
+    if (texts.empty()) {
+        return {};
+    }
+
+    const size_t nthreads = workerCount(texts.size());
+
+    // Each worker accumulates into its own 26-entry array, so no two threads
+    // ever write to the same memory and no locking is required.
+    std::vector<std::array<int, kLetterCount>> locals(nthreads);
+
+    // Partition the texts into nthreads contiguous chunks.
+    const size_t chunk = texts.size() / nthreads;
+    const size_t remainder = texts.size() % nthreads;
+
+    std::vector<std::thread> threads;
+    threads.reserve(nthreads);
+
+    size_t begin = 0;
+    for (size_t t = 0; t < nthreads; ++t) {
+        const size_t count = chunk + (t < remainder ? 1 : 0);
+        const size_t end = begin + count;
+
+        threads.emplace_back([&texts, &locals, t, begin, end]() {
+            for (size_t i = begin; i < end; ++i) {
+                for (char ch : texts[i]) {
+                    const unsigned char uc = static_cast<unsigned char>(ch);
+                    if (std::isalpha(uc)) {
+                        const int idx = std::tolower(uc) - 'a';
+                        locals[t][idx]++;
+                    }
+                }
+            }
+        });
+
+        begin = end;
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    // Merge the per-worker tallies into the result map. Zero counts are skipped
+    // so that letters which never appear do not show up in the map.
+    std::map<char, int> result;
+    for (const auto& local : locals) {
+        for (int k = 0; k < kLetterCount; ++k) {
+            if (local[k] != 0) {
+                result[static_cast<char>('a' + k)] += local[k];
+            }
+        }
+    }
+    return result;
+}
+
+}

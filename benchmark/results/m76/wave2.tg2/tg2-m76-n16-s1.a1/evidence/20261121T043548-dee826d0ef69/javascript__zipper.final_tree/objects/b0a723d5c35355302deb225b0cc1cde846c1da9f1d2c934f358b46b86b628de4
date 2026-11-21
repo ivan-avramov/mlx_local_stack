@@ -1,0 +1,72 @@
+//
+// A zipper for a binary tree: a focus node plus a trail of the parents
+// that were traversed to reach it. All operations are immutable and
+// return a new Zipper (or null at a dead end).
+//
+
+export class Zipper {
+  constructor(tree, trail = []) {
+    this.tree = tree;
+    this.trail = trail;
+  }
+
+  static fromTree(tree) {
+    return new Zipper(tree);
+  }
+
+  toTree() {
+    let node = this.tree;
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      const { parent, direction } = this.trail[i];
+      node = { ...parent, [direction]: node };
+    }
+    return node;
+  }
+
+  value() {
+    return this.tree.value;
+  }
+
+  left() {
+    if (this.tree.left === null) {
+      return null;
+    }
+    return new Zipper(this.tree.left, [
+      ...this.trail,
+      { parent: this.tree, direction: 'left' },
+    ]);
+  }
+
+  right() {
+    if (this.tree.right === null) {
+      return null;
+    }
+    return new Zipper(this.tree.right, [
+      ...this.trail,
+      { parent: this.tree, direction: 'right' },
+    ]);
+  }
+
+  up() {
+    if (this.trail.length === 0) {
+      return null;
+    }
+    const { parent, direction } = this.trail[this.trail.length - 1];
+    return new Zipper(
+      { ...parent, [direction]: this.tree },
+      this.trail.slice(0, -1),
+    );
+  }
+
+  setValue(value) {
+    return new Zipper({ ...this.tree, value }, this.trail);
+  }
+
+  setLeft(left) {
+    return new Zipper({ ...this.tree, left }, this.trail);
+  }
+
+  setRight(right) {
+    return new Zipper({ ...this.tree, right }, this.trail);
+  }
+}

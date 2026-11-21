@@ -1,0 +1,98 @@
+const ONES: [&str; 20] = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+];
+
+const TENS: [&str; 10] = [
+    "zero",
+    "ten",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+];
+
+const SCALES: [&str; 7] = [
+    "",
+    "thousand",
+    "million",
+    "billion",
+    "trillion",
+    "quadrillion",
+    "quintillion",
+];
+
+/// Spell out a number from 0 to 99 in English.
+fn under_hundred(n: u64) -> String {
+    if n < 20 {
+        ONES[n as usize].to_string()
+    } else if n % 10 == 0 {
+        TENS[(n / 10) as usize].to_string()
+    } else {
+        format!("{}-{}", TENS[(n / 10) as usize], ONES[(n % 10) as usize])
+    }
+}
+
+/// Spell out a number from 0 to 999 in English.
+fn under_thousand(n: u64) -> String {
+    let (hundreds, rest) = (n / 100, n % 100);
+    if hundreds == 0 {
+        under_hundred(rest)
+    } else {
+        if rest == 0 {
+            format!("{} hundred", ONES[hundreds as usize])
+        } else {
+            format!("{} hundred {}", ONES[hundreds as usize], under_hundred(rest))
+        }
+    }
+}
+
+pub fn encode(n: u64) -> String {
+    if n == 0 {
+        return "zero".to_string();
+    }
+
+    let mut chunks = Vec::new();
+    let mut value = n;
+    while value > 0 {
+        chunks.push(value % 1000);
+        value /= 1000;
+    }
+
+    let mut parts = Vec::new();
+    for (i, chunk) in chunks.iter().enumerate().rev() {
+        if *chunk == 0 {
+            continue;
+        }
+        let scale = SCALES[i];
+        if scale.is_empty() {
+            parts.push(under_thousand(*chunk));
+        } else {
+            parts.push(format!("{} {}", under_thousand(*chunk), scale));
+        }
+    }
+
+    parts.join(" ")
+}

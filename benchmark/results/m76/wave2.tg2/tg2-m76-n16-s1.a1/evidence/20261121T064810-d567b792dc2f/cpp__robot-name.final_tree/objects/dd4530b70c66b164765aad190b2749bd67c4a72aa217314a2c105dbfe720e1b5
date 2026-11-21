@@ -1,0 +1,60 @@
+#include "robot_name.h"
+
+#include <mutex>
+#include <random>
+#include <string>
+#include <unordered_set>
+
+namespace robot_name {
+
+namespace {
+
+// Generates a random name in the format of two uppercase letters
+// followed by three digits, such as RX837 or BC811.
+std::string generate_name()
+{
+    static std::mt19937 engine{std::random_device{}()};
+    static std::uniform_int_distribution<int> letter(0, 25);
+    static std::uniform_int_distribution<int> digit(0, 9);
+
+    return std::string{
+        static_cast<char>('A' + letter(engine)),
+        static_cast<char>('A' + letter(engine)),
+        static_cast<char>('0' + digit(engine)),
+        static_cast<char>('0' + digit(engine)),
+        static_cast<char>('0' + digit(engine)),
+    };
+}
+
+// Returns a name that no robot has ever had.
+std::string unique_name()
+{
+    static std::mutex mutex;
+    static std::unordered_set<std::string> used_names;
+
+    std::lock_guard<std::mutex> lock(mutex);
+
+    std::string name;
+    do {
+        name = generate_name();
+    } while (used_names.count(name) != 0);
+
+    used_names.insert(name);
+    return name;
+}
+
+}  // namespace
+
+robot::robot() : _name(unique_name()) {}
+
+std::string robot::name() const
+{
+    return _name;
+}
+
+void robot::reset()
+{
+    _name = unique_name();
+}
+
+}  // namespace robot_name

@@ -1,0 +1,35 @@
+#include "queen_attack.h"
+
+#include <cstdlib>
+
+namespace queen_attack {
+
+namespace {
+
+void validate_position(std::pair<int, int> position) {
+    if (position.first < 0 || position.first >= 8 || position.second < 0 ||
+        position.second >= 8) {
+        throw std::domain_error("queen position is not on the board");
+    }
+}
+
+}  // namespace
+
+chess_board::chess_board(std::pair<int, int> white, std::pair<int, int> black)
+    : white_(white), black_(black) {
+    validate_position(white_);
+    validate_position(black_);
+    if (white_ == black_) {
+        throw std::domain_error("queens must be on distinct positions");
+    }
+}
+
+bool chess_board::can_attack() const {
+    const int row_diff = white_.first - black_.first;
+    const int column_diff = white_.second - black_.second;
+
+    return row_diff == 0 || column_diff == 0 ||
+           std::abs(row_diff) == std::abs(column_diff);
+}
+
+}  // namespace queen_attack

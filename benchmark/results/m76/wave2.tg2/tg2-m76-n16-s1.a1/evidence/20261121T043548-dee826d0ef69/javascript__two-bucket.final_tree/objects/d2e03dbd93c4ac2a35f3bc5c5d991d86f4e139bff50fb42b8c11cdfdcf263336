@@ -1,0 +1,100 @@
+//
+// This is only a SKELETON file for the 'Two Bucket' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class TwoBucket {
+  constructor(bucketOne, bucketTwo, goal, startBucket) {
+    this.bucketOne = bucketOne;
+    this.bucketTwo = bucketTwo;
+    this.goal = goal;
+    this.startBucket = startBucket;
+
+    if (goal > Math.max(bucketOne, bucketTwo)) {
+      throw new Error('Goal is larger than both buckets');
+    }
+
+    if (goal % gcd(bucketOne, bucketTwo) !== 0) {
+      throw new Error('Goal is not reachable');
+    }
+  }
+
+  solve() {
+    const sizeOne = this.bucketOne;
+    const sizeTwo = this.bucketTwo;
+    const goal = this.goal;
+
+    const start =
+      this.startBucket === 'one'
+        ? { one: sizeOne, two: 0 }
+        : { one: 0, two: sizeTwo };
+
+    const visited = new Set([key(start)]);
+    const queue = [{ state: start, moves: 1 }];
+
+    while (queue.length > 0) {
+      const { state, moves } = queue.shift();
+      const { one, two } = state;
+
+      if (one === goal || two === goal) {
+        return this.result(one, two, moves);
+      }
+
+      for (const next of this.nextStates(one, two, sizeOne, sizeTwo)) {
+        if (this.isForbidden(next)) continue;
+        const k = key(next);
+        if (visited.has(k)) continue;
+        visited.add(k);
+        queue.push({ state: next, moves: moves + 1 });
+      }
+    }
+
+    throw new Error('No solution found');
+  }
+
+  nextStates(one, two, sizeOne, sizeTwo) {
+    return [
+      { one: sizeOne, two }, // fill bucket one
+      { one, two: sizeTwo }, // fill bucket two
+      { one: 0, two }, // empty bucket one
+      { one, two: 0 }, // empty bucket two
+      this.pour(one, two, sizeOne, sizeTwo, 'one'), // pour one -> two
+      this.pour(one, two, sizeOne, sizeTwo, 'two'), // pour two -> one
+    ];
+  }
+
+  pour(one, two, sizeOne, sizeTwo, from) {
+    if (from === 'one') {
+      const amount = Math.min(one, sizeTwo - two);
+      return { one: one - amount, two: two + amount };
+    }
+    const amount = Math.min(two, sizeOne - one);
+    return { one: one + amount, two: two - amount };
+  }
+
+  isForbidden(state) {
+    // The starting bucket must not be empty while the other bucket is full.
+    if (this.startBucket === 'one') {
+      return state.one === 0 && state.two === this.bucketTwo;
+    }
+    return state.two === 0 && state.one === this.bucketOne;
+  }
+
+  result(one, two, moves) {
+    if (one === this.goal) {
+      return { moves, goalBucket: 'one', otherBucket: two };
+    }
+    return { moves, goalBucket: 'two', otherBucket: one };
+  }
+}
+
+function gcd(a, b) {
+  while (b !== 0) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+function key(state) {
+  return `${state.one},${state.two}`;
+}

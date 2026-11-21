@@ -1,0 +1,143 @@
+use std::borrow::Borrow;
+use std::collections::HashMap;
+
+/// Inserts `(key, value)` pairs into `attrs`.
+///
+/// Accepts both `&[(K, V)]` and `&[&(K, V)]` slices, since `T: Borrow<T>`
+/// holds for values and references alike.
+fn insert_attrs<'a, 'b>(attrs: &mut HashMap<String, String>, pairs: &[impl Borrow<(&'a str, &'b str)>]) {
+    for pair in pairs {
+        let (key, value) = pair.borrow();
+        attrs.insert(key.to_string(), value.to_string());
+    }
+}
+
+pub mod graph {
+    use super::insert_attrs;
+    use std::borrow::Borrow;
+    use std::collections::HashMap;
+
+    pub mod graph_items {
+        pub mod edge {
+            use super::super::super::insert_attrs;
+            use std::borrow::Borrow;
+            use std::collections::HashMap;
+
+            #[derive(Clone, Debug, PartialEq)]
+            pub struct Edge {
+                pub from: String,
+                pub to: String,
+                pub attrs: HashMap<String, String>,
+            }
+
+            impl Edge {
+                pub fn new<K, V>(from: K, to: V) -> Self
+                where
+                    K: AsRef<str>,
+                    V: AsRef<str>,
+                {
+                    Edge {
+                        from: from.as_ref().to_string(),
+                        to: to.as_ref().to_string(),
+                        attrs: HashMap::new(),
+                    }
+                }
+
+                pub fn with_attrs<'a, 'b, P>(&self, attrs: &[P]) -> Self
+                where
+                    P: Borrow<(&'a str, &'b str)>,
+                {
+                    let mut edge = self.clone();
+                    insert_attrs(&mut edge.attrs, attrs);
+                    edge
+                }
+
+                pub fn attr(&self, name: &str) -> Option<&str> {
+                    self.attrs.get(name).map(|s| s.as_str())
+                }
+            }
+        }
+
+        pub mod node {
+            use super::super::super::insert_attrs;
+            use std::borrow::Borrow;
+            use std::collections::HashMap;
+
+            #[derive(Clone, Debug, PartialEq)]
+            pub struct Node {
+                pub name: String,
+                pub attrs: HashMap<String, String>,
+            }
+
+            impl Node {
+                pub fn new<K>(name: K) -> Self
+                where
+                    K: AsRef<str>,
+                {
+                    Node {
+                        name: name.as_ref().to_string(),
+                        attrs: HashMap::new(),
+                    }
+                }
+
+                pub fn with_attrs<'a, 'b, P>(&self, attrs: &[P]) -> Self
+                where
+                    P: Borrow<(&'a str, &'b str)>,
+                {
+                    let mut node = self.clone();
+                    insert_attrs(&mut node.attrs, attrs);
+                    node
+                }
+
+                pub fn attr(&self, name: &str) -> Option<&str> {
+                    self.attrs.get(name).map(|s| s.as_str())
+                }
+            }
+        }
+    }
+
+    use graph_items::edge::Edge;
+    use graph_items::node::Node;
+
+    #[derive(Clone, Debug)]
+    pub struct Graph {
+        pub nodes: Vec<Node>,
+        pub edges: Vec<Edge>,
+        pub attrs: HashMap<String, String>,
+    }
+
+    impl Graph {
+        pub fn new() -> Self {
+            Graph {
+                nodes: vec![],
+                edges: vec![],
+                attrs: HashMap::new(),
+            }
+        }
+
+        pub fn with_nodes(&self, nodes: &[Node]) -> Self {
+            let mut graph = self.clone();
+            graph.nodes = nodes.to_vec();
+            graph
+        }
+
+        pub fn with_edges(&self, edges: &[Edge]) -> Self {
+            let mut graph = self.clone();
+            graph.edges = edges.to_vec();
+            graph
+        }
+
+        pub fn with_attrs<'a, 'b, P>(&self, attrs: &[P]) -> Self
+        where
+            P: Borrow<(&'a str, &'b str)>,
+        {
+            let mut graph = self.clone();
+            insert_attrs(&mut graph.attrs, attrs);
+            graph
+        }
+
+        pub fn node(&self, name: &str) -> Option<&Node> {
+            self.nodes.iter().find(|node| node.name == name)
+        }
+    }
+}

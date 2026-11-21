@@ -1,0 +1,78 @@
+pub struct Luhn {
+    value: String,
+}
+
+impl Luhn {
+    pub fn is_valid(&self) -> bool {
+        // Any character that is neither a digit nor a space makes the input invalid.
+        if self
+            .value
+            .chars()
+            .any(|c| !c.is_ascii_digit() && c != ' ')
+        {
+            return false;
+        }
+
+        let digits: Vec<u32> = self
+            .value
+            .chars()
+            .filter(|c| c.is_ascii_digit())
+            .map(|c| c.to_digit(10).unwrap())
+            .collect();
+
+        // A single digit (or empty input) is not a valid Luhn number.
+        if digits.len() <= 1 {
+            return false;
+        }
+
+        let sum: u32 = digits
+            .iter()
+            .enumerate()
+            .map(|(i, &digit)| {
+                // Double every second digit, counting from the right.
+                if (digits.len() - 1 - i) % 2 == 1 {
+                    let doubled = digit * 2;
+                    if doubled > 9 {
+                        doubled - 9
+                    } else {
+                        doubled
+                    }
+                } else {
+                    digit
+                }
+            })
+            .sum();
+
+        sum % 10 == 0
+    }
+}
+
+impl From<String> for Luhn {
+    fn from(input: String) -> Self {
+        Luhn { value: input }
+    }
+}
+
+impl From<&str> for Luhn {
+    fn from(input: &str) -> Self {
+        Luhn {
+            value: input.to_string(),
+        }
+    }
+}
+
+macro_rules! impl_from_uint {
+    ($($ty:ty),* $(,)?) => {
+        $(
+            impl From<$ty> for Luhn {
+                fn from(input: $ty) -> Self {
+                    Luhn {
+                        value: input.to_string(),
+                    }
+                }
+            }
+        )*
+    };
+}
+
+impl_from_uint!(u8, u16, u32, u64, usize);

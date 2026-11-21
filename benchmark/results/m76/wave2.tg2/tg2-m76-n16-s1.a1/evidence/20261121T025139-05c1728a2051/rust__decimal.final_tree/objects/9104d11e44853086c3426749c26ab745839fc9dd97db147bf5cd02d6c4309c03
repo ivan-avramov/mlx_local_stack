@@ -1,0 +1,156 @@
+use std::cmp::Ordering;
+use std::ops::{Add, Mul, Sub};
+
+use num_bigint::{BigInt, Sign};
+use num_traits::{Signed, Zero};
+
+/// Type implementing arbitrary-precision decimal arithmetic.
+///
+/// A decimal is stored as a sign, an arbitrary-precision integer of digits,
+/// and a scale (the number of fractional decimal places). The value is
+/// `sign * digits / 10^scale`.
+///
+/// Trailing fractional zeros are stripped on construction, so e.g. `0.10`,
+/// `0.1`, and `0.100` all normalize to the same representation, and `-0`
+/// normalizes to `0`.
+#[derive(Clone, Debug)]
+pub struct Decimal {
+    sign: Sign,
+    digits: BigInt,
+    scale: u32,
+}
+
+impl Decimal {
+    /// Create a new decimal with a value of `input`.
+    ///
+    /// Returns `None` if `input` is not a valid decimal literal.
+    pub fn try_from(input: &str) -> Option<Decimal> {
+        let mut rest = input;
+        let mut sign = Sign::Plus;
+        if let Some(r) = rest.strip_prefix('+') {
+            rest = r;
+        } else if let Some(r) = rest.strip_prefix('-') {
+            sign = Sign::Minus;
+            rest = r;
+        }
+
+        let (int_part, frac_part) = match rest.find('.') {
+            Some(i) => (&rest[..i], &rest[i + 1..]),
+            None => (rest, ""),
+        };
+
+        let digits_str = format!("{int_part}{frac_part}");
+        if digits_str.is_empty() || !digits_str.bytes().all(|b| b.is_ascii_digit()) {
+            return None;
+        }
+
+        let digits = BigInt::parse_bytes(digits_str.as_bytes(), 10)?;
+        let scale = frac_part.len() as u32;
+        Some(Self::normalize(sign, digits, scale))
+    }
+
+    /// Build a decimal from its parts, stripping trailing fractional zeros.
+    fn normalize(sign: Sign, digits: BigInt, scale: u32) -> Decimal {
+        let ten = BigInt::from(10u32);
+        let mut digits = digits;
+        let mut scale = scale;
+        while scale > 0 && digits.clone() % &ten == BigInt::ZERO {
+            digits /= &ten;
+            scale -= 1;
+        }
+        let sign = if digits.is_zero() { Sign::Plus } else { sign };
+        Decimal { sign, digits, scale }
+    }
+
+    /// The value as a signed integer scaled by `10^scale`.
+    fn scaled(&self) -> BigInt {
+        match self.sign {
+            Sign::Minus => -self.digits.clone(),
+            Sign::Plus | Sign::NoSign => self.digits.clone(),
+        }
+    }
+
+    /// The two operands scaled to a common scale, in the same order.
+    fn aligned(&self, other: &Decimal) -> (BigInt, BigInt) {
+        let ten = BigInt::from(10u32);
+        if self.scale >= other.scale {
+            (
+                self.scaled(),
+                other.scaled() * ten.pow(self.scale - other.scale),
+            )
+        } else {
+            (
+                self.scaled() * ten.pow(other.scale - self.scale),
+                other.scaled(),
+            )
+        }
+    }
+
+    /// Compare two decimals, aligning their scales first.
+    fn cmp_scaled(&self, other: &Decimal) -> Ordering {
+        let (a, b) = self.aligned(other);
+        a.cmp(&b)
+    }
+
+    /// Compute `self ± other`, where `negate_other` selects subtraction.
+    fn add_impl(&self, other: &Decimal, negate_other: bool) -> Decimal {
+        let (a, b) = self.aligned(other);
+        let sum = if negate_other { a - b } else { a + b };
+        let scale = self.scale.max(other.scale);
+        let sign = if sum.is_negative() { Sign::Minus } else { Sign::Plus };
+        let digits = sum.abs();
+        Self::normalize(sign, digits, scale)
+    }
+
+    /// Multiply two decimals.
+    fn mul_impl(&self, other: &Decimal) -> Decimal {
+        let sign = self.sign * other.sign;
+        let digits = self.digits.clone() * other.digits.clone();
+        let scale = self.scale + other.scale;
+        Self::normalize(sign, digits, scale)
+    }
+}
+
+impl PartialEq for Decimal {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp_scaled(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Decimal {}
+
+impl PartialOrd for Decimal {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp_scaled(other))
+    }
+}
+
+impl Ord for Decimal {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.cmp_scaled(other)
+    }
+}
+
+impl Add for Decimal {
+    type Output = Decimal;
+
+    fn add(self, rhs: Decimal) -> Decimal {
+        self.add_impl(&rhs, false)
+    }
+}
+
+impl Sub for Decimal {
+    type Output = Decimal;
+
+    fn sub(self, rhs: Decimal) -> Decimal {
+        self.add_impl(&rhs, true)
+    }
+}
+
+impl Mul for Decimal {
+    type Output = Decimal;
+
+    fn mul(self, rhs: Decimal) -> Decimal {
+        self.mul_impl(&rhs)
+    }
+}

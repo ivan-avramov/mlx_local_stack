@@ -1,0 +1,131 @@
+//
+// This is only a SKELETON file for the 'Forth' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NUMBER = /^-?\d+$/;
+
+function pop(stack) {
+  if (stack.length === 0) {
+    throw new Error('Stack empty');
+  }
+
+  return stack.pop();
+}
+
+const BUILTINS = {
+  '+': (stack) => stack.push(pop(stack) + pop(stack)),
+  '-': (stack) => {
+    const subtrahend = pop(stack);
+    const minuend = pop(stack);
+
+    stack.push(minuend - subtrahend);
+  },
+  '*': (stack) => stack.push(pop(stack) * pop(stack)),
+  '/': (stack) => {
+    const divisor = pop(stack);
+
+    if (divisor === 0) {
+      throw new Error('Division by zero');
+    }
+
+    stack.push(Math.trunc(pop(stack) / divisor));
+  },
+  dup: (stack) => {
+    if (stack.length === 0) {
+      throw new Error('Stack empty');
+    }
+
+    stack.push(stack[stack.length - 1]);
+  },
+  drop: (stack) => {
+    if (stack.length === 0) {
+      throw new Error('Stack empty');
+    }
+
+    stack.pop();
+  },
+  swap: (stack) => {
+    if (stack.length < 2) {
+      throw new Error('Stack empty');
+    }
+
+    const top = stack.length - 1;
+    [stack[top], stack[top - 1]] = [stack[top - 1], stack[top]];
+  },
+  over: (stack) => {
+    if (stack.length < 2) {
+      throw new Error('Stack empty');
+    }
+
+    stack.push(stack[stack.length - 2]);
+  }
+};
+
+export class Forth {
+  constructor() {
+    this._stack = [];
+    this._words = {};
+  }
+
+  evaluate(input) {
+    const tokens = input.split(/\s+/).filter((token) => token.length > 0);
+    const stack = this._stack;
+    let index = 0;
+
+    while (index < tokens.length) {
+      if (tokens[index] === ':') {
+        index = this._define(tokens, index + 1);
+      } else {
+        this._resolve(tokens[index])(stack);
+        index += 1;
+      }
+    }
+  }
+
+  _define(tokens, index) {
+    const name = tokens[index];
+
+    if (!name || NUMBER.test(name)) {
+      throw new Error('Invalid definition');
+    }
+
+    const actions = [];
+
+    index += 1;
+
+    while (index < tokens.length && tokens[index] !== ';') {
+      actions.push(this._resolve(tokens[index]));
+      index += 1;
+    }
+
+    this._words[name.toLowerCase()] = (stack) => {
+      for (const action of actions) {
+        action(stack);
+      }
+    };
+
+    return index + 1;
+  }
+
+  _resolve(token) {
+    if (NUMBER.test(token)) {
+      const value = parseInt(token, 10);
+
+      return (stack) => stack.push(value);
+    }
+
+    const word = token.toLowerCase();
+    const action = this._words[word] || BUILTINS[word];
+
+    if (!action) {
+      throw new Error('Unknown command');
+    }
+
+    return action;
+  }
+
+  get stack() {
+    return this._stack;
+  }
+}

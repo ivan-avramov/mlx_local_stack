@@ -1,0 +1,85 @@
+//
+// This is only a SKELETON file for the 'Say' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const ONES = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+];
+
+const TENS = [
+  '',
+  '',
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+];
+
+const SCALES = ['', ' thousand', ' million', ' billion'];
+
+const MIN = 0;
+const MAX = 999999999999;
+
+const below100 = (n) => {
+  if (n < 20) return ONES[n];
+  const tens = TENS[Math.floor(n / 10)];
+  const ones = n % 10;
+  return ones ? `${tens}-${ONES[ones]}` : tens;
+};
+
+const below1000 = (n) => {
+  const parts = [];
+  if (n >= 100) {
+    parts.push(`${ONES[Math.floor(n / 100)]} hundred`);
+    n %= 100;
+  }
+  if (n > 0) parts.push(below100(n));
+  return parts.join(' ');
+};
+
+export const say = (n) => {
+  if (!Number.isInteger(n) || n < MIN || n > MAX) {
+    throw new Error('Number must be between 0 and 999,999,999,999.');
+  }
+
+  if (n === 0) return 'zero';
+
+  const groups = [];
+  let x = n;
+  while (x > 0) {
+    groups.unshift(x % 1000);
+    x = Math.floor(x / 1000);
+  }
+
+  return groups
+    .map((group, i) => {
+      if (group === 0) return '';
+      return below1000(group) + SCALES[groups.length - 1 - i];
+    })
+    .filter(Boolean)
+    .join(' ');
+};

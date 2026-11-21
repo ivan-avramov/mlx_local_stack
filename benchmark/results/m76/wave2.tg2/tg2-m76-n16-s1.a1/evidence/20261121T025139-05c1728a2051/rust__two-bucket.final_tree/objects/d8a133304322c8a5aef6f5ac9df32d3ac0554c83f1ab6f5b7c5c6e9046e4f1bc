@@ -1,0 +1,82 @@
+#[derive(PartialEq, Eq, Debug)]
+pub enum Bucket {
+    One,
+    Two,
+}
+
+/// A struct to hold your results in.
+#[derive(PartialEq, Eq, Debug)]
+pub struct BucketStats {
+    /// The total number of "moves" it should take to reach the desired number of liters, including
+    /// the first fill.
+    pub moves: u8,
+    /// Which bucket should end up with the desired number of liters? (Either "one" or "two")
+    pub goal_bucket: Bucket,
+    /// How many liters are left in the other bucket?
+    pub other_bucket: u8,
+}
+
+/// Solve the bucket problem
+pub fn solve(
+    capacity_1: u8,
+    capacity_2: u8,
+    goal: u8,
+    start_bucket: &Bucket,
+) -> Option<BucketStats> {
+    use std::collections::{HashSet, VecDeque};
+
+    // The goal must fit in at least one bucket.
+    if goal > capacity_1 && goal > capacity_2 {
+        return None;
+    }
+
+    // Breadth-first search over (bucket_one, bucket_two) states, starting from
+    // both buckets empty. BFS guarantees the fewest actions.
+    let mut visited = HashSet::new();
+    let mut queue = VecDeque::new();
+    visited.insert((0u8, 0u8));
+    queue.push_back((0u8, 0u8, 0u32));
+
+    while let Some((a, b, moves)) = queue.pop_front() {
+        // All one-action successors of (a, b).
+        let poured = a.min(capacity_2 - b);
+        let poured_back = b.min(capacity_1 - a);
+        let successors = [
+            (capacity_1, b), // fill bucket one
+            (a, capacity_2), // fill bucket two
+            (0, b),          // empty bucket one
+            (a, 0),          // empty bucket two
+            (a - poured, b + poured),     // pour one into two
+            (a + poured_back, b - poured_back), // pour two into one
+        ];
+
+        for (na, nb) in successors {
+            // Rule: after an action, the starting bucket may not be empty
+            // while the other bucket is full.
+            let (start_empty, other_full) = match start_bucket {
+                Bucket::One => (na == 0, nb == capacity_2),
+                Bucket::Two => (nb == 0, na == capacity_1),
+            };
+            if start_empty && other_full {
+                continue;
+            }
+            if !visited.insert((na, nb)) {
+                continue;
+            }
+
+            if na == goal || nb == goal {
+                let goal_bucket = if na == goal { Bucket::One } else { Bucket::Two };
+                let other_bucket = if goal_bucket == Bucket::One { nb } else { na };
+                return Some(BucketStats {
+                    moves: (moves + 1) as u8,
+                    goal_bucket,
+                    other_bucket,
+                });
+            }
+
+            queue.push_back((na, nb, moves + 1));
+        }
+    }
+
+    None
+}

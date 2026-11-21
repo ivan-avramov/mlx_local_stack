@@ -1,0 +1,16 @@
+- 2026-11-21T16:22:04Z campaign core 026ef4557b54f7b64154b9bbe058163c69519606 (026ef4557b54): probe and chain closures equal the current ones
+- 2026-11-21T16:22:05Z policy: scaffold_policy_sha256 c249854c8f523a128b31321f8c6618a86a694eccc7e052004697a9d7b401b816 derived from the probe's --print-identity
+- 2026-11-21T16:22:05Z GATE adapter=140W 28.0V batt=100% orphans=0 -> ok
+- 2026-11-21T16:22:05Z GATE docker=29.8.2 aider-benchmark=present tg2-grader:m65-v1=present -> ok
+- 2026-11-21T16:22:12Z RUN router: MLX_VLM_CACHE_SESSION_MAX=1 MLX_SERVE_CONFIG=$STACK_WORKDIR/worktrees/m76-g2-x/main_models.yaml uv run --frozen --no-sync mlx-serve start (cwd=$STACK_WORKDIR/worktrees/m76-g2-x)
+- 2026-11-21T16:22:14Z router pid=33832 owns :8000; problems=none
+- 2026-11-21T16:22:14Z START chain predictor=mtp blocks=[('s1', 'Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed')]
+- 2026-11-21T16:22:15Z START STATE s1/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed: {"watts": 140, "volts": 28.0, "batt": 100, "free_mem_mb": 33310, "busy": ["33829 uv run --frozen --no-sync mlx-serve start", "33832 $STACK_WORKDIR/worktrees/m76-g2-x/.venv/bin/python $STACK_WORKDIR/worktrees/m76-g2-x/.venv/bin/mlx-serve start"], "orphans_clean": true}
+- 2026-11-21T16:22:15Z GATE adapter=140W 28.0V batt=100% orphans=0 -> ok
+- 2026-11-21T16:22:15Z RUN load Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed
+- 2026-11-21T16:22:21Z worker pid=33859 cmdline: 33859 $STACK_WORKDIR/worktrees/m76-g2-x/.venv/bin/python $STACK_WORKDIR/worktrees/m76-g2-x/.venv/bin/mlx_vlm.server --model caslca/Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed --host 127.0.0.1 --port 8091 --max-kv-size 262144 --kv-prealloc-tokens 262144 --cache-session-shrink on --attention-policy fused_v1 --lazy-prompt-embeddings --mtp-verify-
+- 2026-11-21T16:24:37Z unload Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed ok
+- 2026-11-21T16:24:37Z stop_stack: signal SIGTERM -> own router pid 33832
+- 2026-11-21T16:24:37Z stop_stack: signal SIGTERM -> own router pid 33829
+- 2026-11-21T16:25:07Z stop_stack: signal SIGKILL -> own router pid 33829
+- 2026-11-21T16:25:17Z stop_stack: own router stopped; :8000 free=True

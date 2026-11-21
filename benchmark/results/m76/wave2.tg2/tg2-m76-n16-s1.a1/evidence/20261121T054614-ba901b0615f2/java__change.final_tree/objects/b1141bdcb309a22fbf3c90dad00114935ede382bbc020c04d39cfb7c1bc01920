@@ -1,0 +1,55 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+class ChangeCalculator {
+
+    private final List<Integer> currencyCoins;
+
+    ChangeCalculator(List<Integer> currencyCoins) {
+        this.currencyCoins = currencyCoins;
+    }
+
+    List<Integer> computeMostEfficientChange(int grandTotal) {
+        if (grandTotal < 0) {
+            throw new IllegalArgumentException("Negative totals are not allowed.");
+        }
+
+        if (grandTotal == 0) {
+            return new ArrayList<>();
+        }
+
+        final int infinity = Integer.MAX_VALUE;
+        int[] fewestCoins = new int[grandTotal + 1];
+        int[] coinUsed = new int[grandTotal + 1];
+        Arrays.fill(fewestCoins, infinity);
+        Arrays.fill(coinUsed, -1);
+        fewestCoins[0] = 0;
+
+        for (int amount = 1; amount <= grandTotal; amount++) {
+            for (int coin : currencyCoins) {
+                if (coin <= amount
+                        && fewestCoins[amount - coin] != infinity
+                        && fewestCoins[amount - coin] + 1 < fewestCoins[amount]) {
+                    fewestCoins[amount] = fewestCoins[amount - coin] + 1;
+                    coinUsed[amount] = coin;
+                }
+            }
+        }
+
+        if (fewestCoins[grandTotal] == infinity) {
+            throw new IllegalArgumentException(
+                    "The total " + grandTotal + " cannot be represented in the given currency.");
+        }
+
+        List<Integer> change = new ArrayList<>();
+        for (int amount = grandTotal; amount > 0; amount -= coinUsed[amount]) {
+            change.add(coinUsed[amount]);
+        }
+
+        Collections.sort(change);
+        return change;
+    }
+
+}

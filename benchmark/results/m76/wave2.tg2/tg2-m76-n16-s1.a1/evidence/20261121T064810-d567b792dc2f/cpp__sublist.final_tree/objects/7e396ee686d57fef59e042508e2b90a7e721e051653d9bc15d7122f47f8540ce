@@ -1,0 +1,39 @@
+#include "sublist.h"
+
+#include <algorithm>
+
+namespace sublist {
+
+namespace {
+
+bool contains(const std::initializer_list<int>& haystack,
+              const std::initializer_list<int>& needle) {
+    if (needle.size() > haystack.size()) {
+        return false;
+    }
+    const int* hay = haystack.begin();
+    const int* needle_begin = needle.begin();
+    const int* needle_end = needle.end();
+    const int* limit = hay + haystack.size() - needle.size();
+    for (const int* cursor = hay; cursor <= limit; ++cursor) {
+        if (std::equal(needle_begin, needle_end, cursor)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+List_comparison sublist(std::initializer_list<int> a, std::initializer_list<int> b) {
+    if (a.size() == b.size()) {
+        return std::equal(a.begin(), a.end(), b.begin()) ? List_comparison::equal
+                                                         : List_comparison::unequal;
+    }
+    if (a.size() < b.size()) {
+        return contains(b, a) ? List_comparison::sublist : List_comparison::unequal;
+    }
+    return contains(a, b) ? List_comparison::superlist : List_comparison::unequal;
+}
+
+}  // namespace sublist

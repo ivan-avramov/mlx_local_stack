@@ -1,0 +1,50 @@
+public class CircularBuffer<T> {
+
+    private final Object[] buffer;
+    private int readIndex;
+    private int writeIndex;
+    private int size;
+
+    public CircularBuffer(int capacity) {
+        buffer = new Object[capacity];
+    }
+
+    public T read() throws BufferIOException {
+        if (size == 0) {
+            throw new BufferIOException("Tried to read from empty buffer");
+        }
+        T value = (T) buffer[readIndex];
+        buffer[readIndex] = null;
+        readIndex = (readIndex + 1) % buffer.length;
+        size--;
+        return value;
+    }
+
+    public void write(T item) throws BufferIOException {
+        if (size == buffer.length) {
+            throw new BufferIOException("Tried to write to full buffer");
+        }
+        buffer[writeIndex] = item;
+        writeIndex = (writeIndex + 1) % buffer.length;
+        size++;
+    }
+
+    public void overwrite(T item) throws BufferIOException {
+        if (size == buffer.length) {
+            buffer[readIndex] = item;
+            readIndex = (readIndex + 1) % buffer.length;
+        } else {
+            write(item);
+        }
+    }
+
+    public void clear() {
+        for (int i = 0; i < buffer.length; i++) {
+            buffer[i] = null;
+        }
+        readIndex = 0;
+        writeIndex = 0;
+        size = 0;
+    }
+
+}

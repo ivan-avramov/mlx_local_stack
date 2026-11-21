@@ -1,0 +1,108 @@
+/// Parse and evaluate a simple math word problem.
+///
+/// Returns the result as an integer, or `None` if the command is not a
+/// valid math word problem.
+pub fn answer(command: &str) -> Option<i32> {
+    let rest = command.trim().strip_prefix("What is ")?;
+    let rest = rest.strip_suffix('?')?;
+
+    let tokens: Vec<&str> = rest.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut pos = 0;
+    let mut value = parse_number(&tokens, &mut pos)?;
+
+    while pos < tokens.len() {
+        value = apply_op(&tokens, &mut pos, value)?;
+    }
+
+    Some(value)
+}
+
+/// Parse a signed integer token, advancing `pos` on success.
+fn parse_number(tokens: &[&str], pos: &mut usize) -> Option<i32> {
+    let token = tokens.get(*pos).copied()?;
+    let (sign, digits) = match token.strip_prefix('-') {
+        Some(digits) => (-1i32, digits),
+        None => (1i32, token),
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let value: i32 = digits.parse().ok()?;
+    *pos += 1;
+    Some(sign * value)
+}
+
+/// Apply the operator starting at `pos` to `value`, consuming the
+/// operator's tokens and its right-hand operand.
+fn apply_op(tokens: &[&str], pos: &mut usize, value: i32) -> Option<i32> {
+    let op = tokens.get(*pos).copied()?;
+    match op {
+        "plus" => {
+            *pos += 1;
+            Some(value + parse_number(tokens, pos)?)
+        }
+        "minus" => {
+            *pos += 1;
+            Some(value - parse_number(tokens, pos)?)
+        }
+        "multiplied" => {
+            *pos += 1;
+            if tokens.get(*pos).copied()? != "by" {
+                return None;
+            }
+            *pos += 1;
+            Some(value * parse_number(tokens, pos)?)
+        }
+        "divided" => {
+            *pos += 1;
+            if tokens.get(*pos).copied()? != "by" {
+                return None;
+            }
+            *pos += 1;
+            Some(value / parse_number(tokens, pos)?)
+        }
+        #[cfg(feature = "exponentials")]
+        "raised" => {
+            *pos += 1;
+            if tokens.get(*pos).copied()? != "to" {
+                return None;
+            }
+            *pos += 1;
+            if tokens.get(*pos).copied()? != "the" {
+                return None;
+            }
+            *pos += 1;
+            let exponent = parse_ordinal(tokens, pos)?;
+            if tokens.get(*pos).copied()? != "power" {
+                return None;
+            }
+            *pos += 1;
+            let exponent: u32 = exponent.try_into().ok()?;
+            Some(value.pow(exponent))
+        }
+        _ => None,
+    }
+}
+
+/// Parse an ordinal number such as "5th" or "2nd", advancing `pos` on success.
+#[cfg(feature = "exponentials")]
+fn parse_ordinal(tokens: &[&str], pos: &mut usize) -> Option<i32> {
+    let token = tokens.get(*pos).copied()?;
+    if token.len() < 2 {
+        return None;
+    }
+    let (num, suffix) = token.split_at(token.len() - 2);
+    if num.is_empty() || !num.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    if !suffix.bytes().all(|b| b.is_ascii_lowercase()) {
+        return None;
+    }
+    let value = num.parse().ok()?;
+    *pos += 1;
+    Some(value)
+}

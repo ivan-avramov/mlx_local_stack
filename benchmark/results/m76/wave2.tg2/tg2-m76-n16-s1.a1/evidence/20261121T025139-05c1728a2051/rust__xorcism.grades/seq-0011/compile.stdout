@@ -1,0 +1,29 @@
+TG2_COMPILE_START ddc32992237930b0
+   Compiling xorcism v0.1.0 (/work/xorcism)
+error[E0700]: hidden type for `impl Iterator<Item = u8> + 'b` captures lifetime that does not appear in bounds
+  --> src/lib.rs:51:9
+   |
+13 |   impl<'a> Xorcism<'a> {
+   |        -- hidden type `Map<Map<<Data as IntoIterator>::IntoIter, {closure@src/lib.rs:52:18: 52:24}>, {closure@src/lib.rs:53:18: 53:29}>` captures the lifetime `'a` as defined here
+...
+45 |       pub fn munge<'b, Data>(&'b mut self, data: Data) -> impl Iterator<Item = u8> + 'b
+   |                                                           ----------------------------- opaque type defined here
+...
+51 | /         data.into_iter()
+52 | |             .map(|item| *item.borrow())
+53 | |             .map(move |byte| {
+54 | |                 let key_byte = self.key[self.pos];
+55 | |                 self.pos = (self.pos + 1) % self.key.len();
+56 | |                 byte ^ key_byte
+57 | |             })
+   | |______________^
+   |
+help: add a `use<...>` bound to explicitly capture `'a`
+   |
+45 |     pub fn munge<'b, Data>(&'b mut self, data: Data) -> impl Iterator<Item = u8> + 'b + use<'b, 'a, Data>
+   |                                                                                       +++++++++++++++++++
+
+For more information about this error, try `rustc --explain E0700`.
+error: could not compile `xorcism` (lib) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `xorcism` (lib test) due to 1 previous error

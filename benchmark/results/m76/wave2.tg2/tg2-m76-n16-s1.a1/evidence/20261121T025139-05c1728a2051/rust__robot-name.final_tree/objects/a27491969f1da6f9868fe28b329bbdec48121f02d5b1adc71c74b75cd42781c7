@@ -1,0 +1,96 @@
+use std::collections::HashSet;
+use std::sync::{Mutex, OnceLock};
+
+/// A minimal deterministic PRNG (splitmix64) so we don't need the `rand` crate.
+struct Rng(u64);
+
+impl Rng {
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E3779B97F4A7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58476D1CE4E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D049BB133111EB);
+        z ^ (z >> 31)
+    }
+
+    fn next_range(&mut self, n: u64) -> u64 {
+        self.next_u64() % n
+    }
+}
+
+/// Seeds the PRNG from whatever entropy the standard library can offer:
+/// wall-clock time, monotonic time, the process id, and the address of a
+/// stack variable (ASLR).
+fn seed() -> u64 {
+    let mut h = 0x9E3779B97F4A7C15u64;
+    let local = 0u8;
+    h ^= local as *const u8 as u64;
+    if let Ok(d) = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH) {
+        h = h.wrapping_mul(0x100000001B3).wrapping_add(d.as_nanos() as u64);
+    }
+    h ^= std::process::id() as u64;
+    h
+}
+
+/// Global registry of every name currently handed out to a live robot.
+struct Registry {
+    used: HashSet<String>,
+    rng: Rng,
+}
+
+fn registry() -> &'static Mutex<Registry> {
+    static REGISTRY: OnceLock<Mutex<Registry>> = OnceLock::new();
+    REGISTRY.get_or_init(|| Mutex::new(Registry { used: HashSet::new(), rng: Rng(seed()) }))
+}
+
+/// Generates a name in the `AA000` format that no live robot currently has.
+fn take_unique_name() -> String {
+    let mut reg = registry().lock().unwrap();
+    loop {
+        let name = generate_name(&mut reg.rng);
+        if reg.used.insert(name.clone()) {
+            return name;
+        }
+    }
+}
+
+fn generate_name(rng: &mut Rng) -> String {
+    let first = (b'A' + rng.next_range(26) as u8) as char;
+    let second = (b'A' + rng.next_range(26) as u8) as char;
+    format!("{}{}{:03}", first, second, rng.next_range(1000))
+}
+
+pub struct Robot {
+    name: String,
+}
+
+impl Robot {
+    pub fn new() -> Self {
+        Robot { name: take_unique_name() }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn reset_name(&mut self) {
+        let mut reg = registry().lock().unwrap();
+        reg.used.remove(&self.name);
+        loop {
+            let name = generate_name(&mut reg.rng);
+            if reg.used.insert(name.clone()) {
+                self.name = name;
+                break;
+            }
+        }
+    }
+}
+
+impl Drop for Robot {
+    fn drop(&mut self) {
+        // Release the name so it can be handed out to a future robot.
+        if let Ok(mut reg) = registry().lock() {
+            reg.used.remove(&self.name);
+        }
+    }
+}

@@ -1,0 +1,102 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = [];
+  }
+
+  setValue(value) {
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputs = inputCells;
+    this.fn = fn;
+    this.value = fn(inputCells);
+    this.callbacks = [];
+    this.dependents = [];
+
+    for (const input of inputCells) {
+      input.dependents.push(this);
+    }
+  }
+
+  addCallback(cb) {
+    this.callbacks.push(cb);
+  }
+
+  removeCallback(cb) {
+    const index = this.callbacks.indexOf(cb);
+    if (index !== -1) {
+      this.callbacks.splice(index, 1);
+    }
+  }
+
+  fireCallbacks() {
+    for (const cb of this.callbacks) {
+      cb.callback(this);
+    }
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+
+  callback(cell) {
+    this.values.push(this.fn(cell));
+  }
+}
+
+function propagate(source) {
+  // Collect every compute cell reachable from the changed cell.
+  const affected = [];
+  const visited = new Set();
+  const queue = [source];
+
+  while (queue.length > 0) {
+    const cell = queue.shift();
+    for (const dependent of cell.dependents) {
+      if (!visited.has(dependent)) {
+        visited.add(dependent);
+        affected.push(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+
+  // Topologically order the affected cells (Kahn's algorithm): a cell is
+  // recomputed only after all of its inputs have been, so every cell sees
+  // fully updated dependencies.
+  const remaining = new Set(affected);
+  const order = [];
+
+  while (remaining.size > 0) {
+    const ready = [...remaining].filter((cell) =>
+      cell.inputs.every((input) => !remaining.has(input)),
+    );
+    for (const cell of ready) {
+      remaining.delete(cell);
+    }
+    order.push(...ready);
+  }
+
+  // Recompute every affected cell, then fire callbacks only for cells whose
+  // value changed from the previous stable state.
+  for (const cell of order) {
+    const oldValue = cell.value;
+    cell.value = cell.fn(cell.inputs);
+    if (cell.value !== oldValue) {
+      cell.fireCallbacks();
+    }
+  }
+}

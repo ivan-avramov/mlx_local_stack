@@ -1,0 +1,64 @@
+//
+// This is only a SKELETON file for the 'Connect' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class Board {
+  constructor(lines) {
+    this.board = lines.map((line) => line.split(' ').filter((cell) => cell !== ''));
+  }
+
+  winner() {
+    if (this._reaches('O', (r, c) => r === 0, (r) => r === this.board.length - 1)) {
+      return 'O';
+    }
+    if (this._reaches('X', (r, c) => c === 0, (r, c) => c === this.board[0].length - 1)) {
+      return 'X';
+    }
+    return '';
+  }
+
+  _reaches(player, isStart, isGoal) {
+    const rows = this.board.length;
+    const cols = this.board[0].length;
+    const neighbors = [
+      [0, -1],
+      [0, 1],
+      [-1, 0],
+      [-1, 1],
+      [1, -1],
+      [1, 0],
+    ];
+
+    const seen = new Set();
+    const queue = [];
+    for (let r = 0; r < rows; r++) {
+      for (let c = 0; c < cols; c++) {
+        if (this.board[r][c] === player && isStart(r, c)) {
+          seen.add(`${r},${c}`);
+          queue.push([r, c]);
+        }
+      }
+    }
+
+    while (queue.length > 0) {
+      const [r, c] = queue.shift();
+      if (isGoal(r, c)) {
+        return true;
+      }
+      for (const [dr, dc] of neighbors) {
+        const nr = r + dr;
+        const nc = c + dc;
+        const key = `${nr},${nc}`;
+        if (nr < 0 || nr >= rows || nc < 0 || nc >= cols || seen.has(key)) {
+          continue;
+        }
+        if (this.board[nr][nc] === player) {
+          seen.add(key);
+          queue.push([nr, nc]);
+        }
+      }
+    }
+    return false;
+  }
+}

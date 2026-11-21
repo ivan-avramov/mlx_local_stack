@@ -1,0 +1,52 @@
+//
+// Grade School exercise solution.
+//
+
+export class GradeSchool {
+  constructor() {
+    this._roster = {};
+  }
+
+  roster() {
+    const result = {};
+    for (const grade of Object.keys(this._roster)) {
+      result[grade] = [...this._roster[grade]];
+    }
+    return result;
+  }
+
+  add(name, grade) {
+    // A student cannot be in two grades at once; if they already exist,
+    // remove them from their current grade before adding to the new one.
+    const existingGrade = this._findGrade(name);
+    if (existingGrade !== null) {
+      this._roster[existingGrade] = this._roster[existingGrade].filter(
+        (student) => student !== name,
+      );
+      if (this._roster[existingGrade].length === 0) {
+        delete this._roster[existingGrade];
+      }
+      return false;
+    }
+
+    if (!this._roster[grade]) {
+      this._roster[grade] = [];
+    }
+    this._roster[grade].push(name);
+    this._roster[grade].sort();
+    return true;
+  }
+
+  grade(grade) {
+    return [...(this._roster[grade] || [])];
+  }
+
+  _findGrade(name) {
+    for (const grade of Object.keys(this._roster)) {
+      if (this._roster[grade].includes(name)) {
+        return Number(grade);
+      }
+    }
+    return null;
+  }
+}

@@ -1,0 +1,140 @@
+//
+// This is only a SKELETON file for the 'Zebra Puzzle' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const HOUSES = [0, 1, 2, 3, 4];
+
+const NATIONS = ['Englishman', 'Spaniard', 'Ukrainian', 'Norwegian', 'Japanese'];
+const COLORS = ['Red', 'Green', 'Ivory', 'Yellow', 'Blue'];
+const BEVERAGES = ['Coffee', 'Tea', 'Milk', 'Orange juice', 'Water'];
+const PETS = ['Dog', 'Snail', 'Fox', 'Horse', 'Zebra'];
+const HOBBIES = ['Dancing', 'Reading', 'Painting', 'Football', 'Chess'];
+
+export class ZebraPuzzle {
+  constructor() {
+    this.solution = solve();
+  }
+
+  waterDrinker() {
+    const house = this.solution.beverages.indexOf('Water');
+    return this.solution.nations[house];
+  }
+
+  zebraOwner() {
+    const house = this.solution.pets.indexOf('Zebra');
+    return this.solution.nations[house];
+  }
+}
+
+// Returns { nations, colors, beverages, pets, hobbies } arrays indexed by house,
+// or null if the constraints are unsatisfiable.
+function solve() {
+  const nations = new Array(5).fill(null);
+  const colors = new Array(5).fill(null);
+  const beverages = new Array(5).fill(null);
+  const pets = new Array(5).fill(null);
+  const hobbies = new Array(5).fill(null);
+
+  // Direct facts: the Norwegian lives in the first house, and the middle house
+  // drinks milk.
+  nations[0] = 'Norwegian';
+  beverages[2] = 'Milk';
+
+  const housesOf = (arr, value) =>
+    HOUSES.filter((h) => arr[h] === value);
+
+  const neighbors = (h1, h2) => Math.abs(h1 - h2) === 1;
+
+  // "Immediately to the right" means the higher-numbered house.
+  const immediatelyRight = (h1, h2) => h2 === h1 + 1;
+
+  // A same-house constraint "A implies B" only rules out a partial assignment
+  // once BOTH sides are assigned to different values; an unassigned side is
+  // still free to take the required value.
+  const conflicts = (arrA, valueA, arrB, valueB) => {
+    for (const h of HOUSES) {
+      if (arrA[h] === valueA && arrB[h] !== null && arrB[h] !== valueB) return true;
+      if (arrB[h] === valueB && arrA[h] !== null && arrA[h] !== valueA) return true;
+    }
+    return false;
+  };
+
+  const satisfies = () => {
+    // 2. The Englishman lives in the red house.
+    if (conflicts(nations, 'Englishman', colors, 'Red')) return false;
+    // 3. The Spaniard owns the dog.
+    if (conflicts(nations, 'Spaniard', pets, 'Dog')) return false;
+    // 4. The person in the green house drinks coffee.
+    if (conflicts(colors, 'Green', beverages, 'Coffee')) return false;
+    // 5. The Ukrainian drinks tea.
+    if (conflicts(nations, 'Ukrainian', beverages, 'Tea')) return false;
+    // 6. The green house is immediately to the right of the ivory house.
+    const green = housesOf(colors, 'Green');
+    const ivory = housesOf(colors, 'Ivory');
+    if (green.length === 1 && ivory.length === 1 && !immediatelyRight(ivory[0], green[0])) {
+      return false;
+    }
+    // 7. The snail owner likes to go dancing.
+    if (conflicts(pets, 'Snail', hobbies, 'Dancing')) return false;
+    // 8. The person in the yellow house is a painter.
+    if (conflicts(colors, 'Yellow', hobbies, 'Painting')) return false;
+    // 11. The person who enjoys reading lives next to the person with the fox.
+    const readers = housesOf(hobbies, 'Reading');
+    const foxes = housesOf(pets, 'Fox');
+    if (readers.length === 1 && foxes.length === 1 && !neighbors(readers[0], foxes[0])) {
+      return false;
+    }
+    // 12. The painter's house is next to the house with the horse.
+    const painters = housesOf(hobbies, 'Painting');
+    const horses = housesOf(pets, 'Horse');
+    if (painters.length === 1 && horses.length === 1 && !neighbors(painters[0], horses[0])) {
+      return false;
+    }
+    // 13. The person who plays football drinks orange juice.
+    if (conflicts(hobbies, 'Football', beverages, 'Orange juice')) return false;
+    // 14. The Japanese person plays chess.
+    if (conflicts(nations, 'Japanese', hobbies, 'Chess')) return false;
+    // 15. The Norwegian lives next to the blue house.
+    const norwegians = housesOf(nations, 'Norwegian');
+    const blues = housesOf(colors, 'Blue');
+    if (norwegians.length === 1 && blues.length === 1 && !neighbors(norwegians[0], blues[0])) {
+      return false;
+    }
+    return true;
+  };
+
+  // A flat sequence of (attribute, house) assignments, house by house and
+  // attribute by attribute. Backtracking a single search over this sequence
+  // resets every attribute correctly, unlike nested per-attribute searches.
+  const steps = [];
+  for (const house of HOUSES) {
+    for (const arr of [nations, colors, beverages, pets, hobbies]) {
+      steps.push({ arr, house });
+    }
+  }
+
+  const valuesOf = (arr) =>
+    arr === nations ? NATIONS : arr === colors ? COLORS : arr === beverages ? BEVERAGES : arr === pets ? PETS : HOBBIES;
+
+  const backtrack = (step) => {
+    if (step === steps.length) return true;
+    const { arr, house } = steps[step];
+    // Pre-filled cells (Norwegian in house 1, Milk in the middle) are fixed.
+    if (arr[house] !== null) return backtrack(step + 1);
+    const used = new Set(arr.filter((v) => v !== null));
+    for (const value of valuesOf(arr)) {
+      if (used.has(value)) continue;
+      arr[house] = value;
+      if (satisfies() && backtrack(step + 1)) return true;
+      arr[house] = null;
+    }
+    return false;
+  };
+
+  if (!backtrack(0)) {
+    throw new Error('The puzzle has no solution');
+  }
+
+  return { nations, colors, beverages, pets, hobbies };
+}

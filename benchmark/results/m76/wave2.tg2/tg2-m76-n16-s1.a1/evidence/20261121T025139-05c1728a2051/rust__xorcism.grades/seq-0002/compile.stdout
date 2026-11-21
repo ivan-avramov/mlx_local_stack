@@ -1,0 +1,47 @@
+TG2_COMPILE_START c67c532a0558f885
+   Compiling xorcism v0.1.0 (/work/xorcism)
+error[E0515]: cannot return value referencing function parameter `item`
+  --> src/lib.rs:48:30
+   |
+48 |             .flat_map(|item| item.as_ref())
+   |                              ----^^^^^^^^^
+   |                              |
+   |                              returns a value referencing data owned by the current function
+   |                              `item` is borrowed here
+
+error[E0700]: hidden type for `impl Iterator<Item = u8>` captures lifetime that does not appear in bounds
+  --> src/lib.rs:47:9
+   |
+42 |       pub fn munge<Data>(&mut self, data: Data) -> impl Iterator<Item = u8>
+   |                                                    ------------------------ opaque type defined here
+...
+47 | /         data.into_iter()
+48 | |             .flat_map(|item| item.as_ref())
+49 | |             .map(move |byte| {
+50 | |                 let key_byte = self.key[self.pos];
+51 | |                 self.pos = (self.pos + 1) % self.key.len();
+52 | |                 byte ^ key_byte
+53 | |             })
+   | |______________^
+   |
+   = note: hidden type `Map<FlatMap<<Data as IntoIterator>::IntoIter, &[u8], {closure@src/lib.rs:48:23: 48:29}>, {closure@src/lib.rs:49:18: 49:29}>` captures lifetime `'_`
+
+error[E0621]: explicit lifetime required in the type of `key`
+  --> src/lib.rs:18:9
+   |
+18 | /         Xorcism {
+19 | |             key: key.as_ref(),
+20 | |             pos: 0,
+21 | |         }
+   | |_________^ lifetime `'a` required
+   |
+help: add explicit lifetime `'a` to the type of `key`
+   |
+14 |     pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+   |                           ++
+
+Some errors have detailed explanations: E0515, E0621, E0700.
+For more information about an error, try `rustc --explain E0515`.
+error: could not compile `xorcism` (lib) due to 3 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `xorcism` (lib test) due to 3 previous errors

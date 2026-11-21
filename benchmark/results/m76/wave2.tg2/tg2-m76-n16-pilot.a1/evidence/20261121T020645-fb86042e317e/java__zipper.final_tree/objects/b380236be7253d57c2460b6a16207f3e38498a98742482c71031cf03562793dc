@@ -1,0 +1,99 @@
+class Zipper {
+    int value;
+    Zipper up;
+    Zipper left;
+    Zipper right;
+
+    Zipper(int val) {
+        this.value = val;
+    }
+
+    BinaryTree toTree() {
+        Zipper root = this;
+        while (root.up != null) {
+            root = root.up;
+        }
+        return new BinaryTree(root);
+    }
+
+    int getValue() {
+        return value;
+    }
+
+    Zipper setLeft(Zipper leftChild) {
+        left = leftChild;
+        if (left != null) {
+            left.up = this;
+        }
+        return this;
+    }
+
+    Zipper setRight(Zipper rightChild) {
+        right = rightChild;
+        if (right != null) {
+            right.up = this;
+        }
+        return this;
+    }
+
+    void setValue(int val) {
+        value = val;
+    }
+}
+
+class BinaryTree {
+    Zipper root;
+
+    BinaryTree(int value) {
+        root = new Zipper(value);
+    }
+
+    BinaryTree(Zipper root) {
+        this.root = root;
+    }
+
+    Zipper getRoot() {
+        return root;
+    }
+
+    String printTree() {
+        return printNode(root);
+    }
+
+    private static String printNode(Zipper node) {
+        if (node == null) {
+            return "null";
+        }
+        return "value: " + node.value + ", "
+                + "left: " + printChild(node.left) + ", "
+                + "right: " + printChild(node.right);
+    }
+
+    private static String printChild(Zipper child) {
+        if (child == null) {
+            return "null";
+        }
+        return "{ " + printNode(child) + " }";
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (other == null || getClass() != other.getClass()) {
+            return false;
+        }
+        BinaryTree that = (BinaryTree) other;
+        return treesEqual(root, that.root);
+    }
+
+    private static boolean treesEqual(Zipper a, Zipper b) {
+        if (a == null || b == null) {
+            return a == b;
+        }
+        return a.value == b.value
+                && treesEqual(a.left, b.left)
+                && treesEqual(a.right, b.right);
+    }
+}

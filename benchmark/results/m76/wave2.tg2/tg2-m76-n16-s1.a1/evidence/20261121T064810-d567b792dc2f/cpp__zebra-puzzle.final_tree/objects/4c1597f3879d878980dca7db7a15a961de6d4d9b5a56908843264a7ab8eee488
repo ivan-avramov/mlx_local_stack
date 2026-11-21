@@ -1,0 +1,94 @@
+#include <cstdio>
+#include <functional>
+#include <vector>
+
+static void perms(int n, std::vector<int>& p, int k, const std::function<void(const std::vector<int>&)>& cb) {
+    if (k == n) { cb(p); return; }
+    for (int v = 0; v < n; ++v) {
+        bool used = false;
+        for (int i = 0; i < k; ++i) if (p[i] == v) used = true;
+        if (used) continue;
+        p[k] = v;
+        perms(n, p, k + 1, cb);
+    }
+}
+
+// a[0]=nat, a[1]=col, a[2]=pet, a[3]=drk, a[4]=hob
+static bool fullCheck(const int a[5][5]) {
+    for (int h = 0; h < 5; ++h) {
+        if (a[0][h]==0 && a[1][h]!=0) return false;
+        if (a[1][h]==0 && a[0][h]!=0) return false;
+        if (a[0][h]==1 && a[2][h]!=0) return false;
+        if (a[2][h]==0 && a[0][h]!=1) return false;
+        if (a[1][h]==1 && a[3][h]!=0) return false;
+        if (a[3][h]==0 && a[1][h]!=1) return false;
+        if (a[0][h]==2 && a[3][h]!=1) return false;
+        if (a[3][h]==1 && a[0][h]!=2) return false;
+        if (a[2][h]==1 && a[4][h]!=0) return false;
+        if (a[4][h]==0 && a[2][h]!=1) return false;
+        if (a[1][h]==3 && a[4][h]!=2) return false;
+        if (a[4][h]==2 && a[1][h]!=3) return false;
+        if (a[4][h]==3 && a[3][h]!=3) return false;
+        if (a[3][h]==3 && a[4][h]!=3) return false;
+        if (a[0][h]==3 && a[4][h]!=4) return false;
+        if (a[4][h]==4 && a[0][h]!=3) return false;
+    }
+    for (int h = 0; h < 5; ++h) {
+        if (a[1][h]==1) { if (h==0 || a[1][h-1]!=2) return false; }
+        if (a[1][h]==2) { if (h==4 || a[1][h+1]!=1) return false; }
+    }
+    if (a[3][2]!=2) return false;
+    if (a[0][0]!=4) return false;
+    for (int h = 0; h < 5; ++h) {
+        if (a[4][h]==1) { bool f=false; for(int nn=h-1;nn<=h+1;++nn) if(nn>=0&&nn<5&&a[2][nn]==2) f=true; if(!f) return false; }
+        if (a[2][h]==2) { bool f=false; for(int nn=h-1;nn<=h+1;++nn) if(nn>=0&&nn<5&&a[4][nn]==1) f=true; if(!f) return false; }
+    }
+    for (int h = 0; h < 5; ++h) {
+        if (a[4][h]==2) { bool f=false; for(int nn=h-1;nn<=h+1;++nn) if(nn>=0&&nn<5&&a[2][nn]==3) f=true; if(!f) return false; }
+        if (a[2][h]==3) { bool f=false; for(int nn=h-1;nn<=h+1;++nn) if(nn>=0&&nn<5&&a[4][nn]==2) f=true; if(!f) return false; }
+    }
+    for (int h = 0; h < 5; ++h) if (a[1][h]==4 && h!=1) return false;
+    return true;
+}
+
+int main() {
+    int a[5][5];
+    long long count = 0;
+    std::vector<int> nat(5), col(5), pet(5), drk(5), hob(5);
+    perms(5, nat, 0, [&](const std::vector<int>& n) {
+        for (int h=0;h<5;++h) a[0][h]=n[h];
+        if (a[0][0]!=4) return;  // Norwegian first
+        perms(5, col, 0, [&](const std::vector<int>& c) {
+            for (int h=0;h<5;++h) a[1][h]=c[h];
+            // blue must be house 1 (index 1)
+            if (a[1][1]!=4) return;
+            // green right of ivory
+            for (int h=0;h<5;++h) {
+                if (a[1][h]==1) { if (h==0 || a[1][h-1]!=2) return; }
+                if (a[1][h]==2) { if (h==4 || a[1][h+1]!=1) return; }
+            }
+            perms(5, pet, 0, [&](const std::vector<int>& pe) {
+                for (int h=0;h<5;++h) a[2][h]=pe[h];
+                perms(5, drk, 0, [&](const std::vector<int>& d) {
+                    for (int h=0;h<5;++h) a[3][h]=d[h];
+                    if (a[3][2]!=2) return;  // milk middle
+                    perms(5, hob, 0, [&](const std::vector<int>& ho) {
+                        for (int h=0;h<5;++h) a[4][h]=ho[h];
+                        if (!fullCheck(a)) return;
+                        count++;
+                        printf("SOLUTION %lld:\n", count);
+                        const char* natn[]={"Englishman","Spaniard","Ukrainian","Japanese","Norwegian"};
+                        const char* coln[]={"Red","Green","Ivory","Yellow","Blue"};
+                        const char* petn[]={"Dog","Snail","Fox","Horse","Zebra"};
+                        const char* drkn[]={"Coffee","Tea","Milk","OrangeJuice","Water"};
+                        const char* hobn[]={"Dancing","Reading","Painter","Football","Chess"};
+                        for (int h = 0; h < 5; ++h)
+                            printf("  H%d: %s %s %s %s %s\n", h+1, natn[a[0][h]], coln[a[1][h]], petn[a[2][h]], drkn[a[3][h]], hobn[a[4][h]]);
+                    });
+                });
+            });
+        });
+    });
+    printf("total solutions: %lld\n", count);
+    return 0;
+}

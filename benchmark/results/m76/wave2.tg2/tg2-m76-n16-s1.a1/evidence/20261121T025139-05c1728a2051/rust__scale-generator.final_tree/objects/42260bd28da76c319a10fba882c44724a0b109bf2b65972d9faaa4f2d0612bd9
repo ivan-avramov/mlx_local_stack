@@ -1,0 +1,83 @@
+/// The chromatic scale written with sharps.
+const SHARP_CHROMATIC: [&str; 12] = [
+    "A", "A#", "B", "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#",
+];
+
+/// The chromatic scale written with flats.
+const FLAT_CHROMATIC: [&str; 12] = [
+    "A", "Bb", "B", "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab",
+];
+
+/// Tonics that are conventionally written with flats.
+///
+/// This lookup is case-sensitive: an uppercase tonic denotes a major key and a
+/// lowercase tonic a minor key, and the two spell the same pitch class with
+/// different accidentals (e.g. `G` major uses sharps while `g` minor uses
+/// flats).
+const FLAT_TONICS: [&str; 12] = [
+    "F", "Bb", "Eb", "Ab", "Db", "Gb", "d", "g", "c", "f", "bb", "eb",
+];
+
+#[derive(Debug)]
+pub struct Error;
+
+#[derive(Debug)]
+pub struct Scale {
+    notes: Vec<String>,
+}
+
+impl Scale {
+    pub fn new(tonic: &str, intervals: &str) -> Result<Scale, Error> {
+        let chromatic = chromatic_for(tonic);
+        let start = index_of(chromatic, tonic).ok_or(Error)?;
+
+        let mut notes = vec![chromatic[start].to_string()];
+        let mut pos = start;
+        for c in intervals.chars() {
+            let steps = match c {
+                'm' => 1,
+                'M' => 2,
+                'A' => 3,
+                _ => return Err(Error),
+            };
+            pos = (pos + steps) % chromatic.len();
+            notes.push(chromatic[pos].to_string());
+        }
+
+        Ok(Scale { notes })
+    }
+
+    pub fn chromatic(tonic: &str) -> Result<Scale, Error> {
+        let chromatic = chromatic_for(tonic);
+        let start = index_of(chromatic, tonic).ok_or(Error)?;
+
+        let mut notes = Vec::with_capacity(chromatic.len() + 1);
+        for i in 0..chromatic.len() {
+            notes.push(chromatic[(start + i) % chromatic.len()].to_string());
+        }
+        notes.push(chromatic[start].to_string());
+
+        Ok(Scale { notes })
+    }
+
+    pub fn enumerate(&self) -> Vec<String> {
+        self.notes.clone()
+    }
+}
+
+/// Choose the spelling (sharps or flats) of the chromatic scale for a tonic.
+fn chromatic_for(tonic: &str) -> &'static [&'static str; 12] {
+    if FLAT_TONICS.contains(&tonic) {
+        &FLAT_CHROMATIC
+    } else {
+        &SHARP_CHROMATIC
+    }
+}
+
+/// Find a tonic in a chromatic scale, ignoring the case of the letter.
+fn index_of<'a>(chromatic: &[&'a str], tonic: &str) -> Option<usize> {
+    let tonic = tonic.to_lowercase();
+    chromatic
+        .iter()
+        .position(|note| note.to_lowercase() == tonic)
+}

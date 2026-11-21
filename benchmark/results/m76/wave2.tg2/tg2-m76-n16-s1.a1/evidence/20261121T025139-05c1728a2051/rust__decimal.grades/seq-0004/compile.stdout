@@ -1,0 +1,159 @@
+TG2_COMPILE_START 452befad7a559ec9
+     Locking 4 packages to latest compatible versions
+      Adding num-bigint v0.4.8 (available: v0.5.1)
+   Compiling autocfg v1.5.1
+   Compiling num-traits v0.2.19
+   Compiling num-integer v0.1.47
+   Compiling num-bigint v0.4.8
+   Compiling decimal v0.1.0 (/work/decimal)
+error[E0308]: mismatched types
+  --> src/lib.rs:59:33
+   |
+59 |         let sign = if digits == 0 { Sign::Plus } else { sign };
+   |                       ------    ^ expected `BigInt`, found integer
+   |                       |
+   |                       expected because this is `BigInt`
+
+error[E0599]: no method named `into_sign` found for struct `BigInt` in the current scope
+  --> src/lib.rs:98:34
+   |
+98 |         let (sign, digits) = sum.into_sign();
+   |                                  ^^^^^^^^^
+   |
+help: there is a method `into_biguint` with a similar name
+   |
+98 -         let (sign, digits) = sum.into_sign();
+98 +         let (sign, digits) = sum.into_biguint();
+   |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src/lib.rs:135:14
+    |
+135 |         self.add(&rhs, false)
+    |              ^^^ ----  ----- unexpected argument #2 of type `bool`
+    |                  |
+    |                  expected `Decimal`, found `&Decimal`
+    |
+help: the return type of this call is `&Decimal` due to the type of the argument passed
+   --> src/lib.rs:135:9
+    |
+135 |         self.add(&rhs, false)
+    |         ^^^^^^^^^----^^^^^^^^
+    |                  |
+    |                  this argument influences the return type of `add`
+note: method defined here
+   --> /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/ops/arith.rs:91:7
+help: consider removing the borrow
+    |
+135 -         self.add(&rhs, false)
+135 +         self.add(rhs, false)
+    |
+help: remove the extra argument
+    |
+135 -         self.add(&rhs, false)
+135 +         self.add(/* Decimal */)
+    |
+
+error[E0061]: this method takes 1 argument but 2 arguments were supplied
+   --> src/lib.rs:143:14
+    |
+143 |         self.add(&rhs, true)
+    |              ^^^ ----  ---- unexpected argument #2 of type `bool`
+    |                  |
+    |                  expected `Decimal`, found `&Decimal`
+    |
+help: the return type of this call is `&Decimal` due to the type of the argument passed
+   --> src/lib.rs:143:9
+    |
+143 |         self.add(&rhs, true)
+    |         ^^^^^^^^^----^^^^^^^
+    |                  |
+    |                  this argument influences the return type of `add`
+note: method defined here
+   --> /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/ops/arith.rs:91:7
+help: consider removing the borrow
+    |
+143 -         self.add(&rhs, true)
+143 +         self.add(rhs, true)
+    |
+help: remove the extra argument
+    |
+143 -         self.add(&rhs, true)
+143 +         self.add(/* Decimal */)
+    |
+
+error[E0308]: mismatched types
+   --> src/lib.rs:151:18
+    |
+151 |         self.mul(&rhs)
+    |              --- ^^^^ expected `Decimal`, found `&Decimal`
+    |              |
+    |              arguments to this method are incorrect
+    |
+help: the return type of this call is `&Decimal` due to the type of the argument passed
+   --> src/lib.rs:151:9
+    |
+151 |         self.mul(&rhs)
+    |         ^^^^^^^^^----^
+    |                  |
+    |                  this argument influences the return type of `mul`
+note: method defined here
+   --> /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/ops/arith.rs:337:7
+help: consider removing the borrow
+    |
+151 -         self.mul(&rhs)
+151 +         self.mul(rhs)
+    |
+
+error[E0004]: non-exhaustive patterns: `num_bigint::Sign::NoSign` not covered
+  --> src/lib.rs:65:15
+   |
+65 |         match self.sign {
+   |               ^^^^^^^^^ pattern `num_bigint::Sign::NoSign` not covered
+   |
+note: `num_bigint::Sign` defined here
+  --> /opt/tg2/cargo-vendor/num-bigint-0.4.8/src/bigint.rs:36:1
+   |
+36 | pub enum Sign {
+   | ^^^^^^^^^^^^^
+...
+40 |     NoSign,
+   |     ------ not covered
+   = note: the matched value is of type `num_bigint::Sign`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+   |
+67 ~             Sign::Minus => -self.digits.clone(),
+68 ~             num_bigint::Sign::NoSign => todo!(),
+   |
+
+error[E0507]: cannot move out of `self.digits` which is behind a shared reference
+   --> src/lib.rs:105:22
+    |
+105 |         let digits = self.digits * other.digits;
+    |                      ^^^^^^^^^^^---------------
+    |                      |
+    |                      `self.digits` moved due to usage in operator
+    |                      move occurs because `self.digits` has type `BigInt`, which does not implement the `Copy` trait
+    |
+note: calling this operator moves the left-hand side
+   --> /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/ops/arith.rs:337:11
+help: consider cloning the value if the performance cost is acceptable
+    |
+105 |         let digits = self.digits.clone() * other.digits;
+    |                                 ++++++++
+
+error[E0507]: cannot move out of `other.digits` which is behind a shared reference
+   --> src/lib.rs:105:36
+    |
+105 |         let digits = self.digits * other.digits;
+    |                                    ^^^^^^^^^^^^ move occurs because `other.digits` has type `BigInt`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+105 |         let digits = self.digits * other.digits.clone();
+    |                                                ++++++++
+
+Some errors have detailed explanations: E0004, E0061, E0308, E0507, E0599.
+For more information about an error, try `rustc --explain E0004`.
+error: could not compile `decimal` (lib) due to 8 previous errors
+warning: build failed, waiting for other jobs to finish...

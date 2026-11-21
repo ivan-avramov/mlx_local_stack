@@ -1,0 +1,66 @@
+#if !defined(COMPLEX_NUMBERS_H)
+#define COMPLEX_NUMBERS_H
+
+#include <cmath>
+
+namespace complex_numbers {
+
+class Complex {
+public:
+    Complex(double real, double imag) : real_(real), imag_(imag) {}
+
+    double real() const { return real_; }
+    double imag() const { return imag_; }
+
+    double abs() const { return std::sqrt(real_ * real_ + imag_ * imag_); }
+
+    Complex conj() const { return Complex(real_, -imag_); }
+
+    Complex exp() const {
+        const double e = std::exp(real_);
+        return Complex(e * std::cos(imag_), e * std::sin(imag_));
+    }
+
+    Complex operator+(const Complex& other) const {
+        return Complex(real_ + other.real_, imag_ + other.imag_);
+    }
+
+    Complex operator-(const Complex& other) const {
+        return Complex(real_ - other.real_, imag_ - other.imag_);
+    }
+
+    Complex operator*(const Complex& other) const {
+        return Complex(real_ * other.real_ - imag_ * other.imag_,
+                       imag_ * other.real_ + real_ * other.imag_);
+    }
+
+    Complex operator/(const Complex& other) const {
+        const double denom = other.real_ * other.real_ + other.imag_ * other.imag_;
+        return Complex((real_ * other.real_ + imag_ * other.imag_) / denom,
+                       (imag_ * other.real_ - real_ * other.imag_) / denom);
+    }
+
+private:
+    double real_;
+    double imag_;
+};
+
+inline Complex operator+(double real, const Complex& c) {
+    return c + Complex(real, 0.0);
+}
+
+inline Complex operator-(double real, const Complex& c) {
+    return Complex(real, 0.0) - c;
+}
+
+inline Complex operator*(double real, const Complex& c) {
+    return c * Complex(real, 0.0);
+}
+
+inline Complex operator/(double real, const Complex& c) {
+    return Complex(real, 0.0) / c;
+}
+
+}  // namespace complex_numbers
+
+#endif  // COMPLEX_NUMBERS_H

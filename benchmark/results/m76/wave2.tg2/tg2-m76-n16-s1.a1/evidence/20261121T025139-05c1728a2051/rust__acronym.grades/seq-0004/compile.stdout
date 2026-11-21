@@ -1,0 +1,49 @@
+TG2_COMPILE_START 630d88135f59fc7f
+   Compiling acronym v1.7.0 (/work/acronym)
+error[E0373]: closure may outlive the current function, but it borrows `letters`, which is owned by the current function
+  --> src/lib.rs:6:56
+   |
+ 6 |             letters.into_iter().enumerate().filter_map(|(i, c)| {
+   |                                                        ^^^^^^^^ may outlive borrowed value `letters`
+ 7 |                 if i == 0 || (c.is_uppercase() && letters[i - 1].is_lowercase()) {
+   |                                                   ------- `letters` is borrowed here
+   |
+note: closure is returned here
+  --> src/lib.rs:6:13
+   |
+ 6 | /             letters.into_iter().enumerate().filter_map(|(i, c)| {
+ 7 | |                 if i == 0 || (c.is_uppercase() && letters[i - 1].is_lowercase()) {
+ 8 | |                     Some(c.to_uppercase().to_string())
+ 9 | |                 } else {
+...  |
+12 | |             })
+   | |______________^
+help: to force the closure to take ownership of `letters` (and any other referenced variables), use the `move` keyword
+   |
+ 6 |             letters.into_iter().enumerate().filter_map(move |(i, c)| {
+   |                                                        ++++
+
+error[E0382]: borrow of moved value: `letters`
+ --> src/lib.rs:6:56
+  |
+5 |             let letters: Vec<char> = word.chars().filter(|c| c.is_alphabetic()).collect();
+  |                 ------- move occurs because `letters` has type `Vec<char>`, which does not implement the `Copy` trait
+6 |             letters.into_iter().enumerate().filter_map(|(i, c)| {
+  |                     -----------                        ^^^^^^^^ value borrowed here after move
+  |                     |
+  |                     `letters` moved due to this method call
+7 |                 if i == 0 || (c.is_uppercase() && letters[i - 1].is_lowercase()) {
+  |                                                   ------- borrow occurs due to use in closure
+  |
+note: `into_iter` takes ownership of the receiver `self`, which moves `letters`
+ --> /rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452/library/core/src/iter/traits/collect.rs:312:17
+help: you can `clone` the value and consume it, but this might not be your desired behavior
+  |
+6 |             letters.clone().into_iter().enumerate().filter_map(|(i, c)| {
+  |                    ++++++++
+
+Some errors have detailed explanations: E0373, E0382.
+For more information about an error, try `rustc --explain E0373`.
+error: could not compile `acronym` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `acronym` (lib test) due to 2 previous errors

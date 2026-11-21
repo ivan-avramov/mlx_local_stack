@@ -1,0 +1,29 @@
+TG2_COMPILE_START 12c6ad04bab11e29
+   Compiling xorcism v0.1.0 (/work/xorcism)
+error[E0311]: the associated type `<Data as IntoIterator>::IntoIter` may not live long enough
+  --> src/lib.rs:50:9
+   |
+45 |       pub fn munge<Data>(&mut self, data: Data) -> impl Iterator<Item = u8> + '_
+   |                          --------- the associated type `<Data as IntoIterator>::IntoIter` must be valid for the anonymous lifetime defined here...
+...
+50 | /         data.into_iter()
+51 | |             .map(|item| *item.borrow())
+52 | |             .map(move |byte| {
+53 | |                 let key_byte = self.key[self.pos];
+54 | |                 self.pos = (self.pos + 1) % self.key.len();
+55 | |                 byte ^ key_byte
+56 | |             })
+   | |______________^ ...so that the type `<Data as IntoIterator>::IntoIter` will meet its required lifetime bounds
+   |
+help: consider adding an explicit lifetime bound
+   |
+45 ~     pub fn munge<'b, Data>(&'b mut self, data: Data) -> impl Iterator<Item = u8> + 'b
+46 |     where
+47 |         Data: IntoIterator,
+48 ~         Data::Item: Borrow<u8>, <Data as IntoIterator>::IntoIter: 'b
+   |
+
+For more information about this error, try `rustc --explain E0311`.
+error: could not compile `xorcism` (lib test) due to 1 previous error
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `xorcism` (lib) due to 1 previous error

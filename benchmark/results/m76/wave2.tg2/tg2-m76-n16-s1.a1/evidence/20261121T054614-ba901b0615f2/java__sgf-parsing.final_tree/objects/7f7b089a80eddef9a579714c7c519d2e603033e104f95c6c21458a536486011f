@@ -1,0 +1,125 @@
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+public class SgfParsing {
+
+    private String input;
+    private int pos;
+
+    public SgfNode parse(String input) throws SgfParsingException {
+        this.input = input;
+        this.pos = 0;
+        SgfNode root = parseTree();
+        if (pos < input.length()) {
+            throw new SgfParsingException("Unexpected trailing input at position " + pos);
+        }
+        return root;
+    }
+
+    // tree ::= "(" node node* ")"
+    // The tree is represented by its first node; every further node or
+    // subtree in the tree becomes a child of that first node.
+    private SgfNode parseTree() throws SgfParsingException {
+        expect('(');
+        if (pos >= input.length() || input.charAt(pos) != ';') {
+            throw new SgfParsingException("Tree with no nodes");
+        }
+        SgfNode root = parseNode();
+        while (pos < input.length() && input.charAt(pos) != ')') {
+            char c = input.charAt(pos);
+            if (c == ';') {
+                root.appendChild(parseNode());
+            } else if (c == '(') {
+                root.appendChild(parseTree());
+            } else {
+                throw new SgfParsingException("Expected a node or tree, but found '" + c + "'");
+            }
+        }
+        expect(')');
+        return root;
+    }
+
+    // node ::= ";" property*
+    private SgfNode parseNode() throws SgfParsingException {
+        expect(';');
+        Map<String, List<String>> properties = new HashMap<>();
+        while (pos < input.length()) {
+            char c = input.charAt(pos);
+            if (c == ';' || c == '(' || c == ')') {
+                break;
+            }
+            parseProperty(properties);
+        }
+        return new SgfNode(properties);
+    }
+
+    // property ::= key value+
+    private void parseProperty(Map<String, List<String>> properties) throws SgfParsingException {
+        int keyStart = pos;
+        while (pos < input.length() && Character.isUpperCase(input.charAt(pos))) {
+            pos++;
+        }
+        String key = input.substring(keyStart, pos);
+        if (key.isEmpty()) {
+            throw new SgfParsingException("Expected an uppercase property key");
+        }
+        List<String> values = new ArrayList<>();
+        while (pos < input.length() && input.charAt(pos) == '[') {
+            values.add(parseValue());
+        }
+        if (values.isEmpty()) {
+            throw new SgfParsingException("Property '" + key + "' has no values");
+        }
+        properties.put(key, values);
+    }
+
+    // value ::= "[" text "]"
+    private String parseValue() throws SgfParsingException {
+        expect('[');
+        int start = pos;
+        while (pos < input.length() && input.charAt(pos) != ']') {
+            if (input.charAt(pos) == '\\') {
+                pos += 2; // skip the escaped character, it cannot end the value
+            } else {
+                pos++;
+            }
+        }
+        if (pos >= input.length()) {
+            throw new SgfParsingException("Unterminated property value");
+        }
+        String raw = input.substring(start, pos);
+        pos++; // consume ']'
+        return unescape(raw);
+    }
+
+    // SGF text rules: a backslash followed by a newline removes the newline;
+    // a backslash followed by any other character inserts that character as-is.
+    private String unescape(String raw) {
+        StringBuilder sb = new StringBuilder(raw.length());
+        for (int i = 0; i < raw.length(); i++) {
+            char c = raw.charAt(i);
+            if (c == '\\' && i + 1 < raw.length()) {
+                char next = raw.charAt(i + 1);
+                if (next == '\n') {
+                    i++; // drop the escaped newline
+                } else {
+                    sb.append(next);
+                    i++;
+                }
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    private void expect(char c) throws SgfParsingException {
+        if (pos >= input.length() || input.charAt(pos) != c) {
+            throw new SgfParsingException("Expected '" + c + "' at position " + pos);
+        }
+        pos++;
+    }
+
+}

@@ -1,0 +1,40 @@
+#include "phone_number.h"
+
+#include <cctype>
+
+namespace phone_number {
+
+phone_number::phone_number(const std::string& raw_number) {
+    std::string digits;
+    for (char c : raw_number) {
+        if (std::isdigit(static_cast<unsigned char>(c))) {
+            digits.push_back(c);
+        } else if (c != '+' && c != '(' && c != ')' && c != '-' &&
+                   c != '.' && c != ' ') {
+            throw std::domain_error("invalid character in phone number");
+        }
+    }
+
+    if (digits.size() == 11) {
+        if (digits[0] != '1') {
+            throw std::domain_error("invalid country code");
+        }
+        digits.erase(digits.begin());
+    }
+
+    if (digits.size() != 10) {
+        throw std::domain_error("invalid number of digits");
+    }
+
+    if (digits[0] < '2' || digits[3] < '2') {
+        throw std::domain_error("invalid area or exchange code");
+    }
+
+    number_ = digits;
+}
+
+std::string phone_number::number() const {
+    return number_;
+}
+
+}  // namespace phone_number

@@ -1,0 +1,225 @@
+use std::collections::HashMap;
+
+pub type Value = i32;
+pub type Result = std::result::Result<(), Error>;
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    DivisionByZero,
+    StackUnderflow,
+    UnknownWord,
+    InvalidWord,
+}
+
+#[derive(Clone, Copy)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Dup,
+    Drop,
+    Swap,
+    Over,
+}
+
+/// A single instruction in a definition body.
+///
+/// `Word(idx)` references a definition by its index in the dictionary, so
+/// definitions are stored lazily and never eagerly expanded into the bodies
+/// of other definitions.
+#[derive(Clone, Copy)]
+enum Instr {
+    Number(Value),
+    Word(usize),
+    Op(Op),
+}
+
+struct Definition {
+    body: Vec<Instr>,
+}
+
+pub struct Forth {
+    stack: Vec<Value>,
+    defs: Vec<Definition>,
+    names: HashMap<String, usize>,
+}
+
+impl Forth {
+    pub fn new() -> Forth {
+        let mut defs = Vec::new();
+        let mut names = HashMap::new();
+        for (name, op) in [
+            ("+", Op::Add),
+            ("-", Op::Sub),
+            ("*", Op::Mul),
+            ("/", Op::Div),
+            ("dup", Op::Dup),
+            ("drop", Op::Drop),
+            ("swap", Op::Swap),
+            ("over", Op::Over),
+        ] {
+            names.insert(name.to_string(), defs.len());
+            defs.push(Definition {
+                body: vec![Instr::Op(op)],
+            });
+        }
+        Forth {
+            stack: vec![],
+            defs,
+            names,
+        }
+    }
+
+    pub fn stack(&self) -> &[Value] {
+        &self.stack
+    }
+
+    pub fn eval(&mut self, input: &str) -> Result {
+        let mut tokens = input.split_whitespace();
+        while let Some(token) = tokens.next() {
+            if token == ":" {
+                self.define(&mut tokens)?;
+            } else {
+                self.exec_token(token)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parses `: name body ;` from the remaining tokens and adds the new
+    /// definition to the dictionary. Word references in the body are resolved
+    /// against the dictionary *before* the new definition is installed, so a
+    /// word captures the definition that was current at definition time.
+    fn define<'a>(&mut self, tokens: &mut impl Iterator<Item = &'a str>) -> Result {
+        let name = match tokens.next() {
+            Some(name) => name,
+            None => return Err(Error::InvalidWord),
+        };
+        if parse_number(name).is_some() {
+            return Err(Error::InvalidWord);
+        }
+        let name = name.to_lowercase();
+
+        let mut body = Vec::new();
+        for token in tokens {
+            if token == ";" {
+                break;
+            }
+            body.push(self.token_to_instr(token)?);
+        }
+
+        self.names.insert(name, self.defs.len());
+        self.defs.push(Definition { body });
+        Ok(())
+    }
+
+    fn exec_token(&mut self, token: &str) -> Result {
+        match self.token_to_instr(token)? {
+            Instr::Number(value) => self.stack.push(value),
+            Instr::Op(op) => self.exec_op(op)?,
+            Instr::Word(idx) => {
+                let mut pos = 0;
+                self.execute_def(idx, &mut pos)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn token_to_instr(&self, token: &str) -> std::result::Result<Instr, Error> {
+        if let Some(value) = parse_number(token) {
+            Ok(Instr::Number(value))
+        } else {
+            let name = token.to_lowercase();
+            match self.names.get(&name) {
+                Some(&idx) => Ok(Instr::Word(idx)),
+                None => Err(Error::UnknownWord),
+            }
+        }
+    }
+
+    /// Executes the body of definition `idx` starting at `*pos`.
+    ///
+    /// Each instruction is copied out before the next step so that no borrow
+    /// of the dictionary is held across the recursive call.
+    fn execute_def(&mut self, idx: usize, pos: &mut usize) -> Result {
+        loop {
+            let len = self.defs[idx].body.len();
+            if *pos >= len {
+                return Ok(());
+            }
+            let instr = self.defs[idx].body[*pos];
+            *pos += 1;
+            match instr {
+                Instr::Number(value) => self.stack.push(value),
+                Instr::Op(op) => self.exec_op(op)?,
+                Instr::Word(next) => {
+                    let mut inner = 0;
+                    self.execute_def(next, &mut inner)?;
+                }
+            }
+        }
+    }
+
+    fn exec_op(&mut self, op: Op) -> Result {
+        match op {
+            Op::Add | Op::Sub | Op::Mul | Op::Div => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                let result = match op {
+                    Op::Add => a + b,
+                    Op::Sub => a - b,
+                    Op::Mul => a * b,
+                    Op::Div => {
+                        if b == 0 {
+                            return Err(Error::DivisionByZero);
+                        }
+                        a / b
+                    }
+                    _ => unreachable!(),
+                };
+                self.stack.push(result);
+            }
+            Op::Dup => {
+                let value = self.pop()?;
+                self.stack.push(value);
+                self.stack.push(value);
+            }
+            Op::Drop => {
+                self.pop()?;
+            }
+            Op::Swap => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+            Op::Over => {
+                let b = self.pop()?;
+                let a = self.pop()?;
+                self.stack.push(a);
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+        }
+        Ok(())
+    }
+
+    fn pop(&mut self) -> std::result::Result<Value, Error> {
+        self.stack.pop().ok_or(Error::StackUnderflow)
+    }
+}
+
+/// Parses a token as a signed integer: an optional `-` followed by one or
+/// more ASCII digits. Anything else (including a bare `-`) is not a number.
+fn parse_number(token: &str) -> Option<Value> {
+    let (sign, digits) = match token.strip_prefix('-') {
+        Some(rest) if !rest.is_empty() => (-1, rest),
+        _ => (1, token),
+    };
+    if digits.bytes().all(|b| b.is_ascii_digit()) {
+        digits.parse::<Value>().ok().map(|value| value * sign)
+    } else {
+        None
+    }
+}

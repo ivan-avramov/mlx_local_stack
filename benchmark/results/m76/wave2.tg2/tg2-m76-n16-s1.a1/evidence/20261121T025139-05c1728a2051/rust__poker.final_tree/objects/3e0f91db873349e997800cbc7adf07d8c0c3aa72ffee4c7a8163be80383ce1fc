@@ -1,0 +1,131 @@
+/// Given a list of poker hands, return a list of those hands which win.
+///
+/// Note the type signature: this function should return _the same_ reference to
+/// the winning hand(s) as were passed in, not reconstructed strings which happen to be equal.
+pub fn winning_hands<'a>(hands: &[&'a str]) -> Vec<&'a str> {
+    let mut best: Option<(HandKey, usize)> = None;
+    let mut winners = Vec::new();
+
+    for (i, hand) in hands.iter().enumerate() {
+        let key = evaluate(hand);
+        match best {
+            None => {
+                winners.push(*hand);
+                best = Some((key, i));
+            }
+            Some((ref b, _)) if key > *b => {
+                winners.clear();
+                winners.push(*hand);
+                best = Some((key, i));
+            }
+            Some((ref b, _)) if key == *b => winners.push(*hand),
+            _ => {}
+        }
+    }
+
+    winners
+}
+
+/// A comparable score for a hand: category first, then tie-breaker ranks.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct HandKey {
+    category: u8,
+    tiebreakers: Vec<u8>,
+}
+
+/// Hand categories, ordered from weakest to strongest.
+const HIGH_CARD: u8 = 0;
+const ONE_PAIR: u8 = 1;
+const TWO_PAIR: u8 = 2;
+const THREE_OF_A_KIND: u8 = 3;
+const STRAIGHT: u8 = 4;
+const FLUSH: u8 = 5;
+const FULL_HOUSE: u8 = 6;
+const FOUR_OF_A_KIND: u8 = 7;
+const STRAIGHT_FLUSH: u8 = 8;
+
+/// Parse a hand string like "4S 5S 7H 8D JC" into per-card ranks and suits.
+fn parse_cards(hand: &str) -> ([u8; 5], [char; 5]) {
+    let mut ranks = [0u8; 5];
+    let mut suits = [' '; 5];
+    for (i, token) in hand.split_whitespace().enumerate() {
+        let suit = token.chars().last().unwrap();
+        let rank_str = &token[..token.len() - 1];
+        ranks[i] = rank_value(rank_str);
+        suits[i] = suit;
+    }
+    (ranks, suits)
+}
+
+fn rank_value(rank_str: &str) -> u8 {
+    match rank_str {
+        "2" => 2,
+        "3" => 3,
+        "4" => 4,
+        "5" => 5,
+        "6" => 6,
+        "7" => 7,
+        "8" => 8,
+        "9" => 9,
+        "10" => 10,
+        "J" => 11,
+        "Q" => 12,
+        "K" => 13,
+        "A" => 14,
+        _ => unreachable!("invalid rank: {rank_str}"),
+    }
+}
+
+fn evaluate(hand: &str) -> HandKey {
+    let (ranks, suits) = parse_cards(hand);
+
+    let mut sorted = ranks;
+    sorted.sort_unstable_by(|a, b| b.cmp(a)); // descending
+
+    let flush = suits.iter().all(|s| *s == suits[0]);
+
+    // Group ranks by count, e.g. [14, 14, 14, 9, 9] -> [(3, 14), (2, 9)]
+    let mut groups: Vec<(u8, u8)> = Vec::new();
+    for &r in sorted.iter() {
+        match groups.iter_mut().find(|g| g.1 == r) {
+            Some(g) => g.0 += 1,
+            None => groups.push((1, r)),
+        }
+    }
+    groups.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    // A straight has five distinct ranks spanning a range of four;
+    // the ace-low "wheel" (A,5,4,3,2) scores as a 5-high straight.
+    let straight_high = if groups.iter().all(|g| g.0 == 1) {
+        if sorted[0] - sorted[4] == 4 {
+            Some(sorted[0])
+        } else if sorted == [14, 5, 4, 3, 2] {
+            Some(5)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (category, tiebreakers) = match (flush, straight_high, groups.as_slice()) {
+        (true, Some(high), _) => (STRAIGHT_FLUSH, vec![high]),
+        (_, Some(high), _) => (STRAIGHT, vec![high]),
+        (true, None, _) => (FLUSH, sorted.to_vec()),
+        (false, None, [(3, r3), (2, r2)]) => (FULL_HOUSE, vec![*r3, *r2]),
+        (false, None, [(4, r4), (1, r1)]) => (FOUR_OF_A_KIND, vec![*r4, *r1]),
+        (false, None, [(3, r3), (1, k1), (1, k2)]) => {
+            (THREE_OF_A_KIND, vec![*r3, *k1, *k2])
+        }
+        (false, None, [(2, r2), (2, r1), (1, k1)]) => (TWO_PAIR, vec![*r2, *r1, *k1]),
+        (false, None, [(2, r2), (1, k1), (1, k2), (1, k3)]) => {
+            (ONE_PAIR, vec![*r2, *k1, *k2, *k3])
+        }
+        (false, None, _) => (HIGH_CARD, sorted.to_vec()),
+    };
+
+    HandKey {
+        category,
+        tiebreakers,
+    }
+}

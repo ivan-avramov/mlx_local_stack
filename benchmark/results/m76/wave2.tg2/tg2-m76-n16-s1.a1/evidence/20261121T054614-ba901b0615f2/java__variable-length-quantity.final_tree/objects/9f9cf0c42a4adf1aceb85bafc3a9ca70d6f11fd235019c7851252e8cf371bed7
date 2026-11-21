@@ -1,0 +1,40 @@
+import java.util.List;
+
+import java.util.ArrayList;
+
+class VariableLengthQuantity {
+
+    private static final long CONTINUATION_BIT = 0x80L;
+    private static final long SEVEN_BITS = 0x7FL;
+
+    List<String> encode(List<Long> numbers) {
+        List<String> encoded = new ArrayList<>();
+        for (long number : numbers) {
+            List<Long> groups = new ArrayList<>();
+            groups.add(number & SEVEN_BITS);
+            while ((number >>= 7) > 0) {
+                groups.add((number & SEVEN_BITS) | CONTINUATION_BIT);
+            }
+            for (int i = groups.size() - 1; i >= 0; i--) {
+                encoded.add(String.format("0x%x", groups.get(i)));
+            }
+        }
+        return encoded;
+    }
+
+    List<String> decode(List<Long> bytes) {
+        List<String> decoded = new ArrayList<>();
+        long value = 0;
+        for (long byteValue : bytes) {
+            value = (value << 7) | (byteValue & SEVEN_BITS);
+            if ((byteValue & CONTINUATION_BIT) == 0) {
+                decoded.add(String.format("0x%x", value));
+                value = 0;
+            }
+        }
+        if (!bytes.isEmpty() && (bytes.get(bytes.size() - 1) & CONTINUATION_BIT) != 0) {
+            throw new IllegalArgumentException("Invalid variable-length quantity encoding");
+        }
+        return decoded;
+    }
+}

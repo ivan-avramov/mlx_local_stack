@@ -1,0 +1,125 @@
+//
+// This is only a SKELETON file for the 'Poker' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const RANK_VALUES = {
+  '2': 2,
+  '3': 3,
+  '4': 4,
+  '5': 5,
+  '6': 6,
+  '7': 7,
+  '8': 8,
+  '9': 9,
+  '10': 10,
+  J: 11,
+  Q: 12,
+  K: 13,
+  A: 14,
+};
+
+const parseCard = (card) => {
+  const suit = card.slice(-1);
+  const rank = RANK_VALUES[card.slice(0, -1)];
+  return { rank, suit };
+};
+
+// Returns a numeric score array for a hand. A higher array (compared
+// element-by-element) represents a stronger hand.
+const scoreHand = (hand) => {
+  const cards = hand.split(' ').map(parseCard);
+  const ranks = cards.map((card) => card.rank);
+  const suits = cards.map((card) => card.suit);
+
+  const counts = {};
+  for (const rank of ranks) {
+    counts[rank] = (counts[rank] || 0) + 1;
+  }
+  // Groups of cards sharing a rank, e.g. [{ rank, count }, ...].
+  const groups = Object.entries(counts).map(([rank, count]) => ({
+    rank: Number(rank),
+    count,
+  }));
+
+  const isFlush = suits.every((suit) => suit === suits[0]);
+
+  // Straight detection, including the ace-low "wheel" (A 2 3 4 5).
+  const uniqueRanks = [...new Set(ranks)].sort((a, b) => a - b);
+  let straightHigh = null;
+  if (uniqueRanks.length === 5) {
+    if (uniqueRanks[4] - uniqueRanks[0] === 4) {
+      straightHigh = uniqueRanks[4];
+    } else if (uniqueRanks.join(',') === '2,3,4,5,14') {
+      straightHigh = 5;
+    }
+  }
+  const isStraight = straightHigh !== null;
+
+  const countSignature = groups
+    .map((group) => group.count)
+    .sort((a, b) => b - a);
+
+  let category;
+  if (isStraight && isFlush) category = 9; // straight flush
+  else if (countSignature[0] === 4) category = 8; // four of a kind
+  else if (countSignature[0] === 3 && countSignature[1] === 2) category = 7; // full house
+  else if (isFlush) category = 6; // flush
+  else if (isStraight) category = 5; // straight
+  else if (countSignature[0] === 3) category = 4; // three of a kind
+  else if (countSignature[0] === 2 && countSignature[1] === 2) category = 3; // two pair
+  else if (countSignature[0] === 2) category = 2; // one pair
+  else category = 1; // high card
+
+  // Tiebreakers, ordered most-significant first.
+  let tiebreakers;
+  switch (category) {
+    case 9: // straight flush: just the highest card
+    case 5: // straight: just the highest card
+      tiebreakers = [straightHigh];
+      break;
+    case 8: // four of a kind: quad rank, then kicker
+    case 7: // full house: triplet rank, then pair rank
+    case 4: // three of a kind: triplet rank, then kickers
+    case 3: // two pair: high pair, low pair, then kicker
+    case 2: // one pair: pair rank, then kickers
+      tiebreakers = groups
+        .sort((a, b) => b.count - a.count || b.rank - a.rank)
+        .map((group) => group.rank);
+      break;
+    default: // flush / high card: all five cards, highest first
+      tiebreakers = [...ranks].sort((a, b) => b - a);
+  }
+
+  return [category, ...tiebreakers];
+};
+
+// Returns 1 if `a` beats `b`, -1 if `b` beats `a`, or 0 for a tie.
+const compareScores = (a, b) => {
+  const length = Math.min(a.length, b.length);
+  for (let i = 0; i < length; i += 1) {
+    if (a[i] !== b[i]) {
+      return a[i] > b[i] ? 1 : -1;
+    }
+  }
+  return 0;
+};
+
+export const bestHands = (hands) => {
+  const scores = hands.map(scoreHand);
+  let best = scores[0];
+  const winners = [];
+
+  for (let i = 0; i < hands.length; i += 1) {
+    const comparison = compareScores(scores[i], best);
+    if (comparison > 0) {
+      best = scores[i];
+      winners.length = 0;
+    }
+    if (comparison >= 0) {
+      winners.push(hands[i]);
+    }
+  }
+
+  return winners;
+};

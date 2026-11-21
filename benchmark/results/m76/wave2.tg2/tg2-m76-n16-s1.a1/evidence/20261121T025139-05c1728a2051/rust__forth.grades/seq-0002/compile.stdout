@@ -1,0 +1,39 @@
+TG2_COMPILE_START 115e42a93a63dff3
+   Compiling forth v1.7.0 (/work/forth)
+error[E0658]: anonymous lifetimes in `impl Trait` are unstable
+  --> src/lib.rs:94:61
+   |
+94 |     fn define(&mut self, tokens: &mut impl Iterator<Item = &str>) -> Result {
+   |                                                             ^ expected named lifetime parameter
+   |
+help: consider introducing a named lifetime parameter
+   |
+94 |     fn define<'a>(&mut self, tokens: &mut impl Iterator<Item = &'a str>) -> Result {
+   |              ++++                                               ++
+
+error[E0308]: mismatched types
+   --> src/lib.rs:119:37
+    |
+117 |     fn exec_token(&mut self, token: &str) -> Result {
+    |                                              ------ expected `std::result::Result<(), Error>` because of return type
+118 |         match self.token_to_instr(token)? {
+119 |             Instr::Number(value) => self.stack.push(value),
+    |                                     ^^^^^^^^^^^^^^^^^^^^^^ expected `Result<(), Error>`, found `()`
+    |
+    = note:   expected enum `std::result::Result<(), Error>`
+            found unit type `()`
+note: method `push` modifies its receiver in-place
+   --> src/lib.rs:119:48
+    |
+119 |             Instr::Number(value) => self.stack.push(value),
+    |                                                ^^^^ this call modifies its receiver in-place
+help: try wrapping the expression in `Ok`
+    |
+119 |             Instr::Number(value) => Ok(self.stack.push(value)),
+    |                                     +++                      +
+
+Some errors have detailed explanations: E0308, E0658.
+For more information about an error, try `rustc --explain E0308`.
+error: could not compile `forth` (lib) due to 2 previous errors
+warning: build failed, waiting for other jobs to finish...
+error: could not compile `forth` (lib test) due to 2 previous errors

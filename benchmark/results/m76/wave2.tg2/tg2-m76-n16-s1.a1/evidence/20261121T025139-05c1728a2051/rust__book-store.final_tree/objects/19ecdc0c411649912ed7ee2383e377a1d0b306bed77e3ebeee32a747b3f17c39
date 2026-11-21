@@ -1,0 +1,73 @@
+use std::collections::HashMap;
+
+/// Price (in cents) of a group of `size` distinct books, indexed by group size.
+const GROUP_PRICES: [u32; 6] = [0, 800, 1520, 2160, 2560, 3000];
+
+pub fn lowest_price(books: &[u32]) -> u32 {
+    let mut counts = [0u32; 5];
+    for &book in books {
+        let title = (book - 1) as usize;
+        if !(0..5).contains(&title) {
+            panic!("book titles must be in the range 1..=5");
+        }
+        counts[title] += 1;
+    }
+
+    let mut memo: HashMap<[u32; 5], u32> = HashMap::new();
+    solve(&counts, &mut memo)
+}
+
+/// Minimum cost for the remaining basket described by `counts`,
+/// considering every possible grouping of the books into sets of
+/// 1..=5 distinct titles.
+fn solve(counts: &[u32; 5], memo: &mut HashMap<[u32; 5], u32>) -> u32 {
+    let state = *counts;
+    if state.iter().all(|&c| c == 0) {
+        return 0;
+    }
+    if let Some(&price) = memo.get(&state) {
+        return price;
+    }
+
+    let mut best = u32::MAX;
+    for size in 1..=5 {
+        // Choose `size` distinct titles that still have copies left.
+        let mut remaining = state;
+        for subset in subsets_of_available(&remaining, size) {
+            let mut next = remaining;
+            for title in subset {
+                next[title] -= 1;
+            }
+            let price = GROUP_PRICES[size] + solve(&next, memo);
+            best = best.min(price);
+        }
+    }
+
+    memo.insert(state, best);
+    best
+}
+
+/// Every combination of `size` distinct titles with a positive count.
+fn subsets_of_available(counts: &[u32; 5], size: usize) -> Vec<Vec<usize>> {
+    combinations(0, counts, size, &mut Vec::new())
+}
+
+fn combinations(
+    start: usize,
+    counts: &[u32; 5],
+    size: usize,
+    current: &mut Vec<usize>,
+) -> Vec<Vec<usize>> {
+    if size == 0 {
+        return vec![current.clone()];
+    }
+    let mut result = Vec::new();
+    for title in start..5 {
+        if counts[title] > 0 {
+            current.push(title);
+            result.extend(combinations(title + 1, counts, size - 1, current));
+            current.pop();
+        }
+    }
+    result
+}

@@ -1,0 +1,69 @@
+import java.util.Collection;
+import java.util.LinkedHashSet;
+
+class CustomSet<T> {
+    private final LinkedHashSet<T> elements;
+
+    CustomSet() {
+        this.elements = new LinkedHashSet<>();
+    }
+
+    CustomSet(Collection<T> data) {
+        this.elements = new LinkedHashSet<>(data);
+    }
+
+    boolean isEmpty() {
+        return elements.isEmpty();
+    }
+
+    boolean contains(T element) {
+        return elements.contains(element);
+    }
+
+    boolean isDisjoint(CustomSet<T> other) {
+        return getIntersection(other).isEmpty();
+    }
+
+    boolean add(T element) {
+        return elements.add(element);
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (this == obj) {
+            return true;
+        }
+        if (!(obj instanceof CustomSet)) {
+            return false;
+        }
+        CustomSet<?> other = (CustomSet<?>) obj;
+        return elements.equals(other.elements);
+    }
+
+    @Override
+    public int hashCode() {
+        return elements.hashCode();
+    }
+
+    CustomSet<T> getIntersection(CustomSet<T> other) {
+        LinkedHashSet<T> result = new LinkedHashSet<>(elements);
+        result.retainAll(other.elements);
+        return new CustomSet<>(result);
+    }
+
+    CustomSet<T> getUnion(CustomSet<T> other) {
+        LinkedHashSet<T> result = new LinkedHashSet<>(elements);
+        result.addAll(other.elements);
+        return new CustomSet<>(result);
+    }
+
+    CustomSet<T> getDifference(CustomSet<T> other) {
+        LinkedHashSet<T> result = new LinkedHashSet<>(elements);
+        result.removeAll(other.elements);
+        return new CustomSet<>(result);
+    }
+
+    boolean isSubset(CustomSet<T> other) {
+        return other.elements.stream().allMatch(elements::contains);
+    }
+}

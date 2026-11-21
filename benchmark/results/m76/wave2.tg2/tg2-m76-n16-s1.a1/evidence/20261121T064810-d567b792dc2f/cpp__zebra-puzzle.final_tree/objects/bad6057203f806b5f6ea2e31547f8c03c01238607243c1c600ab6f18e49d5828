@@ -1,0 +1,186 @@
+#include "zebra_puzzle.h"
+
+#include <string_view>
+
+namespace zebra_puzzle {
+
+namespace {
+
+constexpr int kHouses = 5;
+
+// Attribute categories, each a permutation of 0..4 assigned to houses 0..4.
+enum { kNationality, kColor, kPet, kDrink, kHobby, kCategories };
+
+// Values within each category.
+constexpr std::string_view kNationalities[] = {
+    "Englishman", "Spaniard", "Ukrainian", "Japanese", "Norwegian"};
+
+// house[category][house] = value index, -1 means unassigned.
+struct Assignment {
+    int house[kCategories][kHouses];
+};
+
+// Returns true only when the current partial assignment is not provably
+// inconsistent. A check may reject a state only if the constraint is already
+// violated by the assigned values; unassigned cells (-1) are left open.
+bool isConsistent(const Assignment& a) {
+    // 2. Englishman lives in the red house.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kNationality][h] == 0 && a.house[kColor][h] != -1 && a.house[kColor][h] != 0) return false;
+        if (a.house[kColor][h] == 0 && a.house[kNationality][h] != -1 && a.house[kNationality][h] != 0) return false;
+    }
+    // 3. Spaniard owns the dog.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kNationality][h] == 1 && a.house[kPet][h] != -1 && a.house[kPet][h] != 0) return false;
+        if (a.house[kPet][h] == 0 && a.house[kNationality][h] != -1 && a.house[kNationality][h] != 1) return false;
+    }
+    // 4. Green house drinks coffee.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kColor][h] == 1 && a.house[kDrink][h] != -1 && a.house[kDrink][h] != 0) return false;
+        if (a.house[kDrink][h] == 0 && a.house[kColor][h] != -1 && a.house[kColor][h] != 1) return false;
+    }
+    // 5. Ukrainian drinks tea.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kNationality][h] == 2 && a.house[kDrink][h] != -1 && a.house[kDrink][h] != 1) return false;
+        if (a.house[kDrink][h] == 1 && a.house[kNationality][h] != -1 && a.house[kNationality][h] != 2) return false;
+    }
+    // 6. Green house is immediately to the right of the ivory house. This is
+    //    an absolute positional requirement, so it holds even for unassigned
+    //    neighbours: a green house forces ivory directly to its left.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kColor][h] == 1) {
+            if (h == 0) return false;
+            if (a.house[kColor][h - 1] != 2) return false;
+        }
+        if (a.house[kColor][h] == 2) {
+            if (h == kHouses - 1) return false;
+            if (a.house[kColor][h + 1] != 1) return false;
+        }
+    }
+    // 7. Snail owner likes to go dancing.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kPet][h] == 1 && a.house[kHobby][h] != -1 && a.house[kHobby][h] != 0) return false;
+        if (a.house[kHobby][h] == 0 && a.house[kPet][h] != -1 && a.house[kPet][h] != 1) return false;
+    }
+    // 8. Yellow house is a painter.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kColor][h] == 3 && a.house[kHobby][h] != -1 && a.house[kHobby][h] != 2) return false;
+        if (a.house[kHobby][h] == 2 && a.house[kColor][h] != -1 && a.house[kColor][h] != 3) return false;
+    }
+    // 9. Middle house drinks milk.
+    if (a.house[kDrink][2] != -1 && a.house[kDrink][2] != 2) return false;
+    // 10. Norwegian lives in the first house.
+    if (a.house[kNationality][0] != -1 && a.house[kNationality][0] != 4) return false;
+    // 11. Reading lives next to the fox.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kHobby][h] == 1) {
+            bool satisfied = false;
+            bool couldSatisfy = false;
+            for (int n = h - 1; n <= h + 1; ++n) {
+                if (n < 0 || n >= kHouses || n == h) continue;
+                if (a.house[kPet][n] == 2) satisfied = true;
+                if (a.house[kPet][n] == -1) couldSatisfy = true;
+            }
+            if (!satisfied && !couldSatisfy) return false;
+        }
+        if (a.house[kPet][h] == 2) {
+            bool satisfied = false;
+            bool couldSatisfy = false;
+            for (int n = h - 1; n <= h + 1; ++n) {
+                if (n < 0 || n >= kHouses || n == h) continue;
+                if (a.house[kHobby][n] == 1) satisfied = true;
+                if (a.house[kHobby][n] == -1) couldSatisfy = true;
+            }
+            if (!satisfied && !couldSatisfy) return false;
+        }
+    }
+    // 12. Painter's house is next to the horse.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kHobby][h] == 2) {
+            bool satisfied = false;
+            bool couldSatisfy = false;
+            for (int n = h - 1; n <= h + 1; ++n) {
+                if (n < 0 || n >= kHouses || n == h) continue;
+                if (a.house[kPet][n] == 3) satisfied = true;
+                if (a.house[kPet][n] == -1) couldSatisfy = true;
+            }
+            if (!satisfied && !couldSatisfy) return false;
+        }
+        if (a.house[kPet][h] == 3) {
+            bool satisfied = false;
+            bool couldSatisfy = false;
+            for (int n = h - 1; n <= h + 1; ++n) {
+                if (n < 0 || n >= kHouses || n == h) continue;
+                if (a.house[kHobby][n] == 2) satisfied = true;
+                if (a.house[kHobby][n] == -1) couldSatisfy = true;
+            }
+            if (!satisfied && !couldSatisfy) return false;
+        }
+    }
+    // 13. Football player drinks orange juice.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kHobby][h] == 3 && a.house[kDrink][h] != -1 && a.house[kDrink][h] != 3) return false;
+        if (a.house[kDrink][h] == 3 && a.house[kHobby][h] != -1 && a.house[kHobby][h] != 3) return false;
+    }
+    // 14. Japanese plays chess.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kNationality][h] == 3 && a.house[kHobby][h] != -1 && a.house[kHobby][h] != 4) return false;
+        if (a.house[kHobby][h] == 4 && a.house[kNationality][h] != -1 && a.house[kNationality][h] != 3) return false;
+    }
+    // 15. Norwegian lives next to the blue house. The Norwegian is in house 0
+    //     (statement 10), so the blue house must be house 1.
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kColor][h] == 4 && h != 1) return false;
+    }
+    return true;
+}
+
+// Fills one category house-by-house as a full permutation, then recurses to
+// the next category. Prunes partial states that are provably inconsistent.
+bool search(Assignment& a, int category, int house) {
+    if (house == kHouses) {
+        if (category + 1 == kCategories) {
+            return isConsistent(a);
+        }
+        return search(a, category + 1, 0);
+    }
+    for (int value = 0; value < kHouses; ++value) {
+        bool valueTaken = false;
+        for (int h = 0; h < kHouses; ++h) {
+            if (a.house[category][h] == value) valueTaken = true;
+        }
+        if (valueTaken) continue;
+        a.house[category][house] = value;
+        if (isConsistent(a) && search(a, category, house + 1)) return true;
+        a.house[category][house] = -1;
+    }
+    return false;
+}
+
+}  // namespace
+
+Solution solve() {
+    Assignment a{};
+    for (int c = 0; c < kCategories; ++c) {
+        for (int h = 0; h < kHouses; ++h) {
+            a.house[c][h] = -1;
+        }
+    }
+    Solution result;
+    if (!search(a, 0, 0)) {
+        result.drinksWater = "Unknown";
+        result.ownsZebra = "Unknown";
+        return result;
+    }
+    for (int h = 0; h < kHouses; ++h) {
+        if (a.house[kDrink][h] == 4) {
+            result.drinksWater = std::string(kNationalities[a.house[kNationality][h]]);
+        }
+        if (a.house[kPet][h] == 4) {
+            result.ownsZebra = std::string(kNationalities[a.house[kNationality][h]]);
+        }
+    }
+    return result;
+}
+
+}  // namespace zebra_puzzle

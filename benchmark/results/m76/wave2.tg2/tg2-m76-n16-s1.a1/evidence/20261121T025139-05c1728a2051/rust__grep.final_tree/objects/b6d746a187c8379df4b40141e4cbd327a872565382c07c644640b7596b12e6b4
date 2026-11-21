@@ -1,0 +1,99 @@
+use anyhow::{Context, Error};
+use std::fs;
+
+/// While using `&[&str]` to handle flags is convenient for exercise purposes,
+/// and resembles the output of [`std::env::args`], in real-world projects it is
+/// both more convenient and more idiomatic to contain runtime configuration in
+/// a dedicated struct. Therefore, we suggest that you do so in this exercise.
+///
+/// [`std::env::args`]: https://doc.rust-lang.org/std/env/fn.args.html
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flags {
+    /// Prepend the line number and a colon (':') to each line in the output.
+    pub line_number: bool,
+    /// Output only the names of the files that contain at least one matching line.
+    pub file_names: bool,
+    /// Match using a case-insensitive comparison.
+    pub ignore_case: bool,
+    /// Invert the program -- collect all lines that fail to match.
+    pub invert: bool,
+    /// Search only for lines where the search string matches the entire line.
+    pub whole_line: bool,
+}
+
+impl Flags {
+    pub fn new(flags: &[&str]) -> Self {
+        let mut result = Flags {
+            line_number: false,
+            file_names: false,
+            ignore_case: false,
+            invert: false,
+            whole_line: false,
+        };
+
+        for flag in flags {
+            match *flag {
+                "-n" => result.line_number = true,
+                "-l" => result.file_names = true,
+                "-i" => result.ignore_case = true,
+                "-v" => result.invert = true,
+                "-x" => result.whole_line = true,
+                _ => (),
+            }
+        }
+
+        result
+    }
+}
+
+pub fn grep(pattern: &str, flags: &Flags, files: &[&str]) -> Result<Vec<String>, Error> {
+    let mut result = Vec::new();
+
+    for file in files {
+        let contents = fs::read_to_string(file)
+            .with_context(|| format!("Could not read file '{file}'"))?;
+
+        for (line_number, line) in (1..).zip(contents.lines()) {
+            let matched = if flags.whole_line {
+                if flags.ignore_case {
+                    line.to_lowercase() == pattern.to_lowercase()
+                } else {
+                    line == pattern
+                }
+            } else if flags.ignore_case {
+                line.to_lowercase().contains(&pattern.to_lowercase())
+            } else {
+                line.contains(pattern)
+            };
+
+            let selected = if flags.invert { !matched } else { matched };
+
+            if selected {
+                if flags.file_names {
+                    // The `-l` flag takes precedence over `-n`: a file name is
+                    // reported only once, even if several lines matched.
+                    if !result.iter().any(|r| r == file) {
+                        result.push(file.to_string());
+                    }
+                } else {
+                    let mut output = String::new();
+
+                    if files.len() > 1 {
+                        output.push_str(file);
+                        output.push(':');
+                    }
+
+                    if flags.line_number {
+                        output.push_str(&line_number.to_string());
+                        output.push(':');
+                    }
+
+                    output.push_str(line);
+                    result.push(output);
+                }
+            }
+        }
+    }
+
+    Ok(result)
+}

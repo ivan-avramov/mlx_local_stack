@@ -1,0 +1,62 @@
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+class OpticalCharacterReader {
+
+    private static final Map<String, String> DIGIT_PATTERNS = new HashMap<>();
+
+    static {
+        DIGIT_PATTERNS.put(" _ \n| |\n|_|\n   ", "0");
+        DIGIT_PATTERNS.put("   \n  |\n  |\n   ", "1");
+        DIGIT_PATTERNS.put(" _ \n _|\n|_ \n   ", "2");
+        DIGIT_PATTERNS.put(" _ \n _|\n _|\n   ", "3");
+        DIGIT_PATTERNS.put("   \n|_|\n  |\n   ", "4");
+        DIGIT_PATTERNS.put(" _ \n|_ \n _|\n   ", "5");
+        DIGIT_PATTERNS.put(" _ \n|_ \n|_|\n   ", "6");
+        DIGIT_PATTERNS.put(" _ \n  |\n  |\n   ", "7");
+        DIGIT_PATTERNS.put(" _ \n|_|\n|_|\n   ", "8");
+        DIGIT_PATTERNS.put(" _ \n|_|\n _|\n   ", "9");
+    }
+
+    String parse(List<String> input) {
+        if (input.size() == 0 || input.size() % 4 != 0) {
+            throw new IllegalArgumentException("Number of input rows must be a positive multiple of 4");
+        }
+
+        for (String line : input) {
+            if (line.length() == 0 || line.length() % 3 != 0) {
+                throw new IllegalArgumentException("Number of input columns must be a positive multiple of 3");
+            }
+        }
+
+        StringBuilder result = new StringBuilder();
+
+        for (int rowGroup = 0; rowGroup < input.size(); rowGroup += 4) {
+            if (result.length() > 0) {
+                result.append(',');
+            }
+
+            int digitsPerRow = input.get(rowGroup).length() / 3;
+
+            for (int digit = 0; digit < digitsPerRow; digit++) {
+                StringBuilder pattern = new StringBuilder();
+
+                for (int row = 0; row < 4; row++) {
+                    String line = input.get(rowGroup + row);
+                    pattern.append(line, digit * 3, digit * 3 + 3);
+
+                    if (row < 3) {
+                        pattern.append('\n');
+                    }
+                }
+
+                result.append(DIGIT_PATTERNS.getOrDefault(pattern.toString(), "?"));
+            }
+        }
+
+        return result.toString();
+    }
+
+}
