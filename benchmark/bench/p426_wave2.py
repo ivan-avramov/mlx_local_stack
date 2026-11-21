@@ -1640,8 +1640,13 @@ class Sequencer:
 
     def process(self, spec):
         latest = (self.entries(spec["name"]) or [None])[-1]
-        rerun = spec["name"] in (self.a.rerun or []) and not any(
-            r["leg"] == spec["name"] and latest and r["attempt"] == latest["attempt"] for r in self.seq["reruns"])
+        replace = getattr(self.a, "rerun_attempt", None)
+        if replace is None:                 # a replayed command never reruns an attempt a rerun already created
+            rerun = spec["name"] in (self.a.rerun or []) and not any(
+                r["leg"] == spec["name"] and latest and r["attempt"] == latest["attempt"] for r in self.seq["reruns"])
+        else:                               # S28-P29 (C381): a further rerun names the attempt it replaces, once
+            rerun = spec["name"] in (self.a.rerun or []) and bool(latest) and latest["attempt"] == replace and not any(
+                r["leg"] == spec["name"] and r["attempt"] == replace + 1 for r in self.seq["reruns"])
         if latest and not rerun:
             if latest["state"] == "RUNNING":
                 raise Stop(1, f"STOP: {spec['name']}.a{latest['attempt']} was RUNNING when the sequencer last stopped (the operator decides)")
@@ -1989,6 +1994,8 @@ def parse_args(argv):
         p.add_argument("--pause-file", default=None, help="default <out-base>/PAUSE")
         p.add_argument("--rerun", action="append", default=[], metavar="LEG", help="the operator's labelled rerun: a new attempt of LEG")
         p.add_argument("--rerun-reason", default=None)
+        p.add_argument("--rerun-attempt", type=int, default=None, metavar="N",
+                       help="S28-P29: a further rerun replaces attempt N of the one --rerun leg (N = its latest attempt)")
         p.add_argument("--main-root", default=None, help="default ops: the checkout the harvest publishes into")
         p.add_argument("--evidence-stage", default=None, help="default ops: the evidence stage directory")
         p.add_argument("--historical-walls", default=None, metavar="JSON", help="default ops: the historical per-item walls")
@@ -2079,6 +2086,8 @@ def check_args(a, wd):
             raise fz.Refusal(f"--rerun {flag!r} is not a leg of this command ({', '.join(names)})")
     if a.rerun and not a.rerun_reason:
         raise fz.Refusal("--rerun needs --rerun-reason (a rerun is labelled)")
+    if getattr(a, "rerun_attempt", None) is not None and (len(a.rerun or []) != 1 or a.rerun_attempt < 1):
+        raise fz.Refusal("--rerun-attempt N names a positive attempt of exactly one --rerun leg")
     if a.cmd == "run" and a.through is not None:
         by_number = {str(s["n"]): s["name"] for s in table["run"]}
         if a.through not in names and a.through not in by_number:

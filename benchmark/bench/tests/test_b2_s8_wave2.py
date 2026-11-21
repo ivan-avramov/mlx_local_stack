@@ -1033,3 +1033,59 @@ def test_the_module_never_takes_leg_lock_nor_kills_and_uses_the_start_time_ident
     src = Path(w2.__file__).read_text()
     assert 'acquire("chain"' not in src and "os.kill" not in src and ".terminate(" not in src and "killpg" not in src
     assert "psutil" not in src and ".create_time()" not in src                    # C151: process identity is the start time the ops report
+
+
+# S28-P29 (C381): a further rerun of a leg whose last attempt was itself a rerun names the attempt it replaces; a replayed command never
+# loops (without `--rerun-attempt` the existing guard holds), and a stale attempt number is refused.
+def _invalid(world, leg):
+    world.ops.scenario[leg] = dict(rc=2, status="invalidated", invalid=[dict(stage="ready", slot="s", reason="x", at="t")])
+
+
+def test_a_second_rerun_needs_the_attempt_it_replaces(world):
+    leg = "tg1-p426-off-s1"
+    _invalid(world, leg)
+    go(world)
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-reason", "first: box fault") == 1          # a2 INVALID again (same scenario)
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-reason", "second: box fault") == 1         # replayed: the guard holds, no a3
+    assert not (world.out / f"{leg}.a3").exists()
+    world.ops.scenario[leg] = {}
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-attempt", "2", "--rerun-reason", "second: box fault ended") == 0
+    assert (world.out / f"{leg}.a3").is_dir()
+    states = [(l["attempt"], l["state"]) for l in seq(world)["legs"] if l["leg"] == leg]
+    assert states == [(1, "INVALID"), (2, "INVALID"), (3, "VALID")]
+    assert [(r["attempt"], r["reason"]) for r in seq(world)["reruns"]] == [(2, "first: box fault"), (3, "second: box fault ended")]
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-attempt", "2", "--rerun-reason", "replayed") == 0     # a replay after a3: no a4
+    assert not (world.out / f"{leg}.a4").exists()
+
+
+def test_a_rerun_attempt_must_name_the_latest_attempt(world, capsys):
+    leg = "tg1-p426-off-s1"
+    _invalid(world, leg)
+    go(world)
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-attempt", "5", "--rerun-reason", "x") == 1   # not the latest: no rerun, stopped
+    assert not (world.out / f"{leg}.a2").exists()
+    assert go(world, "--rerun-attempt", "1", "--rerun-reason", "x") == 2                    # needs --rerun
+    assert go(world, "--rerun", leg, "--rerun-attempt", "0", "--rerun-reason", "x") == 2    # a positive attempt number
+
+
+def test_a_further_rerun_interrupted_before_its_attempt_never_runs_twice(world):
+    """Cold read S28-P29 (Sol): the rerun record is written before the new attempt starts; a sequencer that died in between (latest
+    a2, a rerun record for a3, no a3 attempt) must not create a3 again on a replay."""
+    leg = "tg1-p426-off-s1"
+    _invalid(world, leg)
+    go(world)
+    world.clock.t += 3600
+    go(world, "--rerun", leg, "--rerun-reason", "first: box fault")                       # a2 INVALID
+    doc = seq(world)
+    doc["reruns"].append(dict(leg=leg, attempt=3, reason="second", at="2026-11-21T00:00:00Z"))   # recorded, then the sequencer died
+    w2.write_sequence(world.out, doc)
+    launches = len(world.ops.launches)
+    world.ops.scenario[leg] = {}
+    world.clock.t += 3600
+    assert go(world, "--rerun", leg, "--rerun-attempt", "2", "--rerun-reason", "second") == 1   # stopped: a2 stays the latest
+    assert len(world.ops.launches) == launches and not (world.out / f"{leg}.a3").exists()
