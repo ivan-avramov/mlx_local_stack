@@ -11,15 +11,15 @@ Decisions: session 28 ruled C374–C382; session 29 C383 (run-time autonomy for 
 ## Goal
 
 Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
-256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — RUNNING — then B8-A8, signals, the A8 panel and the ship
+256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — STOPPED on S29-P5 / S29-P6 — then B8-A8, signals, the A8 panel and the ship
 recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 ## FIRST
 
-1. **A run is LIVE — do not upgrade Homebrew** (C360 fingerprint), no pytest in the arms' trees (S27-P8), no gate (it locks out legs).
-   Sequencer pid in `$STACK_WORKDIR/m76/p426/wave2.tg2/sequencer.pid` (session 28: 30445, chain 30512, watcher 30610), log
-   `wave2.tg2/sequencer.stdout`. Leg `tg2-m76-x-s1.a3` started 2026-11-21 23:50Z (≈ 5–6 h); then s2 (X → N16) and reload (X → N16),
-   ≈ 15–19 h in all. The exec-latency logger runs (pid in `m76/p426/exec-latency/pid`; rows carry `t_epoch` / `t_utc`).
+1. **The decider is STOPPED (2026-11-22 05:27Z), box idle, :8000 free.** `tg2-m76-x-s1.a3` ran all 80 items but is INVALID on the C360
+   host guard (a Homebrew upgrade at 03:02Z), and its harvest REFUSED on `execute.marker` (S29-P5, S29-P6, both OPEN with the
+   operator). Every further launch refuses against `wave2.tg2/host_env.json` until S29-P5 is ruled. Remaining after that: s2 (X → N16),
+   reload (X → N16), ≈ 11–13 h. The exec-latency logger still runs (pid in `m76/p426/exec-latency/pid`). Do not upgrade Homebrew.
 2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
