@@ -16,10 +16,11 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 ## FIRST
 
-1. **The decider is STOPPED (2026-11-22 05:27Z), box idle, :8000 free.** `tg2-m76-x-s1.a3` ran all 80 items but is INVALID on the C360
-   host guard (a Homebrew upgrade at 03:02Z), and its harvest REFUSED on `execute.marker` (S29-P5, S29-P6, both OPEN with the
-   operator). Every further launch refuses against `wave2.tg2/host_env.json` until S29-P5 is ruled. Remaining after that: s2 (X → N16),
-   reload (X → N16), ≈ 11–13 h. The exec-latency logger still runs (pid in `m76/p426/exec-latency/pid`). Do not upgrade Homebrew.
+1. **The decider is STOPPED (2026-11-22 05:27Z), box idle, :8000 free.** `tg2-m76-x-s1.a3` ran all 80 items; INVALID only by the C360
+   host guard (Homebrew upgrade 03:02Z) and its harvest refused on `execute.marker`. Operator ruled C384 (host changes recorded,
+   never blocking; a3 takes its recorded-facts state); build `docs/specs/s29-record-not-block.md` four-eyes light in
+   `$STACK_WORKDIR/fe-s29/` (impl / tw / base copies; out/, briefs/). On Accept: commit, resume the sequencer (no `--rerun`),
+   then s2, reload ≈ 11–13 h; the full gate after the decider, before the push. Exec-latency logger still runs.
 2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
@@ -50,6 +51,7 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 - `$STACK_WORKDIR/worktrees/m76-g2-{n16,x}`: the NEW tg2 arms (@ `72e5626a5` / `026ef4557`) — keep until the A8 readout. Old arms are
   branches `archive/m76-g2-{n16,x}-old-identity`.
 - `$STACK_WORKDIR/worktrees/evidence-s28`: the local `evidence` branch worktree (commit `b909ceb72`) — remove after the evidence push.
+- `$STACK_WORKDIR/fe-s29/`: the C384 / S29-P6 four-eyes build — harvest records to `docs/reviews/s29-record-not-block/`, then remove.
 - `$STACK_WORKDIR/fe-s27/`, `fe-b4b2/`: four-eyes build copies — records harvested to `docs/reviews/s27-robustness/` and
   `docs/reviews/m76-b4b2/four-eyes/`; remove.
 - `m76-w2-{n16,x}`, `m76-q-{n16,x}`, `m76-f45-*`: keep until the stage 4 decision.
