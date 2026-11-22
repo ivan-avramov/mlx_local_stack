@@ -6,7 +6,7 @@ guardrails prevent wrong data or wasted time, not ceremony; GPU time is the bind
 (C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Run-time autonomy (C374) was session 28's only — ask again. Label points
 `S29-P<n>`.
 
-Decisions: session 28 ruled C374–C382; session 29 C383–C386 (next **C387**).
+Decisions: session 28 ruled C374–C382; session 29 C383–C387 (next **C388**).
 
 ## Goal
 
@@ -19,8 +19,8 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 1. **The decider RESUMES (session 29) on the C384 / C385 change** (`docs/specs/s29-record-not-block.md` v1.1, record
    `docs/reviews/s29-record-not-block/`): host changes are recorded, never blocking; `tg2-m76-x-s1.a3` (80 items, INVALID only by the
    03:02Z Homebrew upgrade) is re-derived VALID from its records (original kept as `leg.c360.json`) and harvested; then s2, reload
-   ≈ 11–13 h. Launch script `wave2.tg2/resume_c384.sh`; pid in `wave2.tg2/sequencer.pid`. The full stack gate runs after the decider,
-   before any push (`main` is ahead of `origin/main` by the S29 docs + this change).
+   ≈ 11–13 h. Launch script `wave2.tg2/resume_c384.sh`; pid in `wave2.tg2/sequencer.pid`. The full stack gate runs after the decider;
+   on PASS push `main` once (C387), on FAIL go to the operator (`main` is ahead of `origin/main` by the S29 docs + this change).
 2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
