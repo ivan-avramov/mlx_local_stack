@@ -69,6 +69,7 @@ def test_the_baseline_is_recorded_before_the_first_leg(world):
 
 
 def test_a_change_between_legs_refuses_the_next_launch(world):
+    """S29 H1 (C384): changed from "refuses the next launch" — the difference is logged and recorded, the next leg launches."""
     state = seam(world)
     harvest = world.ops.harvest
 
@@ -78,52 +79,57 @@ def test_a_change_between_legs_refuses_the_next_launch(world):
             install_jdk17(state)
         return res
     world.ops.harvest = harvest_then_install
-    assert go(world) == 1
-    assert world.ops.names() == LEGS[:1]                                    # nothing launched after the change
+    assert go(world) == 0
+    assert world.ops.names() == LEGS                                        # every leg launched after the change
     assert leg_doc(world, "tg1-p426-off-pilot.a1")["state"] == "VALID"      # the change came after its leg.json
-    assert ("STOP: the host environment differs from the run's baseline before tg1-p426-on-pilot (nothing launched): "
-            + JDK17) in log_of(world)
+    assert "host environment differs from the baseline before tg1-p426-on-pilot: " + JDK17 in log_of(world)
+    assert leg_doc(world, "tg1-p426-on-pilot.a1")["host_env_before"] == [JDK17]
 
 
 def test_a_change_during_a_leg_makes_it_invalid_systemic_harvested_and_stops(world):
+    """S29 H2 (C384): changed from INVALID / systemic + stop — the leg's state is the classifier's (VALID here), the change is
+    recorded in its leg.json, the run goes on."""
     state = seam(world)
     world.ops.on_launch = lambda ops, name, root: install_jdk17(state) if name == "tg1-p426-off-s1" else None
-    assert go(world) == 1
-    assert world.ops.names() == LEGS[:3] and world.ops.names("harvest") == LEGS[:3]
+    assert go(world) == 0
+    assert world.ops.names() == LEGS and world.ops.names("harvest") == LEGS
     d = leg_doc(world, "tg1-p426-off-s1.a1")
-    assert d["state"] == "INVALID" and d["class"] == "systemic"
-    assert d["reason"] == "host environment changed during the leg: " + JDK17
-    entry = seq(world)["legs"][-1]
-    assert entry["state"] == "INVALID" and entry["reason"] == d["reason"]
-    assert "is INVALID: host environment changed during the leg" in log_of(world)
+    assert d["state"] == "VALID" and d["class"] == "valid" and d["reason"] == ""
+    assert d["host_env_during"] == [JDK17]
+    entry = [e for e in seq(world)["legs"] if e["leg"] == "tg1-p426-off-s1"][-1]
+    assert entry["state"] == "VALID" and "reason" not in entry
+    assert "host environment changed during tg1-p426-off-s1.a1: " + JDK17 in log_of(world)
 
 
 def test_the_prior_reason_is_kept(world):
+    """S29 H2 (C384): changed from the host reason with `(prior: …)` — the classifier's own reason, the host change beside it."""
     state = seam(world)
     world.ops.scenario["tg1-p426-off-s1"] = dict(rc=2, status="invalidated",
                                                  invalid=[dict(stage="done", slot="s", reason="engagement", at="t")])
     world.ops.on_launch = lambda ops, name, root: install_jdk17(state) if name == "tg1-p426-off-s1" else None
     assert go(world) == 1
     d = leg_doc(world, "tg1-p426-off-s1.a1")
-    assert d["reason"] == "host environment changed during the leg: " + JDK17 + " (prior: engagement)"
+    assert d["reason"] == "engagement" and d["host_env_during"] == [JDK17]
     assert d["class"] == "systemic"
 
 
 def test_a_resumed_run_on_a_changed_host_refuses_until_the_host_equals_the_baseline(world):
+    """S29 H1 / H3 (C384): changed from "refuses until the host equals the baseline" — the rerun launches on the changed host,
+    the difference recorded."""
     state = seam(world)
+    world.ops.scenario["tg1-p426-off-s1"] = dict(rc=2, status="invalidated",
+                                                 invalid=[dict(stage="done", slot="s", reason="engagement", at="t")])
     world.ops.on_launch = lambda ops, name, root: install_jdk17(state) if name == "tg1-p426-off-s1" else None
     assert go(world) == 1
     world.ops.on_launch = None
+    world.ops.scenario.pop("tg1-p426-off-s1")
     world.clock.t += 3600
     n = len(world.ops.launches)
-    assert go(world, "--rerun", "tg1-p426-off-s1", "--rerun-reason", "host changed") == 1
-    assert len(world.ops.launches) == n
-    assert ("the host environment differs from the run's baseline before tg1-p426-off-s1 (nothing launched): " + JDK17
-            ) in log_of(world)
-    state.fp = copy.deepcopy(BASE)                                            # the operator restores the host
-    world.clock.t += 3600
-    assert go(world, "--rerun", "tg1-p426-off-s1", "--rerun-reason", "host restored") == 0
+    assert go(world, "--rerun", "tg1-p426-off-s1", "--rerun-reason", "host changed") == 0
+    assert len(world.ops.launches) > n
+    assert "host environment differs from the baseline before tg1-p426-off-s1: " + JDK17 in log_of(world)
     assert (world.out / "tg1-p426-off-s1.a2" / "leg.json").is_file()
+    assert (world.out / w2.HOST_ENV_FILE).is_file() and state.fp != BASE     # the host stays changed; the baseline is kept
 
 
 def test_an_unreadable_or_tampered_baseline_stops(world):
@@ -181,12 +187,13 @@ def test_the_end_of_run_check_runs_before_the_run_files_are_published(world, thr
         return res
     world.ops.harvest = harvest_then_install
     seen = _snapshot_publication(world)
-    assert go(world, *(("--through", through) if through else ())) == 1
+    # S29 H3 (C384): changed from a stop (rc 1, no DONE) — recorded before publication, logged, the run ends normally
+    assert go(world, *(("--through", through) if through else ())) == 0
     assert seq(world)["host_env_after_last_leg"] == [JDK17]
     assert seen and all(s.get("host_env_after_last_leg") == [JDK17] for s in seen)     # recorded before any publication
     log = log_of(world)
-    assert "STOP: the host environment changed after the last leg: " + JDK17 in log
-    assert "DONE:" not in log and "stopping as asked" not in log
+    assert "host environment differs from the baseline after the last leg: " + JDK17 in log
+    assert ("DONE:" in log) if through is None else ("stopping as asked" in log)
     assert leg_doc(world, last)["state"] == "VALID"
 
 
@@ -208,13 +215,14 @@ def test_a_rehearsal_keeps_the_baseline_in_its_out_base_and_publishes_nothing(re
 
 
 def test_a_host_change_stops_even_a_leg_whose_invalid_state_is_expected(rehearsal):
+    """S29 H3 (C384): changed from "stops" — `after_leg` no longer stops on a host change; R3 launches."""
     w = rehearsal.w
     state = seam(w)
     w.ops.scenario["tg1-p426-rehearsal-mismatch"] = dict(rc=2, status="invalidated", items=1,
                                                          invalid=[dict(stage="done", slot="s", reason="injected", at="t")])
     w.ops.on_launch = lambda ops, name, root: install_jdk17(state) if name == "tg1-p426-rehearsal-mismatch" else None
-    assert go_rehearsal(rehearsal) == 1
-    assert w.ops.names()[-1] == "tg1-p426-rehearsal-mismatch"               # R3 never launched
+    assert go_rehearsal(rehearsal) == 0
+    assert w.ops.names()[-1] == "tg1-p426-rehearsal-kill"                    # R3 launched
 
 
 def _host_stop_lines(w):
@@ -233,16 +241,16 @@ def test_the_baseline_stop_is_a_flat_fail_closed_statement(world):
 
 
 def test_the_invalid_leg_stop_is_a_flat_fail_closed_statement(rehearsal):
-    """Erratum 14 (GLM R2-2): as above, for the stop on a leg the host change made INVALID."""
+    """Erratum 14 (GLM R2-2) for the stop on a leg the host change made INVALID. S29 H2 / H3 (C384): changed — that stop no
+    longer exists: no STOP line names the host change, and the host change is a log line."""
     w = rehearsal.w
     state = seam(w)
     w.ops.scenario["tg1-p426-rehearsal-mismatch"] = dict(rc=2, status="invalidated", items=1,
                                                          invalid=[dict(stage="done", slot="s", reason="injected", at="t")])
     w.ops.on_launch = lambda ops, name, root: install_jdk17(state) if name == "tg1-p426-rehearsal-mismatch" else None
-    assert go_rehearsal(rehearsal) == 1
-    lines = _host_stop_lines(w)
-    assert any("is INVALID: host environment changed during the leg" in line for line in lines)
-    assert not [line for line in lines if "operator" in line], lines
+    assert go_rehearsal(rehearsal) == 0
+    assert _host_stop_lines(w) == []
+    assert "host environment changed during tg1-p426-rehearsal-mismatch.a1: " + JDK17 in log_of(w)
 
 
 def test_the_real_ops_have_the_seam(tmp_path, monkeypatch):

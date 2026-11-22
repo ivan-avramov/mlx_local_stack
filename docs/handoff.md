@@ -6,21 +6,21 @@ guardrails prevent wrong data or wasted time, not ceremony; GPU time is the bind
 (C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Run-time autonomy (C374) was session 28's only — ask again. Label points
 `S29-P<n>`.
 
-Decisions: session 28 ruled C374–C382; session 29 C383 (run-time autonomy for the decider; next **C384**).
+Decisions: session 28 ruled C374–C382; session 29 C383–C385 (next **C386**).
 
 ## Goal
 
 Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
-256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — STOPPED on S29-P5 / S29-P6 — then B8-A8, signals, the A8 panel and the ship
+256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — RUNNING (resumed under C384 / C385) — then B8-A8, signals, the A8 panel and the ship
 recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 ## FIRST
 
-1. **The decider is STOPPED (2026-11-22 05:27Z), box idle, :8000 free.** `tg2-m76-x-s1.a3` ran all 80 items; INVALID only by the C360
-   host guard (Homebrew upgrade 03:02Z) and its harvest refused on `execute.marker`. Operator ruled C384 (host changes recorded,
-   never blocking; a3 takes its recorded-facts state); build `docs/specs/s29-record-not-block.md` four-eyes light in
-   `$STACK_WORKDIR/fe-s29/` (impl / tw / base copies; out/, briefs/). On Accept: commit, resume the sequencer (no `--rerun`),
-   then s2, reload ≈ 11–13 h; the full gate after the decider, before the push. Exec-latency logger still runs.
+1. **The decider RESUMES (session 29) on the C384 / C385 change** (`docs/specs/s29-record-not-block.md` v1.1, record
+   `docs/reviews/s29-record-not-block/`): host changes are recorded, never blocking; `tg2-m76-x-s1.a3` (80 items, INVALID only by the
+   03:02Z Homebrew upgrade) is re-derived VALID from its records (original kept as `leg.c360.json`) and harvested; then s2, reload
+   ≈ 11–13 h. Launch script `wave2.tg2/resume_c384.sh`; pid in `wave2.tg2/sequencer.pid`. The full stack gate runs after the decider,
+   before any push (`main` is ahead of `origin/main` by the S29 docs + this change).
 2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;

@@ -30,11 +30,17 @@ def test_every_leg3_path_has_a_rule():
     assert missing == []
 
 
+def _link(path):
+    """S29 P6b: an unmatched file is listed, no longer a problem; a symlink outside a final tree still refuses."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.symlink_to("/dev/null")
+
+
 def test_dry_run_reports_every_problem_and_writes_nothing(tmp_path):
     w = T.World(tmp_path)
-    T.put(w.root / "stray-one.unknown-kind", "x")
-    T.put(w.ev / "x.grades" / "seq-0001" / "unknown.bin", "x")
-    T.put(w.run / "grading-private" / "keep" / "seq-1" / "mystery.bin", "x")
+    _link(w.root / "stray-one.unknown-kind")                 # S29 P6b: changed from unmatched files to links (still refused)
+    _link(w.ev / "x.grades" / "seq-0001" / "unknown.bin")
+    _link(w.run / "grading-private" / "keep" / "seq-1" / "mystery.bin")
     with pytest.raises(H.HarvestError) as exc:
         w.harvest(dry_run=True)
     text = "\n".join(exc.value.problems)
@@ -53,7 +59,7 @@ def test_dry_run_clean_tree_returns_and_writes_nothing(tmp_path):
 
 def test_dry_run_collects_scrub_and_secret_problems_with_inventory_ones(tmp_path):
     w = T.World(tmp_path)
-    T.put(w.root / "stray.unknown-kind", "x")
+    _link(w.root / "stray.unknown-kind")                     # S29 P6b: changed from an unmatched file to a link (still refused)
     T.put(w.root / "extra.log", "token " + T.FAKE_HF + "\n")
     with pytest.raises(H.HarvestError) as exc:
         w.harvest(dry_run=True)
@@ -67,8 +73,8 @@ def test_cli_dry_run_exit_codes(tmp_path, capsys):
     argv = ["wave2", "--leg-root", str(w.root), "--main-root", str(w.main), "--evidence-stage", str(w.stage), "--dry-run"]
     assert H.main(argv, environ=env, home=tmp_path / "home") == 0
     T.nothing_published(w)
-    T.put(w.root / "stray-a.unknown-kind", "x")
-    T.put(w.root / "stray-b.unknown-kind", "x")
+    _link(w.root / "stray-a.unknown-kind")                   # S29 P6b: changed from unmatched files to links (still refused)
+    _link(w.root / "stray-b.unknown-kind")
     assert H.main(argv, environ=env, home=tmp_path / "home") == 4
     err = capsys.readouterr().err
     assert "stray-a.unknown-kind" in err and "stray-b.unknown-kind" in err

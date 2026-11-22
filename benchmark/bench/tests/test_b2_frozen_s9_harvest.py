@@ -96,9 +96,17 @@ def test_inv_the_leg_root_is_never_modified_by_its_harvest(tmp_path):
 
 # ------------------------------------------------------------------------------------------------ inventory and symlinks
 def test_new_an_unmatched_file_fails_the_harvest(tmp_path):
+    """S29 P6b (C384): changed from a refusal — the unmatched file is listed in HARVEST.json (portable source, size, sha256) and
+    logged, never copied; the harvest succeeds."""
     repo, env, leg = world(tmp_path)
     (leg / "stray.unknown-kind").write_text("x")
-    assert_refused_naming(harvest(tmp_path, repo, env, leg), "stray.unknown-kind")
+    got = harvest(tmp_path, repo, env, leg)
+    assert got.returncode == 0 and not refused_lines(got), out(got)[-2000:]
+    assert "UNRECOGNISED: leg:stray.unknown-kind" in out(got)
+    doc = harvest_json(tmp_path)
+    assert [u["source"] for u in doc["unrecognised"]] == ["leg:stray.unknown-kind"] and doc["unrecognised"][0]["size"] == 1
+    assert not entry_for(doc, "stray.unknown-kind")
+    assert not [p for p in tmp_path.rglob("stray.unknown-kind") if p != leg / "stray.unknown-kind"]
 
 
 def test_new_a_symlink_outside_a_final_tree_fails_the_harvest_without_being_followed(tmp_path):

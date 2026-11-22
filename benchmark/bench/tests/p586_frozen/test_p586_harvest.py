@@ -69,11 +69,13 @@ def test_the_existing_rules_are_unchanged(kit, kind, rel, want):
 def _problem_world(kit, tmp_path):
     """The s9 world plus four problems in four places and two phases: three files without a rule (leg root, run dir, evidence
     dir: the inventory) and an exact credential value in RUNLOG.md (the secret gate, which the baseline reaches only after a
-    clean inventory)."""
+    clean inventory). S29 P6b (C384): changed — a file without a rule is now listed, not a problem, so the three inventory
+    problems are symlinks outside a final tree (still refused), at the same three paths."""
     w = kit.World(tmp_path)
-    kit.put(w.root / "stray.unknown-kind", "x")
-    kit.put(w.run / "grading-private" / "keep" / "seq-1" / "mystery.bin", "x")
-    kit.put(w.ev / "python__beer-song.grades" / "seq-0001" / "notes.bin", "x")
+    for p in (w.root / "stray.unknown-kind", w.run / "grading-private" / "keep" / "seq-1" / "mystery.bin",
+              w.ev / "python__beer-song.grades" / "seq-0001" / "notes.bin"):
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.symlink_to("/dev/null")
     (w.root / "RUNLOG.md").write_text(f"probe stderr: token {kit.FAKE_SECRET}\n")
     return w
 

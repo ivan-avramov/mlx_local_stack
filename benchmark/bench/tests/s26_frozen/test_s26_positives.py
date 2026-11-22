@@ -64,23 +64,25 @@ def test_inv_a_clean_run_passes_and_records_the_host_before_and_after(tmp_path, 
 # ---------------------------------------------------------------------------------------------------- the host guard
 @pytest.mark.parametrize("where", ["grade", "inject", "session_exit"])
 def test_fix_a_host_change_anywhere_in_the_leg_fails_the_record(tmp_path, monkeypatch, world, where):
-    """[FIX] C360: the fingerprint is taken before the first grade and after the serving session; a change a positive made fails."""
+    """[FIX] C360: the fingerprint is taken before the first grade and after the serving session. S29 H4 (C384): changed from
+    "a change fails the record" — the change is recorded (`host_env_changes`), the record PASSES on its own facts."""
     hooks = {"grade": lambda lang, variant: mutate(world), "inject": lambda lang, kind: mutate(world),
              "session_exit": lambda: mutate(world)}
     rc, doc, _ = run_pos(tmp_path, monkeypatch, world, hooks={where: hooks[where]})
-    assert rc == 1 and doc["verdict"] == "FAIL" and ph.sealed_ok(doc)
-    assert CHANGED + ADDED in doc["problems"]
+    assert rc == 0 and doc["verdict"] == "PASS" and ph.sealed_ok(doc)
+    assert doc["host_env_changes"] == [ADDED]
     assert doc["host_env"] != doc["host_env_after"]
-    assert [line for line in doc["problems"] if line.startswith(CHANGED)] == [CHANGED + ADDED]
+    assert [line for line in doc["problems"] if line.startswith(CHANGED)] == []
 
 
 def test_fix_each_host_change_is_its_own_problem(tmp_path, monkeypatch, world):
+    """S29 H4 (C384): changed from "its own problem" — each change is its own recorded entry, none a problem."""
     def both():
         mutate(world)
         world.npm_pkg("jest", "29.7.0")
     rc, doc, _ = run_pos(tmp_path, monkeypatch, world, hooks={"session_exit": both})
-    got = sorted(line for line in doc["problems"] if line.startswith(CHANGED))
-    assert rc == 1 and got == sorted([CHANGED + ADDED, CHANGED + "npm -g jest: absent -> 29.7.0"])
+    assert not [line for line in doc["problems"] if line.startswith(CHANGED)]
+    assert rc == 0 and sorted(doc["host_env_changes"]) == sorted([ADDED, "npm -g jest: absent -> 29.7.0"])
 
 
 # ---------------------------------------------------------------------------------------------------- exceptions
@@ -116,7 +118,9 @@ def test_fix_an_exception_and_a_host_change_are_both_recorded(tmp_path, monkeypa
         mutate(world)
         raise RuntimeError("kaboom")
     rc, doc, _ = run_pos(tmp_path, monkeypatch, world, hooks={"inject": boom})
-    assert rc == 1 and "exception: RuntimeError: kaboom" in doc["problems"] and CHANGED + ADDED in doc["problems"]
+    # S29 H4 (C384): changed — the exception is a problem, the host change is recorded beside it (not a problem)
+    assert rc == 1 and "exception: RuntimeError: kaboom" in doc["problems"] and doc["host_env_changes"] == [ADDED]
+    assert CHANGED + ADDED not in doc["problems"]
 
 
 # ---------------------------------------------------------------------------------------------------- DECLINED vs FAIL vs PASS

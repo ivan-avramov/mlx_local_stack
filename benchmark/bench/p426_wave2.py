@@ -55,11 +55,49 @@ LANG_ORDER = {"s1": ("python", "go"), "s2": ("go", "python")}      # spec 7: s2 
 SESSION_SEED = {"s1": 1001, "s2": 2002}
 OVERRUN_FILE, SEQUENCE_FILE, LOG_FILE = "OVERRUN_PAUSED", "sequence.json", "sequence.log"
 HOST_ENV_FILE = "host_env.json"                      # C360 / S26 §2: the run's host-environment baseline (`bench.host_env`)
-HOST_ENV_REASON = "host environment changed during the leg"
+HOST_ENV_REASON = "host environment changed during the leg"      # the C360 reason (S29 H5 reads it; C384 never writes it)
+C384_SUPERSEDED = "leg.c360.json"                    # S29 H5: a C360 host-INVALID leg.json, kept byte-identical beside its successor
+C384_BEFORE_BASIS = "C360 refused a launch on any difference from the run baseline"
 WAVE2_DIR, REHEARSAL_DIR = "p426/wave2", "p426/rehearsal"
 CHAIN_ENTRY = ("benchmark", "chains", "c147", "run_tg1_chain.py")          # in parts: this module reads no chain rows (test_p371_chain_rows)
 SEAMS = ("launch", "alive", "wait", "power", "harvest", "harvest_path", "publish_dossier", "publish_run_files", "operator_emails",
          "worktree_state", "identity")                 # `notify` is optional; `historical_walls` is needed by `run` only (the amendment)
+
+
+def c360_changes(reason) -> list:
+    """S29 H5: the host changes a C360 reason `host environment changed during the leg: <c1>; <c2>…` names (no `(prior: …)`)."""
+    return str(reason)[len(HOST_ENV_REASON) + 2:].split("; ")
+
+
+def kept_temp(kept) -> Path:
+    """The same-directory temporary file `install_kept` writes before installing `kept`."""
+    kept = Path(kept)
+    return kept.with_name(f".{kept.name}.tmp")
+
+
+def install_kept(kept, data):
+    """S29 H5: install `data` at `kept` atomically and without replacement: a fsynced same-directory temp file, an exclusive hard
+    link to the final path (FileExistsError when one exists; the caller compares it), the temp removed, the directory fsynced.
+    A crash leaves the final path absent or complete, never partial."""
+    kept = Path(kept)
+    tmp = kept_temp(kept)
+    if os.path.lexists(tmp):                           # a crash before the link left it: ours, never at the final path
+        os.unlink(tmp)
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o644)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+        f.flush()
+        os.fsync(f.fileno())
+    try:
+        os.link(tmp, kept)
+    except FileExistsError:
+        pass                                           # an existing file is compared by the caller, never replaced
+    os.unlink(tmp)
+    dfd = os.open(kept.parent, os.O_RDONLY)
+    try:
+        os.fsync(dfd)
+    finally:
+        os.close(dfd)
 
 
 class Stop(Exception):
@@ -479,8 +517,9 @@ def cmd_positives(a, ops, wd, clock=time.time):
     the reference arm, stall / loop / alloc on the pilot item at seed 1001 (12 `run_tg2_probe.py --tg2-inject` runs), each
     verified by `inject_verify` with that kind's causal predicate, one retry per run only on a transport abort; inside ONE serving
     session (the lean router, the A4 gate, the worker loaded). S26 §4: stall must PASS; loop / alloc PASS or are DECLINED by the
-    model (`decline_evidence`). C360: the host fingerprint before the first grade and after the last inject must be equal; an
-    exception inside is recorded. Writes one sealed record (any outcome); rc 0 only when all pass."""
+    model (`decline_evidence`). C384 (S29 H4): the host fingerprint before the first grade and after the last inject are recorded
+    with their diff (`host_env_changes`), never a problem; an exception inside is recorded. Writes one sealed record (any
+    outcome); rc 0 only when all pass."""
     from . import host_env as he
     from . import schedules
     from . import tg2_grade
@@ -534,14 +573,15 @@ def cmd_positives(a, ops, wd, clock=time.time):
         problems.append(he.portable(f"exception: {type(exc).__name__}: {str(exc)[:300]}"))
     finally:
         env1 = json.loads(json.dumps(probe())) if probe else None  # also when no session opened
-    if env0 is not None:
-        problems += [f"{HOST_ENV_REASON}: {c}" for c in he.diff(env0, env1)]
+    host_changes = he.diff(env0, env1) if env0 is not None else []          # C384: recorded, never a problem
+    if host_changes:
+        print("host environment changed during the positives: " + "; ".join(host_changes), flush=True)
     doc = dict(kind=fz.KIND_POSITIVES, corpus="tg2", arm=arm, **{f"{arm}_commit": st.get("head")},
                scaffold="opencode-v2-web-tg2", **{k: ident.get(k) for k in fz.IDENTITY_KEYS},
                draw_sha256=schedules.TG2_DRAW_SHA256, universe_sha256=schedules.TG2_UNIVERSE_SHA256,
                image_id=tg2_grade.pinned_image_id(), frozen_prompt_date=a.frozen_prompt_date, grades=grades, injects=injects,
                proofs={f"{e.get('language')}/{e.get('kind')}": fz.proof_of(e) for e in injects},      # S27 §4.5
-               problems=problems, host_env=env0, host_env_after=env1, verdict="PASS" if not problems else "FAIL",
+               problems=problems, host_env=env0, host_env_after=env1, host_env_changes=host_changes, verdict="PASS" if not problems else "FAIL",
                created=co.utc_stamp(clock()))
     try:
         sealed = ph.write_exclusive(out, doc)
@@ -1032,13 +1072,27 @@ class Sequencer:
         from . import host_env
         return host_env.diff(self.host_baseline(), self.host_live())
 
-    @staticmethod
-    def host_refusal(leg, changed):
-        return (f"STOP: the host environment differs from the run's baseline before {leg} (nothing launched): "
-                + "; ".join(changed))
+    def host_at_launch(self, leg):
+        """C384 (S29 H1): `(diff against the run baseline, the live fingerprint)` before a launch, the diff logged; `(None, None)`
+        without the seam. Never refuses (an unreadable baseline still stops: `host_baseline`)."""
+        if self.host_probe() is None:
+            return None, None
+        from . import host_env
+        live = self.host_live()
+        changed = host_env.diff(self.host_baseline(), live)
+        if changed:
+            self.log(f"host environment differs from the baseline before {leg}: " + "; ".join(changed))
+        return changed, live
+
+    def host_record(self, where, changed):
+        """C384: a host difference is logged and recorded in `sequence.json` (`host_env_events`); it never stops the run."""
+        self.log(f"host environment differs from the baseline {where}: " + "; ".join(changed))
+        self.seq.setdefault("host_env_events", []).append(dict(at=co.utc_stamp(self.clock()), where=where, changes=list(changed)))
+        self.save()
 
     def host_env_start(self):
-        """At `run()` entry: the first run of an out-base records the baseline (exclusive); a resumed run compares first."""
+        """At `run()` entry: the first run of an out-base records the baseline (exclusive); a resumed run compares and records
+        (C384), never rewriting the baseline."""
         if self.host_probe() is None:
             return
         path = self.out / HOST_ENV_FILE
@@ -1049,7 +1103,7 @@ class Sequencer:
             return
         changed = self.host_changes()
         if changed:
-            raise Stop(1, self.host_refusal(self.next_leg_name(), changed))
+            self.host_record(f"at the run's start (next: {self.next_leg_name()})", changed)
 
     def next_leg_name(self):
         """The leg this command would process next (for the resume refusal)."""
@@ -1072,17 +1126,26 @@ class Sequencer:
                 return
             self.log(f"{name}: an exception left the leg; the host environment "
                      + ("changed: " + "; ".join(changed) if changed else "is unchanged"))
+            if changed:                                  # C384: recorded too
+                self.seq.setdefault("host_env_events", []).append(dict(at=co.utc_stamp(self.clock()),
+                                                                       where=f"{name}: an exception left the leg",
+                                                                       changes=list(changed)))
+                self.save()
         except Exception:  # noqa: BLE001  (logging must not replace the original exception)
             pass
 
     def host_env_final(self):
-        """Both exits of `run()`, before the run files are published: a change after the last leg is recorded in
-        `sequence.json` (`host_env_after_last_leg`) and stops (rc 1)."""
+        """Both exits of `run()`, before the run files are published: a difference from the baseline after the last leg is
+        recorded in `sequence.json` (`host_env_after_last_leg`) and logged; the run ends normally (C384). Once recorded, the
+        field follows the latest final check, an empty diff included (S29 H3b); a run that never differed keeps no field."""
         changed = self.host_changes()
-        if changed:
-            self.seq["host_env_after_last_leg"] = changed
+        if changed or "host_env_after_last_leg" in self.seq:
+            self.seq["host_env_after_last_leg"] = list(changed)
             self.save()
-            raise Stop(1, "STOP: the host environment changed after the last leg: " + "; ".join(changed))
+        if changed:
+            self.log("host environment differs from the baseline after the last leg: " + "; ".join(changed))
+        elif "host_env_after_last_leg" in self.seq:
+            self.log("host environment equals the baseline after the last leg (the earlier difference is superseded)")
 
     # -- the boundary: PAUSE and the idle gap (spec 1, 9)
     def last_leg_end(self):
@@ -1187,9 +1250,7 @@ class Sequencer:
         self.wait_boundary()
         self.verify_world()
         self.check_power()
-        changed = self.host_changes()                  # C360 / S26 §2: the host equals the run's baseline before a launch
-        if changed:
-            raise Stop(1, self.host_refusal(spec["name"], changed))
+        before, env_launch = self.host_at_launch(spec["name"])     # C384 (S29 H1): recorded and logged, the leg launches
         if self.corpus == "tg2":                       # M76 B4b-1: the deadline exists before the launch (no default wall)
             try:
                 value = float(self.deadline(spec))
@@ -1209,10 +1270,12 @@ class Sequencer:
                         pair_receipt=first_receipt, occurrences=occurrences, identity=self.identity, lever=self.lever)
         argv += ["--pause-file", str(self.pause)]           # S27 §8.2: the chain holds at item boundaries on the same PAUSE file
         entry = dict(leg=spec["name"], attempt=attempt, state="RUNNING")
+        if before:
+            entry["host_env_before"] = list(before)
         self.seq["legs"].append(entry)
         self.save()
         self.log(f"START {name}: " + json.dumps(argv))
-        try:                                           # C360 / S26 §2: from the launch to the leg.json write
+        try:                                           # S26 §2: from the launch to the leg.json write
             handle = self.ops.launch(argv, cwd=self.worktrees[spec["arm"]], pass_fds=())
             self.log(f"chain PID {handle.pid}")
             rc, t0, watcher, watcher_dead, overrun = self.supervise(spec, attempt, root, handle)
@@ -1230,14 +1293,18 @@ class Sequencer:
                 speed = dict(valid=False, reason="the watcher did not finalize its journal")
             else:
                 speed = speed_of(root / "watch.jsonl")
-            host_changed = self.host_changes()         # the leg must not change the host under itself
-            if host_changed:
-                reason = HOST_ENV_REASON + ": " + "; ".join(host_changed) + (f" (prior: {cls['reason']})" if cls["reason"] else "")
-                cls = dict(cls, state="INVALID", reason=reason, **{"class": "systemic"})
+            during = None                              # C384 (S29 H2): what changed between the launch and the end, recorded
+            if env_launch is not None:
+                from . import host_env
+                during = host_env.diff(env_launch, self.host_live())
+                if during:
+                    self.log(f"host environment changed during {name}: " + "; ".join(during))
             root.mkdir(parents=True, exist_ok=True)
             doc = dict(leg=spec["name"], attempt=attempt, state=cls["state"], reason=cls["reason"], chain_rc=rc,
                        started=co.utc_stamp(t0), ended=co.utc_stamp(ended), speed_valid=bool(speed["valid"]),
                        speed_reason=speed["reason"], overrun=overrun, **{"class": cls["class"]})
+            if env_launch is not None:
+                doc.update(host_env_before=list(before), host_env_during=list(during))
             if spec["kind"] == "makeup" and cls["state"] not in VALID_STATES:
                 doc["not_run"] = not_run(root, self.canon)
             ph.write_exclusive(root / "leg.json", doc)
@@ -1245,8 +1312,8 @@ class Sequencer:
             self.host_log_after_exception(name)
             raise
         entry["state"] = cls["state"]
-        if host_changed:
-            entry["reason"] = cls["reason"]
+        if during:
+            entry["host_env_during"] = list(during)
         self.save()
         self.log(f"END {name}: rc {rc} state {cls['state']}" + (f" ({cls['reason']})" if cls["reason"] else ""))
         if not settled:
@@ -1276,6 +1343,8 @@ class Sequencer:
             raise Stop(4, f"STOP: the harvest of {name} failed (rc {res.get('rc')}); a rerun of the same command retries it")
         self.seq["harvested"].append(dict(attempt=name, harvest_sha256=res["harvest_sha256"]))
         self.save()
+        for note in res.get("notes") or []:            # S29 P6b: the unrecognised files HARVEST.json lists (not copied)
+            self.log(f"harvest {name}: {' '.join(str(note).split())[:600]}")
         self.log(f"HARVESTED {name}")
 
     # -- pairs and the pilot gate
@@ -1502,8 +1571,6 @@ class Sequencer:
     def after_leg(self, spec, entry):
         """What follows a finished, harvested leg (also on resume): its state, its pair dossier, the pilot gate."""
         if entry["state"] not in VALID_STATES:
-            if str(entry.get("reason") or "").startswith(HOST_ENV_REASON):     # C360: stops even where INVALID is expected
-                raise Stop(1, f"STOP: {spec['name']}.a{entry['attempt']} is INVALID: {entry['reason']}")
             if entry["state"] == spec["expect"]:
                 self.log(f"{spec['name']}: {entry['state']} as the rehearsal expects")
                 return
@@ -1638,6 +1705,94 @@ class Sequencer:
         path = self.out / HOST_ENV_FILE
         return [path] if path.is_file() else []
 
+    # -- S29 H5 (C384): legs the C360 host guard recorded INVALID
+    def c384_supersede(self, spec, entry):
+        """A resumed leg whose `leg.json` is INVALID with the C360 host reason and no `(prior: …)`, not yet harvested, takes the
+        state `classify_leg(root, recorded chain_rc, arm)` gives (+ the OVERRUN rule with the recorded `overrun`). The original
+        is kept byte-identical as `leg.c360.json` (harvested beside it); `leg.json` is replaced (atomically) by a sealed record
+        with the new state, the host changes and the supersession (`c384`: the original's sha256s); the sequence entry follows.
+        A prior reason, an already harvested attempt, or one whose harvest is committed (its `HARVEST.json` exists at
+        `ops.harvest_path`, even when `sequence.json` does not say so) is left as recorded (logged). Updates `entry` in place."""
+        name = f"{spec['name']}.a{entry['attempt']}"
+        root = self.root(spec, entry["attempt"])
+        path, kept = root / "leg.json", root / C384_SUPERSEDED
+        try:
+            raw = path.read_bytes()
+            doc = json.loads(raw)
+        except (OSError, ValueError):
+            return
+        if not ph.sealed_ok(doc) or (doc.get("leg"), doc.get("attempt")) != (spec["name"], entry["attempt"]):
+            return                                     # not a verifiable record of this attempt: the existing paths decide
+        if isinstance(doc.get("c384"), dict):          # superseded already; a stop came before sequence.json followed
+            if entry.get("c384") is None:
+                self.c384_check_kept(name, kept, doc["c384"].get("superseded_file_sha256"))
+                self.c384_entry(entry, doc)
+                self.log(f"{name}: C384: the superseding leg.json is recorded in sequence.json (state {doc['state']})")
+            return
+        reason = str(doc.get("reason") or "")
+        if entry.get("state") != "INVALID" or doc.get("state") != "INVALID" or not reason.startswith(HOST_ENV_REASON + ": "):
+            return
+        if " (prior: " in reason:
+            self.log(f"{name}: INVALID by the host change with a prior classification; left as recorded (C384 re-derives only "
+                     "a leg with no prior)")
+            return
+        if self.harvested(entry):
+            self.log(f"{name}: INVALID by the host change and already harvested; left as recorded")
+            return
+        if os.path.lexists(Path(self.ops.harvest_path(name)) / "HARVEST.json"):     # committed; sequence.json not yet saying so
+            self.log(f"{name}: INVALID by the host change and its harvest is already committed; left as recorded")
+            return
+        cls = classify_leg(root, doc.get("chain_rc"), arm=spec["arm"])
+        if doc.get("overrun") is True and cls["state"] == "INVALID" and not self.finished_cleanly(root):
+            cls = dict(cls, state="OVERRUN")
+        file_sha = hashlib.sha256(raw).hexdigest()
+        self.c384_check_kept(name, kept, file_sha, create=raw)
+        body = {k: v for k, v in doc.items() if k not in ("sha256", "not_run")}
+        body.update(state=cls["state"], reason=cls["reason"], host_env_before=[], host_env_during=c360_changes(reason),
+                    c384=dict(rule="C384", superseded=C384_SUPERSEDED, superseded_sha256=doc["sha256"],
+                              superseded_file_sha256=file_sha, superseded_state=doc["state"], superseded_class=doc.get("class"),
+                              superseded_reason=reason, host_env_before_basis=C384_BEFORE_BASIS,
+                              at=co.utc_stamp(self.clock())),
+                    **{"class": cls["class"]})
+        if spec["kind"] == "makeup" and cls["state"] not in VALID_STATES:
+            body["not_run"] = not_run(root, self.canon)
+        sealed = ph.seal(body)
+        atomic_text(path, json.dumps(sealed, indent=1, sort_keys=True) + "\n")
+        self.log(f"{name}: C384: the C360 host INVALID is superseded: state {cls['state']}"
+                 + (f" ({cls['reason']})" if cls["reason"] else "") + f" from its records; the original is {C384_SUPERSEDED} "
+                 f"(sha256 {doc['sha256'][:16]}); host changes during the leg: " + "; ".join(body["host_env_during"]))
+        self.c384_entry(entry, sealed)
+
+    def c384_check_kept(self, name, kept, file_sha, create=None):
+        """`leg.c360.json` is the original's bytes (`file_sha`); installed from `create` when absent (`install_kept`: never a
+        partial file at its path). Anything else stops (rc 1): never overwritten, never followed."""
+        if not os.path.lexists(kept):
+            if create is None:
+                raise Stop(1, f"STOP: {name}/{C384_SUPERSEDED} (the superseded original) is missing")
+            install_kept(kept, create)
+        tmp = kept_temp(kept)
+        if os.path.lexists(tmp):                       # a crash between the link and the temp's removal left it
+            os.unlink(tmp)
+        try:
+            ok = not os.path.islink(kept) and kept.is_file() and hashlib.sha256(kept.read_bytes()).hexdigest() == file_sha
+        except OSError:
+            ok = False
+        if not ok:
+            raise Stop(1, f"STOP: {name}/{C384_SUPERSEDED} exists and is not the leg's recorded leg.json (never overwritten)")
+
+    def c384_entry(self, entry, doc):
+        """The sequence entry follows the superseding leg record (state, reason, host changes, the supersession)."""
+        entry["state"] = doc["state"]
+        if doc.get("reason"):
+            entry["reason"] = doc["reason"]
+        else:
+            entry.pop("reason", None)
+        if doc.get("host_env_during"):
+            entry["host_env_during"] = list(doc["host_env_during"])
+        entry["c384"] = dict(superseded_sha256=doc["c384"]["superseded_sha256"], superseded=C384_SUPERSEDED,
+                             at=doc["c384"].get("at"))
+        self.save()
+
     def process(self, spec):
         latest = (self.entries(spec["name"]) or [None])[-1]
         replace = getattr(self.a, "rerun_attempt", None)
@@ -1650,6 +1805,7 @@ class Sequencer:
         if latest and not rerun:
             if latest["state"] == "RUNNING":
                 raise Stop(1, f"STOP: {spec['name']}.a{latest['attempt']} was RUNNING when the sequencer last stopped (the operator decides)")
+            self.c384_supersede(spec, latest)          # S29 H5: a C360 host-INVALID leg takes the state its records give
             done = latest["state"] in VALID_STATES or latest["state"] == spec["expect"]
             if not done:
                 raise Stop(1, f"STOP: {spec['name']}.a{latest['attempt']} is {latest['state']}; a rerun is an operator decision "
@@ -1833,7 +1989,9 @@ class BoxSeqOps(fz.BoxOps):
         path = self.harvest_path(Path(root).name) / "HARVEST.json"
         sha = hashlib.sha256(path.read_bytes()).hexdigest() if run.returncode == 0 and path.is_file() else None
         message = next((ln.strip() for ln in run.stderr.splitlines() if ln.startswith(("REFUSED:", "ERROR:"))), "")
-        return dict(rc=run.returncode if sha or run.returncode else 1, harvest_json=str(path), harvest_sha256=sha, message=message)
+        notes = [ln.strip() for ln in run.stderr.splitlines() if ln.startswith("UNRECOGNISED")]     # S29 P6b
+        return dict(rc=run.returncode if sha or run.returncode else 1, harvest_json=str(path), harvest_sha256=sha, message=message,
+                    notes=notes)
 
     def _scrub(self, emails, secrets=None):
         from . import p426_harvest

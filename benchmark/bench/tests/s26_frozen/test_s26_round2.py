@@ -127,18 +127,19 @@ def test_fix_the_unreadable_baseline_stop_is_a_flat_fail_closed_statement(tmp_pa
 
 
 def test_fix_the_host_invalid_leg_stop_is_a_flat_fail_closed_statement(tmp_path, monkeypatch):
-    """[FIX] erratum 14: the stop for a leg the host change made INVALID states the fact (and the host change), no operator wording."""
+    """[FIX] erratum 14: the stop for a leg the host change made INVALID states the fact (and the host change), no operator wording.
+    S29 H2 (C384): changed — that stop no longer exists: the run goes on (rc 0), no STOP line, the change is logged."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", Q.ON_PILOT, before=Q.at("on_launch", Q.OFF_PILOT, Q.mutate))
-    lines = stop_lines(X.seq_log(r))
-    assert r["rc"] == 1 and lines and any(Q.ADDED in line for line in lines)
-    assert not [line for line in lines if "operator" in line.lower()], lines
+    log = X.seq_log(r)
+    assert r["rc"] == 0 and stop_lines(log) == []
+    assert f"host environment changed during {Q.OFF_PILOT}.a1: {Q.ADDED}" in log
 
 
 def test_fix_the_other_guard_stops_carry_no_operator_wording(tmp_path, monkeypatch):
-    """[FIX] erratum 14: the pre-launch refusal and the end-of-run stop (already flat) stay flat."""
+    """[FIX] erratum 14: the pre-launch refusal and the end-of-run stop (already flat) stay flat. S29 H1 / H3 (C384): changed —
+    neither stops any more (rc 0, no STOP line); each is a log line."""
     pre = X.drive(tmp_path / "pre", monkeypatch, "run", "--through", Q.ON_PILOT, before=Q.at("on_harvest", Q.OFF_PILOT, Q.mutate))
     end = X.drive(tmp_path / "end", monkeypatch, "run", "--through", Q.ON_PILOT, before=Q.at("on_harvest", Q.ON_PILOT, Q.mutate))
-    for r, needle in ((pre, "differs from the run's baseline"), (end, "changed after the last leg")):
-        lines = [line for line in stop_lines(X.seq_log(r)) if needle in line]
-        assert r["rc"] == 1 and lines
-        assert not [line for line in lines if "operator" in line.lower()], lines
+    for r, needle in ((pre, f"differs from the baseline before {Q.ON_PILOT}"), (end, "differs from the baseline after the last leg")):
+        log = X.seq_log(r)
+        assert r["rc"] == 0 and stop_lines(log) == [] and needle in log

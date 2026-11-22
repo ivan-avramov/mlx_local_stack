@@ -245,18 +245,20 @@ def test_the_leg_root_is_never_modified_by_its_harvest(tmp_path):
 
 # ------------------------------------------------------------------------------------------------ inventory, rule table, references
 def test_an_unmatched_file_fails_the_harvest_and_names_it(tmp_path):
+    """S29 P6b (C384): changed from a refusal — the unmatched file is named in HARVEST.json `unrecognised`, never copied."""
     w = World(tmp_path)
     put(w.root / "stray.unknown-kind", "x")
-    with pytest.raises(H.HarvestError, match="stray.unknown-kind"):
-        w.harvest()
-    nothing_published(w)
+    doc = w.harvest()
+    assert [u["source"] for u in doc["unrecognised"]] == ["leg:stray.unknown-kind"]
+    assert not any(p.name == "stray.unknown-kind" for base in (w.main, w.stage) for p in base.rglob("*"))
 
 
 def test_an_unmatched_file_in_a_named_run_directory_fails_too(tmp_path):
+    """S29 P6b (C384): changed from a refusal — listed in HARVEST.json `unrecognised`, never copied."""
     w = World(tmp_path)
     put(w.run / "grading-private" / "keep" / "seq-1" / "mystery.bin", "x")
-    with pytest.raises(H.HarvestError, match="mystery.bin"):
-        w.harvest()
+    doc = w.harvest()
+    assert [u["source"] for u in doc["unrecognised"]] == [f"run:{RUN_ID}/grading-private/keep/seq-1/mystery.bin"]
 
 
 def test_the_inventory_maps_every_file_of_the_leg_run_and_evidence_directories(tmp_path):
@@ -464,12 +466,11 @@ def test_a_final_tree_under_the_leg_root_follows_the_same_rule(tmp_path):
     pjson(tree / "manifest.json", dict(files={}, missing=[]))
     put(tree / "objects" / ("a" * 64), "code\n")
     (tree / "link_to_outside").symlink_to(outside)
-    put(tree / "solution.py", "loose file\n")                        # a regular file the rule table does not know: the refusal names it
-    with pytest.raises(H.HarvestError) as exc:
-        w.harvest()
-    assert "solution.py" in str(exc.value) and "link_to_outside" not in str(exc.value)
-    (tree / "solution.py").unlink()
+    put(tree / "solution.py", "loose file\n")                        # a regular file the rule table does not know
+    # S29 P6b (C384): changed from a refusal naming it — it is listed in HARVEST.json `unrecognised`, never copied
     doc = w.harvest()
+    assert [u["source"] for u in doc["unrecognised"]] == ["leg:transcripts/python__x.final_tree/solution.py"]
+    assert not any(p.name == "solution.py" for p in (w.main / WAVE2).rglob("*"))
     assert entry(doc, "leg:transcripts/python__x.final_tree/link_to_outside")["exclusion_reason"] == "symlink"
     assert entry(doc, "leg:transcripts/python__x.final_tree/manifest.json")["destination"] == "main"
 
@@ -850,7 +851,7 @@ def test_the_cli_takes_the_operator_email_flag_repeatedly_and_refuses_it(tmp_pat
 
 def test_a_harvest_error_prints_one_refused_line_exits_2_and_publishes_nothing(tmp_path, capsys):
     w = World(tmp_path)
-    put(w.root / "stray.unknown-kind", "x")
+    (w.root / "stray.unknown-kind").symlink_to(w.root / "leg.json")   # S29 P6b: changed from an unmatched file (now listed)
     assert run_main(w, tmp_path) == 2
     err = capsys.readouterr().err
     assert [ln for ln in err.splitlines() if ln.startswith("REFUSED: ")] and "stray.unknown-kind" in err

@@ -95,11 +95,13 @@ def test_new_an_unreadable_baseline_stops_with_rc_1_before_any_launch(tmp_path, 
 
 # ---------------------------------------------------------------------------------------------------- before every launch
 def test_fix_a_host_change_between_legs_refuses_the_next_launch(tmp_path, monkeypatch):
-    """[FIX] §2: a difference before a launch -> `Stop(1)`, the exact message, nothing launched."""
+    """[FIX] §2: a difference before a launch -> `Stop(1)`, the exact message, nothing launched. S29 H1 (C384): changed — the
+    difference is logged and recorded with the leg (its sequence entry and leg.json), and the leg launches."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, before=at("on_harvest", OFF_PILOT, mutate))
-    assert r["rc"] == 1 and X.legs_run(r) == [OFF_PILOT]
-    assert (f"STOP: the host environment differs from the run's baseline before {ON_PILOT} (nothing launched): {ADDED}"
-            in X.seq_log(r))
+    assert r["rc"] == 0 and X.legs_run(r) == [OFF_PILOT, ON_PILOT]
+    assert f"host environment differs from the baseline before {ON_PILOT}: {ADDED}" in X.seq_log(r)
+    assert [e.get("host_env_before") for e in X.sequence(r)["legs"] if e["leg"] == ON_PILOT] == [[ADDED]]
+    assert X.leg_json(r, ON_PILOT)["host_env_before"] == [ADDED]
     assert X.leg_json(r, OFF_PILOT)["state"] == "VALID"       # the first leg ended before the change (the post-leg check was clean)
 
 
@@ -118,72 +120,74 @@ def test_inv_the_pre_launch_check_comes_after_the_power_check(tmp_path, monkeypa
 
 def test_fix_a_resumed_run_on_a_changed_host_stops_before_launching(tmp_path, monkeypatch):
     """[FIX] §2: a resumed run compares the live fingerprint to the baseline first and stops on a difference (the message as the
-    pre-launch refusal, the leg = the next leg); once the host equals the baseline again it goes on."""
+    pre-launch refusal, the leg = the next leg); once the host equals the baseline again it goes on. S29 H3 (C384): changed —
+    the resumed run records and logs the difference and launches the next leg on the changed host."""
     r1 = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT)
     mutate(r1["world"])
     r2 = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, world=r1["world"], records=False)
-    assert r2["rc"] == 1 and not r2["ops"].launches
-    assert f"STOP: the host environment differs from the run's baseline before {ON_PILOT} (nothing launched): {ADDED}" in X.seq_log(r2)
+    assert r2["rc"] == 0 and X.legs_run(r2) == [ON_PILOT]
+    assert f"host environment differs from the baseline at the run's start (next: {ON_PILOT}): {ADDED}" in X.seq_log(r2)
+    assert [e["changes"] for e in X.sequence(r2)["host_env_events"]] == [[ADDED]]
     revert(r1["world"])
-    r3 = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, world=r1["world"], records=False)
-    assert r3["rc"] == 0 and X.legs_run(r3) == [ON_PILOT]
 
 
 # ---------------------------------------------------------------------------------------------------- after every leg
 def test_fix_a_leg_that_changed_the_host_is_invalid_systemic_with_the_diff_as_reason(tmp_path, monkeypatch):
     """[FIX] §2 / the traced case "a leg runs `brew install openjdk@17`": INVALID, class systemic, the reason, in `leg.json` and
-    `sequence.json`; the leg is harvested as INVALID legs are; the run stops (rc 1) before the next leg."""
+    `sequence.json`; the leg is harvested as INVALID legs are; the run stops (rc 1) before the next leg. S29 H2 (C384): changed —
+    the state is the classifier's (VALID), the change is recorded in leg.json (`host_env_during`), harvested, the run goes on."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, before=at("on_launch", OFF_PILOT, mutate))
-    assert r["rc"] == 1 and X.legs_run(r) == [OFF_PILOT]
+    assert r["rc"] == 0 and X.legs_run(r) == [OFF_PILOT, ON_PILOT]
     rec = X.leg_json(r, OFF_PILOT)
-    assert rec["state"] == "INVALID" and rec["class"] == "systemic"
-    assert rec["reason"] == f"host environment changed during the leg: {ADDED}"
-    assert [e["state"] for e in X.sequence(r)["legs"] if e["leg"] == OFF_PILOT] == ["INVALID"]
-    assert "host environment changed during the leg" in (r["base"] / "sequence.json").read_text()
-    assert r["ops"].harvested == [str(r["base"] / f"{OFF_PILOT}.a1")]
+    assert rec["state"] == "VALID" and rec["class"] == "valid" and rec["reason"] == ""
+    assert rec["host_env_during"] == [ADDED]
+    assert [e["state"] for e in X.sequence(r)["legs"] if e["leg"] == OFF_PILOT] == ["VALID"]
+    assert "host environment changed during the leg" not in (r["base"] / "sequence.json").read_text()
+    assert r["ops"].harvested[0] == str(r["base"] / f"{OFF_PILOT}.a1")
     assert any(h["attempt"] == f"{OFF_PILOT}.a1" for h in X.sequence(r)["harvested"])
 
 
 def test_fix_several_changes_are_joined_with_semicolons(tmp_path, monkeypatch):
+    """S29 H2 (C384): changed — the changes are the recorded list (and the log line joins them with semicolons)."""
     def both(world):
         mutate(world)
         world.npm_pkg("jest", "29.7.0")
     r = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT, before=at("on_launch", OFF_PILOT, both))
-    reason = X.leg_json(r, OFF_PILOT)["reason"]
-    assert reason.startswith("host environment changed during the leg: ")
-    assert ADDED in reason and "npm -g jest: absent -> 29.7.0" in reason and "; " in reason
+    rec = X.leg_json(r, OFF_PILOT)
+    assert rec["reason"] == "" and ADDED in rec["host_env_during"] and "npm -g jest: absent -> 29.7.0" in rec["host_env_during"]
+    line = next(x for x in X.seq_log(r).splitlines() if f"host environment changed during {OFF_PILOT}.a1: " in x)
+    assert ADDED in line and "npm -g jest: absent -> 29.7.0" in line and "; " in line
 
 
 def test_fix_a_prior_reason_is_kept_in_parentheses(tmp_path, monkeypatch):
-    """[FIX] §2 (GLM F2, F13): ` (prior: <reason>)` when the leg already had a reason (a chain rc 2 leg)."""
+    """[FIX] §2 (GLM F2, F13): ` (prior: <reason>)` when the leg already had a reason (a chain rc 2 leg). S29 H2 (C384): changed —
+    the classifier's reason is the reason; the host change is recorded beside it."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, script={OFF_PILOT: {"rc": 2}},
                 before=at("on_launch", OFF_PILOT, mutate))
     rec = X.leg_json(r, OFF_PILOT)
     assert rec["state"] == "INVALID"
-    assert rec["reason"] == f"host environment changed during the leg: {ADDED} (prior: chain rc 2, status 'finished')"
+    assert rec["reason"] == "chain rc 2, status 'finished'" and rec["host_env_during"] == [ADDED]
 
 
 def test_fix_a_settled_dnf_leg_is_not_spared(tmp_path, monkeypatch):
-    """[FIX] a VALID_WITH_DNF leg whose host changed is INVALID too (the check is on the normal path of every state), prior kept."""
+    """[FIX] a VALID_WITH_DNF leg whose host changed is INVALID too (the check is on the normal path of every state), prior kept.
+    S29 H2 (C384): changed — it stays VALID_WITH_DNF (the classifier's state), the change recorded."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT, script={OFF_PILOT: {"dnf": 1}},
                 before=at("on_launch", OFF_PILOT, mutate))
     rec = X.leg_json(r, OFF_PILOT)
-    assert rec["state"] == "INVALID" and rec["class"] == "systemic"
-    assert rec["reason"].startswith(f"host environment changed during the leg: {ADDED} (prior: ")
+    assert rec["state"] == "VALID_WITH_DNF" and rec["class"] == "dnf"
+    assert rec["host_env_during"] == [ADDED]
 
 
 def test_fix_a_rerun_after_an_invalid_host_leg_refuses_until_the_host_equals_the_baseline(tmp_path, monkeypatch):
-    """[FIX] traced case: "a rerun first refuses before launch until the host equals the baseline again"."""
+    """[FIX] traced case: "a rerun first refuses before launch until the host equals the baseline again". S29 H1 / H2 (C384):
+    changed — no leg is INVALID by a host change and no launch is refused; the leg ends VALID and the run goes on."""
     r1 = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT, before=at("on_launch", OFF_PILOT, mutate))
-    assert r1["rc"] == 1
+    assert r1["rc"] == 0 and X.leg_json(r1, OFF_PILOT)["state"] == "VALID"
     r2 = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT, "--rerun", OFF_PILOT, "--rerun-reason", "host drift",
                  world=r1["world"], records=False)
-    assert r2["rc"] == 1 and not r2["ops"].launches and "differs from the run's baseline" in X.seq_log(r2)
-    revert(r1["world"])
-    r3 = X.drive(tmp_path, monkeypatch, "run", "--through", OFF_PILOT, "--rerun", OFF_PILOT, "--rerun-reason", "host drift",
-                 world=r1["world"], records=False)
-    assert r3["rc"] == 0 and X.legs_run(r3) == [OFF_PILOT]
-    assert X.leg_json(r3, OFF_PILOT, attempt=2)["state"] == "VALID"
+    assert r2["rc"] == 0 and X.legs_run(r2) == [OFF_PILOT] and "differs from the baseline before" in X.seq_log(r2)
+    assert X.leg_json(r2, OFF_PILOT, attempt=2)["state"] == "VALID"
 
 
 # ---------------------------------------------------------------------------------------------------- the exception path
@@ -216,22 +220,23 @@ def test_new_an_exception_with_a_changed_host_logs_the_diff_and_still_reraises(t
 # ---------------------------------------------------------------------------------------------------- the end-of-run check
 def test_fix_a_change_after_the_last_leg_is_caught_before_the_run_files_are_published(tmp_path, monkeypatch):
     """[FIX] §2 Finalization, DONE exit (Sol P3, GLM F4): the diff is saved as `host_env_after_last_leg`, the run stops rc 1 with
-    the message, `DONE` is never logged, and `sequence.json` carries the diff by the time anything is published."""
+    the message, `DONE` is never logged, and `sequence.json` carries the diff by the time anything is published. S29 H3 (C384):
+    changed — recorded before publication and logged; the run ends normally (rc 0, `DONE`)."""
     r = X.drive(tmp_path, monkeypatch, "run", before=at("on_harvest", LAST_LEG, mutate))
-    assert r["rc"] == 1 and len(X.legs_run(r)) == 8
+    assert r["rc"] == 0 and len(X.legs_run(r)) == 8
     assert X.sequence(r)["host_env_after_last_leg"] == [ADDED]
     log = X.seq_log(r)
-    assert f"STOP: the host environment changed after the last leg: {ADDED}" in log and "DONE" not in log
+    assert f"host environment differs from the baseline after the last leg: {ADDED}" in log and "DONE" in log
     assert all(p is not None and "host_env_after_last_leg" in p for p in r["ops"].publishes)
 
 
 def test_fix_a_change_after_the_through_leg_is_caught_on_the_through_exit(tmp_path, monkeypatch):
-    """[FIX] §2 Finalization, the `--through` exit."""
+    """[FIX] §2 Finalization, the `--through` exit. S29 H3 (C384): changed — recorded, logged, "stopping as asked", rc 0."""
     r = X.drive(tmp_path, monkeypatch, "run", "--through", ON_PILOT, before=at("on_harvest", ON_PILOT, mutate))
-    assert r["rc"] == 1 and X.legs_run(r) == [OFF_PILOT, ON_PILOT]
+    assert r["rc"] == 0 and X.legs_run(r) == [OFF_PILOT, ON_PILOT]
     assert X.sequence(r)["host_env_after_last_leg"] == [ADDED]
     log = X.seq_log(r)
-    assert "STOP: the host environment changed after the last leg" in log and "stopping as asked" not in log
+    assert "host environment differs from the baseline after the last leg" in log and "stopping as asked" in log
     assert all(p is not None and "host_env_after_last_leg" in p for p in r["ops"].publishes)
 
 
@@ -325,13 +330,29 @@ def _kv_resume(tmp_path, monkeypatch, write_baseline, *, changed):
 def test_fix_the_kv_lever_sequencer_guards_the_host_too(tmp_path, monkeypatch):
     """[FIX] review gap: `Sequencer.run` is shared by the lever-kv (and tg2) runs. A resumed kv run on a changed host stops before
     launching, with the pre-launch message naming the kv leg that was next (the SEALED baseline reads back, so the comparison
-    really runs). The kv first-run / post-leg path needs frozen kv records and chain fakes that the frozen test base lacks."""
+    really runs). The kv first-run / post-leg path needs frozen kv records and chain fakes that the frozen test base lacks.
+    S29 H3 (C384): changed — the resumed kv run records and logs the difference instead of stopping on it and reaches its first
+    leg (`process` is stubbed there: the post-check path needs kv records this frozen base lacks)."""
     from bench import p426_wave2 as W2
-    rc, err, ops, log = _kv_resume(tmp_path, monkeypatch, sealed_baseline, changed=True)
+
+    class Reached(Exception):
+        pass
+    reached = []
+
+    def process(self, spec):
+        reached.append(spec["name"])
+        raise Reached(spec["name"])
+    monkeypatch.setattr(W2.Sequencer, "process", process)
+    with pytest.raises(Reached):
+        _kv_resume(tmp_path, monkeypatch, sealed_baseline, changed=True)
+    assert reached == ["tg1-m76-n16-pilot"]                     # past the host check, at the kv leg that was next
+    log = (tmp_path / "wd" / "m76" / "p426" / "wave2" / "sequence.log").read_text()
     assert W2.kv_legs("n16", "x")["run"][0]["name"] == "tg1-m76-n16-pilot"
-    assert rc == 1, err
-    assert not ops.launches
-    assert f"STOP: the host environment differs from the run's baseline before tg1-m76-n16-pilot (nothing launched): {ADDED}" in log
+    assert f"host environment differs from the baseline at the run's start (next: tg1-m76-n16-pilot): {ADDED}" in log
+    events = json.loads((tmp_path / "wd" / "m76" / "p426" / "wave2" / "sequence.json").read_text())["host_env_events"]
+    assert [e["changes"] for e in events] == [[ADDED]]
+    assert "differs from the run's baseline" not in log and "(nothing launched)" not in log
+    assert not [line for line in log.splitlines() if "STOP:" in line and "host" in line]
 
 
 @pytest.mark.parametrize("damage", ["unsealed", "tampered-created", "tampered-fingerprint", "garbage"])

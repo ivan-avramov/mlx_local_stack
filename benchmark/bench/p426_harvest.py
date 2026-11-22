@@ -8,7 +8,10 @@ carrying PII or an oversized file refuses before anything is written. Commits ar
 Wave 2 (B2 spec 11; `python -m bench.p426_harvest wave2 --leg-root … --main-root … --evidence-stage …`, below `harvest_wave2`): one
 attempt's leg root, the run / evidence directories its manifests name and the leg's server-log byte range are inventoried against a
 closed rule table, every reference is resolved transitively, and the files are published in two stages (evidence, then `main`) with
-`HARVEST.json` in the `main` destination as the single commit point. The Wave-1 entry points above are unchanged.
+`HARVEST.json` in the `main` destination as the single commit point. A regular file no rule matches is not copied: it and the
+references to it are listed in `HARVEST.json` (`unrecognised`, `unrecognised_references`; S29 P6b: scrubbed path and size, whether a
+reference's digest matches; no digest of the unscanned bytes). The Wave-1 entry points above
+are unchanged.
 """
 
 import argparse
@@ -220,12 +223,13 @@ ATTEMPT_RE = re.compile(r"^(?P<leg>[A-Za-z0-9][A-Za-z0-9-]*)\.a(?P<n>[1-9][0-9]*
 RUN_ID_RE = re.compile(r"^[0-9]{8}T[0-9]{6}-[0-9a-f]{12}$")
 BARRIER_RE = re.compile(r"^(?P<base>.+)\.item(?P<k>[0-9]+)\.(?P<kind>ready|go|done|continue|stop)$")
 CONTROL_RE = re.compile(r"\.(ack|cancel)$", re.IGNORECASE)        # the chain names them `<stem>.ACK` / `<stem>.CANCEL`
-LEG_MAIN = ("leg.json", "chain.json", "schedule.json", "receipt.json", "watch.jsonl", "log_bounds.json")
+C384_SUPERSEDED = "leg.c360.json"      # S29 H5: the C360 host-INVALID leg record, kept byte-identical beside its successor
+LEG_MAIN = ("leg.json", "chain.json", "schedule.json", "receipt.json", "watch.jsonl", "log_bounds.json", C384_SUPERSEDED)
 RAW_SUFFIXES = (".log", ".txt", ".stdout", ".stderr")
 EVIDENCE_SUFFIXES = (".jsonl", ".json", ".txt", ".log", ".html")     # events, stderr, export, date-freeze / tool-window / web receipts
 PRIVATE_RUN_DIRS = ("home", "data", "state", "cache", "tmp")          # opencode's own state: never copied
 # M76 B4b-1 (H5): the files `tg2_grade` writes per grade into `<item>.grades/seq-NNNN/` (the directory and depth are the boundary)
-TG2_GRADE_SUFFIXES = (".out", ".err", ".stdout", ".stderr", ".inspect", ".inspect.err")
+TG2_GRADE_SUFFIXES = (".out", ".err", ".stdout", ".stderr", ".inspect", ".inspect.err", ".marker")    # S29 P6a: `<step>.marker`
 TG2_SEQ_RE = re.compile(r"seq-\d{4}")
 TG2_GRADES_RE = re.compile(r"(?:rust|javascript|java|cpp)__[A-Za-z0-9][A-Za-z0-9_-]*\.grades")      # a tg2 item's grade directory
 TG2_REGISTRY = ".tg2-registry"
@@ -254,7 +258,7 @@ def _self_hash_problem(rel, doc):
 def _is_immutable(rel):
     """The §16-intro immutable records inside a leg root: the leg record, the receipt, the item records (ready / item / `.dnf`)
     and the `p426_dnf` sidecars."""
-    return rel in ("leg.json", "receipt.json") or rel.startswith("items/") or "/p426_dnf/" in rel
+    return rel in ("leg.json", "receipt.json", C384_SUPERSEDED) or rel.startswith("items/") or "/p426_dnf/" in rel
 
 
 def _immutable_problem(rel, doc):
@@ -559,9 +563,30 @@ def _manifest_runs(leg_root, workdir, problems):
     return runs
 
 
-def _inventory(leg_root, workdir, problems):
-    """Every file of the leg root and of each run / evidence directory the manifests name -> {source: Entry}."""
+class Unrecognised:
+    """S29 P6b: the regular files no rule matches (`files`: {source: path}; never copied) and the references to them (`refs`)."""
+
+    def __init__(self):
+        self.files, self.refs = {}, []
+
+    def records(self, scrub):
+        """[{source, size}]: the source name in its scrubbed portable form and the size; nothing derived from the unscanned
+        bytes (S29 v1.1 P6b: no digest)."""
+        return sorted((dict(source=scrub.text(source), size=os.lstat(path).st_size) for source, path in self.files.items()),
+                      key=lambda r: r["source"])
+
+    def ref_records(self, scrub):
+        """[{reference, source, sha256_matches}] in scrubbed form: whether the recorded digest matches, never a digest."""
+        out = [dict(reference=scrub.text(r["reference"]), source=scrub.text(r["source"]), sha256_matches=r["sha256_matches"])
+               for r in self.refs]
+        return sorted(out, key=lambda r: (r["source"], r["reference"]))
+
+
+def _inventory(leg_root, workdir, problems, unrecognised=None):
+    """Every file of the leg root and of each run / evidence directory the manifests name -> {source: Entry}. A regular file no
+    rule matches goes to `unrecognised` (S29 P6b: listed, not copied, not a problem)."""
     inv, roots = {}, {}
+    unrecognised = unrecognised if unrecognised is not None else Unrecognised()
 
     def add(kind, label, base):
         roots[(kind, label)] = Path(base)
@@ -581,8 +606,8 @@ def _inventory(leg_root, workdir, problems):
                 problems.append(f"{source}: not a regular file")
                 continue
             rule = classify(kind, rel)
-            if rule is None:
-                problems.append(f"{source}: no harvest rule matches this file")
+            if rule is None:                              # S29 P6b: recorded in HARVEST.json, never copied
+                unrecognised.files[source] = path
                 continue
             inv[source] = Entry(source, path, kind, rel, rule[0], rule[1])
 
@@ -628,8 +653,9 @@ def _locate(path, roots):
     return None
 
 
-def _ref(value, what, workdir, roots, inv, problems, sha=None):
-    """Resolve one `$STACK_WORKDIR/…` reference to an inventory entry (it must exist, lie in the roots, be harvested)."""
+def _ref(value, what, workdir, roots, inv, problems, sha=None, unrecognised=None):
+    """Resolve one `$STACK_WORKDIR/…` reference to an inventory entry (it must exist, lie in the roots, be harvested). A reference
+    to an unrecognised file (S29 P6b) is listed in `unrecognised.refs` (its digest compared), never a problem; None."""
     path = _expand(value, workdir)
     if path is None:
         problems.append(f"{what}: reference {Path(str(value)).name} is not a $STACK_WORKDIR path")
@@ -639,6 +665,10 @@ def _ref(value, what, workdir, roots, inv, problems, sha=None):
         problems.append(f"{what}: reference {Path(path).name} lies outside the inventoried roots")
         return None
     entry = inv.get(source)
+    if entry is None and unrecognised is not None and source in unrecognised.files:
+        unrecognised.refs.append(dict(reference=what, source=source,
+                                      sha256_matches=None if sha is None else _stream_sha(unrecognised.files[source]) == sha))
+        return None
     if entry is None:
         problems.append(f"{what}: referenced file {source} is missing")
         return None
@@ -666,17 +696,18 @@ def _artifact_refs(doc, found=None):
     return found
 
 
-def _check_row(row, what, workdir, roots, inv, problems):
+def _check_row(row, what, workdir, roots, inv, problems, unrecognised=None):
     if not isinstance(row, dict):
         problems.append(f"{what}: a row is not a JSON object")
         return
     digests = row.get("evidence_sha256") if isinstance(row.get("evidence_sha256"), dict) else {}
     for key, name in ROW_REFS:
         if isinstance(row.get(key), str):
-            _ref(row[key], f"{what} {key}", workdir, roots, inv, problems, sha=digests.get(name))
+            _ref(row[key], f"{what} {key}", workdir, roots, inv, problems, sha=digests.get(name), unrecognised=unrecognised)
     tree = row.get("final_tree")
     if isinstance(tree, dict) and isinstance(tree.get("manifest"), str):
-        entry = _ref(tree["manifest"], f"{what} final_tree", workdir, roots, inv, problems, sha=tree.get("manifest_sha256"))
+        entry = _ref(tree["manifest"], f"{what} final_tree", workdir, roots, inv, problems, sha=tree.get("manifest_sha256"),
+                     unrecognised=unrecognised)
         if entry is not None:
             try:
                 files = json.loads(entry.data).get("files", {})
@@ -690,7 +721,7 @@ def _check_row(row, what, workdir, roots, inv, problems):
                     problems.append(f"{what} final_tree: object of {rel} is missing")
     for path, digest in _artifact_refs({k: v for k, v in row.items() if k != "final_tree"}):
         if digest is not None:
-            _ref(path, f"{what} artifact", workdir, roots, inv, problems, sha=digest)
+            _ref(path, f"{what} artifact", workdir, roots, inv, problems, sha=digest, unrecognised=unrecognised)
 
 
 def _record_name(sf, rindex, suffix):
@@ -721,7 +752,7 @@ def _accounting_problems(chain, inv, led, sf, rindex, side):
     return ph.accounting_problems(doc, slot, rindex, row=row, item_record=item)
 
 
-def _check_references(leg_root, state, chain, inv, roots, workdir, problems):
+def _check_references(leg_root, state, chain, inv, roots, workdir, problems, unrecognised=None):
     """Transitive references: chain.json → rows / manifests / item records / DNF sidecars → transcripts, sidecars, final trees,
     grader reports, and every object they name."""
     from bench import chain_rows
@@ -793,7 +824,7 @@ def _check_references(leg_root, state, chain, inv, roots, workdir, problems):
         if rel.endswith(".manifest.json") or "/p426_dnf/" in rel:
             for path, digest in _artifact_refs(_load_json(entry)):
                 if digest is not None:
-                    _ref(path, source, workdir, roots, inv, problems, sha=digest)
+                    _ref(path, source, workdir, roots, inv, problems, sha=digest, unrecognised=unrecognised)
         elif rel.endswith(".jsonl") and "/" in rel and not rel.startswith(("quarantine/", "archive/", "a4/")):
             entry.data = _read_regular(entry.path)
             for n, line in enumerate(entry.data.decode("utf-8", "replace").splitlines(), 1):
@@ -803,8 +834,33 @@ def _check_references(leg_root, state, chain, inv, roots, workdir, problems):
                     except ValueError:
                         problems.append(f"{source}: line {n} is not JSON")
                         continue
-                    _check_row(row, f"{source}:{n}", workdir, roots, inv, problems)
+                    _check_row(row, f"{source}:{n}", workdir, roots, inv, problems, unrecognised=unrecognised)
             entry.data = None
+
+
+def _check_supersession(block, inv, problems):
+    """S29 v1.1 H5: a `leg.json` carrying the C384 supersession publishes only with its kept original: `leg.c360.json` exists in
+    the inventory (a regular file of the leg root), its bytes hash to `superseded_file_sha256` and its own self-hash verifies."""
+    what = f"leg.json: the C384 supersession names {C384_SUPERSEDED}"
+    want = block.get("superseded_file_sha256") if isinstance(block, dict) else None
+    if not isinstance(want, str):
+        problems.append(f"{what} without a superseded_file_sha256")
+        return
+    kept = inv.get(f"leg:{C384_SUPERSEDED}")
+    if kept is None or kept.dest != "main":
+        problems.append(f"{what}, which is missing or not a regular file")
+        return
+    data = _read_regular(kept.path)
+    if _sha(data) != want:
+        problems.append(f"{what}, whose bytes do not hash to superseded_file_sha256")
+        return
+    try:
+        doc = json.loads(data)
+    except ValueError:
+        doc = None
+    bad = _immutable_problem(C384_SUPERSEDED, doc)
+    if bad:
+        problems.append(bad)
 
 
 def _check_barrier(state, chain, inv, problems):
@@ -1020,7 +1076,8 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
     leg_entry = None
     if not os.path.lexists(leg_root / "leg.json"):
         raise HarvestError("leg.json: missing (the sequencer's leg record is the leg's state)")
-    inv, roots = _inventory(leg_root, workdir, problems)
+    unrecognised = Unrecognised()                        # S29 P6b: listed in HARVEST.json, never copied, never a refusal
+    inv, roots = _inventory(leg_root, workdir, problems, unrecognised)
     leg_entry = inv.get("leg:leg.json")
     if leg_entry is None or leg_entry.dest != "main":
         raise HarvestError(_problem_text(problems + ["leg.json: not a regular file"]))
@@ -1033,6 +1090,8 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
                            "a result (S27 §5.7)")
     if f"{leg.get('leg')}.a{leg.get('attempt')}" != name:
         raise HarvestError(f"leg.json: names attempt {leg.get('leg')}.a{leg.get('attempt')}, not the leg root {name}")
+    if "c384" in leg:
+        _check_supersession(leg["c384"], inv, problems)
     chain = {}
     if state != "NOT_STARTED":
         chain_entry = inv.get("leg:chain.json")
@@ -1042,7 +1101,7 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
             chain = _load_json(chain_entry)
     if state in ("VALID", "VALID_WITH_DNF") and "leg:watch.jsonl" not in inv:
         problems.append(f"watch.jsonl: missing in a {state} leg (the watcher's journal is the leg's speed receipt)")
-    _check_references(leg_root, state, chain, inv, roots, workdir, problems)
+    _check_references(leg_root, state, chain, inv, roots, workdir, problems, unrecognised)
     _check_barrier(state, chain, inv, problems)
     slices = _log_slices(leg_root, state, inv, worktree, problems)
     for e in slices:
@@ -1104,6 +1163,7 @@ def harvest_wave2(leg_root, *, main_root, evidence_stage, scrub, secrets=None, w
         doc = dict(leg=leg["leg"], attempt=leg["attempt"], state=state, files=[e.record() for e in entries],
                    review=dict(emails_count=len(review_emails), emails_file=f"{PORTABLE_ROOT}/{review_rel}/{name}.emails.json",
                                absent_secret_sources=sorted(absent_sources)),
+                   unrecognised=unrecognised.records(scrub), unrecognised_references=unrecognised.ref_records(scrub),
                    created=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
         doc["sha256"] = _canon_sha(doc)
         body = (json.dumps(doc, indent=1, sort_keys=True, ensure_ascii=False) + "\n").encode("utf-8")
@@ -1375,9 +1435,14 @@ def main(argv=None, *, environ=None, home=None):
         except p426_secrets.SecretsError as exc:
             raise HarvestError(str(exc)) from None
         absent = p426_secrets.absent_sources(home=home, config_path=config, env_files=env_files)
-        harvest_wave2(leg_root, main_root=a.main_root, evidence_stage=a.evidence_stage, scrub=scrub, secrets=values,
-                      worktree=worktree, workdir=workdir, absent_sources=absent, dry_run=a.dry_run, namespace=a.namespace,
-                      lever=a.lever)
+        doc = harvest_wave2(leg_root, main_root=a.main_root, evidence_stage=a.evidence_stage, scrub=scrub, secrets=values,
+                            worktree=worktree, workdir=workdir, absent_sources=absent, dry_run=a.dry_run, namespace=a.namespace,
+                            lever=a.lever)
+        for u in (doc or {}).get("unrecognised") or []:          # S29 P6b: logged (the sequencer logs these lines)
+            print(f"UNRECOGNISED: {u['source']} ({u['size']} bytes): no harvest rule; listed in "
+                  "HARVEST.json, not copied", file=sys.stderr)
+        for r in (doc or {}).get("unrecognised_references") or []:
+            print(f"UNRECOGNISED reference: {r['reference']} -> {r['source']}", file=sys.stderr)
     except HarvestError as exc:
         if dry_run:                                     # P587: every problem, one per line, rc 4
             for problem in exc.problems:

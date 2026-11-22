@@ -135,11 +135,12 @@ def test_a_clean_record_carries_both_fingerprints_and_passes_v8(wd):
 
 
 def test_a_host_change_during_the_positives_is_a_fail(wd):
+    """S29 H4 (C384): changed from a FAIL — the change is recorded (`host_env_changes`), never a problem."""
     rc, doc, _ = run_pos(wd, change_at=("java", "loop"))
-    assert rc == 1 and doc["verdict"] == "FAIL"
-    assert "host environment changed during the leg: Homebrew Cellar: added openjdk@17/17.0.12" in doc["problems"]
+    assert rc == 0 and doc["verdict"] == "PASS" and doc["problems"] == []
+    assert doc["host_env_changes"] == ["Homebrew Cellar: added openjdk@17/17.0.12"]
     assert doc["host_env"] == FP and "openjdk@17/17.0.12" in doc["host_env_after"]["cellar"]
-    assert v8_problems(doc)
+    assert v8_problems(doc) == []
 
 
 def test_an_inject_exception_gives_a_sealed_fail_record_and_closes_the_session(wd):
