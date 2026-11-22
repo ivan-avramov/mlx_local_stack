@@ -35,7 +35,8 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
    `$STACK_WORKDIR/m76/p426/exec-latency/exec_latency.jsonl`, rows now carry `t_epoch` / `t_utc`); commit its evidence (as `b909ceb72`).
 2. B8 (`bench.p426_verify --lever kv all --pair n16,x`) → B8-A8 → signals (A8 verdict by `axis_verdict`; the pre-registered UNDECIDED
    reading C379 (2)) → the A8 panel (two families, both orders, a judge context never holds both orders) → the ship recommendation.
-3. S26-P19 KV vision rubric fix before the next KV panel; C357 PII hook; Y10 conftest LIFO (S28-P18, with the next gated change); the
+3. With the next gated change: the `RE-CHECK … acknowledged by the operator` log wording + an actor in the ack (S29-P13), Y10 / S29-P9.
+4. S26-P19 KV vision rubric fix before the next KV panel; C357 PII hook; Y10 conftest LIFO (S28-P18, with the next gated change); the
    vmmap-census bound as a measured precondition (S28-P24 follow-up).
 
 ## State (session 28)
