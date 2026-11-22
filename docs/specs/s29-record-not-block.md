@@ -1,6 +1,6 @@
 # S29 — host changes and unknown evidence files are recorded, never blocking (C384, S29-P6)
 
-v1.0, 2026-11-22. four-eyes light (data boundary: the harvest; not security / architecture).
+v1.1, 2026-11-22 (v1.1: P6b listing without digests; H5 harvest link check and committed-harvest window; any record's reference). four-eyes light (data boundary: the harvest; not security / architecture).
 
 ## Goal (verbatim in every brief)
 
@@ -47,12 +47,17 @@ gets the state `classify_leg(root, recorded chain_rc, arm)` gives (OVERRUN rule 
 the original sealed `leg.json` is kept byte-identical and harvested; the record every consumer reads for the state (the
 sequencer, harvest, `p426_freeze`, `p426_signals`, B8 `p426_verify`) shows the new state, the host changes and the C384
 supersession with the original's sha256; its seal verifies. A leg with a `(prior: …)` reason, or already harvested, is left
-as recorded (logged).
+as recorded (logged); so is a leg whose harvest is already committed (its published `HARVEST.json` exists), even when
+`sequence.json` does not show it. The kept original is installed atomically (a crash never leaves a partial file at its
+final path). The harvest checks the supersession link: a `leg.json` carrying the C384 supersession publishes only with a
+kept original that exists and hashes to the recorded value; otherwise the harvest refuses.
+**H3b** — the record of the host at the end of the run reflects the latest final check (an empty diff included).
 **P6a — `.marker`.** A `<step>.marker` directly in a tg2 `<item>.grades/seq-NNNN/` is evidence, harvested and scrubbed like
 the other grade outputs at that boundary only.
 **P6b — unrecognised files.** A regular file no harvest rule matches is not copied; it is listed in the harvest's own record
-(source path in portable form, size, sha256) and logged; the harvest continues. A row reference to such a file is listed
-there, not refused.
+(source path in portable, scrubbed form, and size; nothing derived from its unscanned bytes, so no digest) and logged; the
+harvest continues. A reference to such a file from any harvested record is listed there (with whether the recorded digest
+matches), not refused. A path the scrub would change is listed in its scrubbed form, never refusing the harvest.
 
 ## Interfaces / traces
 
