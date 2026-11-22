@@ -1,34 +1,36 @@
-# Handoff — 2026-11-21 (session 28: S27 bundle + B4b-2 + naming / sequencer fixes on `main`; gate of `d9ec9ec8b` running; A8 decider paused after s1 N16 VALID)
+# Handoff — 2026-11-22 (session 28 → 29: all code gated and pushed (`main` @ `14eca7b44`); the A8 tg2 decider is LIVE at X s1 a3)
 
-THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C375,
-S28-P7, S28-P5, S28-P4, C374 … C364). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance:
+THE one handoff. Read this, then `docs/PLAN.md` rows M76, M83, then `docs/open-questions.md` top entries (newest first: C382 … C374,
+S28-P32 … S28-P1). Model names: FULL registry names only. Review rounds: 3 per artifact. Operator stance:
 guardrails prevent wrong data or wasted time, not ceremony; GPU time is the binding resource; run-time calls are the designer's
-(C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Session 28 holds run-time autonomy for the post-gate tg2
-chain (C374) — session 28 only; ask again. Label points `S28-P<n>` (used: P1–P31).
+(C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Run-time autonomy (C374) was session 28's only — ask again. Label points
+`S29-P<n>`.
 
-Decisions: session 28 ruled C374–C381 (next **C382**).
+Decisions: session 28 ruled C374–C382 (next **C383**).
 
 ## Goal
 
 Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
-256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — blocked on the S27 bundle + gate — then the ship
-recommendation.
+256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — RUNNING — then B8-A8, signals, the A8 panel and the ship
+recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 ## FIRST
 
-1. **Gate running** on `main` @ `d9ec9ec8b` (S27 bundle `72e5626a5` already gated; on top: S28-P20 naming fix `43029a1bd` + fixture
-   classification, S28-P29 sequencer `--rerun-attempt` `55f09bc21`, B4b-2 `d9ec9ec8b`); log `$STACK_WORKDIR/gate-logs/stack-d9ec9ec8.log`.
-   On PASS: push `main` only (operator authorized, C379 / C380); the `evidence` push is the designer's timing call (C382: one data-only push of the A8 evidence after the decider); then resume the decider.
-2. **The A8 decider (C367 / C374 autonomy, session 28 only)** — out-base `$STACK_WORKDIR/m76/p426/wave2.tg2/`: pilot pair VALID /
-   VALID, s1 N16 VALID (80 / 80, no faults), X s1 a1 / a2 INVALID before any item (vmmap census timeout while a root filesystem scan
-   stalled `vmmap` box-wide, S28-P24 / P25). Resume with `wave2.tg2/rerun_x_s1_a3.sh` **plus `--rerun-attempt 2`** (C381); the sequencer
-   then runs s2 (X → N16) and reload. Check `vmmap -w <small pid>` < 30 s before launching. ≈ 15–19 h remain.
-3. Power 140 W / 28 V; `env -u CLAUDE_CODE_CHILD_NOTES_DIR`; no BUSY or self-matching pattern in your own argv (S28-P28). Homebrew: hold
-   upgrades while legs run (C360).
+1. **A run is LIVE — do not upgrade Homebrew** (C360 fingerprint), no pytest in the arms' trees (S27-P8), no gate (it locks out legs).
+   Sequencer pid in `$STACK_WORKDIR/m76/p426/wave2.tg2/sequencer.pid` (session 28: 30445, chain 30512, watcher 30610), log
+   `wave2.tg2/sequencer.stdout`. Leg `tg2-m76-x-s1.a3` started 2026-11-21 23:50Z (≈ 5–6 h); then s2 (X → N16) and reload (X → N16),
+   ≈ 15–19 h in all. The exec-latency logger runs (pid in `m76/p426/exec-latency/pid`; rows carry `t_epoch` / `t_utc`).
+2. **Ask the operator for run-time autonomy again** (C374 was session 28 only): reruns of a leg INVALID before any item, holds,
+   continue / pause calls under C353.
+3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
+   `env -u CLAUDE_CODE_CHILD_NOTES_DIR` for legs / gates. If a leg dies before any item on the vmmap census again, check
+   `vmmap -w <small pid>` (< 30 s) and look for a root filesystem scan; a further rerun uses `--rerun-attempt N` (C381).
+4. Pushed: `main` = `14eca7b44` (gate PASS `d9ec9ec8b`, receipt `…-18038ff7e402`). Local `evidence` = `b909ceb72` (pilot pair + s1 N16
+   + X s1 a1 / a2 evidence), NOT pushed: one data-only push of all A8 evidence after the decider (C382 — the designer's timing).
 
 ## Next, in order
 
-1. Gate PASS → push → decider resume (above). After the decider: harvest; publish `run/exec_latency.json` (sealed, from
+1. After the decider: harvest; publish `run/exec_latency.json` (sealed, from
    `$STACK_WORKDIR/m76/p426/exec-latency/exec_latency.jsonl`, rows now carry `t_epoch` / `t_utc`); commit its evidence (as `b909ceb72`).
 2. B8 (`bench.p426_verify --lever kv all --pair n16,x`) → B8-A8 → signals (A8 verdict by `axis_verdict`; the pre-registered UNDECIDED
    reading C379 (2)) → the A8 panel (two families, both orders, a judge context never holds both orders) → the ship recommendation.
