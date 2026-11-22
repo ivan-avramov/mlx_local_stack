@@ -179,19 +179,20 @@ def test_b8_regenerates_byte_identical(tmp_path):
 
 
 # ------------------------------------------------------------------------------------------------ closure identities
-def _identity(tmp_path, inject_allowed=None):
-    """The probe's `--print-identity`; with `inject_allowed`, the tg1 template's `inject_allowed` replaced by it (and nothing else)."""
+def _identity(tmp_path, inject_allowed=None, grader_image_id=None):
+    """The probe's `--print-identity`, with explicit controls for the historical policy comparison."""
     env = dict(os.environ, PYTHONPATH=str(S.BENCH), STACK_WORKDIR=os.environ.get("STACK_WORKDIR", str(tmp_path)))
     probe = str(S.BENCH / "run_tg1_probe.py")
-    if inject_allowed is None:
+    if inject_allowed is None and grader_image_id is None:
         argv = [sys.executable, probe, "--print-identity"]
     else:
-        code = ("import dataclasses, runpy, sys\n"
-                "from bench import tg1_runner as t\n"
-                f"t.TG1_POLICY = dataclasses.replace(t.TG1_POLICY, inject_allowed={tuple(inject_allowed)!r})\n"
-                f"sys.argv = [{probe!r}, '--print-identity']\n"
-                f"runpy.run_path({probe!r}, run_name='__main__')\n")
-        argv = [sys.executable, "-c", code]
+        code = ["import dataclasses, runpy, sys", "from bench import tg1_runner as t, toolchain"]
+        if grader_image_id is not None:
+            code.append(f"toolchain.grader_image_id = lambda: {grader_image_id!r}")
+        if inject_allowed is not None:
+            code.append(f"t.TG1_POLICY = dataclasses.replace(t.TG1_POLICY, inject_allowed={tuple(inject_allowed)!r})")
+        code.extend((f"sys.argv = [{probe!r}, '--print-identity']", f"runpy.run_path({probe!r}, run_name='__main__')"))
+        argv = [sys.executable, "-c", "\n".join(code)]
     proc = subprocess.run(argv, cwd=S.REPO, capture_output=True, text=True, timeout=300, env=env)
     assert proc.returncode == 0, (proc.stderr or proc.stdout)[-800:]
     return json.loads(proc.stdout)
@@ -231,9 +232,11 @@ def test_tg1_identity_unchanged_except_the_closure_fields(tmp_path):
     assert set(got) - box == set(want) - box, sorted((set(got) ^ set(want)) - box)
     assert {k: got[k] for k in INVARIANT_FIELDS} == {k: want[k] for k in INVARIANT_FIELDS}
     assert want["probe_code_sha256"] == BASELINE_CLOSURE["probe_code_sha256"]
-    # S27 §4.5 / §9: the policy identity rotates, and ONLY through `inject_allowed`
-    assert got[S27_POLICY_FIELD] != want[S27_POLICY_FIELD], "the S27 interrupt positive did not rotate the tg1 policy identity"
-    pre = _scrub(_identity(tmp_path, inject_allowed=PRE_S27_INJECT_ALLOWED))
+    # Use the recorded grader ID in both policy comparisons. The probe's normal identity above still uses the live grader.
+    grader = want["toolchain"]["grader_image_id"]
+    current_policy = _identity(tmp_path, grader_image_id=grader)
+    assert current_policy[S27_POLICY_FIELD] != want[S27_POLICY_FIELD], "the S27 interrupt positive did not rotate the tg1 policy identity"
+    pre = _identity(tmp_path, inject_allowed=PRE_S27_INJECT_ALLOWED, grader_image_id=grader)
     assert pre[S27_POLICY_FIELD] == want[S27_POLICY_FIELD], "the tg1 policy differs from the baseline beyond inject_allowed"
 
 

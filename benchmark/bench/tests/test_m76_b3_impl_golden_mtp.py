@@ -79,8 +79,18 @@ def _sha(obj):
     return hashlib.sha256(_canon(obj).encode()).hexdigest()
 
 
-def _git_show(ref, path):
-    return subprocess.run(["git", "-C", str(REPO), "show", f"{ref}:{path}"], capture_output=True, check=True).stdout
+def _frozen_registry_text(frozen, arm):
+    """Read a published S′ registry after verifying its frozen digest."""
+    paths = {
+        "off": BENCH / "bench" / "tests" / "fixtures" / "p426_off" / "main_models.yaml",
+        "on": P426 / "wave1.s2" / "m1-p426s2-on-b1" / "m1" / f"overlay-{ENTRY}.yaml",
+    }
+    path = paths[arm]
+    data = path.read_bytes()
+    expected = frozen[f"registry_{arm}_sha"]
+    actual = hashlib.sha256(data).hexdigest()
+    assert actual == expected, f"{path}: sha256 {actual} != frozen {expected}"
+    return data.decode("utf-8")
 
 
 def plans():
@@ -129,8 +139,8 @@ def pair_gate():
 
 def leg_checks():
     frozen = json.loads((P426 / "wave1.s2" / "run" / "frozen.s2.json").read_text())
-    off_text = _git_show(frozen["stack_head_off"], "main_models.yaml").decode()
-    on_text = _git_show(frozen["stack_head_on"], "main_models.yaml").decode()
+    off_text = _frozen_registry_text(frozen, "off")
+    on_text = _frozen_registry_text(frozen, "on")
     out = dict(delta=L.registry_delta_problems(on_text, off_text, ENTRY, allow_added_comments=True),
                delta_strict=L.registry_delta_problems(on_text, off_text, ENTRY),
                reverse=L.registry_delta_problems(off_text, on_text, ENTRY, allow_added_comments=True))

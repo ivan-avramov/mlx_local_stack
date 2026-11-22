@@ -51,7 +51,10 @@ def _receipt(case, *, repo="mlx-vlm", sha=None, policy=CURRENT_POLICY, verdict="
     sha = sha or case["head"]
     case["gate"].mkdir(exist_ok=True)
     path = case["gate"] / f"{repo}-{sha}-{policy[:12]}.json"
-    path.write_text(json.dumps(dict(repo=repo, sha=sha, policy_digest=policy, verdict=verdict)))
+    receipt = dict(repo=repo, sha=sha, policy_digest=policy, verdict=verdict)
+    if repo == "stack":
+        receipt["pushed_base"] = case["base"]
+    path.write_text(json.dumps(receipt))
     return path
 
 

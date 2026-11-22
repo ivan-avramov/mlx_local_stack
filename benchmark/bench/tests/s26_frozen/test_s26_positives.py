@@ -278,16 +278,17 @@ def test_fix_a_row_sha_that_does_not_verify_is_not_a_decline(tmp_path, monkeypat
 def test_fix_an_exception_message_never_carries_the_absolute_home_path(tmp_path, monkeypatch, world):
     """[FIX] AGENTS.md (public repo: no absolute home paths): an exception whose message holds a home-directory path is recorded
     as a problem, but the sealed record must not carry the path itself."""
-    home = os.path.expanduser("~")
-    if len(home) < 4:
-        pytest.skip("no usable home directory")
+    from bench import host_env
+
+    home = tmp_path / "scrub-home"
+    monkeypatch.setattr(host_env, "real_home", lambda: home)
 
     def boom(*args):
         raise OSError(f"cannot read {home}/.gradle/caches/x.bin")
     rc, doc, _ = run_pos(tmp_path, monkeypatch, world, hooks={"grade": boom})
     assert rc == 1 and ph.sealed_ok(doc)
-    assert any(line.startswith("exception: OSError: ") for line in doc["problems"])
-    assert home not in json.dumps(doc)
+    assert "exception: OSError: cannot read ~/.gradle/caches/x.bin" in doc["problems"]
+    assert str(home) not in json.dumps(doc)
 
 
 # ---------------------------------------------------------------------------------------------------- v8 (`positives_problems`)

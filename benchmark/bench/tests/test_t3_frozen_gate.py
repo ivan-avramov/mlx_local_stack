@@ -46,8 +46,8 @@ def test_audits_and_ref_are_derived_per_sha_not_from_the_live_tree(tmp_path):
     """[N] §3 "derived per sha, not a fixed tuple": one fork whose history crosses both layouts and a later `dev/ci.py` with
     a different list — each sha gates with its own list and ref, whatever the live checkout holds."""
     repo, old = T.old_layout(tmp_path / "mlx-vlm")
-    s2 = T.fork_commit(repo, workflow=None, ci=(T.REPO / "src/mlx-vlm/dev/ci.py").read_text(),
-                       sync_ref=(T.REPO / "src/mlx-vlm/.upstream-sync-ref").read_text(), msg="sync")
+    ci, sync_ref = T.s2_inputs()
+    s2 = T.fork_commit(repo, workflow=None, ci=ci, sync_ref=sync_ref, msg="sync")
     later_audits = [("check_upstream_parity.py", ()), ("check_upstream_deletions.py", ("--strict", "--verbose")),
                     ("check_new_direction.py", ())]
     later = T.fork_commit(repo, ci=T.ci_py(later_audits), sync_ref=T.sync_ref_file("v0.9.9"), msg="later")

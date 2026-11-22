@@ -851,13 +851,25 @@ def old_layout(path):
     return repo, fork_commit(repo, workflow=OLD_WORKFLOW, ci=ci_py(OLD_AUDITS), msg="old layout")
 
 
+def s2_inputs():
+    """Read the original S′ fixture files from the pinned mlx-vlm tree."""
+    fork = REPO / "src" / "mlx-vlm"
+    sha = S2_PINS["mlx_vlm"]
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    env.update(GIT_NO_LAZY_FETCH="1", GIT_NO_REPLACE_OBJECTS="1")
+    ci, sync_ref = (
+        REAL_RUN(["git", "-C", str(fork), "--git-dir=.git", "cat-file", "blob", f"{sha}:{path}"],
+                 capture_output=True, check=True, env=env).stdout.decode("utf-8")
+        for path in ("dev/ci.py", ".upstream-sync-ref")
+    )
+    return ci, sync_ref
+
+
 def s2_layout(path):
-    """The fork at S′: the real `dev/ci.py` and `.upstream-sync-ref` bytes, no parity workflow. POST-REVEAL tw-5: C242 pin
-    move — the bytes are read from the tree's `src/mlx-vlm` (`c688e722` here, `1c7c8fa1` in the candidate; identical there)."""
+    """The fork at S′: historical audit inputs, without a parity workflow."""
+    ci, sync_ref = s2_inputs()
     repo = make_fork_repo(path)
-    real = REPO / "src" / "mlx-vlm"
-    return repo, fork_commit(repo, ci=(real / "dev" / "ci.py").read_text(), sync_ref=(real / ".upstream-sync-ref").read_text(),
-                             msg="s2 layout")
+    return repo, fork_commit(repo, ci=ci, sync_ref=sync_ref, msg="s2 layout")
 
 
 class GateRunner:
