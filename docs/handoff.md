@@ -6,7 +6,7 @@ guardrails prevent wrong data or wasted time, not ceremony; GPU time is the bind
 (C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Run-time autonomy (C374) was session 28's only — ask again. Label points
 `S29-P<n>`.
 
-Decisions: session 28 ruled C374–C382 (next **C383**).
+Decisions: session 28 ruled C374–C382; session 29 C383 (run-time autonomy for the decider; next **C384**).
 
 ## Goal
 
@@ -20,7 +20,7 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
    Sequencer pid in `$STACK_WORKDIR/m76/p426/wave2.tg2/sequencer.pid` (session 28: 30445, chain 30512, watcher 30610), log
    `wave2.tg2/sequencer.stdout`. Leg `tg2-m76-x-s1.a3` started 2026-11-21 23:50Z (≈ 5–6 h); then s2 (X → N16) and reload (X → N16),
    ≈ 15–19 h in all. The exec-latency logger runs (pid in `m76/p426/exec-latency/pid`; rows carry `t_epoch` / `t_utc`).
-2. **Ask the operator for run-time autonomy again** (C374 was session 28 only): reruns of a leg INVALID before any item, holds,
+2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
    `env -u CLAUDE_CODE_CHILD_NOTES_DIR` for legs / gates. If a leg dies before any item on the vmmap census again, check
