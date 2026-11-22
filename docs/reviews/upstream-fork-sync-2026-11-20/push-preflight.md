@@ -62,3 +62,14 @@ The three GitHub main refs and both upstream main refs matched the recorded inpu
 The official MLX-VLM receipt uses policy digest prefix `f4254f6b326b`. The installed hook preflight fetched the fork's public refs, accepted the exact proposed update to its main branch at level full, and performed only a check. One previously listed case ran and passed under the official gate. The exact reviewed upstream and public fork bases are unchanged.
 
 The isolated gate and review branch records the accepted test inputs. Publication follows operator acceptance and in-turn push approval. Publish the verified fork, confirm GitHub reachability for both fork SHAs, then update the stack pins and run the stack gate on its exact commit before publication.
+
+## Follow-on sync and exact fork receipts
+
+The next upstream check found eight MLX-VLM commits through `f1618d6d52be4ef25d3fe65270f7528a59c55df3`. The follow-on merge retains the published fork as its first parent. It carries per-video RoPE timing through prefix-cache reuse and integrates upstream's Inkling tool parser and trainer changes. The locked response parser needed an Inkling adapter to preserve joined reasoning and content. The cache-lifetime fixture now supplies the video timing helper used by the production state. A focused run passed 220 cases. The first exact gate required a fork marker on the added Inkling regression case. The amended commit passed formatting and all nine audits, with zero new upstream-copy failures and the existing 211 baseline failures unchanged.
+
+| Repository | Exact tip | Official result on the current stack policy |
+| --- | --- | --- |
+| MLX-VLM | `2e374e05f86e1347b78a346b06a63db842e504c8` | PASS. 14,885 passed, 58 skipped and 22 expected failures. All 147 tests requiring the exact MLX-Serve sibling passed. Receipt policy prefix `e278faef8d77`. |
+| MLX-Serve | `0555b2fe9637f6b01b2bd5acc834add79841aab7` | PASS. 543 passed and one skipped. Receipt policy prefix `23a0106e98c7`. Published main still contains upstream `754d8d5a07e82ea65efc47a8bd503f1dda2676c8`. |
+
+The installed hook accepted the pending exact MLX-VLM update at level full in a read-only check. The follow-on preflight confirmed both upstream tips, the published MLX-VLM base `427a517a28b422085c8634f82fd36d32d9ae2fbc`, and the current published stack base `14eca7b44e7d61b8ba816b897cc88104b8efb309`. The stack's reviewed P9 fixture repairs are committed on top of that base, with separate focused verification. The exact stack pin commit and its full validation follow publication of the new MLX-VLM tip.
