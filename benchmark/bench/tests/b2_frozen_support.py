@@ -65,8 +65,9 @@ BASE_GITLINKS = {"src/mlx-vlm": "1c7c8fa166582ac1a1c23ae9063527b2b5215b11",
 # (the tq4_attention registry key). C326 bump (M77): src/mlx-vlm 5f83c84f → f9bf743f (tq4_attention with MTP OFF; MTP-ON and
 # mode-absent paths unchanged), src/mlx-serve 0f2259f → 3b02e4c (the MTP-OFF tq4_attention configuration accepted). C328 bump
 # (M76 B2): src/mlx-vlm f9bf743f → 34a21208 (dev tools + tests only; production mlx_vlm/ unchanged).
-LIVE_GITLINKS = {"src/mlx-vlm": "34a212080d28953406ae446ab86505a964677a8d",
-                 "src/mlx-serve": "3b02e4cbd669b2f4ecb2cb8dabac4ef906e70afc"}
+# Upstream follow-on sync: the published and paired fork tips.
+LIVE_GITLINKS = {"src/mlx-vlm": "2e374e05f86e1347b78a346b06a63db842e504c8",
+                 "src/mlx-serve": "0555b2fe9637f6b01b2bd5acc834add79841aab7"}
 
 
 def sha256_file(path):
