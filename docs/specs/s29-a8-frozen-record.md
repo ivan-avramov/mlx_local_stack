@@ -1,6 +1,6 @@
 # S29 — B8-A8 rule 3.6 accepts the decider legs' frozen record (the amendment)
 
-v1.0, 2026-11-23. four-eyes light (the A8 verdict's input path; a consumer fix, no runner change). Lead call S29-P21 under C388.
+v1.1, 2026-11-23 (v1.1: R1 binds the amendment to the pilot dossier the sequencer recorded, not to B8-A8's pilot acceptance — D1, frozen test). four-eyes light (the A8 verdict's input path; a consumer fix, no runner change). Lead call S29-P21 under C388.
 
 ## Goal (verbatim in every brief)
 
@@ -28,8 +28,10 @@ runner, sequencer, harvest, signals or panel code; `B8.json` and the no-A8 sheet
 ## Required behaviour (intent; mechanism free)
 
 R1. A decider-session attempt (s1, s2, reload) whose `frozen_record.sha256` is the amendment's sha256 passes rule 3.6 when the
-    amendment is sealed and valid, names this v8 base (`v8_base_sha256` == the v8 base's sha256), and names the pilot dossier of the
-    pilot pair B8-A8 accepted (`pilot_dossier_sha256`); the pilot session's attempts still need the v8 base's sha256.
+    amendment is sealed and valid, names this v8 base (`v8_base_sha256` == the v8 base's sha256), and names this campaign's pilot
+    dossier (`pilot_dossier_sha256` == the byte sha256 of the pilot pair's dossier file the sequencer recorded in `sequence.json`,
+    read through B8-A8's reader), whether or not B8-A8 accepts the pilot pair itself; the pilot session's attempts still need the
+    v8 base's sha256. A missing pilot record / dossier, or a sha that differs, is a rule-3.6 reason for the decider attempts.
 R2. Anything else is a rule-3.6 REASON (the pair is rejected, never a crash): no amendment published while a decider attempt names
     one; an unsealed / tampered amendment; an amendment naming another v8 base or another pilot dossier; a decider attempt naming a
     sha that is neither; a pilot attempt naming the amendment.
