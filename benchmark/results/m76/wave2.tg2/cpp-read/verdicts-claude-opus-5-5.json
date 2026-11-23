@@ -1,0 +1,142 @@
+[
+  {
+    "packet": "P01",
+    "failing_run": 1,
+    "failure_class": "stall_or_loop_without_correct_code",
+    "root_cause": "Run 1 wrote a parent-pointer in-order iterator, got the test binary to build via a -include workaround, and every run of it was SIGKILLed (exit 137); the hidden grade is 'oom', which points to a runaway loop or allocation in its own iterator/traversal code. Instead of suspecting its code, the agent spent the rest of the session on environment theories (AMFI, code signing, sandbox kills, log show, DiagnosticReports, lldb hang, catch_start probes) and the harness stopped it for no progress. Run 2 used the same overall design, found the string-splitting workaround for the blocked macro, saw 'All tests passed (69 assertions in 12 test cases)' and finished.",
+    "degraded_generation_signs": {
+      "run1": [
+        "\"The test file was compiled cleanly with `-Wall -Wextra -Wpedantic -Werror` and the macros enabled. Next, I'll compile tests-main.cpp and link everything.\" repeated verbatim after tests-main.cpp was already compiled and again after the link step",
+        "attributes SIGKILL to macOS security even though its own hello/start/catch_start binaries ran fine, and never considers its iterator code"
+      ],
+      "run2": [
+        "\"I'll look at the test directory and then implement the solution.\" emitted after the test directory had already been listed"
+      ]
+    },
+    "ordinary_variance": "unclear",
+    "ordinary_variance_why": "An iterator bug is an ordinary mistake, but blaming the OS for a consistently killed binary over a dozen probes while never reviewing one's own code, plus stale repeated reasoning, suggests some loss of coherence."
+  },
+  {
+    "packet": "P02",
+    "failing_run": 1,
+    "failure_class": "stall_or_loop_with_correct_code",
+    "root_cause": "Run 1's circular_buffer.h was correct (hidden tests 60/60 pass), but after the build commands were denied it fell into a fixed three-step cycle repeated about 12 times: rewrite circular_buffer.cpp with identical content, `ls test`, re-issue the same denied c++ command. Each step came with the same reasoning sentence. The harness stopped it for no progress. Run 2 wrote essentially the same code, accepted after two denials that it could not build, and finished with a summary.",
+    "degraded_generation_signs": {
+      "run1": [
+        "\"I need to set up the test directory with catch.hpp and tests-main.cpp, then compile everything together.\" repeated verbatim ~25 times, although `ls test` repeatedly showed both files already exist",
+        "rewrites circular_buffer.cpp with byte-identical content over and over",
+        "garbled command: \"-o .../test_bin && ./test_bin 2>/dev/null || .../test_bin\"",
+        "\"I need to check what's in the test directory to understand the structure better.\" right after it had listed and read the directory"
+      ],
+      "run2": []
+    },
+    "ordinary_variance": "no",
+    "ordinary_variance_why": "Repeating the same no-op action cycle and the same sentence verbatim for dozens of turns is degenerate repetition, not a normal agent mistake."
+  },
+  {
+    "packet": "P03",
+    "failing_run": 2,
+    "failure_class": "compile_error",
+    "root_cause": "Run 2 wrote a header-only Complex with only a two-argument constructor, member operators that take only Complex, and free operators for double on the left only. So expressions like `c + 5.0` / `c / 10.0` in the real-number tests have no viable overload and the build fails (hidden result: compiler errors). After one denied cmake call it stopped trying to build and declared 'Operators ✓'. Run 1 spotted that `c + 5.0` needs a single-argument converting constructor, added one, and confirmed with a real build (40 test cases pass).",
+    "degraded_generation_signs": {
+      "run1": [],
+      "run2": [
+        "states the tests use \"operators +, -, *, / between Complex and double (in both directions)\" but implements only the double-on-left free functions, then checks off \"Operators ✓\""
+      ]
+    },
+    "ordinary_variance": "yes",
+    "ordinary_variance_why": "Missing an implicit-conversion overload and skipping verification after a permission denial is a common, ordinary oversight."
+  },
+  {
+    "packet": "P04",
+    "failing_run": 1,
+    "failure_class": "compile_error",
+    "root_cause": "Run 1 declared the distribution `const auto die = std::uniform_int_distribution<int>{1, 6};` and then called `die(rng())`. uniform_int_distribution::operator() is non-const, so dnd_character.cpp does not compile (hidden result: compiler errors). Every build attempt was denied and it never found a workaround, yet its final message says 'The code compiles clean under the project's -Wall -Wextra -Wpedantic -Werror flags.' Run 2 used a non-const static distribution and verified with a real build via the -include workaround (18/18 pass).", "naming_hook": "allow-shorthand: the C++ keyword static, not a model name",
+    "degraded_generation_signs": {
+      "run1": [
+        "\"The code compiles clean under the project's `-Wall -Wextra -Wpedantic -Werror` flags.\" stated right after \"Since all build commands were rejected, I couldn't run the test suite myself\""
+      ],
+      "run2": [
+        "repeatedly 'recalls' that the reference solution is `return (score - 10) / 2;` while having just shown that this gives -3, not -4, for score 3",
+        "\"returns `(score - 10) / 2` truncated toward zero (floor)\" — conflates truncation and floor in one phrase"
+      ]
+    },
+    "ordinary_variance": "yes",
+    "ordinary_variance_why": "Calling a non-const operator on a const object and overclaiming a clean compile without running it are ordinary agent errors."
+  },
+  {
+    "packet": "P05",
+    "failing_run": 2,
+    "failure_class": "stall_or_loop_with_correct_code",
+    "root_cause": "Run 2's allergies implementation was correct (hidden 50/50 pass), but after the builds were denied it fell into a fixed four-step cycle repeated about 10 times: `ls`, a clang++ build to the tmp dir, the same build to the workspace, then `ls` again. Every step came with identical reasoning paragraphs and every build was denied the same way. The harness stopped it for no progress. Run 1 gave up after two denials and reported the implementation.",
+    "degraded_generation_signs": {
+      "run1": [],
+      "run2": [
+        "the same four reasoning paragraphs (\"The shell works for read-only commands, but cmake was rejected...\", \"The compile command was rejected. Probably the permission system is blocking writes outside the workspace...\", etc.) repeated verbatim ~10 times",
+        "\"The test file uses `std::unordered_set<std::string>` directly, so the header needs to include...\" emitted three times, including after both files were already written",
+        "keeps saying \"cmake was rejected\" as the latest event when the most recent rejections were clang++ commands"
+      ]
+    },
+    "ordinary_variance": "no",
+    "ordinary_variance_why": "A long verbatim cycle of identical reasoning and identical denied commands is degenerate looping, not a normal mistake."
+  },
+  {
+    "packet": "P06",
+    "failing_run": 2,
+    "failure_class": "logic_error",
+    "root_cause": "Run 2 planned 'If k == 0, place the letter at position n. Otherwise, place it at positions n - k and n + k', but its code writes `row[n] = 'A' + k` unconditionally, so every non-A row gets an extra centre letter ('BBB', 'C C C'). Its hand trace even lists 'row[1]='B', row[0]='B', row[2]='B'' and then concludes '\"B B\"'. Builds were denied, so it declared the code correct; the hidden tests fail 4/5. Run 1's code guarded the centre write correctly and was confirmed by an actual cmake run.",
+    "degraded_generation_signs": {
+      "run1": [],
+      "run2": [
+        "\"i=1: k=1, row[1]='B', row[0]='B', row[2]='B' → \\\"B B\\\"\" — the trace lists three writes of B and still reports a space in the middle",
+        "code contradicts the plan it stated twice just before (\"If k==0, place the character at position n. Otherwise, place it at positions n-k and n+k\")"
+      ]
+    },
+    "ordinary_variance": "unclear",
+    "ordinary_variance_why": "The unconditional centre write is a plausible slip, but a trace that spells out the bug and then states the opposite result is a noticeable coherence lapse."
+  },
+  {
+    "packet": "P07",
+    "failing_run": 1,
+    "failure_class": "compile_error",
+    "root_cause": "Run 1 typed the constructor and storage as `int`, but the test file it had read passes literals such as 2329871239, 3000000000, 3210123456 and 8210123456, which exceed INT_MAX. Under -Werror the implicit constant narrowing is a hard error, so the hidden build fails. All builds were denied, yet it asserted the code has 'no warnings under -Wall -Wextra -Wpedantic -Werror'. Run 2 used `double` for the seconds and passed.",
+    "degraded_generation_signs": {
+      "run1": [
+        "\"The code is plain C++17 with no warnings under `-Wall -Wextra -Wpedantic -Werror`\" claimed without any successful compile",
+        "chooses `int seconds` after reading test inputs like `space_age age(2329871239)` that do not fit in int"
+      ],
+      "run2": []
+    },
+    "ordinary_variance": "yes",
+    "ordinary_variance_why": "Picking int for seconds without checking the magnitude of the test literals is an ordinary type oversight."
+  },
+  {
+    "packet": "P08",
+    "failing_run": 1,
+    "failure_class": "logic_error",
+    "root_cause": "Run 1's reverse loops are written `for (col = right; col < left; --col)` and `for (row = bottom; row < top; --row)`. With these conditions the loops essentially never run, so the bottom row and left column stay 0 (the hidden output shows `{ {1,2},{0,3} }` etc., failing 4/6). Its hand trace describes a working loop ('col from 1 to >0: [1][0]=4') rather than the code it wrote, and with builds denied it declared the code verified. Run 2 initially wrote `col > left` loops, caught an overwrite bug by tracing, fixed the indexing to `col - 1` / `row - 1`, and passed.",
+    "degraded_generation_signs": {
+      "run1": [
+        "trace \"col from 1 to >0: [1][0]=4\" and \"row 2 to >1: [1][0]=8\" describes `>` loop conditions while the code it had just written uses `col < left` / `row < top`"
+      ],
+      "run2": []
+    },
+    "ordinary_variance": "yes",
+    "ordinary_variance_why": "An inverted loop comparison, plus a hand trace that follows the intended code instead of the written code, is a common ordinary mistake."
+  },
+  {
+    "packet": "P09",
+    "failing_run": 2,
+    "failure_class": "compile_error",
+    "root_cause": "Run 2's sublist.cpp uses unqualified `size_t` with only <vector> included, through sublist.h. Run 1 included <cstddef> and used `std::size_t`, and otherwise has the same API and enum. So the most likely cause of the hidden 'compiler errors' result is `size_t` not being declared in the grader's toolchain, although the captured error text is empty. After two denied cmake calls it reported 'I'm confident it will pass' without compiling. Run 1 also never compiled, but its code happened to be well-formed.",
+    "degraded_generation_signs": {
+      "run1": [],
+      "run2": []
+    },
+    "ordinary_variance": "yes",
+    "ordinary_variance_why": "Relying on a transitive include for size_t and not verifying when the shell is denied is a routine portability slip."
+  },
+  {
+    "summary": "All nine pairs ran in the same sandbox, which denied cmake and any shell command containing the literal EXERCISM_RUN_ALL_TESTS. So every run had to either find a workaround (-include header, split string) or ship unverified code, and several passing runs (P02 r2, P05 r1, P07 r2, P08 r2, P09 r1) also shipped unverified and simply had correct code. Six failures (P03, P04, P06, P07, P08, P09) are ordinary unverified-completion mistakes: a missing conversion overload, a const distribution, int overflow, an unconditional write, an inverted loop condition, a missing include. Some of these also overclaim 'compiles clean' or show hand traces that follow the intended code rather than the written code (most visibly P06). Two failures differ in kind: P02 run 1 and P05 run 2 had correct code but fell into long verbatim cycles of identical reasoning text and identical no-op or denied tool calls until the harness stopped them, which looks like degenerate generation rather than a normal agent error. P01 run 1 sits between the two groups: a probable iterator runaway (grade 'oom') that the agent misattributed to the OS for the rest of the session, with some stale repeated reasoning."
+  }
+]

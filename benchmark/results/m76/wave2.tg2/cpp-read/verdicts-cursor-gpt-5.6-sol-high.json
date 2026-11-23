@@ -1,0 +1,128 @@
+[
+ {
+  "packet": "P01",
+  "failing_run": 1,
+  "failure_class": "stall_or_loop_without_correct_code",
+  "root_cause": "The test binary repeatedly ended with `Killed by SIGKILL` and exit 137, while the hidden result reported an OOM and no output. Instead of rechecking the iterator implementation, the agent pursued codesigning, AMFI logs, crash reports, and a hanging debugger until the harness stopped it for no progress. Because the implementation never passed and its relevant code is truncated in the packet, the precise code defect cannot be established.",
+  "degraded_generation_signs": {
+   "run1": [
+    "The test file was compiled cleanly with `-Wall -Wextra -Wpedantic -Werror` and the macros enabled. Next, I'll compile tests-main.cpp and link everything."
+   ],
+   "run2": []
+  },
+  "ordinary_variance": "unclear",
+  "ordinary_variance_why": "The debugging tunnel vision is plausible ordinary variance, but the unexplained OOM and prolonged no-progress behavior make the underlying capability uncertain."
+ },
+ {
+  "packet": "P02",
+  "failing_run": 1,
+  "failure_class": "stall_or_loop_with_correct_code",
+  "root_cause": "The hidden grade shows all 60 tests passed, so the implementation was correct. After compilation was denied, however, the agent repeatedly rewrote the unchanged `.cpp`, listed the same directory, and retried the same denied command until the harness stopped it for stalling.",
+  "degraded_generation_signs": {
+   "run1": [
+    "I need to set up the test directory with catch.hpp and tests-main.cpp, then compile everything together."
+   ],
+   "run2": []
+  },
+  "ordinary_variance": "no",
+  "ordinary_variance_why": "Repeating an identical reasoning and tool-call cycle about a dozen times is a coherence failure rather than ordinary competent-agent variance."
+ },
+ {
+  "packet": "P03",
+  "failing_run": 2,
+  "failure_class": "compile_error",
+  "root_cause": "Run 2 defined only `Complex(double real, double imag)` while member arithmetic operators accepted `const Complex&`. Consequently expressions such as `c + 5.0` could not convert the scalar into a `Complex`, although the tests require scalar operations in both directions. The denied build prevented the agent from catching the compiler error that the hidden suite reported.",
+  "degraded_generation_signs": {
+   "run1": [],
+   "run2": []
+  },
+  "ordinary_variance": "yes",
+  "ordinary_variance_why": "Forgetting a converting constructor or right-hand scalar overload is a common C++ API oversight."
+ },
+ {
+  "packet": "P04",
+  "failing_run": 1,
+  "failure_class": "compile_error",
+  "root_cause": "The distribution inside `ability()` was declared `const auto die`, but `std::uniform_int_distribution::operator()` is non-const, so `die(rng())` does not compile. The implementation also used `diff / 2 + (diff % 2 < 0)`, which gives -2 rather than -4 for score 3. Because every build was denied, the agent incorrectly declared the code warning-clean before the hidden compiler failure.",
+  "degraded_generation_signs": {
+   "run1": [
+    "-3+1 = -4 \u2713"
+   ],
+   "run2": []
+  },
+  "ordinary_variance": "no",
+  "ordinary_variance_why": "The explicit claim that -3 plus 1 equals -4 is a basic same-session coherence failure, not merely an ordinary coding slip."
+ },
+ {
+  "packet": "P05",
+  "failing_run": 2,
+  "failure_class": "stall_or_loop_with_correct_code",
+  "root_cause": "The implementation passed all 50 hidden tests, but the session was counted as failed because it stalled. After build commands were denied, the agent alternated the same two compile attempts and `ls` with identical reasoning for roughly fifteen cycles instead of stopping or changing strategy.",
+  "degraded_generation_signs": {
+   "run1": [],
+   "run2": [
+    "The shell works for read-only commands, but cmake was rejected. It's probably a permission rule that blocks cmake/build commands. Let me try building directly with clang++.",
+    "The compile command was rejected. Probably the permission system is blocking writes outside the workspace, or blocking clang++."
+   ]
+  },
+  "ordinary_variance": "no",
+  "ordinary_variance_why": "A long verbatim command-and-reasoning loop is a coherence deficit rather than a plausible competent-agent mistake."
+ },
+ {
+  "packet": "P06",
+  "failing_run": 2,
+  "failure_class": "logic_error",
+  "root_cause": "Run 2 always wrote the current letter at `row[n]` and, for non-A rows, also wrote it at `n-k` and `n+k`. This produced three letters per row, such as `BBB`, instead of the required two flanking letters `B B`, causing four of five hidden tests to fail. Its manual trace listed all three assignments but nevertheless claimed the expected two-letter output.",
+  "degraded_generation_signs": {
+   "run1": [],
+   "run2": [
+    "row[1]='B', row[0]='B', row[2]='B' \u2192 \"B B\"",
+    "row[2]='C', row[0]='C', row[4]='C' \u2192 \"C   C\""
+   ]
+  },
+  "ordinary_variance": "no",
+  "ordinary_variance_why": "Although the extra center assignment is a small coding error, the trace directly contradicting those assignments indicates a coherence deficit."
+ },
+ {
+  "packet": "P07",
+  "failing_run": 1,
+  "failure_class": "compile_error",
+  "root_cause": "Run 1 represented seconds with `int`, despite visible test values such as 2329871239 and 8210123456 exceeding a 32-bit signed integer. Under the project's warnings-as-errors configuration, those constant conversions can fail compilation, matching the hidden compiler failure; the denied builds left the defect unverified.",
+  "degraded_generation_signs": {
+   "run1": [],
+   "run2": []
+  },
+  "ordinary_variance": "yes",
+  "ordinary_variance_why": "Choosing an integer type that is too narrow for visible test data is an ordinary API/type-selection mistake."
+ },
+ {
+  "packet": "P08",
+  "failing_run": 1,
+  "failure_class": "logic_error",
+  "root_cause": "The two reverse loops used `col < left` and `row < top` while decrementing from the larger right and bottom boundaries. Those conditions were false immediately, leaving the bottom and left portions as zeros and causing four of six hidden tests to fail. The agent then hand-traced the loops as though they used `>` and declared the implementation correct.",
+  "degraded_generation_signs": {
+   "run1": [
+    "top<bottom: 1<2: col from 1 to >0: [1][0]=4",
+    "The logic is correct."
+   ],
+   "run2": []
+  },
+  "ordinary_variance": "no",
+  "ordinary_variance_why": "The comparison typo is ordinary, but tracing the opposite condition from the visible code and certifying it as correct is a coherence failure."
+ },
+ {
+  "packet": "P09",
+  "failing_run": 2,
+  "failure_class": "compile_error",
+  "root_cause": "Run 2 used unqualified `size_t` without including `<cstddef>` or writing `std::size_t`, leaving the implementation dependent on a non-portable transitive global declaration. The build was denied, and the agent declared completion before the hidden suite reported compiler errors.",
+  "degraded_generation_signs": {
+   "run1": [],
+   "run2": []
+  },
+  "ordinary_variance": "yes",
+  "ordinary_variance_why": "Missing the proper declaration or namespace for `size_t` is a routine C++ portability and compilation oversight."
+ },
+ {
+  "summary": "The failures split into four compile errors, two direct logic errors, and three harness stalls; denied build commands were common, but the passing counterpart runs show that the environment alone did not determine success. P03, P07, and P09 resemble ordinary C++ interface, type, or portability mistakes. P02 and P05 are different in kind because correct code was defeated by long verbatim generation loops, while P04, P06, and P08 contain direct contradictions between visible arithmetic or code and the agent's own verification. P01 also stalled with an OOM-producing implementation, although the packet does not expose enough of the iterator to distinguish its exact code defect from environmental behavior."
+ }
+]
