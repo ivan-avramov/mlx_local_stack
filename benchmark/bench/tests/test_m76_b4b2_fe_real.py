@@ -80,9 +80,16 @@ def _signals(tmp_path, *extra):
     return cli("bench.p426_signals", args, tmp_path)
 
 
-# (b) with no B8-A8.json SIGNALS.md / SIGNALS.json regenerate byte-identically (the sheet over the frozen panel, not ingested: no --partial)
+# (b) SIGNALS.md / SIGNALS.json regenerate byte-identically from main's inputs (the frozen panel, not ingested: no --partial;
+# S29: with the committed B8-A8.json once the A8 readout is published)
+def _published_b8_a8():
+    """S29: once the A8 readout is published, the committed sheets are generated WITH the committed B8-A8.json."""
+    path = M76 / "B8-A8.json"
+    return ["--b8-a8", path] if path.is_file() else []
+
+
 def test_signals_regenerate_byte_identically(tmp_path):
-    proc = _signals(tmp_path, "--panel", M76 / "panel")
+    proc = _signals(tmp_path, "--panel", M76 / "panel", *_published_b8_a8())
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert (tmp_path / "S.md").read_bytes() == (M76 / "SIGNALS.md").read_bytes()
     assert (tmp_path / "S.json").read_bytes() == (M76 / "SIGNALS.json").read_bytes()
@@ -90,7 +97,7 @@ def test_signals_regenerate_byte_identically(tmp_path):
 
 # (b) ... and so do SIGNALS-partial.md / .json (the frozen stage-3 panel, ingested under --partial)
 def test_partial_signals_regenerate_byte_identically(tmp_path):
-    proc = _signals(tmp_path, "--panel", M76 / "panel", "--partial")
+    proc = _signals(tmp_path, "--panel", M76 / "panel", "--partial", *_published_b8_a8())
     assert proc.returncode == 0, proc.stderr[-1500:]
     assert (tmp_path / "S.md").read_bytes() == (M76 / "SIGNALS-partial.md").read_bytes()
     assert (tmp_path / "S.json").read_bytes() == (M76 / "SIGNALS-partial.json").read_bytes()
@@ -155,7 +162,11 @@ def test_a8_record_changes_only_the_a8_parts_of_the_real_sheet(committed, partia
     doc = V.verify_a8_kv(M76, sha(M76 / "B8.json"))
     got = S.compute_kv(RESULTS, b8, b8_sha256=sha(M76 / "B8.json"), panel=M76 / "panel", partial=partial, b8_a8=doc,
                        b8_a8_sha256=hashlib.sha256(V.dumps(doc).encode()).hexdigest())
-    want = json.loads((M76 / committed).read_text())
+    # S29: the A8-free reference is the sheet generated from the same inputs without B8-A8 (the committed sheet carries A8 once
+    # the readout is published; its byte identity is the golden above)
+    want = json.loads(json.dumps(S.compute_kv(RESULTS, b8, b8_sha256=sha(M76 / "B8.json"), panel=M76 / "panel", partial=partial),
+                                 sort_keys=True, default=str))
+    assert "A8" not in want["axes"]
     assert projection(got) == projection(want)
     assert "A8" in got["axes"]
     members = a8_panel_members(doc)

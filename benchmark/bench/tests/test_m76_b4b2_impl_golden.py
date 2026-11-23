@@ -1,5 +1,6 @@
-"""M76 B4b-2 §7.1 / §7.2 / §7.3 on `main`'s committed records: `B8.json` regenerates byte-identically in every state; with no
-`B8-A8.json` the signals sheets (`SIGNALS.md`, `SIGNALS-partial.md` and their JSON) regenerate byte-identically; with the
+"""M76 B4b-2 §7.1 / §7.2 / §7.3 on `main`'s committed records: `B8.json` regenerates byte-identically in every state; the committed
+signals sheets (`SIGNALS.md`, `SIGNALS-partial.md` and their JSON) regenerate byte-identically (S29: with the committed
+`B8-A8.json` once the A8 readout is published); with the
 `B8-A8.json` of the harvested tg2 pilot pair and decider (new identity; S29: decider legs on the amendment; a shape check)
 `B8.json` is unchanged and the sheet differs only in A8 content; the pilot and the decider pairs are accepted, final-tree
 identities matched, provenance passing."""
@@ -57,9 +58,23 @@ def _signals(tmp_path, partial=False, b8_a8=None):
     return (tmp_path / "S.md").read_text(), (tmp_path / "S.json").read_text()
 
 
+A8_FREE = Path(__file__).resolve().parent / "fixtures" / "m76_signals_without_a8"
+
+
 @pytest.mark.parametrize("partial,name", [(False, "SIGNALS"), (True, "SIGNALS-partial")])
-def test_signals_without_b8_a8_are_byte_identical(tmp_path, partial, name):
+def test_signals_without_b8_a8_are_byte_identical_to_the_a8_free_golden(tmp_path, partial, name):
+    """S29 (Sol cold read): the A8-free path keeps an independent byte golden — the sheets as committed before the A8 readout
+    (`fixtures/m76_signals_without_a8/`); with no B8-A8 the sheets regenerate byte-identically to them."""
     md, js = _signals(tmp_path, partial=partial)
+    assert md == (A8_FREE / f"{name}.md").read_text()
+    assert js == (A8_FREE / f"{name}.json").read_text()
+
+
+@pytest.mark.parametrize("partial,name", [(False, "SIGNALS"), (True, "SIGNALS-partial")])
+def test_committed_signals_regenerate_byte_identically(tmp_path, partial, name):
+    """S29: the committed sheets regenerate from main's inputs — with the committed B8-A8.json once the A8 readout is published."""
+    published = M76 / "B8-A8.json"
+    md, js = _signals(tmp_path, partial=partial, b8_a8=published if published.is_file() else None)
     assert md == (M76 / f"{name}.md").read_text()
     assert js == (M76 / f"{name}.json").read_text()
 
@@ -112,10 +127,13 @@ def test_with_b8_a8_the_sheet_differs_only_in_a8_content(tmp_path, regenerated):
     section, the B8-A8 header line, the A8 decode lines, A8 flags, and the panel completeness now also expecting B8-A8's
     `A8-<session>` members (missing: none is judged in the frozen panel)."""
     md, js = _signals(tmp_path, b8_a8=regenerated.with_name("B8-A8.json"))
-    sig, committed = json.loads(js), json.loads((M76 / "SIGNALS.json").read_text())
+    (tmp_path / "base").mkdir()
+    base_md, base_js = _signals(tmp_path / "base")     # S29: the A8-free reference is generated, not the committed sheet
+    sig, committed = json.loads(js), json.loads(base_js)
+    assert "A8" not in committed["axes"]
     members = _a8_members_added(sig, committed)
     assert members == ["A8-s1", "A8-s2"]
-    base = (M76 / "SIGNALS.md").read_text().split("\n")
+    base = base_md.split("\n")
     c_comp, g_comp = committed["panel"]["completeness"], sig["panel"]["completeness"]
     want = [x.replace(f"expected members {c_comp['expected']}, missing {c_comp['missing_members']}",
                       f"expected members {g_comp['expected']}, missing {g_comp['missing_members']}")
