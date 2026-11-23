@@ -1,8 +1,8 @@
 """M76 B4b-2 §7.1 / §7.2 / §7.3 on `main`'s committed records: `B8.json` regenerates byte-identically in every state; with no
 `B8-A8.json` the signals sheets (`SIGNALS.md`, `SIGNALS-partial.md` and their JSON) regenerate byte-identically; with the
-`B8-A8.json` of the harvested tg2 pilot pair (new identity; a shape check) `B8.json` is unchanged and the sheet differs only in
-the A8 section and its header line; the pilot is accepted, s1 / s2 incomplete, final-tree identities matched, provenance
-passing."""
+`B8-A8.json` of the harvested tg2 pilot pair and decider (new identity; S29: decider legs on the amendment; a shape check)
+`B8.json` is unchanged and the sheet differs only in A8 content; the pilot and the decider pairs are accepted, final-tree
+identities matched, provenance passing."""
 from __future__ import annotations
 
 import hashlib
@@ -64,38 +64,83 @@ def test_signals_without_b8_a8_are_byte_identical(tmp_path, partial, name):
     assert js == (M76 / f"{name}.json").read_text()
 
 
-# §7.3 (new-identity pilot pair, decider incomplete; a shape check)
-def test_pilot_pair_b8_a8_shape(regenerated):
+# §7.3 (new-identity pilot pair and the harvested decider, run on the S29 amendment; a shape check)
+def test_real_b8_a8_shape_with_the_decider(regenerated):
     a8 = json.loads(regenerated.with_name("B8-A8.json").read_text())
     by = {p["pair"]: p for p in a8["pairs"]}
-    assert a8["status"] == "incomplete" and a8["sessions"] == ["s1", "s2"]
-    assert by["pilot"]["accepted"] is True and by["pilot"]["status"] == "accepted", by["pilot"]["reasons"]
-    assert by["s1"]["status"] == by["s2"]["status"] == "incomplete" and by["reload"]["status"] == "incomplete"
-    keys = by["pilot"]["keys"]
-    assert len(keys) == 4 and all(k["manifest_sha256"]["n16"] and k["manifest_sha256"]["x"] for k in keys)   # no null sha
-    assert a8["latency"]["status"] == "incomplete"
-    assert {g: r["status"] for g, r in a8["recheck"].items()} == {"s1": "incomplete", "s2": "incomplete"}
+    assert a8["status"] == "complete" and a8["sessions"] == ["s1", "s2"]
+    for s in ("pilot", "s1", "s2", "reload"):
+        assert by[s]["accepted"] is True and by[s]["status"] == "accepted" and by[s]["reasons"] == [], (s, by[s]["reasons"])
+    for s in ("pilot", "s1", "s2", "reload"):
+        keys = by[s]["keys"]
+        assert keys and all(k["manifest_sha256"]["n16"] and k["manifest_sha256"]["x"] for k in keys), s   # no null sha
+    assert len(by["pilot"]["keys"]) == 4
+    assert "m76/wave2.tg2/run/amendment.json" in a8["inputs"]
+    assert a8["latency"]["status"] == "present"
+    assert {g: r["status"] for g, r in a8["recheck"].items()} == {"s1": "ok", "s2": "ok"}
     # §9.1: tampered rows are listed per arm; the new-identity pilot has none (the old pilot's javascript lock-file row lives
     # only in `wave2.tg2-old-identity/`)
     assert {arm: set(v) for arm, v in by["pilot"]["tampered"].items()} == {"n16": set(), "x": set()}
 
 
-def test_with_b8_a8_the_sheet_differs_only_in_the_a8_section(tmp_path, regenerated):
-    """§7.2 projection on the real records: the A1–A7 sections, panel and coverage are unchanged; only the A8 section and the
-    B8-A8 header line are added (here A8 is incomplete: no verdict, no flag, no A8 panel member)."""
+def _a8_members_added(sig, committed):
+    """B8-A8's `A8-<session>` panel members: what the sheet's panel completeness expects beyond the committed sheet."""
+    got, base = sig["panel"]["completeness"]["expected"], committed["panel"]["completeness"]["expected"]
+    assert got[:len(base)] == base
+    added = got[len(base):]
+    assert added and all(m.startswith("A8-") for m in added)
+    return added
+
+
+def _without_a8_members(value, members):
+    """`value` (a panel / flag record) with the A8 members taken out of its completeness lists and panel_incomplete items/text."""
+    value = json.loads(json.dumps(value))
+    comp = value.get("completeness") if isinstance(value, dict) else None
+    if isinstance(comp, dict):
+        for k in ("expected", "missing_members"):
+            comp[k] = [m for m in comp.get(k) or [] if m not in members]
+    if isinstance(value, dict) and value.get("flag") == "panel_incomplete":
+        items = list(value.get("items") or [])
+        kept = [m for m in items if m not in members]
+        value["text"] = value["text"].replace(f"missing members {items}", f"missing members {kept}")
+        value["items"] = kept
+    return value
+
+
+def test_with_b8_a8_the_sheet_differs_only_in_a8_content(tmp_path, regenerated):
+    """§7.2 projection on the real records: the A1–A7 sections, panel and coverage are unchanged except for A8 content — the A8
+    section, the B8-A8 header line, the A8 decode lines, A8 flags, and the panel completeness now also expecting B8-A8's
+    `A8-<session>` members (missing: none is judged in the frozen panel)."""
     md, js = _signals(tmp_path, b8_a8=regenerated.with_name("B8-A8.json"))
-    base = (M76 / "SIGNALS.md").read_text()
+    sig, committed = json.loads(js), json.loads((M76 / "SIGNALS.json").read_text())
+    members = _a8_members_added(sig, committed)
+    assert members == ["A8-s1", "A8-s2"]
+    base = (M76 / "SIGNALS.md").read_text().split("\n")
+    c_comp, g_comp = committed["panel"]["completeness"], sig["panel"]["completeness"]
+    want = [x.replace(f"expected members {c_comp['expected']}, missing {c_comp['missing_members']}",
+                      f"expected members {g_comp['expected']}, missing {g_comp['missing_members']}")
+             .replace(f"panel incomplete: missing members {c_comp['missing_members']}",
+                      f"panel incomplete: missing members {g_comp['missing_members']}") for x in base]
     lines = md.split("\n")
     assert any(line.startswith("- B8-A8.json sha256: `") for line in lines)
     start = lines.index(next(x for x in lines if x.startswith("## A8 tg2")))
     end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("## "))
-    projected = [x for x in lines[:start] + lines[end:] if not x.startswith("- B8-A8.json sha256: `")]
-    assert "\n".join(projected) == base
-    sig, committed = json.loads(js), json.loads((M76 / "SIGNALS.json").read_text())
+    projected, section = [], None
+    for x in lines[:start] + lines[end:]:
+        if x.startswith("## "):
+            section = x
+        if x.startswith("- B8-A8.json sha256: `"):
+            continue
+        if section and section.startswith(("## Decode per item", "## Flags")) and x.startswith("- A8"):
+            continue                                     # A8 decode lines / A8 flags
+        projected.append(x)
+    assert projected == want
     for k in ("A1", "A5", "A7", "A2", "A3", "A4", "M1"):
         assert sig["axes"][k] == committed["axes"][k]
-    assert sig["panel"] == committed["panel"] and sig["flags"] == committed["flags"]
-    assert sig["axes"]["A8"]["status"].startswith("incomplete")
+    assert _without_a8_members(sig["panel"], members) == committed["panel"]
+    assert ([_without_a8_members(f, members) for f in sig["flags"] if f.get("member") != "A8"]
+            == [_without_a8_members(f, members) for f in committed["flags"]])
+    assert not str(sig["axes"]["A8"].get("status", "")).startswith("incomplete")      # the decider feeds the A8 section
 
 
 def test_provenance_passes_on_the_real_tg2_pilot_manifests():

@@ -115,6 +115,7 @@ class A8World:
                                     **IDENTITY))
         (self.ns / "run" / "v8_base.json").write_text(dumps(self.v8))
         self.sessions = tuple(sessions)
+        self.amendment = None
         for s in self.sessions:
             for arm in ARMS:
                 self.build_attempt(arm, s)
@@ -125,11 +126,30 @@ class A8World:
                         pairs=[dict(pair=s, n16=attempt("n16", s), x=attempt("x", s), dossier=f"pairs/{s}__n16-a1__x-a1.json",
                                     verdict="PASS", published=True) for s in self.pairs],
                         harvested=[], rechecks={}, reruns=[])
+        if "pilot" not in self.pairs and set(self.pairs) & {"s1", "s2", "reload"}:
+            # a decider-only world: the campaign's pilot still ran — its sequencer pair record + dossier (the amendment binds
+            # that dossier); its attempts are outside the tree (B8-A8: pilot incomplete, never accepted)
+            from bench.tests.test_m76_b4b2_fe_support import recorded_pilot_dossier, recorded_pilot_legs, recorded_pilot_pair
+
+            self.seq["legs"][:0] = recorded_pilot_legs()
+            self.seq["pairs"].insert(0, recorded_pilot_pair())
+            (self.ns / "pairs" / "pilot__n16-a1__x-a1.json").write_text(dumps(recorded_pilot_dossier()))
         if rechecks:
             for gate, need in (("s1", ("s1",)), ("s2", ("s1", "s2"))):
                 if all(s in self.pairs for s in need):
                     self.recheck(gate)
         self.save_seq()
+        self.publish_amendment()
+
+    def publish_amendment(self):
+        """S29 rule 3.6: the sealed post-pilot `run/amendment.json` (binding this v8 base and the pilot dossier's bytes) the decider
+        chains name, as the runner records them; nothing when no pilot dossier is published."""
+        from bench.tests.test_m76_b4b2_fe_support import publish_tg2_amendment
+
+        dossier = self.ns / "pairs" / "pilot__n16-a1__x-a1.json"
+        if dossier.is_file():
+            self.amendment = publish_tg2_amendment(self.ns, self.v8, dossier, self.amendment)
+        return self.amendment
 
     # -- paths
     def att(self, arm, s):
@@ -264,6 +284,8 @@ class A8World:
                                 differences=[dict(process="worker", field="argv.worker", n16="",
                                                   x="--kv-bits 4 --tq4-attention m72_exact")]))
         (self.ns / "pairs" / f"{s}__n16-a1__x-a1.json").write_text(dumps(doc))
+        if s == "pilot" and getattr(self, "amendment", None) is not None:
+            self.publish_amendment()                      # the amendment binds the pilot dossier's bytes
 
     def recheck(self, gate, *, inside=True, review=False, attempts=None, report_sha=None, ack=None):
         sessions = {"s1": ["s1"], "s2": ["s1", "s2"]}[gate]

@@ -1,6 +1,7 @@
 """M76 B4b-2 (spec v1.5) — acceptance §7.1 / §7.2 / §7.3 on the COMMITTED records: the byte-identity goldens (B8.json, SIGNALS.md /
 SIGNALS.json, SIGNALS-partial.md / .json regenerate from `main`'s inputs), the A8-present projection of the sheet, and the shape of
-B8-A8 on the real harvested tg2 pilot pair (`benchmark/results/m76/wave2.tg2/`, decider absent).
+B8-A8 on the real harvested tg2 pilot pair and decider (`benchmark/results/m76/wave2.tg2/`; S29: the decider legs run on the
+sealed post-pilot amendment).
 
 Class of each test (comment above it): (a) reproduces a failure the spec fixes, (b) preserves an invariant, (c) new behaviour.
 
@@ -110,11 +111,42 @@ def projection(sig):
         sig.pop(k, None)
     for m in ((sig.get("panel") or {}).get("members") or {}).values():
         m.pop("holm_p", None)
+    comp = (sig.get("panel") or {}).get("completeness")
+    if isinstance(comp, dict):                          # B8-A8 adds its `A8-<session>` members to the expected / missing lists
+        for k in ("expected", "missing_members"):
+            comp[k] = _non_a8(comp.get(k))
     return json.loads(json.dumps(sig, sort_keys=True, default=str))
 
 
-# (c) with the real B8-A8.json: the sheet's A1–A7 sections, decode, coverage and raw statistics equal the committed ones; only the A8
-# section, header shas / counts, flags and Holm column may differ
+def _non_a8(members):
+    return [m for m in members or [] if not str(m).startswith("A8-")]
+
+
+def flags_without_a8(flags):
+    """The sheet's flags minus what B8-A8 causes: flags of member A8 dropped, the A8 panel members taken out of
+    `panel_incomplete` (its items and its text)."""
+    out = []
+    for f in flags:
+        if f.get("member") == "A8":
+            continue
+        f = copy.deepcopy(f)
+        if f.get("flag") == "panel_incomplete":
+            items = list(f.get("items") or [])
+            f["text"] = f["text"].replace(f"missing members {items}", f"missing members {_non_a8(items)}")
+            f["items"] = _non_a8(items)
+        out.append(json.dumps(f, sort_keys=True, default=str))
+    return sorted(out)
+
+
+def a8_panel_members(doc):
+    from bench import p426_panel as P
+
+    return [f"A8-{s}" for s in P.kv_a8_member_sessions(doc)]
+
+
+# (c) with the real B8-A8.json: the sheet's A1–A7 sections, decode, coverage and raw statistics equal the committed ones; only A8
+# content may differ — the A8 section and decode, header shas / counts, the Holm column, A8 flags, and the panel completeness now
+# also expecting exactly B8-A8's `A8-<session>` members
 @pytest.mark.parametrize("committed,partial", [("SIGNALS.json", False), ("SIGNALS-partial.json", True)])
 def test_a8_record_changes_only_the_a8_parts_of_the_real_sheet(committed, partial):
     from bench import p426_signals as S
@@ -125,10 +157,13 @@ def test_a8_record_changes_only_the_a8_parts_of_the_real_sheet(committed, partia
                        b8_a8_sha256=hashlib.sha256(V.dumps(doc).encode()).hexdigest())
     want = json.loads((M76 / committed).read_text())
     assert projection(got) == projection(want)
-    assert "A8" in got["axes"] and not got["axes"]["A8"].get("verdict")           # only the pilot exists: no verdict
-    old = {json.dumps(f, sort_keys=True) for f in want["flags"]}
-    new = {json.dumps(f, sort_keys=True, default=str) for f in got["flags"]}
-    assert old <= new
+    assert "A8" in got["axes"]
+    members = a8_panel_members(doc)
+    assert members == ["A8-s1", "A8-s2"]                # the decider's confirmatory sessions are B8-A8-accepted
+    gc, wc = got["panel"]["completeness"], want["panel"]["completeness"]
+    assert gc["expected"] == wc["expected"] + members
+    assert gc["missing_members"] == wc["missing_members"] + [m for m in members if not (M76 / "panel" / m).is_dir()]
+    assert flags_without_a8(got["flags"]) == flags_without_a8(want["flags"])
 
 
 # ------------------------------------------------------------------------------------------------------------------ §7.3
@@ -141,14 +176,16 @@ def sessions(doc):
     return {p["pair"]: p for p in doc["pairs"]}
 
 
-# (c) B8-A8 builds on the pilot pair alone: the pilot accepted, s1 / s2 / reload incomplete (the decider has not run)
-def test_the_real_pilot_pair_builds_with_the_pilot_accepted(real_doc):
+# (c) B8-A8 builds on the harvested pilot and decider: the pilot accepted (diagnostic), s1 / s2 accepted (pair), reload accepted
+# (diagnostic), the record complete
+def test_the_real_pilot_and_decider_pairs_build_accepted(real_doc):
     got = sessions(real_doc)
     assert got["pilot"]["accepted"] is True, got["pilot"]["reasons"]
     assert got["pilot"]["reasons"] == [] and got["pilot"]["role"] == "diagnostic"
-    for s in ("s1", "s2", "reload"):
-        assert got[s]["status"] == "incomplete" and got[s]["accepted"] is False and got[s]["reasons"], s
-    assert real_doc["status"] == "incomplete" and real_doc["corpus"] == "tg2" and real_doc["sessions"] == ["s1", "s2"]
+    for s, role in (("s1", "pair"), ("s2", "pair"), ("reload", "diagnostic")):
+        assert got[s]["status"] == "accepted" and got[s]["accepted"] is True and got[s]["reasons"] == [], (s, got[s]["reasons"])
+        assert got[s]["role"] == role and got[s]["keys"], s
+    assert real_doc["status"] == "complete" and real_doc["corpus"] == "tg2" and real_doc["sessions"] == ["s1", "s2"]
 
 
 # (c) final-tree identities matched for every pilot row of both arms (no null sha), provenance passing
@@ -171,16 +208,27 @@ def test_the_real_record_binds_b8_and_its_inputs(real_doc):
     assert names & {"wave2.tg2/run/sequence.json", "m76/wave2.tg2/run/sequence.json"}
 
 
-# (c) delivery 5: the decider has begun — N16 s1 is harvested (VALID, 80 items), X s1 a1 / a2 are INVALID before any item: s1 is
-# `incomplete` (X s1 has no accepted attempt), never a refusal and never a verdict; s2 / reload have not started
-def test_the_real_s1_is_incomplete_with_x_s1_unaccepted(real_doc):
+# (c) the decider ran on the amendment (S29 rule 3.6): every selected decider attempt's chain names the sealed post-pilot
+# amendment, which binds this v8 base and the accepted pilot's dossier; X s1 a1 / a2 (INVALID before any item) are not selected;
+# the s1 / s2 / reload pairs are accepted on it, the pilot on the v8 base
+def test_the_real_decider_pairs_are_accepted_on_the_amendment(real_doc):
     got = sessions(real_doc)
-    assert got["s1"]["status"] == "incomplete" and got["s1"]["accepted"] is False and got["s1"]["reasons"]
-    assert not got["s1"]["keys"] and got["s1"]["role"] == "pair"
-    assert got["s2"]["status"] == "incomplete" and got["reload"]["status"] == "incomplete"
-    assert real_doc["status"] == "incomplete"
+    amendment = json.loads((TG2 / "run" / "amendment.json").read_text())
+    v8 = json.loads((TG2 / "run" / "v8_base.json").read_text())
+    assert amendment["v8_base_sha256"] == v8["sha256"]
+    assert amendment["pilot_dossier_sha256"] == sha(M76 / got["pilot"]["dossier"])
+    assert {"m76/wave2.tg2/run/amendment.json", "m76/wave2.tg2/run/v8_base.json"} <= set(real_doc["inputs"])
+    for s in ("s1", "s2", "reload"):
+        assert got[s]["accepted"] is True and got[s]["reasons"] == [], (s, got[s]["reasons"])
+        for arm in PAIR:
+            chain = json.loads((TG2 / got[s]["attempts"][arm] / "chain.json").read_text())
+            assert chain["tg2_leg"] == s and chain["frozen_record"]["sha256"] == amendment["sha256"], (s, arm)
+    for arm in PAIR:
+        chain = json.loads((TG2 / got["pilot"]["attempts"][arm] / "chain.json").read_text())
+        assert chain["frozen_record"]["sha256"] == v8["sha256"]
     seq = json.loads((TG2 / "run" / "sequence.json").read_text())
     assert {(l["leg"], l["attempt"]): l["state"] for l in seq["legs"]}[("tg2-m76-x-s1", 2)] == "INVALID"      # the premise
+    assert got["s1"]["attempts"]["x"] not in ("tg2-m76-x-s1.a1", "tg2-m76-x-s1.a2")
 
 
 # (c) the new-identity pilot pair is accepted as a whole record: both arms' four rows, the dossier, the harvest, provenance
@@ -238,10 +286,15 @@ def test_no_regrade_machinery_in_the_real_record(real_doc):
     assert "regrade" not in json.dumps(real_doc).lower()
 
 
-# (c) the decider's launch-latency record is not yet published: `latency: incomplete`, descriptive, not a refusal
-def test_the_real_latency_is_incomplete(real_doc):
-    assert not (TG2 / "run" / "exec_latency.json").exists()
-    assert "incomplete" in json.dumps(real_doc["latency"]).lower()
+# (c) the decider's launch-latency record is published: B8-A8 reads it as `present` (sealed, rows well-formed), bound to its sha
+# and an input of the record
+def test_the_real_latency_is_present_and_verifies(real_doc):
+    path = TG2 / "run" / "exec_latency.json"
+    published = json.loads(path.read_text())
+    lat = real_doc["latency"]
+    assert lat["status"] == "present" and lat["path"] == f"{V.A8_NS}/run/exec_latency.json"
+    assert lat["sha256"] == published["sha256"] and len(lat["rows"]) == len(published["rows"]) > 0
+    assert real_doc["inputs"]["m76/wave2.tg2/run/exec_latency.json"] == sha(path)
 
 
 # (b) the premises the above rest on, checked on the committed pilot itself (these pass on the baseline too)

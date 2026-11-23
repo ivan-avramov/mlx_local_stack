@@ -55,6 +55,7 @@ def _write_v8(w, **patch):
     for s in w.sessions:
         for arm in ("n16", "x"):
             w.edit_chain(arm, s, lambda d: d["frozen_record"].__setitem__("sha256", v8["sha256"]))
+    w.publish_amendment()                    # S29 rule 3.6: the deciders run on the amendment binding this v8 base
 
 
 def conform(w):

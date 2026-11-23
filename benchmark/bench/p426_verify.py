@@ -2721,9 +2721,102 @@ def _a8_load_attempt(reader, name, session, where):
     return att
 
 
-def _a8_plan_reasons(arm, att, session, v8, draw):
+A8_AMENDMENT_REL = f"{A8_NS}/run/amendment.json"
+
+
+def _a8_amendment(reader, run):
+    """S29 R3: the published post-pilot amendment (`run/amendment.json`), a hashed B8-A8 input when present; None when absent.
+    Unreadable JSON is returned as a non-object (rule 3.6 rejects it; never a refusal)."""
+    data = reader.try_read_bytes(run / "amendment.json")
+    if data is None:
+        return None
+    try:
+        return json.loads(data.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        return "<unreadable>"
+
+
+def a8_recorded_pilot_dossier_sha256(reader, seq, ref, test):
+    """S29 v1.1 R1: (byte sha256 of the pilot pair's dossier file the sequencer recorded in `sequence.json`, read through `reader`
+    so it is a hashed input; None) — or (None, why) when the pilot record or its dossier is missing. Independent of B8-A8's own
+    pilot verdict."""
+    try:
+        sp, _ = _sequence_pair_and_superseded(seq, "pilot", namespace=A8_NS)
+    except RefusalError as exc:
+        return None, f"no single pilot pair record in {A8_NS}/run/sequence.json ({exc})"
+    dossier_rel = sp.get("dossier") or f"pairs/pilot__{ref}-a1__{test}-a1.json"
+    if not isinstance(dossier_rel, str) or not dossier_rel.startswith("pairs/") or ".." in dossier_rel.split("/"):
+        return None, f"the recorded pilot dossier path {dossier_rel!r} is not under {A8_NS}/pairs/"
+    path = reader.root / A8_NS / dossier_rel
+    if path.is_symlink() or (path.exists() and path.resolve().parent != (reader.root / A8_NS / "pairs").resolve()):
+        return None, f"the recorded pilot dossier {A8_NS}/{dossier_rel} resolves outside {A8_NS}/pairs/"
+    data = reader.try_read_bytes(path)
+    if data is None:
+        return None, f"the recorded pilot dossier {A8_NS}/{dossier_rel} is missing"
+    return hashlib.sha256(data).hexdigest(), None
+
+
+def a8_amendment_problems(amendment, v8, pilot_dossier_sha256, pilot_dossier_problem=None):
+    """S29 R1 / R2: why `amendment` is not this campaign's sealed post-pilot record — absent, not a sealed object, another kind or
+    corpus, another v8 base, or not the pilot dossier the sequencer recorded (`pilot_dossier_sha256`, None with
+    `pilot_dossier_problem` when that record / dossier is missing). [] when it is."""
+    from bench import p426_freeze as fz
+    from bench import p426_hooks as ph
+
+    if amendment is None:
+        return [f"no amendment is published ({A8_AMENDMENT_REL})"]
+    if not isinstance(amendment, dict) or not ph.sealed_ok(amendment):
+        return [f"{A8_AMENDMENT_REL} does not verify as a sealed record"]
+    problems = []
+    if amendment.get("kind") != fz.KIND_AMENDMENT:
+        problems.append(f"amendment kind {amendment.get('kind')!r} != {fz.KIND_AMENDMENT!r}")
+    if amendment.get("corpus") != "tg2":
+        problems.append(f"amendment corpus {amendment.get('corpus')!r} != 'tg2'")
+    if not isinstance(v8.get("sha256"), str) or amendment.get("v8_base_sha256") != v8.get("sha256"):
+        problems.append(f"amendment v8_base_sha256 {str(amendment.get('v8_base_sha256'))[:16]} != v8_base sha256 "
+                        f"{str(v8.get('sha256'))[:16]}")
+    if pilot_dossier_sha256 is None:
+        problems.append(pilot_dossier_problem or "no recorded pilot dossier the amendment could name")
+    elif amendment.get("pilot_dossier_sha256") != pilot_dossier_sha256:
+        problems.append(f"amendment pilot_dossier_sha256 {str(amendment.get('pilot_dossier_sha256'))[:16]} != the recorded pilot "
+                        f"dossier's {pilot_dossier_sha256[:16]}")
+    return problems
+
+
+def a8_frozen_record_reasons(arm, att, session, v8, amendment, pilot_dossier_sha256, pilot_dossier_problem=None):
+    """§3.6 as amended by S29 (v1.2): `chain.frozen_record.sha256` is this campaign's frozen identity — the pilot: the v8 base's
+    sha256 only; a decider session (s1, s2, reload): the amendment's only, when `a8_amendment_problems` finds none (naming the v8
+    base is a reason: the leg would have run without the pilot gate's amendment). Anything else is a REASON."""
+    name = att["name"]
+    fr = att["chain"].get("frozen_record")
+    got = fr.get("sha256") if isinstance(fr, dict) else None
+    want = v8.get("sha256")
+    head = f"rule 3.6: {arm} {name} chain.json frozen_record.sha256 {got!r}"
+    named_v8 = isinstance(got, str) and isinstance(want, str) and got == want
+    am_sha = amendment.get("sha256") if isinstance(amendment, dict) else None
+    named_amendment = isinstance(got, str) and isinstance(am_sha, str) and got == am_sha
+    if session == "pilot":
+        if named_v8:
+            return []
+        if named_amendment:
+            return [f"{head} is the amendment's: the pilot runs on the v8 base (sha256 {want!r})"]
+        return [f"{head} != v8_base sha256 {want!r}"]
+    if named_v8:
+        return [f"{head} is the v8 base's: a {session} leg runs on the amendment ({A8_AMENDMENT_REL}), never on the v8 base"]
+    if amendment is None:
+        return [f"{head} names no published amendment ({A8_AMENDMENT_REL} is absent)"]
+    if not isinstance(amendment, dict):
+        return [f"{head}: {A8_AMENDMENT_REL} does not verify as a sealed record"]
+    if not named_amendment:
+        return [f"{head} != the amendment sha256 {am_sha!r}"]
+    return [f"{head} names the amendment, which is not this campaign's: {p}"
+            for p in a8_amendment_problems(amendment, v8, pilot_dossier_sha256, pilot_dossier_problem)]
+
+
+def _a8_plan_reasons(arm, att, session, v8, draw, amendment=None, pilot_dossier_sha256=None, pilot_dossier_problem=None):
     """§3.6 (C368 S1): the attempt's schedule is the pinned draw's leg (`schedules.check_tg2_p426`; its `TransportAbort` is a
-    REASON), `chain.tg2_leg` is the session, `chain.frozen_record.sha256` is v8's."""
+    REASON), `chain.tg2_leg` is the session, `chain.frozen_record.sha256` is this campaign's frozen identity
+    (`a8_frozen_record_reasons`, S29)."""
     from bench import schedules
     from bench.token_turn_gate import TransportAbort
 
@@ -2736,10 +2829,7 @@ def _a8_plan_reasons(arm, att, session, v8, draw):
         reasons.append(f"rule 3.6: {arm} {name} schedule.json cannot be checked against the pinned draw ({type(exc).__name__})")
     if att["chain"].get("tg2_leg") != session:
         reasons.append(f"rule 3.6: {arm} {name} chain.json tg2_leg {att['chain'].get('tg2_leg')!r} != {session!r}")
-    fr = att["chain"].get("frozen_record")
-    got = fr.get("sha256") if isinstance(fr, dict) else None
-    if got is None or got != v8.get("sha256"):
-        reasons.append(f"rule 3.6: {arm} {name} chain.json frozen_record.sha256 {got!r} != v8_base sha256 {v8.get('sha256')!r}")
+    reasons += a8_frozen_record_reasons(arm, att, session, v8, amendment, pilot_dossier_sha256, pilot_dossier_problem)
     return reasons
 
 
@@ -2847,7 +2937,8 @@ def _a8_incomplete(session, reasons, ref, test):
                 keys_rejected=[], keys=[], identical=0, role="diagnostic" if session in A8_DIAGNOSTIC else "pair")
 
 
-def _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test):
+def _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test, amendment=None, pilot_dossier_sha256=None,
+                pilot_dossier_problem=None):
     """One A8 session record: `incomplete` (no pair record, a leg not harvested, a PAUSED leg) or the A7 rules + §3.3 / §3.6 /
     §9 on its two attempts (`accepted` / `rejected` with every reason). Returns (record, {arm: attempt} | None)."""
     for arm in (ref, test):
@@ -2884,7 +2975,7 @@ def _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test):
         a = atts[arm]
         reasons += _leg_reasons(arm, a) + _sequence_leg_reasons(seq, arm, names[arm]) + _commit_reasons(v8, arm, a)
         reasons += _harvest_reasons_kv(reader, arm, a)
-        reasons += _a8_plan_reasons(arm, a, session, v8, draw)
+        reasons += _a8_plan_reasons(arm, a, session, v8, draw, amendment, pilot_dossier_sha256, pilot_dossier_problem)
         reasons += a8_v8_identity_reasons(reader, arm, a, session, v8) + a8_seed_reasons(arm, a, session)
         reasons += [f"{arm} {a['name']} {r}" for r in a["slot_reasons"]]
         reasons += final_tree_reasons(arm, a, KV_REPO_PREFIX, A8_NS)
@@ -3057,10 +3148,16 @@ def verify_a8_kv(results_root, base_b8_sha256=None, draw_path=None):
     except (OSError, UnicodeDecodeError, ValueError):
         raise RefusalError(f"the pinned tg2 draw ({TG2_DRAW_REL}) is missing or unreadable") from None
     v8_reasons += a8_v8_pin_reasons(v8, hashlib.sha256(draw_bytes).hexdigest())
+    amendment = _a8_amendment(reader, run)               # S29 R3: a hashed input when published
     confirm = kv_a8_sessions()
+    # S29 v1.1 R1: a decider attempt's amendment must name the pilot dossier the sequencer recorded (its byte sha, a hashed
+    # input), whether or not B8-A8 accepts the pilot pair
+    pilot_dossier_sha256, pilot_dossier_problem = (a8_recorded_pilot_dossier_sha256(reader, seq, ref, test)
+                                                   if amendment is not None else (None, None))
     out_pairs, atts = [], {}
     for session in confirm + A8_DIAGNOSTIC:
-        rec, a = _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test)
+        rec, a = _a8_session(reader, seq, v8, v8_reasons, session, draw, ref, test, amendment, pilot_dossier_sha256,
+                             pilot_dossier_problem)
         out_pairs.append(rec)
         if a is not None:
             atts[session] = a

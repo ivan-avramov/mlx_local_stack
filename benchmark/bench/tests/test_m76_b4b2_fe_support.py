@@ -73,6 +73,54 @@ def pinned_manifest(arm, lang):
     return json.loads(path.read_text())
 
 
+AMENDMENT_PATH = "$STACK_WORKDIR/run/amendment.json"
+TG2_DECIDERS = ("s1", "s2", "reload")
+
+
+def recorded_pilot_legs():
+    """The sequencer's tg2 pilot leg records (`sequence.json` `legs`) of a decider-only world."""
+    return [dict(leg=f"tg2-m76-{arm}-pilot", attempt=1, state="VALID") for arm in ("n16", "x")]
+
+
+def recorded_pilot_pair():
+    """The sequencer's tg2 pilot pair record (`sequence.json` `pairs`) of a decider-only world."""
+    return dict(pair="pilot", n16="tg2-m76-n16-pilot.a1", x="tg2-m76-x-pilot.a1", dossier="pairs/pilot__n16-a1__x-a1.json",
+                verdict="PASS", published=True)
+
+
+def recorded_pilot_dossier():
+    """The sealed PASS pilot dossier of a decider-only world (its attempts are not in the tree; only its bytes are bound)."""
+    arms = {arm: dict(attempt=f"tg2-m76-{arm}-pilot.a1", harvest_sha256="7" * 64, receipt_sha256="8" * 64) for arm in ("n16", "x")}
+    return sealed(dict(pair="pilot", lever="kv", ref="n16", test="x", verdict="PASS", arms=arms, differences=copy.deepcopy(DIFFS),
+                       at="2026-11-19T21:30:00Z"))
+
+
+def publish_tg2_amendment(ns_dir, v8, pilot_dossier, previous=None):
+    """Write `<ns_dir>/run/amendment.json`: a sealed `p426_timeout_amendment` (the fields `p426_freeze.write_amendment_tg2` writes;
+    synthetic walls at the 382 s floor) naming `v8` and the sha256 of `pilot_dossier`'s bytes. Every decider chain under `ns_dir`
+    whose `frozen_record.sha256` is the v8 base's or `previous`'s is re-pointed at the new amendment. Returns the amendment."""
+    from bench import p426_freeze as fz
+
+    walls = {lang: fz.TG2_WALL_FLOOR_S for lang in fz.TG2_LANGS}
+    doc = sealed(dict(kind=fz.KIND_AMENDMENT, v8_base_sha256=v8["sha256"], corpus="tg2",
+                      **{f"w_{lang}_s": w for lang, w in walls.items()},
+                      leg_deadline_s={leg: fz.tg2_deadline_s(leg, walls) for leg in fz.TG2_ITEM_COUNT},
+                      settle_bound_s=float(v8.get("settle_bound_s", 600.0)),
+                      pilot_dossier_sha256=sha_bytes(Path(pilot_dossier).read_bytes()), created="2026-11-20T00:30:00Z"))
+    ns_dir = Path(ns_dir)
+    (ns_dir / "run" / "amendment.json").write_text(dumps(doc))
+    old = {v8["sha256"]} | ({previous["sha256"]} if isinstance(previous, dict) else set())
+    for path in sorted(ns_dir.glob("tg2-m76-*-*.a*/chain.json")):
+        if path.parent.name.split("-")[3].split(".")[0] not in TG2_DECIDERS:
+            continue
+        chain = json.loads(path.read_text())
+        fr = chain.get("frozen_record")
+        if isinstance(fr, dict) and fr.get("sha256") in old:
+            chain["frozen_record"] = dict(fr, path=AMENDMENT_PATH, sha256=doc["sha256"])
+            path.write_text(dumps(chain))
+    return doc
+
+
 class World:
     """A synthetic M76 tree for one corpus. `corpus="tg2"` -> `wave2.tg2` (sessions pilot / s1 / s2 / reload, the pinned draw's items);
     `corpus="tg1"` -> `wave2` (sessions s1 / s2 / s3 / pilot / reload, 8 python+go items).
@@ -105,11 +153,19 @@ class World:
         self.write_base_b8()
         self.v8 = self._v8()
         self.p(self.ns, "run", "v8_base.json").write_text(dumps(self.v8))
+        self.amendment = None
         for s in self.sessions:
             for arm in ("n16", "x"):
                 self.build_attempt(arm, s)
             self.write_dossier(s)
+        # tg2 decider-only world: the campaign's pilot still ran — its pair record + dossier stand in the sequencer's records (the
+        # amendment binds that dossier); its attempts are outside the tree (B8-A8: pilot incomplete, never accepted)
+        self.recorded_pilot = (corpus == "tg2" and "pilot" not in self.sessions
+                               and bool(set(self.sessions) & set(TG2_DECIDERS)))
+        if self.recorded_pilot:
+            self._write_json(self.p(self.ns, "pairs", "pilot__n16-a1__x-a1.json"), recorded_pilot_dossier())
         self.write_sequence()
+        self.publish_amendment()
 
     # ------------------------------------------------------------------------------------------------------------- paths
     def p(self, *rel):
@@ -354,12 +410,29 @@ class World:
         self._write_json(self.p(self.ns, "pairs", f"{session}__n16-a1__x-a1.json"),
                          sealed(dict(pair=session, lever="kv", ref="n16", test="x", verdict="PASS", arms=arms,
                                      differences=copy.deepcopy(DIFFS), at="2026-11-20T00:00:00Z")))
+        if session == "pilot" and getattr(self, "amendment", None) is not None:
+            self.publish_amendment()                         # the amendment binds the pilot dossier's bytes
+
+    def publish_amendment(self):
+        """tg2 (S29 rule 3.6): the sealed post-pilot `run/amendment.json` in `p426_freeze.write_amendment_tg2`'s shape, binding this
+        v8 base and the pilot dossier's bytes; every decider chain naming the v8 base or a previous amendment is re-pointed at it
+        (the runner runs the pilot on the v8 base, every decider leg on the amendment). No pilot dossier -> nothing published."""
+        if self.corpus != "tg2":
+            return None
+        dossier = self.p(self.ns, "pairs", "pilot__n16-a1__x-a1.json")
+        if not dossier.is_file():
+            return None
+        self.amendment = publish_tg2_amendment(self.p(self.ns), self.v8, dossier, self.amendment)
+        return self.amendment
 
     def write_sequence(self, extra=None):
         legs = [dict(leg=self.att(a, s)[:-3], attempt=1, state=(self.legs.get((a, s)) or {}).get("state", "VALID"))
                 for s in self.sessions for a in ("n16", "x")]
         pairs = [dict(pair=s, n16=self.att("n16", s), x=self.att("x", s), dossier=f"pairs/{s}__n16-a1__x-a1.json", verdict="PASS",
                       published=True) for s in self.sessions]
+        if getattr(self, "recorded_pilot", False):
+            legs[:0] = recorded_pilot_legs()
+            pairs.insert(0, recorded_pilot_pair())
         seq = dict(legs=legs, pairs=pairs, reruns=[], rechecks={}, harvested=[])
         seq.update(extra or {})
         self._write_json(self.p(self.ns, "run", "sequence.json"), seq)
