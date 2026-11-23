@@ -11,17 +11,19 @@ Decisions: session 28 ruled C374–C382; session 29 C383–C388 (next **C389**).
 ## Goal
 
 Certify `Qwen3.8-27B-Fable-Distill-OptiQ-4.5bpw-mixed` on TQ4 KV + `tq4_attention: m72_exact` + MTP ON as the shipped default (−13 GB at
-256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — RUNNING (resumed under C384 / C385) — then B8-A8, signals, the A8 panel and the ship
+256K). Stage 1 ✔, stage 2 ✔, stage 3a ✔. Remaining: stage 3b A8 (tg2) decider — COMPLETE — then B8-A8, signals, the A8 panel and the ship
 recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 ## FIRST
 
-1. **The decider RESUMES (session 29) on the C384 / C385 change** (`docs/specs/s29-record-not-block.md` v1.1, record
-   `docs/reviews/s29-record-not-block/`): host changes are recorded, never blocking; `tg2-m76-x-s1.a3` (80 items, INVALID only by the
-   03:02Z Homebrew upgrade) is re-derived VALID from its records (original kept as `leg.c360.json`) and harvested; then s2, reload
-   ≈ 11–13 h. Launch script `wave2.tg2/resume_c384.sh`; pid in `wave2.tg2/sequencer.pid`. The full stack gate runs after the decider;
-   on PASS push `main` once (C387), on FAIL go to the operator (`main` is ahead of `origin/main` by the S29 docs + this change).
-2. **Run-time autonomy granted for session 29 (C383)**; ask again next session: reruns of a leg INVALID before any item, holds,
+1. **The A8 decider is COMPLETE (2026-11-23 17:12Z):** all 8 legs VALID + harvested (s1 N16 a1 / X a3; s2 X a1 / N16 a2 — N16 a1
+   INVALID on a harness race, S29-P16 / C388; reload X a1 / N16 a1); pair dossiers PASS; re-checks s1 / s2 outside, no operator flag
+   (α* 0.001 stands). Data on `main` `acaca05cc`; evidence pushed (`evidence` `162f5a584`, C382; worktree `evidence-s28` removed);
+   `run/exec_latency.json` sealed (logger stopped). Full gate of `acaca05cc` RUNNING (log `$STACK_WORKDIR/gate-logs/gate-acaca05cc.log`);
+   on PASS push `main` @ `acaca05cc` once (C387), never a later sha. B8-A8 was `incomplete` (rule 3.6 vs the amendment, S29-P21):
+   fix in four-eyes light in `$STACK_WORKDIR/fe-s29b/` (spec `docs/specs/s29-a8-frozen-record.md`); then B8-A8 → signals → panel →
+   the ship recommendation (the operator's call).
+2. **Run-time autonomy granted for session 29 (C383, widened by C388: the designer decides for the rest of session 29)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
 3. Check processes by pid / port / pid file only — never a pattern your own command carries (S28-P28). Power 140 W / 28 V;
    `env -u CLAUDE_CODE_CHILD_NOTES_DIR` for legs / gates. If a leg dies before any item on the vmmap census again, check
@@ -51,7 +53,7 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 - `$STACK_WORKDIR/worktrees/m76-g2-{n16,x}`: the NEW tg2 arms (@ `72e5626a5` / `026ef4557`) — keep until the A8 readout. Old arms are
   branches `archive/m76-g2-{n16,x}-old-identity`.
-- `$STACK_WORKDIR/worktrees/evidence-s28`: the local `evidence` branch worktree (commit `b909ceb72`) — remove after the evidence push.
+- `$STACK_WORKDIR/fe-s29b/`: the S29-P21 four-eyes build — harvest records to `docs/reviews/s29-a8-frozen-record/`, then remove.
 - `$STACK_WORKDIR/fe-s29/`: the C384 / S29-P6 four-eyes build — harvest records to `docs/reviews/s29-record-not-block/`, then remove.
 - `$STACK_WORKDIR/fe-s27/`, `fe-b4b2/`: four-eyes build copies — records harvested to `docs/reviews/s27-robustness/` and
   `docs/reviews/m76-b4b2/four-eyes/`; remove.
