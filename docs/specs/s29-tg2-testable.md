@@ -1,6 +1,6 @@
 # S29 — tg2 where the agent can test before it ships (PLAN M85 phase 1; C389, C390)
 
-v1.0, 2026-11-23. four-eyes STRICT (it relaxes an anti-cheat guard and changes the tg2 identity).
+v1.1, 2026-11-23. four-eyes STRICT (it relaxes an anti-cheat guard and changes the tg2 identity). v1.1 applies the design review r1 (Sol P1–P7; adopted / adapted, not re-reviewed): K2 and V1 moved to a separate main-side change (`s29-main-small.md`).
 
 ## Goal (verbatim in every brief)
 
@@ -16,9 +16,9 @@ solution lookup (Exercism / problem-specifications content fetched from outside)
 ## Scope
 
 1. **Testable workspace (tg2 corpus / prepared tree / prompt, the carrier).** T1–T4 below.
-2. **Arm-side items that need the identity change anyway.** K1 (the S29-P16 kill-boundary race), K2 (the re-check ack).
-3. **Main-side, independent of the identity:** V1 (S26-P19, the KV vision rubric text).
-4. Tests and known positives for all of the above.
+2. **The arm-side item that needs the identity change anyway:** K1 (the S29-P16 kill-boundary race).
+3. Tests and known positives for all of the above. (K2 — the re-check ack actor — and V1 — the KV vision rubric — are main-side
+   and identity-independent: a separate small change before the phase 3 panel.)
 
 ## Settled constraints
 
@@ -30,34 +30,42 @@ solution lookup (Exercism / problem-specifications content fetched from outside)
 
 ## Required behaviour (intent; mechanisms free unless stated)
 
-**T1 — the full suite runs locally.** For every tg2 language and every item of the universe, running the language's standard test
-command in the prepared workspace executes every test case the grader executes (none skipped, ignored or disabled). With the
-item's reference solution all of them pass; with a stub / broken solution failures are reported per test.
+**T1 — the graded suite runs locally.** For every tg2 language and every item of the universe, running the language's standard
+test command in the prepared workspace executes exactly the test cases the grader grades — every graded leaf, none of them
+skipped, ignored or disabled; the grader's frozen optional leaves (`OPTIONAL_LEAVES`) stay optional / skipped locally as they are
+graded. With the item's reference solution all of them pass.
 **T2 — the agent is told the command.** The prompt's per-language helper sentence names the command that runs the full suite
 (the same one T1 proves).
 **T3 — never denied.** That command (and its ordinary variants: build only, run one test, rebuild) is allowed by the carrier.
 **T4 — lookup still denied.** Fetching Exercism / problem-specifications content from outside (web fetch, and shell network
 fetches such as curl / wget / git clone of those hosts or repos) stays denied, as do the other lookup denies (code search
-sites). A local build flag, file or path that merely contains the word is not a lookup and is allowed.
+sites), for any letter case and inside a compound command (e.g. a permitted build command chained with a fetch). A local build
+flag, file or path that merely contains the word is not a lookup and is allowed. The supported threat is a cooperative agent
+looking things up, not an adversary obfuscating a fetch.
 **K1 — the kill-boundary race is the item's own.** A harness kill whose reconciliation shows exactly one trailing failed request
-that started at / after the kill signal and processed zero tokens (worker prompt / completion totals unchanged, nothing in
-flight before) reconciles as a recorded kill-boundary shape of the item (its order recorded), never an INTEGRITY fault that
-invalidates the leg. Any other unexplained inconsistency keeps today's class.
-**K2 — the re-check acknowledgement says who.** The sequencer's re-check acknowledgement is recorded with its actor (operator /
-designer, with the ruling it rests on) and logged neutrally; a missing actor refuses the ack.
-**V1 — the KV vision rubric** asks for accuracy / coverage / precision against the image and carries no reference-caption clause
-(the M76 vision corpus has none); its own test; the frozen stage-3 A3 records keep their old rubric binding.
+of the item's own session (the worker's `requests_started` and `requests_failed` each +1, `requests_completed` unchanged, nothing in
+flight at the pre-signal sample, the failure recorded at / after the signal) is the item's own accounting: recorded (the
+`accounting_fault` class: its tokens / latency descriptive only), never an INTEGRITY fault that invalidates the leg. Failed
+requests expose no token counts, so no zero-token proof is required: the client was killed, nothing it received can enter the
+item's outcome. Any other unexplained inconsistency keeps today's class.
+**I1 — a new identity.** The change produces a new tg2 scaffold / identity value that binds the carrier, the prompt (helper
+sentences) and the workspace preparation; rows of the old and new identity never pool (the existing pooling / identity
+refusals see them as different).
 
 ## Acceptance
 
-1. T1 on the real universe: per language, every item, reference solution → all graded test cases run and pass; a stub → per-test
-   failures; the count of executed test cases equals the grader's for the same tree (a known positive per language).
+1. T1 on the real universe: per language, every item, reference solution → the locally executed test cases equal the grader's
+   graded leaves for the same tree (count and names) and all pass; per language one known negative — a solution that compiles but
+   is wrong — shows failures locally and in the grader.
 2. T3 / T4 by the carrier's own matcher (or a real opencode session): the full-suite command and its variants allowed for every
    language; a lookup per deny class denied; a local path / flag containing the word allowed.
-3. The tamper rule: a run that only builds and tests leaves no protected file changed (no `tampered`).
-4. K1: the recorded S29-P16 shape (`tg2-m76-n16-s2.a1` javascript/zebra-puzzle's termination + worker summaries) reconciles as the
-   item's own; a failed request that processed tokens, or one before the signal with nothing in flight, keeps today's verdict.
-5. K2, V1 by their tests. Every changed module's existing tests pass, nothing that passed on the baseline fails.
+3. The tamper rule: after the stated local build-and-test command (and its variants) in a prepared tree with the reference
+   solution, the production tamper check (`tamper_reasons`) returns no reasons.
+4. K1: the recorded S29-P16 shape (`tg2-m76-n16-s2.a1` javascript/zebra-puzzle's termination + worker summaries) is the item's own
+   accounting, the leg not INVALID; a shape outside K1 (e.g. a failed request with nothing started, or a completed-count change)
+   keeps today's class.
+5. I1: the old and new identities differ, and a row of each refuses to pool. Every changed module's existing tests pass, nothing
+   that passed on the baseline fails.
 6. The positives (M85 phase 2) gain a per-language "the agent ran the full suite" record and a lookup-denied record.
 
 ## Non-goals
