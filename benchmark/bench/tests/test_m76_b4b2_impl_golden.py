@@ -15,6 +15,7 @@ import pytest
 
 from bench import p426_signals as S
 from bench import p426_verify as V
+from bench.tests import m76_b4b2_frozen_cli
 
 BENCH = Path(__file__).resolve().parents[2]
 REPO = BENCH.parent
@@ -24,8 +25,10 @@ M76 = ROWS / "m76"
 
 def _b8(tmp_path):
     out = tmp_path / "B8.json"
-    rc = V.main(["--lever", "kv", "all", "--results-root", str(M76), "--rows-root", str(ROWS), "--repo", str(REPO),
-                 "--pair", "n16,x", "--out", str(out)])
+    rc = m76_b4b2_frozen_cli.main(
+        ["--lever", "kv", "all", "--results-root", str(M76), "--rows-root", str(ROWS), "--repo", str(REPO),
+         "--pair", "n16,x", "--out", str(out)]
+    )
     assert rc == 0
     return out
 

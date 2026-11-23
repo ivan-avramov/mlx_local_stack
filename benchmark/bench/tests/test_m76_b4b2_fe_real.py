@@ -33,7 +33,8 @@ PAIR = ("n16", "x")
 
 def cli(module, args, tmp_path):
     env = {"PYTHONPATH": str(BENCH), "PATH": "/usr/bin:/bin:/usr/local/bin:/opt/homebrew/bin", "HOME": str(tmp_path),
-           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "MLX_BENCH_RESULTS": str(RESULTS)}
+           "GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "MLX_BENCH_RESULTS": str(RESULTS),
+           "PYTHONDONTWRITEBYTECODE": "1", "TMPDIR": os.environ.get("TMPDIR", str(tmp_path))}
     return subprocess.run([sys.executable, "-m", module, *map(str, args)], cwd=BENCH, capture_output=True, text=True, timeout=3000, env=env)
 
 
@@ -45,8 +46,9 @@ def sha(path):
 @pytest.fixture(scope="module")
 def regenerated_b8(tmp_path_factory):
     out = tmp_path_factory.mktemp("b8")
-    proc = cli("bench.p426_verify", ["all", "--lever", "kv", "--pair", "n16,x", "--results-root", M76, "--rows-root", RESULTS,
-                                     "--repo", W.REPO, "--out", out / "B8.json"], out)
+    proc = cli("bench.tests.m76_b4b2_frozen_cli",
+               ["all", "--lever", "kv", "--pair", "n16,x", "--results-root", M76, "--rows-root", RESULTS,
+                "--repo", W.REPO, "--out", out / "B8.json"], out)
     return out, proc
 
 
