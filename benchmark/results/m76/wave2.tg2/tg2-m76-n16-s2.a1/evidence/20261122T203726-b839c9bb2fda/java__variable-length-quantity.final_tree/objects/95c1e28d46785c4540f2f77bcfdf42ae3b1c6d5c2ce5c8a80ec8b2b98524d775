@@ -1,0 +1,57 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class VariableLengthQuantity {
+
+    private static final long CONTINUATION_BIT = 0x80L;
+    private static final long SEVEN_BITS = 0x7fL;
+
+    List<String> encode(List<Long> numbers) {
+        List<String> result = new ArrayList<>();
+        for (Long number : numbers) {
+            // Split the value into 7-bit groups, least significant first.
+            List<Long> groups = new ArrayList<>();
+            long value = number;
+            groups.add(value & SEVEN_BITS);
+            value >>>= 7;
+            while (value != 0) {
+                groups.add(value & SEVEN_BITS);
+                value >>>= 7;
+            }
+
+            // Emit most significant group first; every byte but the last
+            // carries the continuation bit.
+            for (int i = groups.size() - 1; i >= 0; i--) {
+                long byteValue = groups.get(i);
+                if (i > 0) {
+                    byteValue |= CONTINUATION_BIT;
+                }
+                result.add(format(byteValue));
+            }
+        }
+        return result;
+    }
+
+    List<String> decode(List<Long> bytes) {
+        List<String> result = new ArrayList<>();
+        long value = 0;
+        boolean inSequence = false;
+        for (Long byteValue : bytes) {
+            value = (value << 7) | (byteValue & SEVEN_BITS);
+            inSequence = true;
+            if ((byteValue & CONTINUATION_BIT) == 0) {
+                result.add(format(value));
+                value = 0;
+                inSequence = false;
+            }
+        }
+        if (inSequence) {
+            throw new IllegalArgumentException("Invalid variable-length quantity encoding");
+        }
+        return result;
+    }
+
+    private static String format(long value) {
+        return String.format("0x%x", value);
+    }
+}

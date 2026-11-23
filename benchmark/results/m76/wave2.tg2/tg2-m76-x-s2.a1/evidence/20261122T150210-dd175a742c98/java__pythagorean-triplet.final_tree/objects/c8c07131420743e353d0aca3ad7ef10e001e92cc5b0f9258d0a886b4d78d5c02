@@ -1,0 +1,89 @@
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+class PythagoreanTriplet {
+
+    final int a;
+    final int b;
+    final int c;
+
+    PythagoreanTriplet(int a, int b, int c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+
+    static TripletListBuilder makeTripletsList() {
+        return new TripletListBuilder();
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof PythagoreanTriplet)) {
+            return false;
+        }
+        PythagoreanTriplet that = (PythagoreanTriplet) o;
+        return a == that.a && b == that.b && c == that.c;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(a, b, c);
+    }
+
+    static class TripletListBuilder {
+
+        private int sum = -1;
+        private int maxFactor = -1;
+
+        TripletListBuilder thatSumTo(int sum) {
+            this.sum = sum;
+            return this;
+        }
+
+        TripletListBuilder withFactorsLessThanOrEqualTo(int maxFactor) {
+            this.maxFactor = maxFactor;
+            return this;
+        }
+
+        List<PythagoreanTriplet> build() {
+            List<PythagoreanTriplet> triplets = new ArrayList<>();
+            if (sum <= 0) {
+                return triplets;
+            }
+            // For a + b + c = sum with a^2 + b^2 = c^2:
+            //   (c - b)(c + b) = a^2  and  c + b = sum - a
+            // so c - b = a^2 / (sum - a), giving
+            //   b = (sum - a - a^2 / (sum - a)) / 2
+            //   c = (sum - a + a^2 / (sum - a)) / 2.
+            for (int a = 1; a < sum / 3; a++) {
+                int s = sum - a;
+                int aSquared = a * a;
+                if (aSquared % s != 0) {
+                    continue;
+                }
+                int cMinusB = aSquared / s;
+                int bNumerator = s - cMinusB;
+                int cNumerator = s + cMinusB;
+                if (bNumerator <= 2 * a || bNumerator % 2 != 0 || cNumerator % 2 != 0) {
+                    continue;
+                }
+                int b = bNumerator / 2;
+                int c = cNumerator / 2;
+                if (maxFactor >= 0 && c > maxFactor) {
+                    continue;
+                }
+                if (a * a + b * b == c * c) {
+                    triplets.add(new PythagoreanTriplet(a, b, c));
+                }
+            }
+            return triplets;
+        }
+
+    }
+
+}

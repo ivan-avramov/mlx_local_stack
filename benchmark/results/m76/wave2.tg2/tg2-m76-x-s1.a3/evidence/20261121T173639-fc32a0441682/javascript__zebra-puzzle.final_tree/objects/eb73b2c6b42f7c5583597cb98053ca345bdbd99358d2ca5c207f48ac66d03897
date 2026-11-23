@@ -1,0 +1,165 @@
+//
+// This is only a SKELETON file for the 'Zebra Puzzle' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NATIONALITIES = ['Englishman', 'Spaniard', 'Ukrainian', 'Norwegian', 'Japanese'];
+const COLORS = ['Red', 'Green', 'Ivory', 'Yellow', 'Blue'];
+const BEVERAGES = ['Coffee', 'Tea', 'Milk', 'OrangeJuice', 'Water'];
+const PETS = ['Dog', 'Snails', 'Fox', 'Horse', 'Zebra'];
+const HOBIES = ['Dancing', 'Painter', 'Reading', 'Football', 'Chess'];
+
+// House positions are 0..4; position 0 is "the first house".
+// A solution is a set of five 5-element arrays (one per category),
+// where each array maps house position -> attribute value.
+
+export class ZebraPuzzle {
+  constructor() {
+    this.solution = solve();
+  }
+
+  waterDrinker() {
+    const house = this.solution.beverages.indexOf('Water');
+    return this.solution.nationalities[house];
+  }
+
+  zebraOwner() {
+    const house = this.solution.pets.indexOf('Zebra');
+    return this.solution.nationalities[house];
+  }
+}
+
+function solve() {
+  const solution = {
+    nationalities: [],
+    colors: [],
+    beverages: [],
+    pets: [],
+    hobs: [],
+  };
+
+  const categories = ['nationalities', 'colors', 'beverages', 'pets', 'hobs'];
+  const values = {
+    nationalities: NATIONALITIES,
+    colors: COLORS,
+    beverages: BEVERAGES,
+    pets: PETS,
+    hobs: HOBIES,
+  };
+
+  // Assign attributes one category at a time, trying each permutation and
+  // discarding partial assignments that violate any constraint already
+  // fully determined by the categories assigned so far.
+  function assign(depth) {
+    if (depth === categories.length) return true;
+    const category = categories[depth];
+    for (const perm of permutations(values[category])) {
+      solution[category] = perm;
+      if (constraintsSatisfiedSoFar(solution, depth + 1, categories) && assign(depth + 1)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  if (!assign(0)) {
+    throw new Error('No solution found');
+  }
+  return solution;
+}
+
+// Each constraint lists the categories it involves and returns whether the
+// partial assignment satisfies it.
+const CONSTRAINTS = [
+  // 2. The Englishman lives in the red house.
+  {
+    involves: ['nationalities', 'colors'],
+    check: (s) => s.nationalities.indexOf('Englishman') === s.colors.indexOf('Red'),
+  },
+  // 3. The Spaniard owns the dog.
+  {
+    involves: ['nationalities', 'pets'],
+    check: (s) => s.nationalities.indexOf('Spaniard') === s.pets.indexOf('Dog'),
+  },
+  // 4. The person in the green house drinks coffee.
+  {
+    involves: ['colors', 'beverages'],
+    check: (s) => s.colors.indexOf('Green') === s.beverages.indexOf('Coffee'),
+  },
+  // 5. The Ukrainian drinks tea.
+  {
+    involves: ['nationalities', 'beverages'],
+    check: (s) => s.nationalities.indexOf('Ukrainian') === s.beverages.indexOf('Tea'),
+  },
+  // 6. The green house is immediately to the right of the ivory house.
+  {
+    involves: ['colors'],
+    check: (s) => s.colors.indexOf('Green') === s.colors.indexOf('Ivory') + 1,
+  },
+  // 7. The snail owner likes to go dancing.
+  {
+    involves: ['pets', 'hobs'],
+    check: (s) => s.pets.indexOf('Snails') === s.hobs.indexOf('Dancing'),
+  },
+  // 8. The person in the yellow house is a painter.
+  {
+    involves: ['colors', 'hobs'],
+    check: (s) => s.colors.indexOf('Yellow') === s.hobs.indexOf('Painter'),
+  },
+  // 9. The person in the middle house drinks milk.
+  {
+    involves: ['beverages'],
+    check: (s) => s.beverages[2] === 'Milk',
+  },
+  // 10. The Norwegian lives in the first house.
+  {
+    involves: ['nationalities'],
+    check: (s) => s.nationalities[0] === 'Norwegian',
+  },
+  // 11. The person who enjoys reading lives in the house next to the house with the fox.
+  {
+    involves: ['pets', 'hobs'],
+    check: (s) => Math.abs(s.hobs.indexOf('Reading') - s.pets.indexOf('Fox')) === 1,
+  },
+  // 12. The painter's house is next to the house with the horse.
+  {
+    involves: ['pets', 'hobs'],
+    check: (s) => Math.abs(s.hobs.indexOf('Painter') - s.pets.indexOf('Horse')) === 1,
+  },
+  // 13. The person who plays football drinks orange juice.
+  {
+    involves: ['beverages', 'hobs'],
+    check: (s) => s.hobs.indexOf('Football') === s.beverages.indexOf('OrangeJuice'),
+  },
+  // 14. The Japanese person plays chess.
+  {
+    involves: ['nationalities', 'hobs'],
+    check: (s) => s.nationalities.indexOf('Japanese') === s.hobs.indexOf('Chess'),
+  },
+  // 15. The Norwegian lives next to the blue house.
+  {
+    involves: ['nationalities', 'colors'],
+    check: (s) => Math.abs(s.nationalities.indexOf('Norwegian') - s.colors.indexOf('Blue')) === 1,
+  },
+];
+
+function constraintsSatisfiedSoFar(s, assignedCount, categories) {
+  return CONSTRAINTS.every((constraint) => {
+    const fullyDetermined = constraint.involves.every(
+      (category) => categories.indexOf(category) < assignedCount
+    );
+    return fullyDetermined ? constraint.check(s) : true;
+  });
+}
+
+function permutations(items) {
+  if (items.length <= 1) return [items];
+  const result = [];
+  items.forEach((item, index) => {
+    const rest = items.slice(0, index).concat(items.slice(index + 1));
+    for (const perm of permutations(rest)) {
+      result.push([item].concat(perm));
+    }
+  });
+  return result;
+}

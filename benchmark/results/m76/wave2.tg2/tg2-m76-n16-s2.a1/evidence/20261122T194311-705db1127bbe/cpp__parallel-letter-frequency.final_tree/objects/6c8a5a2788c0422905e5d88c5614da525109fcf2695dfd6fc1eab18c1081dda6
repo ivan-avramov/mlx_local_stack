@@ -1,0 +1,77 @@
+#include "parallel_letter_frequency.h"
+
+#include <array>
+#include <cctype>
+#include <algorithm>
+#include <thread>
+#include <vector>
+
+namespace parallel_letter_frequency {
+
+namespace {
+
+constexpr std::size_t kAlphabetSize = 26;
+
+// Count letters in texts[begin, end), accumulating into `counts`.
+void countTexts(const std::vector<std::string_view>& texts,
+                std::size_t begin,
+                std::size_t end,
+                std::array<int, kAlphabetSize>& counts) {
+    counts.fill(0);
+    for (std::size_t i = begin; i < end; ++i) {
+        for (char c : texts[i]) {
+            unsigned char uc = static_cast<unsigned char>(c);
+            if (std::isalpha(uc)) {
+                int letter = std::tolower(uc) - 'a';
+                counts[static_cast<std::size_t>(letter)]++;
+            }
+        }
+    }
+}
+
+}  // namespace
+
+std::map<char, int> frequency(const std::vector<std::string_view>& texts) {
+    std::map<char, int> result;
+    if (texts.empty()) {
+        return result;
+    }
+
+    unsigned int hardware = std::thread::hardware_concurrency();
+    std::size_t threads = hardware > 0 ? hardware : 1;
+    if (threads > texts.size()) {
+        threads = texts.size();
+    }
+
+    std::vector<std::array<int, kAlphabetSize>> partials(threads);
+    std::vector<std::thread> workers;
+    workers.reserve(threads);
+
+    std::size_t chunk = (texts.size() + threads - 1) / threads;
+    for (std::size_t t = 0; t < threads; ++t) {
+        std::size_t begin = t * chunk;
+        if (begin >= texts.size()) {
+            break;
+        }
+        workers.emplace_back([&texts, &partials, begin, t, chunk]() {
+            std::size_t end = std::min(begin + chunk, texts.size());
+            countTexts(texts, begin, end, partials[t]);
+        });
+    }
+
+    for (auto& worker : workers) {
+        worker.join();
+    }
+
+    for (const auto& counts : partials) {
+        for (std::size_t i = 0; i < kAlphabetSize; ++i) {
+            if (counts[i] > 0) {
+                result[static_cast<char>('a' + i)] += counts[i];
+            }
+        }
+    }
+
+    return result;
+}
+
+}  // namespace parallel_letter_frequency

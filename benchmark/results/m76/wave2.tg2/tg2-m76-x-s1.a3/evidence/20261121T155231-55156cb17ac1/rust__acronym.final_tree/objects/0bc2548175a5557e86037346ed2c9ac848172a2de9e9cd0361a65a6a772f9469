@@ -1,0 +1,22 @@
+pub fn abbreviate(phrase: &str) -> String {
+    phrase
+        .split(|c: char| c.is_whitespace() || c == '-')
+        .flat_map(|word| {
+            let mut seen_alpha = false;
+            let mut prev_lower = false;
+            word.chars().filter_map(move |c| {
+                let take = if !seen_alpha {
+                    c.is_alphabetic()
+                } else {
+                    c.is_uppercase() && prev_lower
+                };
+                if c.is_alphabetic() {
+                    seen_alpha = true;
+                    prev_lower = c.is_lowercase();
+                }
+                take.then_some(c)
+            })
+        })
+        .map(|c| c.to_ascii_uppercase())
+        .collect()
+}

@@ -1,0 +1,38 @@
+fn is_vowel(c: char) -> bool {
+    matches!(c, 'a' | 'e' | 'i' | 'o' | 'u')
+}
+
+fn translate_word(word: &str) -> String {
+    // Rule 1: words starting with "xr" or "yt" are treated like vowel words.
+    if word.starts_with("xr") || word.starts_with("yt") {
+        return format!("{word}ay");
+    }
+
+    // Find where the leading consonant cluster ends.
+    let mut split = 0;
+    for (i, c) in word.chars().enumerate() {
+        if is_vowel(c) {
+            break;
+        }
+        // Rule 4: 'y' acts as a vowel once it is not the first letter.
+        if c == 'y' && i > 0 {
+            break;
+        }
+        // Rule 3: a 'q' followed by 'u' is part of the cluster to move.
+        if c == 'q' && word.get(i + 1..).is_some_and(|rest| rest.starts_with('u')) {
+            split = i + 2;
+            break;
+        }
+        split = i + 1;
+    }
+
+    format!("{}{}ay", &word[split..], &word[..split])
+}
+
+pub fn translate(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(translate_word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}

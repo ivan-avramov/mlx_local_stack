@@ -1,0 +1,45 @@
+/// Price (in cents) of a group of `k` different books, for k = 0..=5.
+const GROUP_COST: [u32; 6] = [0, 800, 1520, 2160, 2560, 3000];
+
+/// Returns the lowest possible price (in cents) for the given basket.
+/// Each element of `books` is a book title (1..=5).
+pub fn lowest_price(books: &[u32]) -> u32 {
+    let mut counts = [0u32; 5];
+    for &title in books {
+        if (1..=5).contains(&title) {
+            counts[(title - 1) as usize] += 1;
+        }
+    }
+    let mut memo = std::collections::HashMap::new();
+    solve(&counts, &mut memo)
+}
+
+/// Minimum cost to buy the books described by `counts` (how many copies of
+/// each of the 5 titles remain).
+///
+/// A state is canonicalized by sorting the counts in descending order, since
+/// the titles themselves are interchangeable. From a state we try forming a
+/// group of `k` different books (1 <= k <= number of titles still in stock),
+/// always taking one copy of each of the `k` most numerous titles — keeping
+/// the remaining counts as balanced as possible is never worse.
+fn solve(counts: &[u32; 5], memo: &mut std::collections::HashMap<[u32; 5], u32>) -> u32 {
+    let mut c = *counts;
+    c.sort_unstable_by(|a, b| b.cmp(a));
+    if c.iter().all(|&x| x == 0) {
+        return 0;
+    }
+    if let Some(&value) = memo.get(&c) {
+        return value;
+    }
+    let distinct = c.iter().filter(|&&x| x > 0).count();
+    let mut best = u32::MAX;
+    for k in 1..=distinct {
+        let mut next = c;
+        for i in 0..k {
+            next[i] -= 1;
+        }
+        best = best.min(GROUP_COST[k] + solve(&next, memo));
+    }
+    memo.insert(c, best);
+    best
+}

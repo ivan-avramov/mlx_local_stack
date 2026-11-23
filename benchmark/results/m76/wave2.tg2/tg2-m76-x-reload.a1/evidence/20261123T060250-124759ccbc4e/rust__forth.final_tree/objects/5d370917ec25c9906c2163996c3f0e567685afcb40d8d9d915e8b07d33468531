@@ -1,0 +1,244 @@
+use std::collections::HashMap;
+
+pub type Value = i32;
+pub type Result = std::result::Result<(), Error>;
+
+/// Built-in stack operations.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Dup,
+    Drop,
+    Swap,
+    Over,
+}
+
+/// A single instruction inside a word definition.
+enum Instr {
+    /// Push a literal number onto the stack.
+    Num(Value),
+    /// Perform a built-in stack operation.
+    Op(Op),
+    /// Invoke another word definition by index into [`Forth::defs`].
+    ///
+    /// Resolved at *definition* time, so a word always calls the definition
+    /// that existed when it was defined (no eager expansion, no OOM attack).
+    Ref(usize),
+    /// A word that was unknown when the definition was parsed; resolved at
+    /// execution time (yields [`Error::UnknownWord`] if still unknown).
+    Word(String),
+}
+
+pub struct Forth {
+    /// Data stack; the last element is the top of the stack.
+    stack: Vec<Value>,
+    /// All word definitions, built-ins included (they occupy the first slots).
+    defs: Vec<Vec<Instr>>,
+    /// Lower-cased word name -> index into `defs`.
+    dict: HashMap<String, usize>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    DivisionByZero,
+    StackUnderflow,
+    UnknownWord,
+    InvalidWord,
+}
+
+impl Forth {
+    pub fn new() -> Forth {
+        let mut defs: Vec<Vec<Instr>> = Vec::new();
+        let mut dict: HashMap<String, usize> = HashMap::new();
+
+        for (name, op) in [
+            ("dup", Op::Dup),
+            ("drop", Op::Drop),
+            ("swap", Op::Swap),
+            ("over", Op::Over),
+            ("+", Op::Add),
+            ("-", Op::Sub),
+            ("*", Op::Mul),
+            ("/", Op::Div),
+        ] {
+            dict.insert(name.to_string(), defs.len());
+            defs.push(vec![Instr::Op(op)]);
+        }
+
+        Forth {
+            stack: Vec::new(),
+            defs,
+            dict,
+        }
+    }
+
+    pub fn stack(&self) -> &[Value] {
+        &self.stack
+    }
+
+    pub fn eval(&mut self, input: &str) -> Result {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            if tokens[i] == ":" {
+                i += self.define(&tokens[i..])?;
+            } else {
+                i += self.exec_token(tokens[i])?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parse and register a definition starting at `tokens[0] == ":"`.
+    /// Returns the number of tokens consumed.
+    fn define(&mut self, tokens: &[&str]) -> std::result::Result<usize, Error> {
+        if tokens.len() < 2 {
+            return Err(Error::InvalidWord);
+        }
+
+        let lname = tokens[1].to_lowercase();
+        // Numbers cannot be word names.
+        if lname.parse::<Value>().is_ok() {
+            return Err(Error::InvalidWord);
+        }
+
+        let mut end = None;
+        for (j, tok) in tokens.iter().enumerate() {
+            if *tok == ";" {
+                end = Some(j);
+                break;
+            }
+        }
+        let end = match end {
+            Some(e) => e,
+            None => return Err(Error::InvalidWord),
+        };
+
+        // Capture the body at definition time: known words become `Ref`s to
+        // the definition that exists right now, so later redefinitions of
+        // those words do not affect this one.
+        let mut def = Vec::with_capacity(end.saturating_sub(2));
+        for tok in &tokens[2..end] {
+            if let Ok(n) = tok.parse::<Value>() {
+                def.push(Instr::Num(n));
+            } else {
+                let lt = tok.to_lowercase();
+                match self.dict.get(&lt) {
+                    Some(&idx) => def.push(Instr::Ref(idx)),
+                    None => def.push(Instr::Word(lt)),
+                }
+            }
+        }
+
+        let idx = self.defs.len();
+        self.defs.push(def);
+        self.dict.insert(lname, idx);
+        Ok(end + 1)
+    }
+
+    /// Execute a single token that is not the start of a definition.
+    /// Returns the number of tokens consumed.
+    fn exec_token(&mut self, token: &str) -> std::result::Result<usize, Error> {
+        if let Ok(n) = token.parse::<Value>() {
+            self.stack.push(n);
+        } else {
+            let lt = token.to_lowercase();
+            match self.dict.get(&lt) {
+                Some(&idx) => self.exec_def(idx)?,
+                None => return Err(Error::UnknownWord),
+            }
+        }
+        Ok(1)
+    }
+
+    /// Execute a word definition, following `Ref`/`Word` instructions
+    /// iteratively with an explicit frame stack (no recursion).
+    fn exec_def(&mut self, start: usize) -> Result {
+        let defs = &self.defs;
+        let dict = &self.dict;
+        let mut frames: Vec<(usize, usize)> = vec![(start, 0)];
+
+        loop {
+            let (di, ip) = frames.pop().unwrap();
+            let def = &defs[di];
+            let mut ip = ip;
+            let mut descended = false;
+
+            while ip < def.len() {
+                ip += 1;
+                match &def[ip - 1] {
+                    Instr::Num(n) => self.stack.push(*n),
+                    Instr::Op(op) => Self::exec_op(&mut self.stack, *op)?,
+                    Instr::Ref(r) => {
+                        frames.push((di, ip));
+                        frames.push((*r, 0));
+                        descended = true;
+                        break;
+                    }
+                    Instr::Word(name) => match dict.get(name) {
+                        Some(&r) => {
+                            frames.push((di, ip));
+                            frames.push((r, 0));
+                            descended = true;
+                            break;
+                        }
+                        None => return Err(Error::UnknownWord),
+                    },
+                }
+            }
+
+            if descended {
+                continue;
+            }
+            if frames.is_empty() {
+                return Ok(());
+            }
+        }
+    }
+
+    /// Perform a built-in stack operation.
+    fn exec_op(stack: &mut Vec<Value>, op: Op) -> Result {
+        match op {
+            Op::Add | Op::Sub | Op::Mul | Op::Div => {
+                let b = stack.pop().ok_or(Error::StackUnderflow)?;
+                let a = stack.pop().ok_or(Error::StackUnderflow)?;
+                if op == Op::Div && b == 0 {
+                    return Err(Error::DivisionByZero);
+                }
+                let r = match op {
+                    Op::Add => a + b,
+                    Op::Sub => a - b,
+                    Op::Mul => a * b,
+                    Op::Div => a / b,
+                    _ => unreachable!(),
+                };
+                stack.push(r);
+            }
+            Op::Dup => {
+                let a = stack.pop().ok_or(Error::StackUnderflow)?;
+                stack.push(a);
+                stack.push(a);
+            }
+            Op::Drop => {
+                stack.pop().ok_or(Error::StackUnderflow)?;
+            }
+            Op::Swap => {
+                let b = stack.pop().ok_or(Error::StackUnderflow)?;
+                let a = stack.pop().ok_or(Error::StackUnderflow)?;
+                stack.push(b);
+                stack.push(a);
+            }
+            Op::Over => {
+                let b = stack.pop().ok_or(Error::StackUnderflow)?;
+                let a = stack.pop().ok_or(Error::StackUnderflow)?;
+                stack.push(a);
+                stack.push(b);
+                stack.push(a);
+            }
+        }
+        Ok(())
+    }
+}

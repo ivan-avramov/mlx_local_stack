@@ -1,0 +1,96 @@
+//! Generate musical scales from a tonic and a sequence of intervals.
+//!
+//! Scales are built by walking the twelve-pitch chromatic circle. The choice
+//! of spelling (sharps vs. flats) depends on the tonic, and each interval
+//! advances the current pitch by a fixed number of semitones:
+//!
+//! - `m` (minor second / half step)  -> 1 semitone
+//! - `M` (major second / whole step) -> 2 semitones
+//! - `A` (augmented second)          -> 3 semitones
+
+#[derive(Debug)]
+pub struct Error;
+
+pub struct Scale {
+    notes: Vec<String>,
+}
+
+/// The chromatic scale spelled with sharps, indexed by semitone (C = 0).
+const SHARP_CHROMATIC: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+
+/// The chromatic scale spelled with flats, indexed by semitone (C = 0).
+const FLAT_CHROMATIC: [&str; 12] = [
+    "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
+];
+
+impl Scale {
+    /// Build a scale from `tonic` following the interval pattern `intervals`.
+    pub fn new(tonic: &str, intervals: &str) -> Result<Scale, Error> {
+        let use_sharps = should_use_sharps(tonic);
+        let chromatic = if use_sharps {
+            &SHARP_CHROMATIC
+        } else {
+            &FLAT_CHROMATIC
+        };
+
+        let tonic = normalize_letter(tonic);
+        let start = chromatic
+            .iter()
+            .position(|note| *note == tonic)
+            .ok_or(Error)?;
+
+        let mut notes = vec![chromatic[start].to_string()];
+        let mut pos = start;
+
+        for interval in intervals.chars() {
+            let steps = match interval {
+                'm' => 1,
+                'M' => 2,
+                'A' => 3,
+                _ => return Err(Error),
+            };
+            pos = (pos + steps) % 12;
+            notes.push(chromatic[pos].to_string());
+        }
+
+        Ok(Scale { notes })
+    }
+
+    /// Build the default (chromatic) scale starting at `tonic`.
+    pub fn chromatic(tonic: &str) -> Result<Scale, Error> {
+        Self::new(tonic, &"m".repeat(12))
+    }
+
+    /// Return the notes of the scale, tonic first and ending on the tonic.
+    pub fn enumerate(&self) -> Vec<String> {
+        self.notes.clone()
+    }
+}
+
+/// Uppercase the tonic's letter so it matches the chromatic tables, while
+/// leaving any accidental (`#` or `b`) untouched.
+fn normalize_letter(tonic: &str) -> String {
+    let mut chars = tonic.chars();
+    let letter = chars.next().map(|c| c.to_ascii_uppercase()).unwrap_or(' ');
+    format!("{letter}{}", chars.as_str())
+}
+
+/// Decide whether a tonic's scale should be spelled with sharps or flats.
+///
+/// The letter's case matters: uppercase denotes a major key, lowercase a minor
+/// key, and the two can differ (e.g. `G` major uses sharps while `g` minor
+/// uses flats). Tonics that carry an explicit accidental follow that
+/// accidental.
+fn should_use_sharps(tonic: &str) -> bool {
+    const SHARPS: &[&str] = &[
+        // No sharps or flats by default, but spelled with sharps when
+        // accidentals are needed.
+        "C", "a",
+        // Use sharps.
+        "G", "D", "A", "E", "B", "F#",
+        "e", "b", "f#", "c#", "g#", "d#",
+    ];
+    SHARPS.contains(&tonic)
+}

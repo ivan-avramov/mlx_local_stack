@@ -1,0 +1,110 @@
+import java.util.Objects;
+
+class Rational {
+
+    private final int numerator;
+    private final int denominator;
+
+    Rational(int numerator, int denominator) {
+        if (denominator == 0) {
+            throw new IllegalArgumentException("Denominator must not be zero");
+        }
+
+        int gcd = gcd(Math.abs(numerator), Math.abs(denominator));
+        int n = numerator / gcd;
+        int d = denominator / gcd;
+
+        if (d < 0) {
+            n = -n;
+            d = -d;
+        }
+
+        this.numerator = n;
+        this.denominator = d;
+    }
+
+    int getNumerator() {
+        return numerator;
+    }
+
+    int getDenominator() {
+        return denominator;
+    }
+
+    Rational add(Rational other) {
+        return new Rational(
+                this.numerator * other.denominator + other.numerator * this.denominator,
+                this.denominator * other.denominator);
+    }
+
+    Rational subtract(Rational other) {
+        return new Rational(
+                this.numerator * other.denominator - other.numerator * this.denominator,
+                this.denominator * other.denominator);
+    }
+
+    Rational multiply(Rational other) {
+        return new Rational(
+                this.numerator * other.numerator,
+                this.denominator * other.denominator);
+    }
+
+    Rational divide(Rational other) {
+        return new Rational(
+                this.numerator * other.denominator,
+                this.denominator * other.numerator);
+    }
+
+    Rational abs() {
+        return new Rational(Math.abs(numerator), Math.abs(denominator));
+    }
+
+    Rational pow(int power) {
+        if (power >= 0) {
+            return new Rational(intPow(numerator, power), intPow(denominator, power));
+        } else {
+            return new Rational(intPow(denominator, -power), intPow(numerator, -power));
+        }
+    }
+
+    double exp(double exponent) {
+        return Math.pow(Math.pow(exponent, 1.0 / denominator), numerator);
+    }
+
+    private static int intPow(int base, int power) {
+        int result = 1;
+        for (int i = 0; i < power; i++) {
+            result *= base;
+        }
+        return result;
+    }
+
+    private static int gcd(int a, int b) {
+        while (b != 0) {
+            int t = a % b;
+            a = b;
+            b = t;
+        }
+        return a;
+    }
+
+    @Override
+    public String toString() {
+        return String.format("%d/%d", this.getNumerator(), this.getDenominator());
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof Rational other) {
+            return this.getNumerator() == other.getNumerator()
+                    && this.getDenominator() == other.getDenominator();
+        }
+
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.getNumerator(), this.getDenominator());
+    }
+}

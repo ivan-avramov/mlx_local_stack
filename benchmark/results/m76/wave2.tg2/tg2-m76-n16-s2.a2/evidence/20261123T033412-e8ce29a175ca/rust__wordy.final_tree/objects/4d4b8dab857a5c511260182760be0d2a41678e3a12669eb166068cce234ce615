@@ -1,0 +1,121 @@
+/// Parse and evaluate a simple math word problem.
+///
+/// Returns the integer result, or `None` if the command is not a valid
+/// math question.
+pub fn answer(command: &str) -> Option<i32> {
+    let expr = command.strip_prefix("What is ")?;
+    let expr = expr.strip_suffix('?')?;
+
+    let tokens: Vec<&str> = expr.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+
+    let mut i = 0;
+    let mut current = parse_number(&tokens, &mut i)?;
+
+    while i < tokens.len() {
+        match parse_operator(&tokens, &mut i)? {
+            Op::Plus => {
+                current = current.checked_add(parse_number(&tokens, &mut i)?)?;
+            }
+            Op::Minus => {
+                current = current.checked_sub(parse_number(&tokens, &mut i)?)?;
+            }
+            Op::Mult => {
+                current = current.checked_mul(parse_number(&tokens, &mut i)?)?;
+            }
+            Op::Div => {
+                current = current.checked_div(parse_number(&tokens, &mut i)?)?;
+            }
+            #[cfg(feature = "exponentials")]
+            Op::Pow(exp) => {
+                if exp < 0 {
+                    return None;
+                }
+                current = current.checked_pow(exp as u32)?;
+            }
+        }
+    }
+
+    Some(current)
+}
+
+/// The binary operators the parser understands. `Pow` carries its exponent,
+/// which is embedded in the "raised to the Nth power" phrase.
+enum Op {
+    Plus,
+    Minus,
+    Mult,
+    Div,
+    #[cfg(feature = "exponentials")]
+    Pow(i32),
+}
+
+/// Parse a (possibly negative) integer at `tokens[*i]`, advancing `*i`.
+fn parse_number(tokens: &[&str], i: &mut usize) -> Option<i32> {
+    let tok = tokens.get(*i).copied()?;
+    let n = tok.parse::<i32>().ok()?;
+    *i += 1;
+    Some(n)
+}
+
+/// Parse an operator starting at `tokens[*i]`, advancing `*i` past it.
+fn parse_operator(tokens: &[&str], i: &mut usize) -> Option<Op> {
+    let tok = tokens.get(*i).copied()?;
+    match tok {
+        "plus" => {
+            *i += 1;
+            Some(Op::Plus)
+        }
+        "minus" => {
+            *i += 1;
+            Some(Op::Minus)
+        }
+        "multiplied" => {
+            if tokens.get(*i + 1).copied() == Some("by") {
+                *i += 2;
+                Some(Op::Mult)
+            } else {
+                None
+            }
+        }
+        "divided" => {
+            if tokens.get(*i + 1).copied() == Some("by") {
+                *i += 2;
+                Some(Op::Div)
+            } else {
+                None
+            }
+        }
+        #[cfg(feature = "exponentials")]
+        "raised" => {
+            // Expected: raised to the <ordinal> power
+            if tokens.get(*i + 1).copied() == Some("to")
+                && tokens.get(*i + 2).copied() == Some("the")
+            {
+                let exp_tok = tokens.get(*i + 3).copied()?;
+                let exp = parse_ordinal(exp_tok)?;
+                if tokens.get(*i + 4).copied() == Some("power") {
+                    *i += 5;
+                    Some(Op::Pow(exp))
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Extract the numeric prefix from an ordinal word such as "5th" or "2nd".
+#[cfg(feature = "exponentials")]
+fn parse_ordinal(s: &str) -> Option<i32> {
+    let digits: String = s.chars().take_while(char::is_ascii_digit).collect();
+    if digits.is_empty() {
+        return None;
+    }
+    digits.parse::<i32>().ok()
+}

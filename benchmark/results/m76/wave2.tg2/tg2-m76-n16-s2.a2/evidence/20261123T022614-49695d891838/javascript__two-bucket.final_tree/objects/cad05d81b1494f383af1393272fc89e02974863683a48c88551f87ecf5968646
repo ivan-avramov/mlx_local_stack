@@ -1,0 +1,71 @@
+//
+// This is only a SKELETON file for the 'Two Bucket' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const gcd = (a, b) => (b === 0 ? a : gcd(b, a % b));
+
+export class TwoBucket {
+  constructor(bucketOne, bucketTwo, goal, startBucket) {
+    this.bucketOne = bucketOne;
+    this.bucketTwo = bucketTwo;
+    this.goal = goal;
+    this.startBucket = startBucket;
+
+    if (goal > Math.max(bucketOne, bucketTwo)) {
+      throw new Error('Goal is larger than both buckets');
+    }
+
+    if (goal % gcd(bucketOne, bucketTwo) !== 0) {
+      throw new Error('No solution possible');
+    }
+  }
+
+  solve() {
+    const { bucketOne, bucketTwo, goal, startBucket } = this;
+    const startIsOne = startBucket === 'one';
+
+    // After an action the starting bucket may not be empty while the other is full.
+    const isForbidden = (one, two) =>
+      startIsOne ? one === 0 && two === bucketTwo : one === bucketOne && two === 0;
+
+    const start = startIsOne ? [bucketOne, 0] : [0, bucketTwo];
+    const queue = [[start, 1]];
+    const visited = new Set([start.join(',')]);
+
+    let head = 0;
+    while (head < queue.length) {
+      const [[one, two], moves] = queue[head];
+      head += 1;
+
+      if (one === goal || two === goal) {
+        return {
+          moves,
+          goalBucket: one === goal ? 'one' : 'two',
+          otherBucket: one === goal ? two : one,
+        };
+      }
+
+      const pourOneIntoTwo = Math.min(one, bucketTwo - two);
+      const pourTwoIntoOne = Math.min(two, bucketOne - one);
+      const nextStates = [
+        [bucketOne, two], // fill bucket one
+        [one, bucketTwo], // fill bucket two
+        [0, two], // empty bucket one
+        [one, 0], // empty bucket two
+        [one - pourOneIntoTwo, two + pourOneIntoTwo], // pour one into two
+        [one + pourTwoIntoOne, two - pourTwoIntoOne], // pour two into one
+      ];
+
+      for (const [nextOne, nextTwo] of nextStates) {
+        const key = `${nextOne},${nextTwo}`;
+        if (!visited.has(key) && !isForbidden(nextOne, nextTwo)) {
+          visited.add(key);
+          queue.push([[nextOne, nextTwo], moves + 1]);
+        }
+      }
+    }
+
+    throw new Error('No solution possible');
+  }
+}

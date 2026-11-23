@@ -1,0 +1,38 @@
+#include "dnd_character.h"
+
+#include <algorithm>
+#include <random>
+
+namespace dnd_character {
+
+int modifier(int score) {
+    int diff = score - 10;
+    // Round down (floor division), not truncate toward zero.
+    return diff >= 0 ? diff / 2 : (diff - 1) / 2;
+}
+
+int ability() {
+    static std::mt19937 generator{std::random_device{}()};
+    std::uniform_int_distribution<int> die(1, 6);
+
+    int total = 0;
+    int lowest = 7;
+    for (int i = 0; i < 4; ++i) {
+        int roll = die(generator);
+        total += roll;
+        lowest = std::min(lowest, roll);
+    }
+    return total - lowest;
+}
+
+Character::Character()
+    : strength{ability()}
+    , dexterity{ability()}
+    , constitution{ability()}
+    , intelligence{ability()}
+    , wisdom{ability()}
+    , charisma{ability()}
+    , hitpoints{10 + modifier(constitution)} {
+}
+
+}  // namespace dnd_character

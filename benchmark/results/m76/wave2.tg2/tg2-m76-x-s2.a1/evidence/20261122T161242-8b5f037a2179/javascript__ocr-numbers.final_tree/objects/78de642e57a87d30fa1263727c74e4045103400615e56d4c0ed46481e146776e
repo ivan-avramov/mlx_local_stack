@@ -1,0 +1,60 @@
+//
+// This is only a SKELETON file for the 'OCR Numbers' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const DIGIT_GRIDS = [
+  [' _ ', '| |', '|_|', '   '], // 0
+  ['   ', '  |', '  |', '   '], // 1
+  [' _ ', ' _|', '|_ ', '   '], // 2
+  [' _ ', ' _|', ' _|', '   '], // 3
+  ['   ', '|_|', '  |', '   '], // 4
+  [' _ ', '|_ ', ' _|', '   '], // 5
+  [' _ ', '|_ ', '|_|', '   '], // 6
+  [' _ ', '  |', '  |', '   '], // 7
+  [' _ ', '|_|', '|_|', '   '], // 8
+  [' _ ', '|_|', ' _|', '   '], // 9
+];
+
+const DIGITS = DIGIT_GRIDS.map((grid) => grid.join(''));
+
+const convertGroup = (group) => {
+  const pattern = group.join('');
+  const index = DIGITS.indexOf(pattern);
+  return index === -1 ? '?' : String(index);
+};
+
+export const convert = (input) => {
+  const lines = input.split('\n');
+
+  if (lines.length % 4 !== 0) {
+    throw new Error('Input height is invalid');
+  }
+
+  const width = Math.max(...lines.map((line) => line.length));
+  if (width % 3 !== 0) {
+    throw new Error('Input width is invalid');
+  }
+
+  const groups = [];
+  const rows = lines.length / 4;
+  const columns = width / 3;
+
+  for (let row = 0; row < rows; row += 1) {
+    const group = [];
+
+    for (let col = 0; col < columns; col += 1) {
+      const start = col * 3;
+
+      group.push(
+        lines.slice(row * 4, row * 4 + 4).map((line) => line.slice(start, start + 3)),
+      );
+    }
+
+    groups.push(group);
+  }
+
+  return groups
+    .map((group) => group.map(convertGroup).join(''))
+    .join(',');
+};

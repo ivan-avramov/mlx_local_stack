@@ -1,0 +1,142 @@
+use std::borrow::Borrow;
+
+/// A munger which XORs a key with some data.
+///
+/// Holds a reference to the key and the position within the key of the next
+/// byte to be XORed, so that repeated calls continue where the previous call
+/// left off (the key is reused, cycling around as needed).
+#[derive(Clone)]
+pub struct Xorcism<'a> {
+    key: &'a [u8],
+    position: usize,
+}
+
+impl<'a> Xorcism<'a> {
+    /// Create a new Xorcism munger from a key.
+    ///
+    /// Should accept anything which has a cheap conversion to a byte slice.
+    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
+        Xorcism {
+            key: key.as_ref(),
+            position: 0,
+        }
+    }
+
+    /// XOR a single byte with the current key byte, advancing the key position.
+    fn munge_byte(&mut self, byte: u8) -> u8 {
+        let key_byte = self.key[self.position % self.key.len()];
+        self.position += 1;
+        byte ^ key_byte
+    }
+
+    /// XOR each byte of the input buffer with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    pub fn munge_in_place(&mut self, data: &mut [u8]) {
+        for byte in data.iter_mut() {
+            *byte = self.munge_byte(*byte);
+        }
+    }
+
+    /// XOR each byte of the data with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    ///
+    /// Should accept anything which has a cheap conversion to a byte iterator.
+    /// Shouldn't matter whether the byte iterator's values are owned or borrowed.
+    pub fn munge<Data>(&mut self, data: Data) -> MungeIter<'_, 'a, Data::IntoIter>
+    where
+        Data: IntoIterator,
+        Data::Item: std::borrow::Borrow<u8>,
+    {
+        MungeIter {
+            xs: self,
+            data: data.into_iter(),
+        }
+    }
+}
+
+/// An iterator which XORs each byte of an underlying data iterator with the key.
+pub struct MungeIter<'a, 'k, I> {
+    xs: &'a mut Xorcism<'k>,
+    data: I,
+}
+
+impl<'a, 'k, I> Iterator for MungeIter<'a, 'k, I>
+where
+    I: Iterator,
+    I::Item: std::borrow::Borrow<u8>,
+{
+    type Item = u8;
+
+    fn next(&mut self) -> Option<u8> {
+        self.data.next().map(|byte| self.xs.munge_byte(*byte.borrow()))
+    }
+}
+
+#[cfg(feature = "io")]
+pub mod io {
+    use std::io::{self, Read, Write};
+
+    use super::Xorcism;
+
+    /// A `Read` adaptor which XORs everything read with the key.
+    pub struct Reader<'a, R> {
+        xs: Xorcism<'a>,
+        inner: R,
+    }
+
+    impl<'a, R: Read> Read for Reader<'a, R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = self.inner.read(buf)?;
+            self.xs.munge_in_place(&mut buf[..n]);
+            Ok(n)
+        }
+    }
+
+    /// A `Write` adaptor which XORs everything written with the key.
+    pub struct Writer<'a, W> {
+        xs: Xorcism<'a>,
+        inner: W,
+    }
+
+    impl<'a, W: Write> Write for Writer<'a, W> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let mut munged = vec![0u8; buf.len()];
+            munged.copy_from_slice(buf);
+            self.xs.munge_in_place(&mut munged);
+            let n = self.inner.write(&munged)?;
+            // If only part of the buffer was written, rewind the key position
+            // so the unwritten bytes are XORed with the same key bytes next time.
+            self.xs.position = self.xs.position.wrapping_sub(buf.len() - n);
+            Ok(n)
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+
+    impl<'a> Xorcism<'a> {
+        /// Convert the munger and a `Read` into a `Read` adaptor which XORs all read bytes.
+        pub fn reader<R: Read>(self, reader: R) -> Reader<'a, R> {
+            Reader {
+                xs: self,
+                inner: reader,
+            }
+        }
+
+        /// Convert the munger and a `Write` into a `Write` adaptor which XORs all written bytes.
+        pub fn writer<W: Write>(self, writer: W) -> Writer<'a, W> {
+            Writer {
+                xs: self,
+                inner: writer,
+            }
+        }
+    }
+}

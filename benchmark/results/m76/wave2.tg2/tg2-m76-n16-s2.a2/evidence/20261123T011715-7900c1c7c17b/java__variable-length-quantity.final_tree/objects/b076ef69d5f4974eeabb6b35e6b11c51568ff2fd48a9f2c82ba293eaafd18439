@@ -1,0 +1,56 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class VariableLengthQuantity {
+
+    private static final int CONTINUATION_BIT = 0x80;
+    private static final int SIGNIFICANT_BITS = 0x7F;
+
+    List<String> encode(List<Long> numbers) {
+        List<String> result = new ArrayList<>();
+        for (Long number : numbers) {
+            long value = number;
+
+            // Collect 7-bit groups from least significant to most significant.
+            List<Long> groups = new ArrayList<>();
+            groups.add(value & SIGNIFICANT_BITS);
+            value >>= 7;
+            while (value > 0) {
+                groups.add(value & SIGNIFICANT_BITS);
+                value >>= 7;
+            }
+
+            // Emit from most significant group to least significant.
+            // Every byte except the last carries the continuation bit.
+            for (int i = groups.size() - 1; i >= 0; i--) {
+                long encoded = groups.get(i);
+                if (i > 0) {
+                    encoded |= CONTINUATION_BIT;
+                }
+                result.add("0x" + Long.toHexString(encoded));
+            }
+        }
+        return result;
+    }
+
+    List<String> decode(List<Long> bytes) {
+        List<String> result = new ArrayList<>();
+        long value = 0;
+        boolean inSequence = false;
+
+        for (Long currentByte : bytes) {
+            value = (value << 7) | (currentByte & SIGNIFICANT_BITS);
+            inSequence = true;
+            if ((currentByte & CONTINUATION_BIT) == 0) {
+                result.add("0x" + Long.toHexString(value));
+                value = 0;
+                inSequence = false;
+            }
+        }
+
+        if (inSequence) {
+            throw new IllegalArgumentException("Invalid variable-length quantity encoding");
+        }
+        return result;
+    }
+}

@@ -1,0 +1,143 @@
+use std::borrow::Borrow;
+
+#[cfg(feature = "io")]
+use std::io::{Read, Write};
+
+/// A munger which XORs a key with some data
+#[derive(Clone)]
+pub struct Xorcism<'a> {
+    key: &'a [u8],
+    position: usize,
+}
+
+impl<'a> Xorcism<'a> {
+    /// Create a new Xorcism munger from a key
+    ///
+    /// Should accept anything which has a cheap conversion to a byte slice.
+    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    where
+        Key: AsRef<[u8]> + ?Sized,
+    {
+        Xorcism {
+            key: key.as_ref(),
+            position: 0,
+        }
+    }
+
+    /// XOR each byte of the input buffer with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    pub fn munge_in_place(&mut self, data: &mut [u8]) {
+        for byte in data.iter_mut() {
+            *byte ^= self.next_key_byte();
+        }
+    }
+
+    /// XOR each byte of the data with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    ///
+    /// Should accept anything which has a cheap conversion to a byte iterator.
+    /// Shouldn't matter whether the byte iterator's values are owned or borrowed.
+    pub fn munge<'b, Data>(&'b mut self, data: Data) -> impl Iterator<Item = u8> + 'b
+        + use<'a, 'b, Data>
+    where
+        Data: IntoIterator,
+        Data::Item: Borrow<u8>,
+        Data::IntoIter: 'b,
+    {
+        // The closure moves the `&mut self` reference, so the returned iterator
+        // keeps the key position in sync with how far it has been consumed.
+        data.into_iter().map(move |item| *item.borrow() ^ self.next_key_byte())
+    }
+
+    /// Returns the next byte of the repeating key, advancing the key position.
+    fn next_key_byte(&mut self) -> u8 {
+        let byte = self.key[self.position % self.key.len()];
+        self.position += 1;
+        byte
+    }
+}
+
+#[cfg(feature = "io")]
+impl<'a> Xorcism<'a> {
+    /// Converts the munger into a `Read` adaptor which XORs the bytes it reads.
+    pub fn reader<R: Read>(self, inner: R) -> impl Read + use<'a, R> {
+        io::Reader {
+            inner,
+            key: self.key,
+            position: self.position,
+        }
+    }
+
+    /// Converts the munger into a `Write` adaptor which XORs the bytes it writes.
+    pub fn writer<W: Write>(self, inner: W) -> impl Write + use<'a, W> {
+        io::Writer {
+            inner,
+            key: self.key,
+            position: self.position,
+            buffer: Vec::new(),
+        }
+    }
+}
+
+#[cfg(feature = "io")]
+mod io {
+    use std::io::{self, Read, Write};
+
+    /// A `Read` adaptor which XORs the bytes read from an inner reader with a repeating key.
+    pub struct Reader<'a, R: Read> {
+        pub(super) inner: R,
+        pub(super) key: &'a [u8],
+        pub(super) position: usize,
+    }
+
+    /// A `Write` adaptor which XORs the bytes it writes with a repeating key
+    /// before passing them to an inner writer.
+    pub struct Writer<'a, W: Write> {
+        pub(super) inner: W,
+        pub(super) key: &'a [u8],
+        pub(super) position: usize,
+        pub(super) buffer: Vec<u8>,
+    }
+
+    impl<'a, R: Read> Read for Reader<'a, R> {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let len = self.inner.read(buf)?;
+            let key = self.key;
+            let mut position = self.position;
+            let key_len = key.len();
+            for byte in &mut buf[..len] {
+                *byte ^= key[position % key_len];
+                position += 1;
+            }
+            self.position = position;
+            Ok(len)
+        }
+    }
+
+    impl<'a, W: Write> Write for Writer<'a, W> {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            let key = self.key;
+            let mut position = self.position;
+            let key_len = key.len();
+            // Reuse the scratch buffer so repeated writes don't allocate.
+            self.buffer.clear();
+            self.buffer.reserve(buf.len());
+            self.buffer.extend(buf.iter().map(|byte| {
+                let key_byte = key[position % key_len];
+                position += 1;
+                *byte ^ key_byte
+            }));
+            self.position = position;
+            self.inner.write_all(&self.buffer)?;
+            Ok(buf.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            self.inner.flush()
+        }
+    }
+}

@@ -1,0 +1,92 @@
+//
+// This is only a SKELETON file for the 'Poker' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const RANK_VALUES = {
+  J: 11,
+  Q: 12,
+  K: 13,
+  A: 14,
+};
+
+const rankValue = (rankStr) =>
+  RANK_VALUES[rankStr] ?? Number(rankStr);
+
+const parseCard = (card) => {
+  const suit = card.slice(-1);
+  const rank = rankValue(card.slice(0, -1));
+  return { rank, suit };
+};
+
+// Turn a hand into a comparable score array.
+// The first element is the category (higher is better); the rest are
+// tie-breakers, each a rank, in order of importance.
+const scoreHand = (hand) => {
+  const cards = hand.split(' ').map(parseCard);
+  const ranks = cards.map((c) => c.rank).sort((a, b) => b - a); // desc
+  const suits = cards.map((c) => c.suit);
+
+  const isFlush = suits.every((s) => s === suits[0]);
+
+  // Group ranks by how many times they appear, ordered by count then rank.
+  const counts = {};
+  for (const r of ranks) counts[r] = (counts[r] ?? 0) + 1;
+  const groups = Object.entries(counts)
+    .map(([r, c]) => [Number(r), c])
+    .sort((a, b) => (b[1] - a[1]) || (b[0] - a[0]));
+  const pattern = groups.map((g) => g[1]).join('');
+
+  // Straight detection (including the ace-low "wheel").
+  const unique = [...new Set(ranks)].sort((a, b) => b - a);
+  let isStraight = false;
+  let straightHigh = 0;
+  if (unique.length === 5) {
+    if (unique[0] - unique[4] === 4) {
+      isStraight = true;
+      straightHigh = unique[0];
+    } else if (unique.join(',') === '14,5,4,3,2') {
+      isStraight = true;
+      straightHigh = 5;
+    }
+  }
+
+  if (isStraight && isFlush) return [8, straightHigh]; // straight flush
+  if (pattern === '41') return [7, groups[0][0], groups[1][0]]; // four of a kind
+  if (pattern === '32') return [6, groups[0][0], groups[1][0]]; // full house
+  if (isFlush) return [5, ...ranks]; // flush
+  if (isStraight) return [4, straightHigh]; // straight
+  if (pattern === '311') {
+    return [3, groups[0][0], groups[1][0], groups[2][0]]; // three of a kind
+  }
+  if (pattern === '221') {
+    return [2, groups[0][0], groups[1][0], groups[2][0]]; // two pair
+  }
+  if (pattern === '2111') {
+    return [1, groups[0][0], groups[1][0], groups[2][0], groups[3][0]]; // one pair
+  }
+  return [0, ...ranks]; // high card
+};
+
+// Lexicographic comparison of two score arrays; positive if a > b.
+const compare = (a, b) => {
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const x = a[i] ?? -1;
+    const y = b[i] ?? -1;
+    if (x !== y) return x - y;
+  }
+  return 0;
+};
+
+export const bestHands = (hands) => {
+  const scored = hands.map((hand) => ({ hand, score: scoreHand(hand) }));
+
+  let best = scored[0].score;
+  for (const { score } of scored) {
+    if (compare(score, best) > 0) best = score;
+  }
+
+  return scored
+    .filter(({ score }) => compare(score, best) === 0)
+    .map(({ hand }) => hand);
+};

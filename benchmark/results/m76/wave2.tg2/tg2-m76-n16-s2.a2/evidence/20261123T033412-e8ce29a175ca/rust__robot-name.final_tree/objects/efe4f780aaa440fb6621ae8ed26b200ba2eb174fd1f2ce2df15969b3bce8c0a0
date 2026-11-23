@@ -1,0 +1,64 @@
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+
+use rand::Rng;
+
+/// The set of names currently handed out to robots.
+///
+/// This is deliberate global mutable state: the exercise's API
+/// (`Robot::new()` with no arguments) forces it. A more idiomatic design
+/// would make the registry an explicit value, e.g. a `NameRegistry` struct
+/// that the caller owns and passes by reference to `Robot::new`, so that
+/// "every robot has a unique name" is guaranteed by the type system instead
+/// of hidden in a process-wide static.
+static USED_NAMES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+pub struct Robot {
+    name: String,
+}
+
+impl Robot {
+    pub fn new() -> Self {
+        let name = Self::generate_unique_name();
+        Robot { name }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn reset_name(&mut self) {
+        let mut used = USED_NAMES.lock().unwrap();
+        used.remove(&self.name);
+        self.name = Self::generate_unique_name_locked(&mut used);
+    }
+
+    /// Draw random names until one that no other robot currently has.
+    fn generate_unique_name() -> String {
+        let mut used = USED_NAMES.lock().unwrap();
+        Self::generate_unique_name_locked(&mut used)
+    }
+
+    fn generate_unique_name_locked(used: &mut HashSet<String>) -> String {
+        let mut rng = rand::rng();
+        loop {
+            let name = random_name(&mut rng);
+            if used.insert(name.clone()) {
+                return name;
+            }
+        }
+    }
+}
+
+/// Two uppercase letters followed by three digits, e.g. `RX837`.
+fn random_name(rng: &mut impl Rng) -> String {
+    let mut name = String::with_capacity(5);
+    for _ in 0..2 {
+        name.push(rng.random_range('A'..='Z'));
+    }
+    for _ in 0..3 {
+        name.push(rng.random_range('0'..='9'));
+    }
+    name
+}

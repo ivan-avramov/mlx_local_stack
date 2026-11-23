@@ -1,0 +1,87 @@
+//
+// This is the solution file for the 'Connect' exercise.
+//
+// The board is given as an array of strings, one per row. Each row is a
+// space-separated list of cells (`X`, `O`, or `.`). Row `r` is indented by
+// `r` spaces purely for display, so the leading whitespace is ignored when
+// parsing.
+//
+// Player `O` connects the top edge (row 0) to the bottom edge (last row).
+// Player `X` connects the left edge (column 0) to the right edge (last column).
+//
+// Because the board is a parallelogram of hexagons, a cell at (row, col) is
+// edge-adjacent to six neighbours:
+//   (row,     col - 1), (row,     col + 1)   same row
+//   (row - 1, col),     (row - 1, col + 1)   row above
+//   (row + 1, col - 1), (row + 1, col)       row below
+//
+
+export class Board {
+  constructor(lines) {
+    this.grid = lines.map((line) => line.trim().split(' '));
+    this.rows = this.grid.length;
+    this.cols = this.grid[0].length;
+  }
+
+  winner() {
+    if (this.connects('X', (r, c) => c === 0, (r, c) => c === this.cols - 1)) {
+      return 'X';
+    }
+    if (this.connects('O', (r) => r === 0, (r) => r === this.rows - 1)) {
+      return 'O';
+    }
+    return '';
+  }
+
+  // Flood-fill from every `player` cell on the `startEdge`, returning true if
+  // the connected region reaches the `endEdge`.
+  connects(player, startEdge, endEdge) {
+    const visited = new Set();
+    const queue = [];
+
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.cols; c++) {
+        if (this.grid[r][c] === player && startEdge(r, c)) {
+          visited.add(`${r},${c}`);
+          queue.push([r, c]);
+        }
+      }
+    }
+
+    while (queue.length > 0) {
+      const [r, c] = queue.shift();
+
+      if (endEdge(r, c)) {
+        return true;
+      }
+
+      for (const [nr, nc] of this.neighbours(r, c)) {
+        if (nr < 0 || nr >= this.rows || nc < 0 || nc >= this.cols) {
+          continue;
+        }
+        if (this.grid[nr][nc] !== player) {
+          continue;
+        }
+        const key = `${nr},${nc}`;
+        if (visited.has(key)) {
+          continue;
+        }
+        visited.add(key);
+        queue.push([nr, nc]);
+      }
+    }
+
+    return false;
+  }
+
+  neighbours(r, c) {
+    return [
+      [r, c - 1],
+      [r, c + 1],
+      [r - 1, c],
+      [r - 1, c + 1],
+      [r + 1, c - 1],
+      [r + 1, c],
+    ];
+  }
+}

@@ -1,0 +1,84 @@
+//
+// This is only a SKELETON file for the 'Poker' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const RANKS = {
+  '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+  '10': 10, J: 11, Q: 12, K: 13, A: 14,
+};
+
+const parseCard = (card) => {
+  const suit = card[card.length - 1];
+  const rank = RANKS[card.slice(0, -1)];
+  return { rank, suit };
+};
+
+// Returns [category, ...tiebreak values] for a hand string.
+// Categories: 0 high card, 1 one pair, 2 two pair, 3 three of a kind,
+// 4 straight, 5 flush, 6 full house, 7 four of a kind, 8 straight flush.
+const score = (hand) => {
+  const cards = hand.split(' ').map(parseCard);
+  const ranks = cards.map((c) => c.rank).sort((a, b) => b - a);
+  const isFlush = cards.every((c) => c.suit === cards[0].suit);
+
+  // Group ranks by count, e.g. {8: 3, 2: 2} for a full house.
+  const groups = {};
+  for (const r of ranks) groups[r] = (groups[r] || 0) + 1;
+  // Groups ordered by count descending, then rank descending.
+  const byCount = Object.keys(groups)
+    .map(Number)
+    .sort((a, b) => groups[b] - groups[a] || b - a);
+
+  // Straight detection; ace can also be low (A 2 3 4 5).
+  let straightHigh = 0;
+  const unique = [...new Set(ranks)];
+  if (unique.length === 5 && unique[0] - unique[4] === 4) {
+    straightHigh = unique[0];
+  } else if (unique.join(',') === '14,5,4,3,2') {
+    straightHigh = 5;
+  }
+
+  if (straightHigh && isFlush) {
+    return [8, straightHigh];
+  }
+  if (straightHigh) {
+    return [4, straightHigh];
+  }
+  if (groups[byCount[0]] === 4) {
+    return [7, byCount[0], byCount[1]];
+  }
+  if (groups[byCount[0]] === 3 && groups[byCount[1]] === 2) {
+    return [6, byCount[0], byCount[1]];
+  }
+  if (isFlush) {
+    return [5, ...ranks];
+  }
+  if (groups[byCount[0]] === 3) {
+    return [3, byCount[0], byCount[1], byCount[2]];
+  }
+  if (groups[byCount[0]] === 2 && groups[byCount[1]] === 2) {
+    return [2, byCount[0], byCount[1], byCount[2]];
+  }
+  if (groups[byCount[0]] === 2) {
+    return [1, byCount[0], byCount[1], byCount[2], byCount[3]];
+  }
+  return [0, ...ranks];
+};
+
+export const bestHands = (hands) => {
+  const scored = hands.map((hand) => ({ hand, score: score(hand) }));
+  let best = scored[0].score;
+  for (const { score: s } of scored) {
+    if (compare(s, best) > 0) best = s;
+  }
+  return scored.filter(({ score: s }) => compare(s, best) === 0).map(({ hand }) => hand);
+};
+
+const compare = (a, b) => {
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};

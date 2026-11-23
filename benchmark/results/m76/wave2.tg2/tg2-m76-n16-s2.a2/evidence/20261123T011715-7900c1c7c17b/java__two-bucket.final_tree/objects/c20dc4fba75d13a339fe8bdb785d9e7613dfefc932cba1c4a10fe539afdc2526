@@ -1,0 +1,81 @@
+import java.util.ArrayDeque;
+import java.util.Queue;
+
+class TwoBucket {
+    private final int moves;
+    private final String finalBucket;
+    private final int otherBucket;
+
+    TwoBucket(int bucketOneCap, int bucketTwoCap, int desiredLiters, String startBucket) {
+        boolean startOne = startBucket.equals("one");
+        int[] start = bfs(bucketOneCap, bucketTwoCap, desiredLiters, startOne);
+        this.moves = start[0];
+        this.finalBucket = start[1] == 0 ? "one" : "two";
+        this.otherBucket = start[2];
+    }
+
+    private static int[] bfs(int capOne, int capTwo, int goal, boolean startOne) {
+        int startA = startOne ? capOne : 0;
+        int startB = startOne ? 0 : capTwo;
+        Queue<int[]> queue = new ArrayDeque<>();
+        queue.add(new int[]{startA, startB, 1});
+        boolean[][] seen = new boolean[capOne + 1][capTwo + 1];
+        seen[startA][startB] = true;
+
+        while (!queue.isEmpty()) {
+            int[] state = queue.poll();
+            int a = state[0];
+            int b = state[1];
+            int moves = state[2];
+
+            if (a == goal || b == goal) {
+                return new int[]{moves, a == goal ? 0 : 1, a == goal ? b : a};
+            }
+
+            for (int[] next : successors(a, b, capOne, capTwo, startOne)) {
+                if (!seen[next[0]][next[1]]) {
+                    seen[next[0]][next[1]] = true;
+                    queue.add(new int[]{next[0], next[1], moves + 1});
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("No solution possible");
+    }
+
+    private static int[][] successors(int a, int b, int capOne, int capTwo, boolean startOne) {
+        int pourOneToTwo = Math.min(a, capTwo - b);
+        int pourTwoToOne = Math.min(b, capOne - a);
+        int[][] all = {
+                {capOne, b}, // fill bucket one
+                {a, capTwo}, // fill bucket two
+                {0, b},      // empty bucket one
+                {a, 0},      // empty bucket two
+                {a - pourOneToTwo, b + pourOneToTwo},
+                {a + pourTwoToOne, b - pourTwoToOne}
+        };
+
+        int count = 0;
+        for (int[] next : all) {
+            boolean invalid = (startOne && next[0] == 0 && next[1] == capTwo)
+                    || (!startOne && next[0] == capOne && next[1] == 0);
+            if (!invalid) {
+                all[count++] = next;
+            }
+        }
+
+        return java.util.Arrays.copyOf(all, count);
+    }
+
+    int getTotalMoves() {
+        return moves;
+    }
+
+    String getFinalBucket() {
+        return finalBucket;
+    }
+
+    int getOtherBucket() {
+        return otherBucket;
+    }
+}

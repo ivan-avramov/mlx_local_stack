@@ -1,0 +1,106 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = [];
+  }
+
+  setValue(value) {
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputs = inputCells;
+    this.fn = fn;
+    this.value = fn(inputCells);
+    this.callbacks = [];
+    this.dependents = [];
+
+    for (const input of inputCells) {
+      input.dependents.push(this);
+    }
+  }
+
+  addCallback(cb) {
+    this.callbacks.push(cb);
+  }
+
+  removeCallback(cb) {
+    const index = this.callbacks.indexOf(cb);
+    if (index !== -1) {
+      this.callbacks.splice(index, 1);
+    }
+  }
+
+  fireCallbacks() {
+    for (const cb of this.callbacks) {
+      cb.callback(this);
+    }
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+
+  callback(cell) {
+    this.values.push(this.fn(cell));
+  }
+}
+
+function propagate(source) {
+  // Collect every compute cell reachable from the changed source.
+  const affected = new Set();
+  const queue = [source];
+
+  while (queue.length > 0) {
+    const cell = queue.shift();
+    for (const dependent of cell.dependents) {
+      if (!affected.has(dependent)) {
+        affected.add(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+
+  // Order the affected cells topologically: a cell is added only after all of
+  // its inputs, so recomputing in this order reaches a stable state.
+  const affectedCells = [];
+  const settled = new Set();
+
+  function visit(cell) {
+    if (settled.has(cell)) {
+      return;
+    }
+    settled.add(cell);
+    for (const input of cell.inputs || []) {
+      visit(input);
+    }
+    if (cell.fn) {
+      affectedCells.push(cell);
+    }
+  }
+
+  for (const cell of affected) {
+    visit(cell);
+  }
+
+  // Recompute every affected cell, then fire callbacks only for cells whose
+  // value changed from the previous stable state.
+  for (const cell of affectedCells) {
+    const oldValue = cell.value;
+    cell.value = cell.fn(cell.inputs);
+    if (cell.value !== oldValue) {
+      cell.fireCallbacks();
+    }
+  }
+}

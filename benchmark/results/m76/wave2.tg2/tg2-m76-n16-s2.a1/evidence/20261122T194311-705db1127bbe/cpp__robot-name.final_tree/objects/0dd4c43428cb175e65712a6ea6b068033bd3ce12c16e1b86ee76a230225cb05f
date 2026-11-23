@@ -1,0 +1,62 @@
+#include "robot_name.h"
+
+#include <random>
+
+namespace robot_name {
+
+std::unordered_set<std::string> robot::_used_names;
+
+namespace {
+
+std::mt19937& engine()
+{
+    static std::mt19937 engine{std::random_device{}()};
+    return engine;
+}
+
+std::string generate_name()
+{
+    static const char letters[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
+    static const char digits[] = "0123456789";
+
+    std::uniform_int_distribution<int> letter_dist(0, 25);
+    std::uniform_int_distribution<int> digit_dist(0, 9);
+
+    std::string name;
+    name += letters[letter_dist(engine())];
+    name += letters[letter_dist(engine())];
+    name += digits[digit_dist(engine())];
+    name += digits[digit_dist(engine())];
+    name += digits[digit_dist(engine())];
+    return name;
+}
+
+}  // namespace
+
+robot::robot()
+{
+    _name = generate_unique_name();
+}
+
+const std::string& robot::name() const
+{
+    return _name;
+}
+
+void robot::reset()
+{
+    _name = generate_unique_name();
+}
+
+std::string robot::generate_unique_name()
+{
+    std::string name;
+    do {
+        name = generate_name();
+    } while (_used_names.count(name) != 0);
+
+    _used_names.insert(name);
+    return name;
+}
+
+}  // namespace robot_name

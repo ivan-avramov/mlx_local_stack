@@ -1,0 +1,53 @@
+import java.util.Arrays;
+import java.util.List;
+
+class OpticalCharacterReader {
+
+    private static final String[][] DIGITS = {
+            {" _ ", "| |", "|_|"},
+            {"   ", "  |", "  |"},
+            {" _ ", " _|", "|_ "},
+            {" _ ", " _|", " _|"},
+            {"   ", "|_|", "  |"},
+            {" _ ", "|_ ", " _|"},
+            {" _ ", "|_ ", "|_|"},
+            {" _ ", "  |", "  |"},
+            {" _ ", "|_|", "|_|"},
+            {" _ ", "|_|", " _|"}
+    };
+
+    String parse(List<String> input) {
+        if (input.size() % 4 != 0) {
+            throw new IllegalArgumentException("Number of input rows must be a positive multiple of 4");
+        }
+        int width = input.get(0).length();
+        if (width % 3 != 0) {
+            throw new IllegalArgumentException("Number of input columns must be a positive multiple of 3");
+        }
+
+        StringBuilder result = new StringBuilder();
+        for (int block = 0; block < input.size(); block += 4) {
+            if (block > 0) {
+                result.append(',');
+            }
+            for (int col = 0; col < width; col += 3) {
+                result.append(readDigit(input, block, col));
+            }
+        }
+        return result.toString();
+    }
+
+    private char readDigit(List<String> input, int row, int col) {
+        String[] pattern = new String[3];
+        for (int r = 0; r < 3; r++) {
+            pattern[r] = input.get(row + r).substring(col, col + 3);
+        }
+        for (int d = 0; d < DIGITS.length; d++) {
+            if (Arrays.equals(DIGITS[d], pattern)) {
+                return (char) ('0' + d);
+            }
+        }
+        return '?';
+    }
+
+}

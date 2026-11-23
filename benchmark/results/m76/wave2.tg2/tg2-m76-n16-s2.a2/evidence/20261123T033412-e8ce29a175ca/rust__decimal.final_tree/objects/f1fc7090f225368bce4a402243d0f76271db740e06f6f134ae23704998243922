@@ -1,0 +1,260 @@
+use std::cmp::Ordering;
+use std::ops::{Add, Mul, Sub};
+
+/// Type implementing arbitrary-precision decimal arithmetic.
+///
+/// A `Decimal` is a sign together with a sequence of base-10 digits, split
+/// into an integer part and a fractional part. Both digit vectors are kept
+/// in normalized form: the integer part has no leading zeros and the
+/// fractional part has no trailing zeros, so every value has exactly one
+/// representation (zero is `neg == false` with both parts empty).
+#[derive(Clone, Debug)]
+pub struct Decimal {
+    neg: bool,
+    int: Vec<u8>,
+    frac: Vec<u8>,
+}
+
+impl Default for Decimal {
+    fn default() -> Self {
+        Decimal { neg: false, int: Vec::new(), frac: Vec::new() }
+    }
+}
+
+impl Decimal {
+    /// Create a new decimal with a value of `input`, e.g. `"12.345"`,
+    /// `"-0.5"` or `"+7"`. Returns `None` if the input is not a valid
+    /// decimal literal.
+    pub fn try_from(input: &str) -> Option<Decimal> {
+        let mut s = input;
+        let mut neg = false;
+        if let Some(rest) = s.strip_prefix('-') {
+            neg = true;
+            s = rest;
+        } else if let Some(rest) = s.strip_prefix('+') {
+            s = rest;
+        }
+        let (int_str, frac_str) = match s.find('.') {
+            Some(i) => (&s[..i], &s[i + 1..]),
+            None => (s, ""),
+        };
+        if int_str.is_empty() && frac_str.is_empty() {
+            return None;
+        }
+        if !int_str.bytes().all(|b| b.is_ascii_digit())
+            || !frac_str.bytes().all(|b| b.is_ascii_digit())
+        {
+            return None;
+        }
+        let mut int: Vec<u8> = int_str.bytes().map(|b| b - b'0').collect();
+        let mut frac: Vec<u8> = frac_str.bytes().map(|b| b - b'0').collect();
+        while int.first() == Some(&0) {
+            int.remove(0);
+        }
+        while frac.last() == Some(&0) {
+            frac.pop();
+        }
+        let is_zero = int.is_empty() && frac.is_empty();
+        Some(Decimal { neg: neg && !is_zero, int, frac })
+    }
+
+    fn is_zero(&self) -> bool {
+        self.int.is_empty() && self.frac.is_empty()
+    }
+
+    /// The full digit sequence (integer part followed by fractional part)
+    /// together with the scale, i.e. the number of fractional digits.
+    fn magnitude(&self) -> (Vec<u8>, usize) {
+        let mut d = self.int.clone();
+        d.extend_from_slice(&self.frac);
+        (d, self.frac.len())
+    }
+
+    /// Rebuild a normalized `Decimal` from a raw digit sequence and scale.
+    fn from_magnitude(mut digits: Vec<u8>, scale: usize, neg: bool) -> Decimal {
+        let int_len = digits.len().saturating_sub(scale);
+        let mut frac = digits.split_off(int_len);
+        let mut int = digits;
+        // Leading zeros are only insignificant in the integer part; in the
+        // fractional part they shift the value towards zero.
+        while int.first() == Some(&0) {
+            int.remove(0);
+        }
+        while frac.last() == Some(&0) {
+            frac.pop();
+        }
+        let is_zero = int.is_empty() && frac.is_empty();
+        Decimal { neg: neg && !is_zero, int, frac }
+    }
+
+    /// Express both digit sequences at the larger scale (by appending
+    /// trailing zeros) and pad with leading zeros so they have the same
+    /// length. Returns the aligned sequences and the common scale.
+    fn align(a: Vec<u8>, sa: usize, b: Vec<u8>, sb: usize) -> (Vec<u8>, Vec<u8>, usize) {
+        let scale = sa.max(sb);
+        let mut a = a;
+        let mut b = b;
+        for _ in 0..scale - sa {
+            a.push(0);
+        }
+        for _ in 0..scale - sb {
+            b.push(0);
+        }
+        let n = a.len().max(b.len());
+        while a.len() < n {
+            a.insert(0, 0);
+        }
+        while b.len() < n {
+            b.insert(0, 0);
+        }
+        (a, b, scale)
+    }
+
+    /// Compare the absolute values of two decimals.
+    fn cmp_magnitude(&self, other: &Decimal) -> Ordering {
+        let (a, sa) = self.magnitude();
+        let (b, sb) = other.magnitude();
+        let (a, b, _) = Self::align(a, sa, b, sb);
+        a.cmp(&b)
+    }
+
+    fn add_impl(&self, other: &Decimal) -> Decimal {
+        let (a, sa) = self.magnitude();
+        let (b, sb) = other.magnitude();
+        let (a, b, scale) = Self::align(a, sa, b, sb);
+        if self.neg == other.neg {
+            let mut carry = 0u8;
+            let mut sum = vec![0u8; a.len()];
+            for i in (0..a.len()).rev() {
+                let t = a[i] as u16 + b[i] as u16 + carry as u16;
+                sum[i] = (t % 10) as u8;
+                carry = (t / 10) as u8;
+            }
+            if carry > 0 {
+                sum.insert(0, carry);
+            }
+            Decimal::from_magnitude(sum, scale, self.neg)
+        } else {
+            match a.cmp(&b) {
+                Ordering::Equal => Decimal::default(),
+                Ordering::Greater => {
+                    let diff = Self::sub_magnitude(&a, &b);
+                    Decimal::from_magnitude(diff, scale, self.neg)
+                }
+                Ordering::Less => {
+                    let diff = Self::sub_magnitude(&b, &a);
+                    Decimal::from_magnitude(diff, scale, other.neg)
+                }
+            }
+        }
+    }
+
+    /// Subtract two aligned digit sequences, assuming `a >= b`.
+    fn sub_magnitude(a: &[u8], b: &[u8]) -> Vec<u8> {
+        let mut borrow = 0u8;
+        let mut out = vec![0u8; a.len()];
+        for i in (0..a.len()).rev() {
+            let mut t = a[i] as i16 - b[i] as i16 - borrow as i16;
+            if t < 0 {
+                t += 10;
+                borrow = 1;
+            } else {
+                borrow = 0;
+            }
+            out[i] = t as u8;
+        }
+        out
+    }
+
+    fn sub_impl(&self, other: &Decimal) -> Decimal {
+        let negated = Decimal {
+            neg: !other.neg,
+            int: other.int.clone(),
+            frac: other.frac.clone(),
+        };
+        self.add_impl(&negated)
+    }
+
+    fn mul_impl(&self, other: &Decimal) -> Decimal {
+        let (a, sa) = self.magnitude();
+        let (b, sb) = other.magnitude();
+        if a.is_empty() || b.is_empty() {
+            return Decimal::default();
+        }
+        let mut prod = vec![0u16; a.len() + b.len()];
+        for i in (0..a.len()).rev() {
+            let mut carry = 0u16;
+            for j in (0..b.len()).rev() {
+                let k = i + j + 1;
+                let total = prod[k] + a[i] as u16 * b[j] as u16 + carry;
+                prod[k] = total % 10;
+                carry = total / 10;
+            }
+            prod[i] += carry;
+        }
+        // A position can hold at most 19 after the loop above; one backward
+        // pass normalizes every position to a single digit.
+        for k in (1..prod.len()).rev() {
+            prod[k - 1] += prod[k] / 10;
+            prod[k] %= 10;
+        }
+        let digits = prod.into_iter().map(|d| d as u8).collect();
+        Decimal::from_magnitude(digits, sa + sb, self.neg ^ other.neg)
+    }
+
+    fn compare(&self, other: &Decimal) -> Ordering {
+        if self.is_zero() && other.is_zero() {
+            return Ordering::Equal;
+        }
+        if self.neg != other.neg {
+            return if self.neg { Ordering::Less } else { Ordering::Greater };
+        }
+        let mag = self.cmp_magnitude(other);
+        if self.neg {
+            mag.reverse()
+        } else {
+            mag
+        }
+    }
+}
+
+impl PartialEq for Decimal {
+    fn eq(&self, other: &Decimal) -> bool {
+        self.neg == other.neg && self.int == other.int && self.frac == other.frac
+    }
+}
+
+impl Eq for Decimal {}
+
+impl PartialOrd for Decimal {
+    fn partial_cmp(&self, other: &Decimal) -> Option<Ordering> {
+        Some(self.compare(other))
+    }
+}
+
+impl Ord for Decimal {
+    fn cmp(&self, other: &Decimal) -> Ordering {
+        self.compare(other)
+    }
+}
+
+impl Add for Decimal {
+    type Output = Decimal;
+    fn add(self, rhs: Decimal) -> Self::Output {
+        self.add_impl(&rhs)
+    }
+}
+
+impl Sub for Decimal {
+    type Output = Decimal;
+    fn sub(self, rhs: Decimal) -> Self::Output {
+        self.sub_impl(&rhs)
+    }
+}
+
+impl Mul for Decimal {
+    type Output = Decimal;
+    fn mul(self, rhs: Decimal) -> Self::Output {
+        self.mul_impl(&rhs)
+    }
+}

@@ -1,0 +1,218 @@
+#include "zebra_puzzle.h"
+
+#include <array>
+
+namespace zebra_puzzle {
+
+namespace {
+
+// Attribute values, in a fixed order. House 0 is the first house.
+// Only `nationalities` is referenced by name; the others document the
+// ordering of the integer values used throughout the solver.
+const std::array<const char*, 5> colors [[maybe_unused]] = {"Red", "Green", "Ivory", "Yellow", "Blue"};
+const std::array<const char*, 5> nationalities = {"Englishman", "Spaniard", "Ukrainian", "Norwegian", "Japanese"};
+const std::array<const char*, 5> drinks [[maybe_unused]] = {"Coffee", "Tea", "Milk", "OrangeJuice", "Water"};
+const std::array<const char*, 5> pets [[maybe_unused]] = {"Dog", "Snail", "Fox", "Horse", "Zebra"};
+const std::array<const char*, 5> hobbies [[maybe_unused]] = {"Dancing", "Reading", "Painting", "Football", "Chess"};
+
+// Each house stores the index of the value assigned to each attribute,
+// or -1 when the attribute has not been assigned yet.
+struct House {
+    int color = -1;
+    int nationality = -1;
+    int drink = -1;
+    int pet = -1;
+    int hobby = -1;
+};
+
+bool isAdjacent(int a, int b) { return a + 1 == b || b + 1 == a; }
+
+// Returns false when the partial assignment violates a constraint that is
+// already fully determined. Constraints involving unassigned values are
+// deferred until enough of the puzzle is known.
+bool consistent(const std::array<House, 5>& houses) {
+    for (int i = 0; i < 5; ++i) {
+        const House& h = houses[i];
+
+        // 2. The Englishman lives in the red house.
+        if (h.nationality == 0 && h.color != -1 && h.color != 0) return false;
+        if (h.color == 0 && h.nationality != -1 && h.nationality != 0) return false;
+
+        // 3. The Spaniard owns the dog.
+        if (h.nationality == 1 && h.pet != -1 && h.pet != 0) return false;
+        if (h.pet == 0 && h.nationality != -1 && h.nationality != 1) return false;
+
+        // 4. The person in the green house drinks coffee.
+        if (h.color == 1 && h.drink != -1 && h.drink != 0) return false;
+        if (h.drink == 0 && h.color != -1 && h.color != 1) return false;
+
+        // 5. The Ukrainian drinks tea.
+        if (h.nationality == 2 && h.drink != -1 && h.drink != 1) return false;
+        if (h.drink == 1 && h.nationality != -1 && h.nationality != 2) return false;
+
+        // 7. The snail owner likes to go dancing.
+        if (h.pet == 1 && h.hobby != -1 && h.hobby != 0) return false;
+        if (h.hobby == 0 && h.pet != -1 && h.pet != 1) return false;
+
+        // 8. The person in the yellow house is a painter.
+        if (h.color == 3 && h.hobby != -1 && h.hobby != 2) return false;
+        if (h.hobby == 2 && h.color != -1 && h.color != 3) return false;
+
+        // 13. The person who plays football drinks orange juice.
+        if (h.hobby == 3 && h.drink != -1 && h.drink != 3) return false;
+        if (h.drink == 3 && h.hobby != -1 && h.hobby != 3) return false;
+
+        // 14. The Japanese person plays chess.
+        if (h.nationality == 4 && h.hobby != -1 && h.hobby != 4) return false;
+        if (h.hobby == 4 && h.nationality != -1 && h.nationality != 4) return false;
+
+        // 6. The green house is immediately to the right of the ivory house.
+        if (h.color == 1 && i > 0 && houses[i - 1].color != -1 && houses[i - 1].color != 2) return false;
+        if (h.color == 2 && i + 1 < 5 && houses[i + 1].color != -1 && houses[i + 1].color != 1) return false;
+        if (h.color == 1 && i == 0) return false;  // nothing to the left of the first house
+
+        // 15. The Norwegian lives next to the blue house.
+        if (h.nationality == 3) {
+            bool blueNext = false;
+            for (int j = 0; j < 5; ++j) {
+                if (isAdjacent(i, j) && houses[j].color == 4) blueNext = true;
+            }
+            if (blueNext) continue;
+            bool anyAssigned = false;
+            for (int j = 0; j < 5; ++j) {
+                if (isAdjacent(i, j) && houses[j].color != -1) anyAssigned = true;
+            }
+            if (anyAssigned) return false;
+        }
+        if (h.color == 4) {
+            bool norwegianNext = false;
+            for (int j = 0; j < 5; ++j) {
+                if (isAdjacent(i, j) && houses[j].nationality == 3) norwegianNext = true;
+            }
+            if (norwegianNext) continue;
+            bool anyAssigned = false;
+            for (int j = 0; j < 5; ++j) {
+                if (isAdjacent(i, j) && houses[j].nationality != -1) anyAssigned = true;
+            }
+            if (anyAssigned) return false;
+        }
+    }
+
+    // The "next to" constraints below are only checked once every house has
+    // both attributes assigned, so that unassigned houses cannot cause a
+    // valid branch to be pruned.
+    bool allPets = true;
+    bool allHobbies = true;
+    for (const House& h : houses) {
+        if (h.pet == -1) allPets = false;
+        if (h.hobby == -1) allHobbies = false;
+    }
+    if (allPets && allHobbies) {
+        for (int i = 0; i < 5; ++i) {
+            // 11. The person who enjoys reading lives next to the person with the fox.
+            if (houses[i].hobby == 1) {
+                bool foxNext = false;
+                for (int j = 0; j < 5; ++j) {
+                    if (houses[j].pet == 2 && isAdjacent(i, j)) foxNext = true;
+                }
+                if (!foxNext) return false;
+            }
+            if (houses[i].pet == 2) {
+                bool readingNext = false;
+                for (int j = 0; j < 5; ++j) {
+                    if (houses[j].hobby == 1 && isAdjacent(i, j)) readingNext = true;
+                }
+                if (!readingNext) return false;
+            }
+
+            // 12. The painter's house is next to the house with the horse.
+            if (houses[i].hobby == 2) {
+                bool horseNext = false;
+                for (int j = 0; j < 5; ++j) {
+                    if (houses[j].pet == 3 && isAdjacent(i, j)) horseNext = true;
+                }
+                if (!horseNext) return false;
+            }
+            if (houses[i].pet == 3) {
+                bool painterNext = false;
+                for (int j = 0; j < 5; ++j) {
+                    if (houses[j].hobby == 2 && isAdjacent(i, j)) painterNext = true;
+                }
+                if (!painterNext) return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+bool solveRecursively(std::array<House, 5>& houses, int house, int attribute) {
+    if (house == 5) return true;
+
+    if (attribute == 5) return solveRecursively(houses, house + 1, 0);
+
+    for (int value = 0; value < 5; ++value) {
+        // Each attribute value is used by exactly one house.
+        bool taken = false;
+        for (int k = 0; k < 5; ++k) {
+            if (k == house) continue;
+            const House& other = houses[k];
+            switch (attribute) {
+                case 0: taken = taken || other.color == value; break;
+                case 1: taken = taken || other.nationality == value; break;
+                case 2: taken = taken || other.drink == value; break;
+                case 3: taken = taken || other.pet == value; break;
+                case 4: taken = taken || other.hobby == value; break;
+            }
+            if (taken) break;
+        }
+        if (taken) continue;
+
+        switch (attribute) {
+            case 0: houses[house].color = value; break;
+            case 1: houses[house].nationality = value; break;
+            case 2: houses[house].drink = value; break;
+            case 3: houses[house].pet = value; break;
+            case 4: houses[house].hobby = value; break;
+        }
+
+        if (consistent(houses)) {
+            if (solveRecursively(houses, house, attribute + 1)) return true;
+        }
+
+        switch (attribute) {
+            case 0: houses[house].color = -1; break;
+            case 1: houses[house].nationality = -1; break;
+            case 2: houses[house].drink = -1; break;
+            case 3: houses[house].pet = -1; break;
+            case 4: houses[house].hobby = -1; break;
+        }
+    }
+
+    return false;
+}
+
+}  // namespace
+
+Solution solve() {
+    std::array<House, 5> houses{};
+
+    // 9. The person in the middle house drinks milk.
+    houses[2].drink = 2;
+
+    // 10. The Norwegian lives in the first house.
+    houses[0].nationality = 3;
+
+    bool solved = solveRecursively(houses, 0, 0);
+    (void)solved;
+
+    Solution solution;
+    for (const House& h : houses) {
+        if (h.drink == 4) solution.drinksWater = nationalities[h.nationality];
+        if (h.pet == 4) solution.ownsZebra = nationalities[h.nationality];
+    }
+
+    return solution;
+}
+
+}  // namespace zebra_puzzle

@@ -1,0 +1,111 @@
+#ifndef BINARY_SEARCH_TREE_H
+#define BINARY_SEARCH_TREE_H
+
+#include <cstddef>
+#include <iterator>
+#include <memory>
+#include <stack>
+
+namespace binary_search_tree {
+
+template <typename T>
+class binary_tree {
+public:
+    explicit binary_tree(const T& data) : data_{data} {}
+
+    const T& data() const { return data_; }
+
+    // Return an owning copy of the left/right subtree. The real tree is left
+    // untouched, so callers may destroy the returned pointer freely and the
+    // tree remains valid for further access.
+    std::unique_ptr<binary_tree> left() const { return left_ ? left_->clone() : nullptr; }
+    std::unique_ptr<binary_tree> right() const { return right_ ? right_->clone() : nullptr; }
+
+    void insert(const T& data) {
+        if (data <= data_) {
+            if (left_ == nullptr) {
+                left_ = std::make_unique<binary_tree>(data);
+            } else {
+                left_->insert(data);
+            }
+        } else {
+            if (right_ == nullptr) {
+                right_ = std::make_unique<binary_tree>(data);
+            } else {
+                right_->insert(data);
+            }
+        }
+    }
+
+    // Deep copy of this subtree.
+    std::unique_ptr<binary_tree> clone() const {
+        auto copy = std::make_unique<binary_tree>(data_);
+        if (left_) copy->left_ = left_->clone();
+        if (right_) copy->right_ = right_->clone();
+        return copy;
+    }
+
+    class iterator {
+    public:
+        using difference_type = std::ptrdiff_t;
+        using value_type = T;
+        using pointer = const T*;
+        using reference = const T&;
+        using iterator_category = std::forward_iterator_tag;
+
+        iterator() = default;
+
+        explicit iterator(const binary_tree* tree) {
+            while (tree != nullptr) {
+                stack_.push(tree);
+                tree = tree->left_.get();
+            }
+            if (!stack_.empty()) {
+                tree_ = stack_.top();
+                stack_.pop();
+            }
+        }
+
+        reference operator*() const { return tree_->data(); }
+        pointer operator->() const { return &tree_->data(); }
+
+        iterator& operator++() {
+            if (tree_->right_ != nullptr) {
+                tree_ = tree_->right_.get();
+                while (tree_ != nullptr) {
+                    stack_.push(tree_);
+                    tree_ = tree_->left_.get();
+                }
+                if (!stack_.empty()) {
+                    tree_ = stack_.top();
+                    stack_.pop();
+                }
+            } else {
+                tree_ = stack_.empty() ? nullptr : stack_.top();
+                if (!stack_.empty()) {
+                    stack_.pop();
+                }
+            }
+            return *this;
+        }
+
+        bool operator==(const iterator& other) const { return tree_ == other.tree_; }
+        bool operator!=(const iterator& other) const { return !(*this == other); }
+
+    private:
+        const binary_tree* tree_ = nullptr;
+        std::stack<const binary_tree*> stack_;
+    };
+
+    iterator begin() const { return iterator(this); }
+    iterator end() const { return iterator(); }
+
+private:
+    T data_;
+    std::unique_ptr<binary_tree> left_;
+    std::unique_ptr<binary_tree> right_;
+};
+
+}  // namespace binary_search_tree
+
+#endif  // BINARY_SEARCH_TREE_H

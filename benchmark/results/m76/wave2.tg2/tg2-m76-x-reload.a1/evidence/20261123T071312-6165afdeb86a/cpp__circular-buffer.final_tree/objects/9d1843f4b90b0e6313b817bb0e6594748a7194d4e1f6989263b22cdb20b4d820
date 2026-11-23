@@ -1,0 +1,65 @@
+#if !defined(CIRCULAR_BUFFER_H)
+#define CIRCULAR_BUFFER_H
+
+#include <algorithm>
+#include <cstddef>
+#include <stdexcept>
+#include <vector>
+
+namespace circular_buffer {
+
+template <typename T>
+class circular_buffer {
+public:
+    explicit circular_buffer(std::size_t capacity)
+        : capacity_(capacity), head_(0), tail_(0), size_(0),
+          storage_(capacity) {}
+
+    void write(const T& item) {
+        if (full()) {
+            throw std::domain_error("Buffer is full");
+        }
+        storage_[tail_] = item;
+        tail_ = (tail_ + 1) % capacity_;
+        ++size_;
+    }
+
+    void overwrite(const T& item) {
+        if (full()) {
+            head_ = (head_ + 1) % capacity_;
+        }
+        storage_[tail_] = item;
+        tail_ = (tail_ + 1) % capacity_;
+        size_ = std::min(size_ + 1, capacity_);
+    }
+
+    T read() {
+        if (empty()) {
+            throw std::domain_error("Buffer is empty");
+        }
+        T item = storage_[head_];
+        head_ = (head_ + 1) % capacity_;
+        --size_;
+        return item;
+    }
+
+    void clear() {
+        head_ = 0;
+        tail_ = 0;
+        size_ = 0;
+    }
+
+private:
+    bool full() const { return size_ == capacity_; }
+    bool empty() const { return size_ == 0; }
+
+    std::size_t capacity_;
+    std::size_t head_;
+    std::size_t tail_;
+    std::size_t size_;
+    std::vector<T> storage_;
+};
+
+}  // namespace circular_buffer
+
+#endif // CIRCULAR_BUFFER_H

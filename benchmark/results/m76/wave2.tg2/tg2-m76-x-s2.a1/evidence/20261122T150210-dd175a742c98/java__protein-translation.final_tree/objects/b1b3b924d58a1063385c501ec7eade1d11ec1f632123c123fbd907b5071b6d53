@@ -1,0 +1,58 @@
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+class ProteinTranslator {
+
+    private static final Map<String, String> CODON_TO_AMINO_ACID = new HashMap<>();
+
+    private static final List<String> STOP_CODONS = List.of("UAA", "UAG", "UGA");
+
+    static {
+        CODON_TO_AMINO_ACID.put("AUG", "Methionine");
+        CODON_TO_AMINO_ACID.put("UUU", "Phenylalanine");
+        CODON_TO_AMINO_ACID.put("UUC", "Phenylalanine");
+        CODON_TO_AMINO_ACID.put("UUA", "Leucine");
+        CODON_TO_AMINO_ACID.put("UUG", "Leucine");
+        CODON_TO_AMINO_ACID.put("UCU", "Serine");
+        CODON_TO_AMINO_ACID.put("UCC", "Serine");
+        CODON_TO_AMINO_ACID.put("UCA", "Serine");
+        CODON_TO_AMINO_ACID.put("UCG", "Serine");
+        CODON_TO_AMINO_ACID.put("UAU", "Tyrosine");
+        CODON_TO_AMINO_ACID.put("UAC", "Tyrosine");
+        CODON_TO_AMINO_ACID.put("UGU", "Cysteine");
+        CODON_TO_AMINO_ACID.put("UGC", "Cysteine");
+        CODON_TO_AMINO_ACID.put("UGG", "Tryptophan");
+    }
+
+    List<String> translate(String rnaSequence) {
+        List<String> proteins = new ArrayList<>();
+        int length = rnaSequence.length();
+
+        for (int i = 0; i < length; i += 3) {
+            if (length - i < 3) {
+                break;
+            }
+
+            String codon = rnaSequence.substring(i, i + 3);
+
+            if (STOP_CODONS.contains(codon)) {
+                return proteins;
+            }
+
+            String aminoAcid = CODON_TO_AMINO_ACID.get(codon);
+            if (aminoAcid == null) {
+                throw new IllegalArgumentException("Invalid codon");
+            }
+
+            proteins.add(aminoAcid);
+        }
+
+        if (length % 3 != 0) {
+            throw new IllegalArgumentException("Invalid codon");
+        }
+
+        return proteins;
+    }
+}

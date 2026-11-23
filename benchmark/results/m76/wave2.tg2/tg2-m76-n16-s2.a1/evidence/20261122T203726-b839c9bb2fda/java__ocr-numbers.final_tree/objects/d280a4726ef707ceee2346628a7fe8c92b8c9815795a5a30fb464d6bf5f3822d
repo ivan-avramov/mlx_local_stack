@@ -1,0 +1,63 @@
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+class OpticalCharacterReader {
+
+    private static final int ROWS_PER_DIGIT = 4;
+    private static final int COLS_PER_DIGIT = 3;
+
+    private static final Map<String, Character> DIGIT_PATTERNS = buildPatterns();
+
+    String parse(List<String> input) {
+        if (input.size() % ROWS_PER_DIGIT != 0 || input.isEmpty()) {
+            throw new IllegalArgumentException("Number of input rows must be a positive multiple of 4");
+        }
+
+        int columns = input.get(0).length();
+        if (columns % COLS_PER_DIGIT != 0 || columns == 0) {
+            throw new IllegalArgumentException("Number of input columns must be a positive multiple of 3");
+        }
+        for (String row : input) {
+            if (row.length() != columns) {
+                throw new IllegalArgumentException("Number of input columns must be a positive multiple of 3");
+            }
+        }
+
+        StringBuilder result = new StringBuilder();
+        for (int rowGroup = 0; rowGroup < input.size(); rowGroup += ROWS_PER_DIGIT) {
+            if (rowGroup > 0) {
+                result.append(',');
+            }
+            for (int col = 0; col < columns; col += COLS_PER_DIGIT) {
+                StringBuilder pattern = new StringBuilder();
+                for (int row = 0; row < ROWS_PER_DIGIT - 1; row++) {
+                    pattern.append(input.get(rowGroup + row), col, col + COLS_PER_DIGIT);
+                    if (row < ROWS_PER_DIGIT - 2) {
+                        pattern.append('\n');
+                    }
+                }
+                Character digit = DIGIT_PATTERNS.get(pattern.toString());
+                result.append(digit != null ? digit : '?');
+            }
+        }
+        return result.toString();
+    }
+
+    private static Map<String, Character> buildPatterns() {
+        Map<String, Character> patterns = new HashMap<>();
+        patterns.put(" _ \n| |\n|_|", '0');
+        patterns.put("   \n  |\n  |", '1');
+        patterns.put(" _ \n _|\n|_ ", '2');
+        patterns.put(" _ \n _|\n _|", '3');
+        patterns.put("   \n|_|\n  |", '4');
+        patterns.put(" _ \n|_ \n _|", '5');
+        patterns.put(" _ \n|_ \n|_|", '6');
+        patterns.put(" _ \n  |\n  |", '7');
+        patterns.put(" _ \n|_|\n|_|", '8');
+        patterns.put(" _ \n|_|\n _|", '9');
+        return patterns;
+    }
+
+}

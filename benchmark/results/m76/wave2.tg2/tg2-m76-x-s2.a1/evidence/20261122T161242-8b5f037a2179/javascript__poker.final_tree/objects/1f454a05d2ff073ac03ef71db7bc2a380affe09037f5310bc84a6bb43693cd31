@@ -1,0 +1,89 @@
+//
+// This is only a SKELETON file for the 'Poker' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const RANKS = {
+  '2': 2, '3': 3, '4': 4, '5': 5, '6': 6, '7': 7, '8': 8, '9': 9,
+  '10': 10, J: 11, Q: 12, K: 13, A: 14,
+};
+
+const HAND_TYPES = {
+  straightFlush: 8,
+  fourOfAKind: 7,
+  fullHouse: 6,
+  flush: 5,
+  straight: 4,
+  threeOfAKind: 3,
+  twoPair: 2,
+  onePair: 1,
+  highCard: 0,
+};
+
+const rankOf = (card) => RANKS[card.slice(0, -1)];
+const suitOf = (card) => card.slice(-1);
+
+const scoreHand = (hand) => {
+  const cards = hand.split(' ');
+  const ranks = cards.map(rankOf).sort((a, b) => b - a);
+  const isFlush = cards.every((c) => suitOf(c) === suitOf(cards[0]));
+
+  // Count occurrences of each rank.
+  const counts = new Map();
+  for (const r of ranks) counts.set(r, (counts.get(r) || 0) + 1);
+  // Groups sorted by count descending, then rank descending: [rank, count]
+  const groups = [...counts.entries()].sort((a, b) => b[1] - a[1] || b[0] - a[0]);
+
+  // Detect a straight: five distinct ranks in a row.
+  let straightHigh = null;
+  if (new Set(ranks).size === 5) {
+    if (ranks[0] - ranks[4] === 4) {
+      straightHigh = ranks[0];
+    } else if (ranks[0] === 14 && ranks[1] === 5) {
+      straightHigh = 5; // A-2-3-4-5: ace plays low
+    }
+  }
+
+  const pattern = groups.map(([, n]) => n).join('');
+
+  if (straightHigh !== null && isFlush) {
+    return [HAND_TYPES.straightFlush, straightHigh];
+  }
+  if (pattern === '41') {
+    return [HAND_TYPES.fourOfAKind, groups[0][0], groups[1][0]];
+  }
+  if (pattern === '32') {
+    return [HAND_TYPES.fullHouse, groups[0][0], groups[1][0]];
+  }
+  if (isFlush) {
+    return [HAND_TYPES.flush, ...ranks];
+  }
+  if (straightHigh !== null) {
+    return [HAND_TYPES.straight, straightHigh];
+  }
+  if (pattern === '311') {
+    return [HAND_TYPES.threeOfAKind, groups[0][0], ...groups.slice(1).map(([r]) => r)];
+  }
+  if (pattern === '221') {
+    return [HAND_TYPES.twoPair, groups[0][0], groups[1][0], groups[2][0]];
+  }
+  if (pattern === '2111') {
+    return [HAND_TYPES.onePair, groups[0][0], ...groups.slice(1).map(([r]) => r)];
+  }
+  return [HAND_TYPES.highCard, ...ranks];
+};
+
+export const bestHands = (hands) => {
+  const scored = hands.map((hand) => ({ hand, score: scoreHand(hand) }));
+  const compare = (a, b) => {
+    for (let i = 0; i < Math.min(a.length, b.length); i++) {
+      if (a[i] !== b[i]) return a[i] - b[i];
+    }
+    return a.length - b.length;
+  };
+  let bestScore = null;
+  for (const { score } of scored) {
+    if (bestScore === null || compare(score, bestScore) > 0) bestScore = score;
+  }
+  return scored.filter(({ score }) => compare(score, bestScore) === 0).map(({ hand }) => hand);
+};

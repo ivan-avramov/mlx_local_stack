@@ -1,0 +1,188 @@
+import java.util.ArrayDeque;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Deque;
+import java.util.List;
+import java.util.Random;
+
+public class MazeGenerator {
+
+    private static final int MIN_CELLS = 5;
+    private static final int MAX_CELLS = 100;
+
+    private static final char EMPTY_CELL = ' ';
+    private static final char HORIZONTAL_WALL = '─';
+    private static final char VERTICAL_WALL = '│';
+    private static final char OPENING = '⇨';
+
+    // {deltaRow, deltaColumn}
+    private static final int[][] DIRECTIONS = {
+            {-1, 0}, // north
+            {1, 0},  // south
+            {0, -1}, // west
+            {0, 1}   // east
+    };
+
+    public char[][] generatePerfectMaze(int rows, int columns) {
+        return generatePerfectMaze(rows, columns, new Random());
+    }
+
+    public char[][] generatePerfectMaze(int rows, int columns, int seed) {
+        return generatePerfectMaze(rows, columns, new Random(seed));
+    }
+
+    private char[][] generatePerfectMaze(int rows, int columns, Random random) {
+        validateDimensions(rows, columns);
+
+        boolean[][] horizontalWalls = new boolean[rows + 1][columns];
+        boolean[][] verticalWalls = new boolean[rows][columns + 1];
+        for (boolean[] wall : horizontalWalls) {
+            Arrays.fill(wall, true);
+        }
+        for (boolean[] wall : verticalWalls) {
+            Arrays.fill(wall, true);
+        }
+
+        carveMaze(rows, columns, random, horizontalWalls, verticalWalls);
+
+        char[][] maze = renderMaze(rows, columns, horizontalWalls, verticalWalls);
+        maze[2 * random.nextInt(rows) + 1][0] = OPENING;
+        maze[2 * random.nextInt(rows) + 1][2 * columns] = OPENING;
+        return maze;
+    }
+
+    private void validateDimensions(int rows, int columns) {
+        if (rows < MIN_CELLS || rows > MAX_CELLS) {
+            throw new IllegalArgumentException("rows must be between " + MIN_CELLS + " and " + MAX_CELLS);
+        }
+        if (columns < MIN_CELLS || columns > MAX_CELLS) {
+            throw new IllegalArgumentException("columns must be between " + MIN_CELLS + " and " + MAX_CELLS);
+        }
+    }
+
+    /**
+     * Carves a perfect maze (a spanning tree of the cell grid) using an
+     * iterative depth-first search with randomised backtracking.
+     */
+    private void carveMaze(int rows, int columns, Random random,
+                           boolean[][] horizontalWalls, boolean[][] verticalWalls) {
+        boolean[][] visited = new boolean[rows][columns];
+        Deque<int[]> stack = new ArrayDeque<>();
+        stack.push(new int[]{0, 0});
+        visited[0][0] = true;
+
+        while (!stack.isEmpty()) {
+            int[] current = stack.peek();
+            int row = current[0];
+            int column = current[1];
+
+            List<int[]> unvisitedNeighbors = new ArrayList<>();
+            for (int[] direction : DIRECTIONS) {
+                int neighborRow = row + direction[0];
+                int neighborColumn = column + direction[1];
+                if (neighborRow >= 0 && neighborRow < rows
+                        && neighborColumn >= 0 && neighborColumn < columns
+                        && !visited[neighborRow][neighborColumn]) {
+                    unvisitedNeighbors.add(new int[]{neighborRow, neighborColumn});
+                }
+            }
+
+            if (unvisitedNeighbors.isEmpty()) {
+                stack.pop();
+                continue;
+            }
+
+            int[] next = unvisitedNeighbors.get(random.nextInt(unvisitedNeighbors.size()));
+            removeWallBetween(row, column, next[0], next[1], horizontalWalls, verticalWalls);
+            visited[next[0]][next[1]] = true;
+            stack.push(next);
+        }
+    }
+
+    private void removeWallBetween(int row, int column, int neighborRow, int neighborColumn,
+                                   boolean[][] horizontalWalls, boolean[][] verticalWalls) {
+        if (neighborRow == row - 1) {
+            horizontalWalls[row][column] = false; // wall above the cell
+        } else if (neighborRow == row + 1) {
+            horizontalWalls[row + 1][column] = false; // wall below the cell
+        } else if (neighborColumn == column - 1) {
+            verticalWalls[row][column] = false; // wall to the left of the cell
+        } else {
+            verticalWalls[row][column + 1] = false; // wall to the right of the cell
+        }
+    }
+
+    private char[][] renderMaze(int rows, int columns,
+                                boolean[][] horizontalWalls, boolean[][] verticalWalls) {
+        char[][] maze = new char[2 * rows + 1][2 * columns + 1];
+
+        for (int row = 0; row < rows; row++) {
+            for (int column = 0; column < columns; column++) {
+                maze[2 * row + 1][2 * column + 1] = EMPTY_CELL;
+            }
+        }
+
+        for (int row = 0; row <= rows; row++) {
+            for (int column = 0; column < columns; column++) {
+                maze[2 * row][2 * column + 1] =
+                        horizontalWalls[row][column] ? HORIZONTAL_WALL : EMPTY_CELL;
+            }
+        }
+
+        for (int row = 0; row < rows; row++) {
+            for (int column = 0; column <= columns; column++) {
+                maze[2 * row + 1][2 * column] =
+                        verticalWalls[row][column] ? VERTICAL_WALL : EMPTY_CELL;
+            }
+        }
+
+        for (int row = 0; row <= rows; row++) {
+            for (int column = 0; column <= columns; column++) {
+                boolean up = row > 0 && verticalWalls[row - 1][column];
+                boolean down = row < rows && verticalWalls[row][column];
+                boolean left = column > 0 && horizontalWalls[row][column - 1];
+                boolean right = column < columns && horizontalWalls[row][column];
+                maze[2 * row][2 * column] = junctionCharacter(up, down, left, right);
+            }
+        }
+
+        return maze;
+    }
+
+    private char junctionCharacter(boolean up, boolean down, boolean left, boolean right) {
+        if (up && down && left && right) {
+            return '┼';
+        }
+        if (up && down) {
+            return VERTICAL_WALL;
+        }
+        if (left && right) {
+            return HORIZONTAL_WALL;
+        }
+        if (up && left) {
+            return '┘';
+        }
+        if (up && right) {
+            return '└';
+        }
+        if (down && left) {
+            return '┐';
+        }
+        if (down && right) {
+            return '┌';
+        }
+        if (up && left && right) {
+            return '┴';
+        }
+        if (down && left && right) {
+            return '┬';
+        }
+        if (up && down && left) {
+            return '├';
+        }
+        if (up && down && right) {
+            return '┤';
+        }
+        return EMPTY_CELL;
+    }
+}

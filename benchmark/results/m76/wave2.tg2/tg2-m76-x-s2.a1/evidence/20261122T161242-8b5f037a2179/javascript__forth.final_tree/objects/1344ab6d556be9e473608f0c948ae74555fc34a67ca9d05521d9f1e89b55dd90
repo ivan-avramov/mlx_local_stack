@@ -1,0 +1,138 @@
+//
+// This is only a SKELETON file for the 'Forth' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NUMBER = /^-?\d+$/;
+
+export class Forth {
+  constructor() {
+    this._stack = [];
+    this._words = {};
+  }
+
+  get stack() {
+    return this._stack;
+  }
+
+  evaluate(input) {
+    const tokens = input.trim().split(/\s+/).filter((t) => t.length > 0);
+
+    for (let i = 0; i < tokens.length; i++) {
+      const token = tokens[i];
+
+      if (NUMBER.test(token)) {
+        this._stack.push(parseInt(token, 10));
+      } else if (token === ':') {
+        const end = tokens.indexOf(';', i + 1);
+        if (end === -1) {
+          throw new Error('Invalid definition');
+        }
+        const name = tokens[i + 1];
+        if (NUMBER.test(name)) {
+          throw new Error('Invalid definition');
+        }
+        const body = [];
+        for (const t of tokens.slice(i + 2, end)) {
+          const word = t.toLowerCase();
+          const existing = this._words[word];
+          if (existing) {
+            body.push(...existing);
+          } else {
+            body.push(word);
+          }
+        }
+        this._words[name.toLowerCase()] = body;
+        i = end;
+      } else {
+        const word = token.toLowerCase();
+        const body = this._words[word];
+        if (body) {
+          for (const t of body) {
+            this._exec(t);
+          }
+        } else {
+          this._exec(word);
+        }
+      }
+    }
+  }
+
+  _exec(token) {
+    const stack = this._stack;
+
+    if (NUMBER.test(token)) {
+      stack.push(parseInt(token, 10));
+      return;
+    }
+
+    switch (token) {
+      case '+':
+      case '-':
+      case '*':
+      case '/': {
+        const b = stack.pop();
+        if (b === undefined) {
+          throw new Error('Stack empty');
+        }
+        const a = stack.pop();
+        if (a === undefined) {
+          throw new Error('Stack empty');
+        }
+        if (token === '+') {
+          stack.push(a + b);
+        } else if (token === '-') {
+          stack.push(a - b);
+        } else if (token === '*') {
+          stack.push(a * b);
+        } else {
+          if (b === 0) {
+            throw new Error('Division by zero');
+          }
+          stack.push(Math.trunc(a / b));
+        }
+        return;
+      }
+      case 'dup': {
+        const a = stack.pop();
+        if (a === undefined) {
+          throw new Error('Stack empty');
+        }
+        stack.push(a, a);
+        return;
+      }
+      case 'drop': {
+        if (stack.pop() === undefined) {
+          throw new Error('Stack empty');
+        }
+        return;
+      }
+      case 'swap': {
+        const b = stack.pop();
+        if (b === undefined) {
+          throw new Error('Stack empty');
+        }
+        const a = stack.pop();
+        if (a === undefined) {
+          throw new Error('Stack empty');
+        }
+        stack.push(b, a);
+        return;
+      }
+      case 'over': {
+        const b = stack.pop();
+        if (b === undefined) {
+          throw new Error('Stack empty');
+        }
+        const a = stack.pop();
+        if (a === undefined) {
+          throw new Error('Stack empty');
+        }
+        stack.push(a, b, a);
+        return;
+      }
+      default:
+        throw new Error('Unknown command');
+    }
+  }
+}

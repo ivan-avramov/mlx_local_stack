@@ -1,0 +1,82 @@
+//
+// A zipper for a binary tree: a focus node plus a trail of ancestors.
+// Each trail entry records the ancestor's value, its children, and which
+// side ('left' or 'right') the focus was reached from. All operations are
+// pure: they return new Zipper instances without mutating the tree.
+//
+
+export class Zipper {
+  constructor(focus, trail = []) {
+    this.focus = focus;
+    this.trail = trail;
+  }
+
+  static fromTree(tree) {
+    return new Zipper(tree);
+  }
+
+  toTree() {
+    let node = this.focus;
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      const parent = this.trail[i];
+      const rebuilt = { value: parent.value, left: parent.left, right: parent.right };
+      if (parent.side === 'left') {
+        rebuilt.left = node;
+      } else {
+        rebuilt.right = node;
+      }
+      node = rebuilt;
+    }
+    return node;
+  }
+
+  value() {
+    return this.focus.value;
+  }
+
+  left() {
+    if (this.focus.left === null) {
+      return null;
+    }
+    return new Zipper(this.focus.left, [
+      ...this.trail,
+      { value: this.focus.value, left: this.focus.left, right: this.focus.right, side: 'left' },
+    ]);
+  }
+
+  right() {
+    if (this.focus.right === null) {
+      return null;
+    }
+    return new Zipper(this.focus.right, [
+      ...this.trail,
+      { value: this.focus.value, left: this.focus.left, right: this.focus.right, side: 'right' },
+    ]);
+  }
+
+  up() {
+    if (this.trail.length === 0) {
+      return null;
+    }
+    const parent = this.trail[this.trail.length - 1];
+    const rebuilt = { value: parent.value, left: parent.left, right: parent.right };
+    if (parent.side === 'left') {
+      rebuilt.left = this.focus;
+    } else {
+      rebuilt.right = this.focus;
+    }
+    return new Zipper(rebuilt, this.trail.slice(0, -1));
+  }
+
+  setValue(value) {
+    return new Zipper({ ...this.focus, value }, this.trail);
+  }
+
+  setLeft(left) {
+    return new Zipper({ ...this.focus, left }, this.trail);
+  }
+
+  setRight(right) {
+    return new Zipper({ ...this.focus, right }, this.trail);
+  }
+}

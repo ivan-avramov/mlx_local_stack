@@ -1,0 +1,116 @@
+/// Parse and evaluate a simple math word problem.
+///
+/// Returns the result of the command, or `None` if the command is invalid.
+pub fn answer(command: &str) -> Option<i32> {
+    let body = command.strip_prefix("What is ")?;
+    let body = body.strip_suffix('?').unwrap_or(body);
+    let tokens: Vec<&str> = body.split_whitespace().collect();
+    if tokens.is_empty() {
+        return None;
+    }
+    evaluate(&tokens)
+}
+
+enum Op {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    #[cfg(feature = "exponentials")]
+    Pow,
+}
+
+/// Evaluate a token sequence as `<number> <op> <number> <op> <number> ...`,
+/// applying operations strictly left-to-right.
+fn evaluate(tokens: &[&str]) -> Option<i32> {
+    let mut index = 0;
+    let mut value = parse_number(tokens, &mut index)?;
+    while index < tokens.len() {
+        let op = parse_operator(tokens, &mut index)?;
+        value = apply(op, value, tokens, &mut index)?;
+    }
+    Some(value)
+}
+
+/// Parse the number at `index`, advancing `index` past it on success.
+fn parse_number<'a>(tokens: &'a [&'a str], index: &mut usize) -> Option<i32> {
+    let value = tokens.get(*index)?.parse::<i32>().ok()?;
+    *index += 1;
+    Some(value)
+}
+
+fn parse_operator<'a>(tokens: &'a [&'a str], index: &mut usize) -> Option<Op> {
+    let op = match tokens[*index] {
+        "plus" => Op::Add,
+        "minus" => Op::Sub,
+        "multiplied" if tokens.get(*index + 1) == Some(&"by") => Op::Mul,
+        "divided" if tokens.get(*index + 1) == Some(&"by") => Op::Div,
+        #[cfg(feature = "exponentials")]
+        "raised"
+            if tokens.get(*index + 1) == Some(&"to")
+                && tokens.get(*index + 2) == Some(&"the") =>
+        {
+            Op::Pow
+        }
+        _ => return None,
+    };
+    *index += match op {
+        Op::Add | Op::Sub => 1,
+        Op::Mul | Op::Div => 2,
+        #[cfg(feature = "exponentials")]
+        Op::Pow => 3,
+    };
+    Some(op)
+}
+
+fn apply(op: Op, value: i32, tokens: &[&str], index: &mut usize) -> Option<i32> {
+    match op {
+        Op::Add => {
+            let rhs = parse_number(tokens, index)?;
+            value.checked_add(rhs)
+        }
+        Op::Sub => {
+            let rhs = parse_number(tokens, index)?;
+            value.checked_sub(rhs)
+        }
+        Op::Mul => {
+            let rhs = parse_number(tokens, index)?;
+            value.checked_mul(rhs)
+        }
+        Op::Div => {
+            let rhs = parse_number(tokens, index)?;
+            if rhs == 0 {
+                return None;
+            }
+            value.checked_div(rhs)
+        }
+        #[cfg(feature = "exponentials")]
+        Op::Pow => {
+            let exponent = parse_ordinal(tokens, index)?;
+            if tokens.get(*index) != Some(&"power") {
+                return None;
+            }
+            *index += 1;
+            value.checked_pow(exponent)
+        }
+    }
+}
+
+/// Parse an ordinal such as `5th`, `2nd`, `3rd` or `1st` as a non-negative
+/// integer exponent, advancing `index` past it on success.
+#[cfg(feature = "exponentials")]
+fn parse_ordinal(tokens: &[&str], index: &mut usize) -> Option<u32> {
+    let token = tokens.get(*index)?;
+    let digits = token
+        .strip_suffix("st")
+        .or_else(|| token.strip_suffix("nd"))
+        .or_else(|| token.strip_suffix("rd"))
+        .or_else(|| token.strip_suffix("th"))
+        .unwrap_or(token);
+    let exponent = digits.parse::<i32>().ok()?;
+    if exponent < 0 {
+        return None;
+    }
+    *index += 1;
+    Some(exponent as u32)
+}

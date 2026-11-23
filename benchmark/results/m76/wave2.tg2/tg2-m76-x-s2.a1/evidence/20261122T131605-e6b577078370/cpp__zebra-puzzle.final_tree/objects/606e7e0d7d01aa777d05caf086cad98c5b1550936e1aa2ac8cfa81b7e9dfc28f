@@ -1,0 +1,205 @@
+#include "zebra_puzzle.h"
+
+#include <array>
+
+namespace zebra_puzzle {
+
+namespace {
+
+constexpr int houses = 5;
+constexpr int unassigned = -1;
+
+// Each category has five distinct values, indexed 0..4.
+enum Nationality { Englishman, Spaniard, Ukrainian, Norwegian, Japanese };
+enum Color { Red, Green, Ivory, Yellow, Blue };
+enum Drink { Coffee, Tea, Milk, OrangeJuice, Water };
+enum Pet { Dog, Snail, Fox, Horse, Zebra };
+enum Hobby { Dancing, Painting, Reading, Football, Chess };
+
+const std::array<const char*, houses> nationalityNames = {
+    "Englishman", "Spaniard", "Ukrainian", "Norwegian", "Japanese"};
+
+// A complete (or partially filled) assignment of every category to the
+// five houses. Houses are indexed 0..4, house 0 being the first house.
+struct Grid {
+    std::array<int, houses> nationality;
+    std::array<int, houses> color;
+    std::array<int, houses> drink;
+    std::array<int, houses> pet;
+    std::array<int, houses> hobby;
+
+    Grid() {
+        nationality.fill(unassigned);
+        color.fill(unassigned);
+        drink.fill(unassigned);
+        pet.fill(unassigned);
+        hobby.fill(unassigned);
+    }
+};
+
+// True if some neighbor of house `h` is either unassigned or holds `target`.
+bool neighborPossibility(const std::array<int, houses>& values, int h, int target) {
+    for (int n : {h - 1, h + 1}) {
+        if (n < 0 || n >= houses) {
+            continue;
+        }
+        if (values[n] == unassigned || values[n] == target) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Checks every clue against a partially filled grid. Returns false as soon
+// as some clue is definitely violated.
+bool consistent(const Grid& g) {
+    for (int h = 0; h < houses; ++h) {
+        const int n = g.nationality[h];
+        const int c = g.color[h];
+        const int d = g.drink[h];
+        const int p = g.pet[h];
+        const int hb = g.hobby[h];
+
+        // Clue 2: the Englishman lives in the red house.
+        if (n != unassigned && c != unassigned && (n == Englishman) != (c == Red)) {
+            return false;
+        }
+        // Clue 3: the Spaniard owns the dog.
+        if (n != unassigned && p != unassigned && (n == Spaniard) != (p == Dog)) {
+            return false;
+        }
+        // Clue 4: the person in the green house drinks coffee.
+        if (c != unassigned && d != unassigned && (c == Green) != (d == Coffee)) {
+            return false;
+        }
+        // Clue 5: the Ukrainian drinks tea.
+        if (n != unassigned && d != unassigned && (n == Ukrainian) != (d == Tea)) {
+            return false;
+        }
+        // Clue 7: the snail owner likes to go dancing.
+        if (p != unassigned && hb != unassigned && (p == Snail) != (hb == Dancing)) {
+            return false;
+        }
+        // Clue 8: the person in the yellow house is a painter.
+        if (c != unassigned && hb != unassigned && (c == Yellow) != (hb == Painting)) {
+            return false;
+        }
+        // Clue 13: the person who plays football drinks orange juice.
+        if (hb != unassigned && d != unassigned && (hb == Football) != (d == OrangeJuice)) {
+            return false;
+        }
+        // Clue 14: the Japanese person plays chess.
+        if (n != unassigned && hb != unassigned && (n == Japanese) != (hb == Chess)) {
+            return false;
+        }
+    }
+
+    // Clue 6: the green house is immediately to the right of the ivory house.
+    // A neighbor that is not yet assigned may still become the required color,
+    // so only prune when the neighbor is assigned to the wrong color.
+    for (int h = 0; h < houses; ++h) {
+        if (g.color[h] == Green &&
+            (h == 0 || (g.color[h - 1] != unassigned && g.color[h - 1] != Ivory))) {
+            return false;
+        }
+        if (g.color[h] == Ivory &&
+            (h == houses - 1 || (g.color[h + 1] != unassigned && g.color[h + 1] != Green))) {
+            return false;
+        }
+    }
+
+    // Clue 9: the person in the middle house drinks milk.
+    if (g.drink[houses / 2] != unassigned && g.drink[houses / 2] != Milk) {
+        return false;
+    }
+
+    // Clue 10: the Norwegian lives in the first house.
+    if (g.nationality[0] != unassigned && g.nationality[0] != Norwegian) {
+        return false;
+    }
+
+    // Clue 15: the Norwegian lives next to the blue house.
+    for (int h = 0; h < houses; ++h) {
+        if (g.nationality[h] == Norwegian && !neighborPossibility(g.color, h, Blue)) {
+            return false;
+        }
+        if (g.color[h] == Blue && !neighborPossibility(g.nationality, h, Norwegian)) {
+            return false;
+        }
+    }
+
+    // Clue 11: the reader lives next to the person with the fox.
+    for (int h = 0; h < houses; ++h) {
+        if (g.hobby[h] == Reading && !neighborPossibility(g.pet, h, Fox)) {
+            return false;
+        }
+        if (g.pet[h] == Fox && !neighborPossibility(g.hobby, h, Reading)) {
+            return false;
+        }
+    }
+
+    // Clue 12: the painter's house is next to the house with the horse.
+    for (int h = 0; h < houses; ++h) {
+        if (g.hobby[h] == Painting && !neighborPossibility(g.pet, h, Horse)) {
+            return false;
+        }
+        if (g.pet[h] == Horse && !neighborPossibility(g.hobby, h, Painting)) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// Backtracking search. Categories are assigned one at a time (nationality,
+// color, drink, pet, hobby), each in a full permutation of its five values,
+// pruning with `consistent` after every single assignment.
+bool search(Grid& g, int stage, int house, unsigned used) {
+    if (house == houses) {
+        return stage == 5 || search(g, stage + 1, 0, 0);
+    }
+    if (stage == 5) {
+        return true;
+    }
+
+    std::array<int, houses>* column = nullptr;
+    switch (stage) {
+        case 0: column = &g.nationality; break;
+        case 1: column = &g.color; break;
+        case 2: column = &g.drink; break;
+        case 3: column = &g.pet; break;
+        default: column = &g.hobby; break;
+    }
+
+    for (int value = 0; value < houses; ++value) {
+        if (used & (1u << value)) {
+            continue;
+        }
+        (*column)[house] = value;
+        if (consistent(g) && search(g, stage, house + 1, used | (1u << value))) {
+            return true;
+        }
+        (*column)[house] = unassigned;
+    }
+    return false;
+}
+
+}  // namespace
+
+Solution solve() {
+    Grid g;
+    search(g, 0, 0, 0);
+
+    Solution solution;
+    for (int h = 0; h < houses; ++h) {
+        if (g.drink[h] == Water) {
+            solution.drinksWater = nationalityNames[g.nationality[h]];
+        }
+        if (g.pet[h] == Zebra) {
+            solution.ownsZebra = nationalityNames[g.nationality[h]];
+        }
+    }
+    return solution;
+}
+
+}  // namespace zebra_puzzle

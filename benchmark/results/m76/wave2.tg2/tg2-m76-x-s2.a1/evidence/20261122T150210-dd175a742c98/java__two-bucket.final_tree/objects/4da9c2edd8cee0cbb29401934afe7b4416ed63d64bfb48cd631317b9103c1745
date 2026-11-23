@@ -1,0 +1,93 @@
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
+
+class TwoBucket {
+    private final int totalMoves;
+    private final String finalBucket;
+    private final int otherBucket;
+
+    TwoBucket(int bucketOneCap, int bucketTwoCap, int desiredLiters, String startBucket) {
+        int[] result = solve(bucketOneCap, bucketTwoCap, desiredLiters, startBucket);
+        this.totalMoves = result[0];
+        this.finalBucket = result[1] == 0 ? "one" : "two";
+        this.otherBucket = result[1] == 0 ? result[3] : result[2];
+    }
+
+    int getTotalMoves() {
+        return totalMoves;
+    }
+
+    String getFinalBucket() {
+        return finalBucket;
+    }
+
+    int getOtherBucket() {
+        return otherBucket;
+    }
+
+    /**
+     * Breadth-first search over states (bucketOne, bucketTwo). Returns
+     * {moves, whichBucket(0=one, 1=two), bucketOneLiters, bucketTwoLiters}
+     * for the first state where either bucket holds the desired amount.
+     */
+    private static int[] solve(int capOne, int capTwo, int desired, String startBucket) {
+        Set<String> seen = new HashSet<>();
+        Deque<int[]> queue = new ArrayDeque<>();
+        queue.add(new int[]{0, 0, 0});
+        seen.add(key(0, 0));
+
+        while (!queue.isEmpty()) {
+            int[] state = queue.poll();
+            int a = state[0];
+            int b = state[1];
+            int moves = state[2];
+
+            if (a == desired || b == desired) {
+                return new int[]{moves, a == desired ? 0 : 1, a, b};
+            }
+
+            for (int[] next : successors(a, b, capOne, capTwo, startBucket)) {
+                String k = key(next[0], next[1]);
+                if (seen.add(k)) {
+                    queue.add(new int[]{next[0], next[1], moves + 1});
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("No solution exists");
+    }
+
+    private static String key(int a, int b) {
+        return a + "," + b;
+    }
+
+    private static int[][] successors(int a, int b, int capOne, int capTwo, String startBucket) {
+        // Fill bucket one, fill bucket two, empty bucket one, empty bucket two,
+        // pour one into two, pour two into one.
+        int[][] candidates = {
+                {capOne, b},
+                {a, capTwo},
+                {0, b},
+                {a, 0},
+                {a - Math.min(a, capTwo - b), b + Math.min(a, capTwo - b)},
+                {a + Math.min(b, capOne - a), b - Math.min(b, capOne - a)}
+        };
+
+        int[][] kept = new int[candidates.length][];
+        int count = 0;
+        for (int[] c : candidates) {
+            // Rule: never end up with the starting bucket empty and the other full.
+            if (startBucket.equals("one") && c[0] == 0 && c[1] == capTwo) {
+                continue;
+            }
+            if (startBucket.equals("two") && c[0] == capOne && c[1] == 0) {
+                continue;
+            }
+            kept[count++] = c;
+        }
+
+        return java.util.Arrays.copyOf(kept, count);
+    }
+}

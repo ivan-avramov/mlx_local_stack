@@ -1,0 +1,48 @@
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    IncompleteNumber,
+}
+
+/// Convert a list of numbers to a stream of bytes encoded with variable length encoding.
+pub fn to_bytes(values: &[u32]) -> Vec<u8> {
+    let mut out = Vec::new();
+    for &value in values {
+        // Collect the 7-bit groups, least significant first.
+        let mut groups = Vec::new();
+        let mut v = value;
+        loop {
+            groups.push((v & 0x7f) as u8);
+            v >>= 7;
+            if v == 0 {
+                break;
+            }
+        }
+        // Emit most significant group first; set the continuation bit on every
+        // byte except the final (least significant) one.
+        for (i, &group) in groups.iter().enumerate().rev() {
+            out.push(if i == 0 { group } else { group | 0x80 });
+        }
+    }
+    out
+}
+
+/// Given a stream of bytes, extract all numbers which are encoded in there.
+pub fn from_bytes(bytes: &[u8]) -> Result<Vec<u32>, Error> {
+    let mut out = Vec::new();
+    let mut value: u32 = 0;
+    let mut incomplete = false;
+    for &byte in bytes {
+        value = (value << 7) | (byte & 0x7f) as u32;
+        if byte & 0x80 == 0 {
+            out.push(value);
+            value = 0;
+            incomplete = false;
+        } else {
+            incomplete = true;
+        }
+    }
+    if incomplete {
+        return Err(Error::IncompleteNumber);
+    }
+    Ok(out)
+}

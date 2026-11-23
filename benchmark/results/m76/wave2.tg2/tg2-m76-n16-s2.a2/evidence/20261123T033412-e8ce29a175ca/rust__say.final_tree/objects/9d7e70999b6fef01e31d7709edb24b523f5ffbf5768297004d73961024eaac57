@@ -1,0 +1,100 @@
+const ONES: [&str; 20] = [
+    "zero",
+    "one",
+    "two",
+    "three",
+    "four",
+    "five",
+    "six",
+    "seven",
+    "eight",
+    "nine",
+    "ten",
+    "eleven",
+    "twelve",
+    "thirteen",
+    "fourteen",
+    "fifteen",
+    "sixteen",
+    "seventeen",
+    "eighteen",
+    "nineteen",
+];
+
+const TENS: [&str; 10] = [
+    "",
+    "ten",
+    "twenty",
+    "thirty",
+    "forty",
+    "fifty",
+    "sixty",
+    "seventy",
+    "eighty",
+    "ninety",
+];
+
+const SCALES: [&str; 7] = [
+    "",
+    "thousand",
+    "million",
+    "billion",
+    "trillion",
+    "quadrillion",
+    "quintillion",
+];
+
+fn under_100(n: u64) -> String {
+    if n < 20 {
+        ONES[n as usize].to_string()
+    } else {
+        let tens = TENS[(n / 10) as usize];
+        let ones = n % 10;
+        if ones == 0 {
+            tens.to_string()
+        } else {
+            format!("{tens}-{}", ONES[ones as usize])
+        }
+    }
+}
+
+fn under_1000(n: u64) -> String {
+    let hundreds = n / 100;
+    let rest = n % 100;
+    match (hundreds, rest) {
+        (0, 0) => "zero".to_string(),
+        (0, _) => under_100(rest),
+        (_, 0) => format!("{} hundred", ONES[hundreds as usize]),
+        (_, _) => format!(
+            "{} hundred {}",
+            ONES[hundreds as usize],
+            under_100(rest)
+        ),
+    }
+}
+
+pub fn encode(n: u64) -> String {
+    if n == 0 {
+        return "zero".to_string();
+    }
+
+    let mut parts = Vec::new();
+    let mut chunk = n;
+    let mut scale = 0;
+    while chunk > 0 {
+        let group = chunk % 1000;
+        if group != 0 {
+            let mut part = under_1000(group);
+            if scale > 0 {
+                part.push(' ');
+                part.push_str(SCALES[scale]);
+            }
+            parts.push(part);
+        }
+        chunk /= 1000;
+        scale += 1;
+    }
+
+    parts.reverse();
+    parts.join(" ")
+}

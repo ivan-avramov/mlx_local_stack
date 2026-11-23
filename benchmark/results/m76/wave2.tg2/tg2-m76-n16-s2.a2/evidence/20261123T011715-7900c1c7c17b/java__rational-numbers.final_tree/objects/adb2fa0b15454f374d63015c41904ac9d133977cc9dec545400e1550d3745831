@@ -1,0 +1,117 @@
+import java.util.Objects;
+
+class Rational {
+
+    private final int numerator;
+    private final int denominator;
+
+    Rational(int numerator, int denominator) {
+        // Standard form: the denominator must be positive.
+        if (denominator < 0) {
+            numerator = -numerator;
+            denominator = -denominator;
+        }
+
+        // Reduce to lowest terms.
+        int gcd = gcd(Math.abs(numerator), Math.abs(denominator));
+        if (gcd > 0) {
+            numerator /= gcd;
+            denominator /= gcd;
+        }
+
+        this.numerator = numerator;
+        this.denominator = denominator;
+    }
+
+    int getNumerator() {
+        return numerator;
+    }
+
+    int getDenominator() {
+        return denominator;
+    }
+
+    Rational add(Rational other) {
+        return new Rational(
+                numerator * other.denominator + other.numerator * denominator,
+                denominator * other.denominator);
+    }
+
+    Rational subtract(Rational other) {
+        return new Rational(
+                numerator * other.denominator - other.numerator * denominator,
+                denominator * other.denominator);
+    }
+
+    Rational multiply(Rational other) {
+        return new Rational(numerator * other.numerator, denominator * other.denominator);
+    }
+
+    Rational divide(Rational other) {
+        return new Rational(numerator * other.denominator, denominator * other.numerator);
+    }
+
+    Rational abs() {
+        return new Rational(Math.abs(numerator), Math.abs(denominator));
+    }
+
+    Rational pow(int power) {
+        int magnitude = Math.abs(power);
+        int raisedNumerator = powInt(numerator, magnitude);
+        int raisedDenominator = powInt(denominator, magnitude);
+        return power >= 0
+                ? new Rational(raisedNumerator, raisedDenominator)
+                : new Rational(raisedDenominator, raisedNumerator);
+    }
+
+    double exp(double x) {
+        // x^(a/b) = root(x^a, b). Split the exponent into its integer and
+        // fractional parts to keep the result as accurate as possible.
+        int whole = numerator / denominator;
+        int remainder = numerator % denominator;
+        return Math.pow(x, whole) * Math.pow(x, (double) remainder / denominator);
+    }
+
+    @Override
+    public String toString() {
+        return String.format("%d/%d", this.getNumerator(), this.getDenominator());
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (obj instanceof Rational other) {
+            return this.getNumerator() == other.getNumerator()
+                    && this.getDenominator() == other.getDenominator();
+        }
+
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(this.getNumerator(), this.getDenominator());
+    }
+
+    private static int gcd(int a, int b) {
+        while (b != 0) {
+            int remainder = a % b;
+            a = b;
+            b = remainder;
+        }
+        return a;
+    }
+
+    private static int powInt(int base, int exponent) {
+        int result = 1;
+        int current = base;
+        int remaining = exponent;
+        while (remaining > 0) {
+            if ((remaining & 1) == 1) {
+                result *= current;
+            }
+            current *= current;
+            remaining >>= 1;
+        }
+        return result;
+    }
+}

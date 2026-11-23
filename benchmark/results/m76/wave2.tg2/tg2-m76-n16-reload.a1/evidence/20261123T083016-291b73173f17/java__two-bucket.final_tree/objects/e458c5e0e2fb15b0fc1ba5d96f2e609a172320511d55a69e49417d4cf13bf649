@@ -1,0 +1,114 @@
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
+
+class TwoBucket {
+    private final int moves;
+    private final String finalBucket;
+    private final int otherBucket;
+
+    TwoBucket(int bucketOneCap, int bucketTwoCap, int desiredLiters, String startBucket) {
+        boolean startWithOne = startBucket.equals("one");
+
+        int[] start = startWithOne ? new int[]{bucketOneCap, 0} : new int[]{0, bucketTwoCap};
+        if (start[0] == desiredLiters || start[1] == desiredLiters) {
+            this.moves = 1;
+            this.finalBucket = start[0] == desiredLiters ? "one" : "two";
+            this.otherBucket = start[0] == desiredLiters ? start[1] : start[0];
+            return;
+        }
+
+        Set<String> seen = new HashSet<>();
+        Deque<int[]> queue = new ArrayDeque<>();
+        Deque<Integer> moveCounts = new ArrayDeque<>();
+        queue.add(start);
+        moveCounts.add(1);
+        seen.add(key(start));
+
+        while (!queue.isEmpty()) {
+            int[] state = queue.poll();
+            int moves = moveCounts.poll();
+
+            for (int[] next : successors(state, bucketOneCap, bucketTwoCap, startBucket)) {
+                if (next[0] == desiredLiters || next[1] == desiredLiters) {
+                    this.moves = moves + 1;
+                    this.finalBucket = next[0] == desiredLiters ? "one" : "two";
+                    this.otherBucket = next[0] == desiredLiters ? next[1] : next[0];
+                    return;
+                }
+                if (seen.add(key(next))) {
+                    queue.add(next);
+                    moveCounts.add(moves + 1);
+                }
+            }
+        }
+
+        throw new IllegalArgumentException("No solution exists.");
+    }
+
+    private static String key(int[] state) {
+        return state[0] + "," + state[1];
+    }
+
+    private static int[][] successors(int[] state, int capOne, int capTwo, String startBucket) {
+        int b1 = state[0];
+        int b2 = state[1];
+        boolean startWithOne = startBucket.equals("one");
+
+        int[][] candidates = new int[][]{
+                {capOne, b2}, // fill bucket one
+                {b1, capTwo}, // fill bucket two
+                {0, b2},      // empty bucket one
+                {b1, 0},      // empty bucket two
+                pour(b1, b2, capTwo) // pour bucket one into bucket two
+        };
+
+        int[][] result = new int[candidates.length + 1][];
+        int count = 0;
+        for (int[] candidate : candidates) {
+            if (isAllowed(candidate, startWithOne, capOne, capTwo)) {
+                result[count++] = candidate;
+            }
+        }
+
+        // Pour bucket two into bucket one.
+        int amount = Math.min(b2, capOne - b1);
+        int[] poured = new int[]{b1 + amount, b2 - amount};
+        if (isAllowed(poured, startWithOne, capOne, capTwo)) {
+            result[count++] = poured;
+        }
+
+        return java.util.Arrays.copyOf(result, count);
+    }
+
+    private static boolean isAllowed(int[] state, boolean startWithOne, int capOne, int capTwo) {
+        // Rule: after an action, the starting bucket may not be empty while the other is full.
+        if (startWithOne) {
+            return !(state[0] == 0 && state[1] == capTwo);
+        }
+        return !(state[1] == 0 && state[0] == capOne);
+    }
+
+    /**
+     * Pours {@code from} into {@code to}, which currently holds {@code toAmount}
+     * and holds at most {@code toCap}. Returns the new amounts for
+     * (source, destination).
+     */
+    private static int[] pour(int from, int toAmount, int toCap) {
+        int amount = Math.min(from, toCap - toAmount);
+        return new int[]{from - amount, toAmount + amount};
+    }
+
+    int getTotalMoves() {
+        return moves;
+    }
+
+    String getFinalBucket() {
+        return finalBucket;
+    }
+
+    int getOtherBucket() {
+        return otherBucket;
+    }
+}

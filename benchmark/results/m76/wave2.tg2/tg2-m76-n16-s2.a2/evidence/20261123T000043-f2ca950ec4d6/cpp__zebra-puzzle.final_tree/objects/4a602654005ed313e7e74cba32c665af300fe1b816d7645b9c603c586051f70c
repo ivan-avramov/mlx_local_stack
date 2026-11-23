@@ -1,0 +1,199 @@
+#include "zebra_puzzle.h"
+
+#include <array>
+#include <cstdlib>
+
+namespace zebra_puzzle {
+
+namespace {
+
+constexpr int kHouses = 5;
+
+enum Color { kRed = 0, kGreen, kIvory, kYellow, kBlue, kColorCount };
+enum Nationality { kEnglishman = 0, kSpaniard, kUkrainian, kJapanese, kNorwegian,
+                   kNationalityCount };
+enum Pet { kDog = 0, kSnail, kFox, kHorse, kZebra, kPetCount };
+enum Drink { kCoffee = 0, kTea, kMilk, kOrangeJuice, kWater, kDrinkCount };
+enum Hobby { kDancing = 0, kReading, kPainting, kFootball, kChess, kHobbyCount };
+
+struct House {
+    int color = -1;
+    int nationality = -1;
+    int pet = -1;
+    int drink = -1;
+    int hobby = -1;
+};
+
+// The search assigns one attribute at a time, in this order:
+// color, nationality, pet, drink, hobby.
+int& attributeOf(House& house, int attribute) {
+    switch (attribute) {
+        case 0: return house.color;
+        case 1: return house.nationality;
+        case 2: return house.pet;
+        case 3: return house.drink;
+        default: return house.hobby;
+    }
+}
+
+bool isAdjacent(int a, int b) { return std::abs(a - b) == 1; }
+
+// Checks the clues that bind two attributes within a single house.
+// Each attribute takes each of its five values exactly once, so every
+// clue applies in both directions.
+bool consistent(const House& house) {
+    if (house.nationality == kEnglishman && house.color != -1 && house.color != kRed) {
+        return false;  // Clue 2
+    }
+    if (house.nationality == kSpaniard && house.pet != -1 && house.pet != kDog) {
+        return false;  // Clue 3
+    }
+    if (house.color == kGreen && house.drink != -1 && house.drink != kCoffee) {
+        return false;  // Clue 4
+    }
+    if (house.drink == kCoffee && house.color != -1 && house.color != kGreen) {
+        return false;  // Clue 4
+    }
+    if (house.nationality == kUkrainian && house.drink != -1 && house.drink != kTea) {
+        return false;  // Clue 5
+    }
+    if (house.drink == kTea && house.nationality != -1 && house.nationality != kUkrainian) {
+        return false;  // Clue 5
+    }
+    if (house.pet == kSnail && house.hobby != -1 && house.hobby != kDancing) {
+        return false;  // Clue 7
+    }
+    if (house.hobby == kDancing && house.pet != -1 && house.pet != kSnail) {
+        return false;  // Clue 7
+    }
+    if (house.color == kYellow && house.hobby != -1 && house.hobby != kPainting) {
+        return false;  // Clue 8
+    }
+    if (house.hobby == kPainting && house.color != -1 && house.color != kYellow) {
+        return false;  // Clue 8
+    }
+    if (house.hobby == kFootball && house.drink != -1 && house.drink != kOrangeJuice) {
+        return false;  // Clue 13
+    }
+    if (house.drink == kOrangeJuice && house.hobby != -1 && house.hobby != kFootball) {
+        return false;  // Clue 13
+    }
+    if (house.nationality == kJapanese && house.hobby != -1 && house.hobby != kChess) {
+        return false;  // Clue 14
+    }
+    if (house.hobby == kChess && house.nationality != -1 && house.nationality != kJapanese) {
+        return false;  // Clue 14
+    }
+    return true;
+}
+
+// Checks the clues that relate different houses.
+bool satisfies(const std::array<House, kHouses>& houses) {
+    // Clue 6: the green house is immediately to the right of the ivory house.
+    for (int i = 0; i < kHouses; ++i) {
+        if (houses[i].color == kIvory &&
+            (i + 1 >= kHouses || houses[i + 1].color != kGreen)) {
+            return false;
+        }
+    }
+    // Clue 11: the reader lives next to the fox.
+    for (int i = 0; i < kHouses; ++i) {
+        if (houses[i].hobby == kReading) {
+            bool nextToFox = false;
+            for (int j = 0; j < kHouses; ++j) {
+                if (houses[j].pet == kFox && isAdjacent(i, j)) {
+                    nextToFox = true;
+                }
+            }
+            if (!nextToFox) {
+                return false;
+            }
+        }
+    }
+    // Clue 12: the painter lives next to the horse.
+    for (int i = 0; i < kHouses; ++i) {
+        if (houses[i].hobby == kPainting) {
+            bool nextToHorse = false;
+            for (int j = 0; j < kHouses; ++j) {
+                if (houses[j].pet == kHorse && isAdjacent(i, j)) {
+                    nextToHorse = true;
+                }
+            }
+            if (!nextToHorse) {
+                return false;
+            }
+        }
+    }
+    // Clue 15: the Norwegian lives next to the blue house.
+    for (int i = 0; i < kHouses; ++i) {
+        if (houses[i].nationality == kNorwegian) {
+            bool nextToBlue = false;
+            for (int j = 0; j < kHouses; ++j) {
+                if (houses[j].color == kBlue && isAdjacent(i, j)) {
+                    nextToBlue = true;
+                }
+            }
+            if (!nextToBlue) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// Backtracking search: assign one attribute to all houses, then move on
+// to the next attribute, pruning with the clues as soon as they apply.
+bool assign(std::array<House, kHouses>& houses, int attribute, int house) {
+    if (house == kHouses) {
+        return attribute == 4 ? satisfies(houses) : assign(houses, attribute + 1, 0);
+    }
+    int& slot = attributeOf(houses[house], attribute);
+    if (slot != -1) {
+        return assign(houses, attribute, house + 1);
+    }
+    for (int value = 0; value < kHouses; ++value) {
+        bool used = false;
+        for (int i = 0; i < kHouses; ++i) {
+            if (i != house && attributeOf(houses[i], attribute) == value) {
+                used = true;
+                break;
+            }
+        }
+        if (used) {
+            continue;
+        }
+        slot = value;
+        if (consistent(houses[house]) && assign(houses, attribute, house + 1)) {
+            return true;
+        }
+        slot = -1;
+    }
+    return false;
+}
+
+}  // namespace
+
+Solution solve() {
+    std::array<House, kHouses> houses{};
+    houses[0].nationality = kNorwegian;  // Clue 10: the Norwegian lives in the first house
+    houses[2].drink = kMilk;            // Clue 9: the person in the middle house drinks milk
+
+    assign(houses, 0, 0);
+
+    static const char* const kNationalities[] = {
+        "Englishman", "Spaniard", "Ukrainian", "Japanese", "Norwegian",
+    };
+
+    Solution solution;
+    for (const House& house : houses) {
+        if (house.drink == kWater) {
+            solution.drinksWater = kNationalities[house.nationality];
+        }
+        if (house.pet == kZebra) {
+            solution.ownsZebra = kNationalities[house.nationality];
+        }
+    }
+    return solution;
+}
+
+}  // namespace zebra_puzzle

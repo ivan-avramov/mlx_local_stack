@@ -1,0 +1,52 @@
+use std::collections::HashMap;
+
+/// Cost of a group of `size` distinct books, in cents.
+/// 1 book: $8.00, 2: 5% off, 3: 10% off, 4: 20% off, 5: 25% off.
+const GROUP_COST: [u32; 6] = [0, 800, 1520, 2160, 2560, 3000];
+
+/// Returns the lowest price, in cents, for a basket of books.
+/// Each book is one of the five series titles, numbered 1..=5.
+pub fn lowest_price(books: &[u32]) -> u32 {
+    let mut counts = [0u32; 5];
+    for &book in books {
+        counts[(book - 1) as usize] += 1;
+    }
+
+    let mut memo: HashMap<[u32; 5], u32> = HashMap::new();
+    solve(counts, &mut memo)
+}
+
+/// Minimum cost to buy the remaining books, given how many copies of each
+/// of the five titles are left. At each step we pick a group of distinct
+/// titles (any non-empty subset of the titles with copies remaining) and
+/// buy one of each at the group discount.
+fn solve(counts: [u32; 5], memo: &mut HashMap<[u32; 5], u32>) -> u32 {
+    if counts.iter().all(|&c| c == 0) {
+        return 0;
+    }
+    if let Some(&cached) = memo.get(&counts) {
+        return cached;
+    }
+
+    let mut best = u32::MAX;
+    for mask in 1..32u32 {
+        let mut remaining = counts;
+        let mut possible = true;
+        for i in 0..5 {
+            if mask >> i & 1 == 1 {
+                if remaining[i] == 0 {
+                    possible = false;
+                    break;
+                }
+                remaining[i] -= 1;
+            }
+        }
+        if possible {
+            let size = mask.count_ones() as usize;
+            best = best.min(GROUP_COST[size] + solve(remaining, memo));
+        }
+    }
+
+    memo.insert(counts, best);
+    best
+}

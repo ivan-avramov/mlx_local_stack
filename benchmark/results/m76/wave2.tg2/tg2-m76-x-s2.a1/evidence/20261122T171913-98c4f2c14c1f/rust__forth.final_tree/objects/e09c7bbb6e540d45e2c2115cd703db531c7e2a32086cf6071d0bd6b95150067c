@@ -1,0 +1,226 @@
+use std::collections::HashMap;
+
+pub type Value = i32;
+pub type Result = std::result::Result<(), Error>;
+
+/// A single compiled instruction.
+///
+/// User-defined words are stored as `Call(idx)` references into the
+/// definition arena rather than being eagerly expanded into the bodies of the
+/// words they reference. This keeps memory usage proportional to the size of
+/// the source definitions (see `tests/alloc-attack.rs`) while still capturing
+/// a word's meaning at the time it is defined (see the
+/// `can_use_different_words_with_the_same_name` test).
+#[derive(Clone, Copy)]
+enum Instr {
+    Push(Value),
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Dup,
+    Drop,
+    Swap,
+    Over,
+    Call(usize),
+}
+
+pub struct Forth {
+    stack: Vec<Value>,
+    /// Arena of compiled definitions, addressed by index.
+    definitions: Vec<Vec<Instr>>,
+    /// Maps a lowercased word name to the index of its *current* definition.
+    words: HashMap<String, usize>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    DivisionByZero,
+    StackUnderflow,
+    UnknownWord,
+    InvalidWord,
+}
+
+impl Forth {
+    pub fn new() -> Forth {
+        Forth {
+            stack: Vec::new(),
+            definitions: Vec::new(),
+            words: HashMap::new(),
+        }
+    }
+
+    pub fn stack(&self) -> &[Value] {
+        &self.stack
+    }
+
+    pub fn eval(&mut self, input: &str) -> Result {
+        let tokens: Vec<&str> = input.split_whitespace().collect();
+        let mut i = 0;
+        while i < tokens.len() {
+            if tokens[i] == ":" {
+                i += 1;
+                self.define(&tokens, &mut i)?;
+            } else {
+                self.exec_token(tokens[i])?;
+                i += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// Parses a `: name body ;` definition starting just after the `:` token,
+    /// compiling `body` and registering it under `name`. Advances `*i` past the
+    /// terminating `;`.
+    fn define(&mut self, tokens: &[&str], i: &mut usize) -> Result {
+        // The word name.
+        if *i >= tokens.len() {
+            return Err(Error::InvalidWord);
+        }
+        let name = tokens[*i];
+        *i += 1;
+
+        // A word name must not be a number.
+        if name.parse::<Value>().is_ok() {
+            return Err(Error::InvalidWord);
+        }
+
+        // Collect the definition body up to (and including) the `;`.
+        let mut body: Vec<&str> = Vec::new();
+        loop {
+            if *i >= tokens.len() {
+                return Err(Error::InvalidWord);
+            }
+            if tokens[*i] == ";" {
+                *i += 1;
+                break;
+            }
+            body.push(tokens[*i]);
+            *i += 1;
+        }
+
+        let def = self.compile(&body)?;
+        let idx = self.definitions.len();
+        self.definitions.push(def);
+        self.words.insert(name.to_lowercase(), idx);
+        Ok(())
+    }
+
+    /// Compiles a definition body into a list of instructions, resolving any
+    /// referenced user-defined words to references to their *current*
+    /// definition.
+    fn compile(&self, body: &[&str]) -> std::result::Result<Vec<Instr>, Error> {
+        let mut def = Vec::new();
+        for tok in body {
+            if let Ok(n) = tok.parse::<Value>() {
+                def.push(Instr::Push(n));
+                continue;
+            }
+            let lower = tok.to_lowercase();
+            if let Some(&idx) = self.words.get(&lower) {
+                def.push(Instr::Call(idx));
+            } else {
+                def.push(Self::builtin(&lower)?);
+            }
+        }
+        Ok(def)
+    }
+
+    /// Maps a built-in word name to its instruction, or errors if unknown.
+    fn builtin(lower: &str) -> std::result::Result<Instr, Error> {
+        Ok(match lower {
+            "+" => Instr::Add,
+            "-" => Instr::Sub,
+            "*" => Instr::Mul,
+            "/" => Instr::Div,
+            "dup" => Instr::Dup,
+            "drop" => Instr::Drop,
+            "swap" => Instr::Swap,
+            "over" => Instr::Over,
+            _ => return Err(Error::UnknownWord),
+        })
+    }
+
+    /// Executes a single top-level token.
+    fn exec_token(&mut self, tok: &str) -> Result {
+        if let Ok(n) = tok.parse::<Value>() {
+            self.stack.push(n);
+            return Ok(());
+        }
+        let lower = tok.to_lowercase();
+        if let Some(&idx) = self.words.get(&lower) {
+            self.exec_def(idx)
+        } else {
+            self.exec_instr(Self::builtin(&lower)?)
+        }
+    }
+
+    /// Executes a compiled definition. Instructions are copied out one at a
+    /// time so the arena borrow does not conflict with the stack mutation.
+    fn exec_def(&mut self, idx: usize) -> Result {
+        let len = self.definitions[idx].len();
+        for pos in 0..len {
+            let instr = self.definitions[idx][pos];
+            self.exec_instr(instr)?;
+        }
+        Ok(())
+    }
+
+    /// Executes a single instruction.
+    fn exec_instr(&mut self, instr: Instr) -> Result {
+        match instr {
+            Instr::Push(v) => self.stack.push(v),
+            Instr::Add => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a + b);
+            }
+            Instr::Sub => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a - b);
+            }
+            Instr::Mul => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a * b);
+            }
+            Instr::Div => {
+                let (a, b) = self.pop2()?;
+                if b == 0 {
+                    return Err(Error::DivisionByZero);
+                }
+                self.stack.push(a / b);
+            }
+            Instr::Dup => {
+                let v = self.stack.last().copied().ok_or(Error::StackUnderflow)?;
+                self.stack.push(v);
+            }
+            Instr::Drop => {
+                self.pop()?;
+            }
+            Instr::Swap => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+            Instr::Over => {
+                if self.stack.len() < 2 {
+                    return Err(Error::StackUnderflow);
+                }
+                self.stack.push(self.stack[self.stack.len() - 2]);
+            }
+            Instr::Call(idx) => self.exec_def(idx)?,
+        }
+        Ok(())
+    }
+
+    fn pop(&mut self) -> std::result::Result<Value, Error> {
+        self.stack.pop().ok_or(Error::StackUnderflow)
+    }
+
+    /// Pops the top two values, returning `(older, newer)` where `older` is
+    /// the value further from the top.
+    fn pop2(&mut self) -> std::result::Result<(Value, Value), Error> {
+        let b = self.pop()?;
+        let a = self.pop()?;
+        Ok((a, b))
+    }
+}

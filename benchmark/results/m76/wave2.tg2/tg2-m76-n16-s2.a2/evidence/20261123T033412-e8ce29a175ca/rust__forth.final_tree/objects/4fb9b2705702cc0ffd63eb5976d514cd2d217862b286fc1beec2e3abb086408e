@@ -1,0 +1,273 @@
+use std::collections::HashMap;
+
+pub type Value = i32;
+pub type Result = std::result::Result<(), Error>;
+
+pub struct Forth {
+    stack: Vec<Value>,
+    defs: Vec<Definition>,
+    names: HashMap<String, usize>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    DivisionByZero,
+    StackUnderflow,
+    UnknownWord,
+    InvalidWord,
+}
+
+/// A builtin stack operation.
+#[derive(Clone, Copy, Debug)]
+enum Builtin {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Dup,
+    Drop,
+    Swap,
+    Over,
+}
+
+/// A definition: either a builtin operation or a user-defined sequence of tokens.
+enum Definition {
+    Builtin(Builtin),
+    User(Vec<Token>),
+}
+
+/// A token stored inside a definition.
+#[derive(Clone, Copy, Debug)]
+enum Token {
+    Num(Value),
+    /// A reference to a definition by index, resolved when the definition
+    /// was created. This keeps definitions lazy (no eager expansion) while
+    /// still binding each word to the definition that existed at the time.
+    Word(usize),
+}
+
+/// A token produced by the tokenizer, before name resolution.
+enum RawToken {
+    Num(Value),
+    Word(String),
+}
+
+impl Forth {
+    pub fn new() -> Forth {
+        let mut defs = Vec::with_capacity(8);
+        let mut names = HashMap::new();
+        for (name, builtin) in [
+            ("+", Builtin::Add),
+            ("-", Builtin::Sub),
+            ("*", Builtin::Mul),
+            ("/", Builtin::Div),
+            ("dup", Builtin::Dup),
+            ("drop", Builtin::Drop),
+            ("swap", Builtin::Swap),
+            ("over", Builtin::Over),
+        ] {
+            names.insert(name.to_string(), defs.len());
+            defs.push(Definition::Builtin(builtin));
+        }
+        Forth {
+            stack: Vec::new(),
+            defs,
+            names,
+        }
+    }
+
+    pub fn stack(&self) -> &[Value] {
+        &self.stack
+    }
+
+    pub fn eval(&mut self, input: &str) -> Result {
+        let tokens = tokenize(input);
+        let mut i = 0;
+        while i < tokens.len() {
+            match &tokens[i] {
+                RawToken::Num(n) => self.stack.push(*n),
+                RawToken::Word(w) if w == ":" => {
+                    i += 1;
+                    // The word name must be a word, not a number.
+                    let name = match tokens.get(i) {
+                        Some(RawToken::Word(name)) => name.clone(),
+                        _ => return Err(Error::InvalidWord),
+                    };
+                    i += 1;
+                    let body_start = i;
+                    while i < tokens.len()
+                        && !matches!(&tokens[i], RawToken::Word(w) if w == ";")
+                    {
+                        i += 1;
+                    }
+                    if i >= tokens.len() {
+                        return Err(Error::InvalidWord); // unterminated definition
+                    }
+                    self.define(&name, &tokens[body_start..i])?;
+                    i += 1; // skip ';'
+                }
+                RawToken::Word(w) => {
+                    let idx = *self.names.get(w.as_str()).ok_or(Error::UnknownWord)?;
+                    self.exec_def(idx)?;
+                }
+            }
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// Register `name` as a new definition whose body is `body`. Words in the
+    /// body are resolved against the current dictionary, so the new definition
+    /// captures the words as they are now (and a word can use its own
+    /// previous definition).
+    fn define(&mut self, name: &str, body: &[RawToken]) -> Result {
+        let mut tokens = Vec::with_capacity(body.len());
+        for t in body {
+            match t {
+                RawToken::Num(n) => tokens.push(Token::Num(*n)),
+                RawToken::Word(w) => {
+                    let idx = *self.names.get(w.as_str()).ok_or(Error::UnknownWord)?;
+                    tokens.push(Token::Word(idx));
+                }
+            }
+        }
+        let idx = self.defs.len();
+        self.defs.push(Definition::User(tokens));
+        self.names.insert(name.to_lowercase(), idx);
+        Ok(())
+    }
+
+    /// Execute a definition. User definitions are executed iteratively with an
+    /// explicit stack of frames, each a `(definition index, next token
+    /// position)` pair, so nested definitions neither recurse nor are expanded
+    /// eagerly.
+    fn exec_def(&mut self, idx: usize) -> Result {
+        match &self.defs[idx] {
+            Definition::Builtin(b) => return self.exec_builtin(*b),
+            Definition::User(_) => {}
+        }
+        let mut frames: Vec<(usize, usize)> = vec![(idx, 0)];
+        while let Some(frame) = frames.last_mut() {
+            let (def_idx, pos) = *frame;
+            let tokens = match &self.defs[def_idx] {
+                Definition::User(tokens) => tokens,
+                Definition::Builtin(_) => unreachable!("builtins are executed immediately"),
+            };
+            if pos >= tokens.len() {
+                frames.pop();
+                continue;
+            }
+            frame.1 = pos + 1;
+            match tokens[pos] {
+                Token::Num(n) => self.stack.push(n),
+                Token::Word(i) => match &self.defs[i] {
+                    Definition::Builtin(b) => self.exec_builtin(*b)?,
+                    Definition::User(_) => frames.push((i, 0)),
+                },
+            }
+        }
+        Ok(())
+    }
+
+    fn exec_builtin(&mut self, b: Builtin) -> Result {
+        match b {
+            Builtin::Add => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a + b);
+            }
+            Builtin::Sub => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a - b);
+            }
+            Builtin::Mul => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a * b);
+            }
+            Builtin::Div => {
+                let (a, b) = self.pop2()?;
+                if b == 0 {
+                    return Err(Error::DivisionByZero);
+                }
+                self.stack.push(a / b);
+            }
+            Builtin::Dup => {
+                let a = self.pop()?;
+                self.stack.push(a);
+                self.stack.push(a);
+            }
+            Builtin::Drop => {
+                self.pop()?;
+            }
+            Builtin::Swap => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+            Builtin::Over => {
+                let (a, b) = self.pop2()?;
+                self.stack.push(a);
+                self.stack.push(b);
+                self.stack.push(a);
+            }
+        }
+        Ok(())
+    }
+
+    fn pop(&mut self) -> std::result::Result<Value, Error> {
+        self.stack.pop().ok_or(Error::StackUnderflow)
+    }
+
+    /// Pop two values, returning (second-from-top, top).
+    fn pop2(&mut self) -> std::result::Result<(Value, Value), Error> {
+        let b = self.pop()?;
+        let a = self.pop()?;
+        Ok((a, b))
+    }
+}
+
+/// Split `input` into whitespace-separated tokens. A run of digits (optionally
+/// preceded by `-`) is a number; anything else is a word, lowercased for
+/// case-insensitive lookup.
+fn tokenize(input: &str) -> Vec<RawToken> {
+    let bytes = input.as_bytes();
+    let mut tokens = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        let c = bytes[i];
+        if c.is_ascii_whitespace() {
+            i += 1;
+            continue;
+        }
+        let is_negative = c == b'-' && bytes.get(i + 1).is_some_and(|d| d.is_ascii_digit());
+        if c.is_ascii_digit() || is_negative {
+            let start = i;
+            if is_negative {
+                i += 1;
+            }
+            while i < bytes.len() && bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            // Token boundaries fall on ASCII bytes, so this slice is valid UTF-8.
+            let s = std::str::from_utf8(&bytes[start..i]).expect("valid UTF-8 token");
+            let v: i64 = match s.parse::<i64>() {
+                Ok(v) => v,
+                Err(_) => {
+                    if s.starts_with('-') {
+                        i64::MIN
+                    } else {
+                        i64::MAX
+                    }
+                }
+            };
+            tokens.push(RawToken::Num(v.clamp(i32::MIN as i64, i32::MAX as i64) as i32));
+        } else {
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_whitespace() {
+                i += 1;
+            }
+            let s = std::str::from_utf8(&bytes[start..i]).expect("valid UTF-8 token");
+            tokens.push(RawToken::Word(s.to_lowercase()));
+        }
+    }
+    tokens
+}

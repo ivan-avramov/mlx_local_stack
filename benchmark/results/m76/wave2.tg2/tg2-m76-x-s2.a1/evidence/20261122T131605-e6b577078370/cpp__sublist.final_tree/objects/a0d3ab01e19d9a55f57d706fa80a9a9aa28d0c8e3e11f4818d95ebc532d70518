@@ -1,0 +1,61 @@
+#include "sublist.h"
+
+#include <cstddef>
+
+namespace sublist {
+
+namespace {
+
+// Returns true if `needle` occurs as a contiguous sub-sequence of `haystack`.
+bool contains(const std::vector<int>& haystack, const std::vector<int>& needle) {
+    if (needle.empty()) {
+        return true;
+    }
+    if (needle.size() > haystack.size()) {
+        return false;
+    }
+
+    // KMP failure function so the search is linear in the input sizes.
+    std::vector<std::size_t> failure(needle.size(), 0);
+    for (std::size_t i = 1; i < needle.size(); ++i) {
+        std::size_t j = failure[i - 1];
+        while (j > 0 && needle[i] != needle[j]) {
+            j = failure[j - 1];
+        }
+        if (needle[i] == needle[j]) {
+            ++j;
+        }
+        failure[i] = j;
+    }
+
+    std::size_t j = 0;
+    for (std::size_t i = 0; i < haystack.size(); ++i) {
+        while (j > 0 && haystack[i] != needle[j]) {
+            j = failure[j - 1];
+        }
+        if (haystack[i] == needle[j]) {
+            ++j;
+        }
+        if (j == needle.size()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+List_comparison sublist(const std::vector<int>& a, const std::vector<int>& b) {
+    if (a == b) {
+        return List_comparison::equal;
+    }
+    if (contains(b, a)) {
+        return List_comparison::sublist;
+    }
+    if (contains(a, b)) {
+        return List_comparison::superlist;
+    }
+    return List_comparison::unequal;
+}
+
+}  // namespace sublist

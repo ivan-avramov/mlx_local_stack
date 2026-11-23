@@ -1,0 +1,89 @@
+/// Given a list of poker hands, return a list of those hands which win.
+///
+/// Note the type signature: this function should return _the same_ reference to
+/// the winning hand(s) as were passed in, not reconstructed strings which happen to be equal.
+pub fn winning_hands<'a>(hands: &[&'a str]) -> Vec<&'a str> {
+    let scores: Vec<Score> = hands.iter().map(|hand| score_hand(*hand)).collect();
+    let best = *scores.iter().max().unwrap();
+    hands.iter()
+        .zip(scores.iter())
+        .filter(|(_, score)| **score == best)
+        .map(|(hand, _)| *hand)
+        .collect()
+}
+
+/// A hand's score: the category (higher is better) followed by up to five
+/// tie-breaking card ranks, most important first.
+type Score = [u8; 6];
+
+fn score_hand(hand: &str) -> Score {
+    let cards: Vec<&str> = hand.split_whitespace().collect();
+
+    let mut ranks: [u8; 5] = cards.iter().map(|card| rank_value(card)).collect::<Vec<_>>().try_into().expect("hand must contain exactly five cards");
+    ranks.sort_unstable_by(|a, b| b.cmp(a));
+
+    let suit = cards[0][cards[0].len() - 1..].to_string();
+    let flush = cards.iter().all(|card| card.ends_with(&suit));
+
+    // Highest card of the straight, or 0 if the hand is not a straight.
+    // An ace may be high (10-J-Q-K-A) or low (A-2-3-4-5), but never in the middle.
+    // A straight requires five distinct ranks.
+    let distinct = ranks.windows(2).all(|w| w[0] != w[1]);
+    let straight_high = if distinct && ranks[0] - ranks[4] == 4 {
+        ranks[0]
+    } else if ranks == [14, 5, 4, 3, 2] {
+        5
+    } else {
+        0
+    };
+
+    // (rank, count) groups, most frequent first, then highest rank first.
+    let mut groups: Vec<(u8, u8)> = Vec::new();
+    for &rank in &ranks {
+        match groups.iter_mut().find(|group| group.0 == rank) {
+            Some(group) => group.1 += 1,
+            None => groups.push((rank, 1)),
+        }
+    }
+    groups.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+
+    if flush && straight_high != 0 {
+        [8, straight_high, 0, 0, 0, 0]
+    } else if groups[0].1 == 4 {
+        [7, groups[0].0, groups[1].0, 0, 0, 0]
+    } else if groups.len() == 2 && groups[0].1 == 3 {
+        [6, groups[0].0, groups[1].0, 0, 0, 0]
+    } else if flush {
+        [5, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4]]
+    } else if straight_high != 0 {
+        [4, straight_high, 0, 0, 0, 0]
+    } else if groups[0].1 == 3 {
+        [3, groups[0].0, groups[1].0, groups[2].0, 0, 0]
+    } else if groups[0].1 == 2 && groups[1].1 == 2 {
+        [2, groups[0].0, groups[1].0, groups[2].0, 0, 0]
+    } else if groups[0].1 == 2 {
+        [1, groups[0].0, groups[1].0, groups[2].0, groups[3].0, 0]
+    } else {
+        [0, ranks[0], ranks[1], ranks[2], ranks[3], ranks[4]]
+    }
+}
+
+fn rank_value(card: &str) -> u8 {
+    let rank = &card[..card.len() - 1];
+    match rank {
+        "2" => 2,
+        "3" => 3,
+        "4" => 4,
+        "5" => 5,
+        "6" => 6,
+        "7" => 7,
+        "8" => 8,
+        "9" => 9,
+        "10" => 10,
+        "J" => 11,
+        "Q" => 12,
+        "K" => 13,
+        "A" => 14,
+        _ => panic!("unknown rank {rank:?}"),
+    }
+}

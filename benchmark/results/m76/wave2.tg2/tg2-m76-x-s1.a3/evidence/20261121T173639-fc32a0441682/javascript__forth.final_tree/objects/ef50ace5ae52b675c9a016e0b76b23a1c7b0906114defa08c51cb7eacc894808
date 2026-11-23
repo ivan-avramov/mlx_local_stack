@@ -1,0 +1,128 @@
+const NUMBER = /^-?\d+$/;
+
+function pop(stack) {
+  if (stack.length === 0) {
+    throw new Error('Stack empty');
+  }
+  return stack.pop();
+}
+
+const BUILTINS = {
+  '+': (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    stack.push(a + b);
+  },
+  '-': (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    stack.push(a - b);
+  },
+  '*': (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    stack.push(a * b);
+  },
+  '/': (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    if (b === 0) {
+      throw new Error('Division by zero');
+    }
+    stack.push(Math.trunc(a / b));
+  },
+  dup: (stack) => {
+    const a = pop(stack);
+    stack.push(a, a);
+  },
+  drop: (stack) => {
+    pop(stack);
+  },
+  swap: (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    stack.push(b, a);
+  },
+  over: (stack) => {
+    const b = pop(stack);
+    const a = pop(stack);
+    stack.push(a, b, a);
+  },
+};
+
+export class Forth {
+  constructor() {
+    this._stack = [];
+    this._words = {};
+  }
+
+  evaluate(input) {
+    const tokens = input.split(/\s+/).filter((token) => token.length > 0);
+    for (let i = 0; i < tokens.length; i += 1) {
+      const token = tokens[i];
+      if (NUMBER.test(token)) {
+        this._stack.push(parseInt(token, 10));
+      } else if (token === ':') {
+        const end = tokens.indexOf(';', i + 1);
+        if (end === -1) {
+          throw new Error('Invalid definition');
+        }
+        const name = tokens[i + 1].toLowerCase();
+        if (!name || name === ':' || name === ';' || NUMBER.test(name)) {
+          throw new Error('Invalid definition');
+        }
+        const body = [];
+        for (const part of tokens.slice(i + 2, end)) {
+          body.push(...this.compile(part));
+        }
+        this._words[name] = body;
+        i = end;
+      } else {
+        this.execute(token);
+      }
+    }
+  }
+
+  compile(token) {
+    if (NUMBER.test(token)) {
+      return [{ type: 'num', value: parseInt(token, 10) }];
+    }
+    const name = token.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(this._words, name)) {
+      return this._words[name];
+    }
+    const builtin = BUILTINS[name];
+    if (builtin) {
+      return [{ type: 'op', fn: builtin }];
+    }
+    throw new Error('Unknown command');
+  }
+
+  execute(token) {
+    const name = token.toLowerCase();
+    if (Object.prototype.hasOwnProperty.call(this._words, name)) {
+      this.run(this._words[name]);
+      return;
+    }
+    const builtin = BUILTINS[name];
+    if (builtin) {
+      builtin(this._stack);
+      return;
+    }
+    throw new Error('Unknown command');
+  }
+
+  run(body) {
+    for (const item of body) {
+      if (item.type === 'num') {
+        this._stack.push(item.value);
+      } else {
+        item.fn(this._stack);
+      }
+    }
+  }
+
+  get stack() {
+    return this._stack;
+  }
+}

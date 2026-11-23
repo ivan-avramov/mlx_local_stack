@@ -1,0 +1,113 @@
+pub mod graph {
+    pub mod graph_items {
+        pub mod edge {
+            use std::collections::HashMap;
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub struct Edge {
+                pub from: String,
+                pub to: String,
+                attrs: HashMap<String, String>,
+            }
+
+            impl Edge {
+                pub fn new(from: &str, to: &str) -> Self {
+                    Self {
+                        from: from.to_string(),
+                        to: to.to_string(),
+                        attrs: HashMap::new(),
+                    }
+                }
+
+                pub fn with_attrs(&self, attrs: &[(&str, &str)]) -> Self {
+                    let mut edge = self.clone();
+                    for (key, value) in attrs {
+                        edge.attrs.insert(key.to_string(), value.to_string());
+                    }
+                    edge
+                }
+
+                pub fn attr(&self, name: &str) -> Option<&str> {
+                    self.attrs.get(name).map(String::as_str)
+                }
+            }
+        }
+
+        pub mod node {
+            use std::collections::HashMap;
+
+            #[derive(Debug, Clone, PartialEq)]
+            pub struct Node {
+                pub name: String,
+                attrs: HashMap<String, String>,
+            }
+
+            impl Node {
+                pub fn new(name: &str) -> Self {
+                    Self {
+                        name: name.to_string(),
+                        attrs: HashMap::new(),
+                    }
+                }
+
+                pub fn with_attrs(&self, attrs: &[(&str, &str)]) -> Self {
+                    let mut node = self.clone();
+                    for (key, value) in attrs {
+                        node.attrs.insert(key.to_string(), value.to_string());
+                    }
+                    node
+                }
+
+                pub fn attr(&self, name: &str) -> Option<&str> {
+                    self.attrs.get(name).map(String::as_str)
+                }
+            }
+        }
+    }
+
+    pub use graph_items::edge::Edge;
+    pub use graph_items::node::Node;
+
+    use std::collections::HashMap;
+
+    #[derive(Debug, Clone, PartialEq)]
+    pub struct Graph {
+        pub nodes: Vec<Node>,
+        pub edges: Vec<Edge>,
+        pub attrs: HashMap<String, String>,
+    }
+
+    impl Graph {
+        pub fn new() -> Self {
+            Self {
+                nodes: Vec::new(),
+                edges: Vec::new(),
+                attrs: HashMap::new(),
+            }
+        }
+
+        pub fn with_nodes(&self, nodes: &[Node]) -> Self {
+            let mut graph = self.clone();
+            graph.nodes = nodes.to_vec();
+            graph
+        }
+
+        pub fn with_edges(&self, edges: &[Edge]) -> Self {
+            let mut graph = self.clone();
+            graph.edges = edges.to_vec();
+            graph
+        }
+
+        pub fn with_attrs(&self, attrs: &[(&str, &str)]) -> Self {
+            let mut graph = self.clone();
+            for (key, value) in attrs {
+                graph.attrs.insert(key.to_string(), value.to_string());
+            }
+            graph
+        }
+
+        pub fn node(&self, name: &str) -> Option<&Node> {
+            self.nodes.iter().find(|node| node.name == name)
+        }
+    }
+}

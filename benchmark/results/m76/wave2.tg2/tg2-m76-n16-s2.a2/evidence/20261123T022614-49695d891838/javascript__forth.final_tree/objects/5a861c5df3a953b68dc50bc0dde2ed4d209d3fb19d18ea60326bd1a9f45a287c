@@ -1,0 +1,103 @@
+//
+// This is only a SKELETON file for the 'Forth' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NUMBER_RE = /^-?\d+$/;
+
+const pop = (stack) => {
+  if (stack.length === 0) {
+    throw new Error('Stack empty');
+  }
+  return stack.pop();
+};
+
+const BUILTINS = {
+  '+': (s) => s.push(pop(s) + pop(s)),
+  '-': (s) => {
+    const b = pop(s);
+    const a = pop(s);
+    s.push(a - b);
+  },
+  '*': (s) => s.push(pop(s) * pop(s)),
+  '/': (s) => {
+    const divisor = pop(s);
+    if (divisor === 0) {
+      throw new Error('Division by zero');
+    }
+    const dividend = pop(s);
+    s.push(Math.trunc(dividend / divisor));
+  },
+  dup: (s) => {
+    if (s.length === 0) {
+      throw new Error('Stack empty');
+    }
+    s.push(s[s.length - 1]);
+  },
+  drop: (s) => pop(s),
+  swap: (s) => {
+    const a = pop(s);
+    const b = pop(s);
+    s.push(a, b);
+  },
+  over: (s) => {
+    const a = pop(s);
+    const b = pop(s);
+    s.push(b, a, b);
+  },
+};
+
+export class Forth {
+  constructor() {
+    this._stack = [];
+    this._words = {};
+  }
+
+  evaluate(input) {
+    const tokens = input.trim().split(/\s+/).filter((t) => t.length > 0);
+
+    for (let i = 0; i < tokens.length; i++) {
+      if (tokens[i] === ':') {
+        const end = tokens.indexOf(';', i + 1);
+        if (end === -1 || end === i + 1) {
+          throw new Error('Invalid definition');
+        }
+        const name = tokens[i + 1];
+        if (NUMBER_RE.test(name)) {
+          throw new Error('Invalid definition');
+        }
+        this._words[name.toLowerCase()] = tokens
+          .slice(i + 2, end)
+          .map((t) => t.toLowerCase())
+          .flatMap((t) => (t in this._words ? this._words[t] : [t]));
+        i = end;
+        continue;
+      }
+      this._exec(tokens[i]);
+    }
+  }
+
+  _exec(token) {
+    if (NUMBER_RE.test(token)) {
+      this._stack.push(parseInt(token, 10));
+      return;
+    }
+    const name = token.toLowerCase();
+    if (name in this._words) {
+      for (const t of this._words[name]) {
+        this._exec(t);
+      }
+      return;
+    }
+    const builtin = BUILTINS[name];
+    if (builtin) {
+      builtin(this._stack);
+      return;
+    }
+    throw new Error('Unknown command');
+  }
+
+  get stack() {
+    return this._stack;
+  }
+}

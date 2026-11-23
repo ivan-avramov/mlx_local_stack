@@ -1,0 +1,61 @@
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+
+class OpticalCharacterReader {
+
+    private static final Map<String, Character> DIGITS = buildDigits();
+
+    String parse(List<String> input) {
+        int rows = input.size();
+        if (rows % 4 != 0) {
+            throw new IllegalArgumentException("Number of input rows must be a positive multiple of 4");
+        }
+
+        int cols = input.get(0).length();
+        if (cols % 3 != 0) {
+            throw new IllegalArgumentException("Number of input columns must be a positive multiple of 3");
+        }
+
+        List<String> lineResults = new ArrayList<>();
+        for (int block = 0; block < rows; block += 4) {
+            StringBuilder line = new StringBuilder();
+            for (int col = 0; col < cols; col += 3) {
+                StringBuilder pattern = new StringBuilder();
+                for (int row = 0; row < 4; row++) {
+                    String lineText = input.get(block + row);
+                    for (int c = col; c < col + 3; c++) {
+                        pattern.append(c < lineText.length() ? lineText.charAt(c) : ' ');
+                    }
+                }
+                line.append(DIGITS.getOrDefault(pattern.toString(), '?'));
+            }
+            lineResults.add(line.toString());
+        }
+
+        return String.join(",", lineResults);
+    }
+
+    private static Map<String, Character> buildDigits() {
+        String[][] shapes = {
+                {" _ ", "| |", "|_|", "   "}, // 0
+                {"   ", "  |", "  |", "   "}, // 1
+                {" _ ", " _|", "|_ ", "   "}, // 2
+                {" _ ", " _|", " _|", "   "}, // 3
+                {"   ", "|_|", "  |", "   "}, // 4
+                {" _ ", "|_ ", " _|", "   "}, // 5
+                {" _ ", "|_ ", "|_|", "   "}, // 6
+                {" _ ", "  |", "  |", "   "}, // 7
+                {" _ ", "|_|", "|_|", "   "}, // 8
+                {" _ ", "|_|", " _|", "   "}, // 9
+        };
+
+        Map<String, Character> digits = new HashMap<>();
+        for (int i = 0; i < shapes.length; i++) {
+            digits.put(String.join("", shapes[i]), (char) ('0' + i));
+        }
+        return digits;
+    }
+
+}

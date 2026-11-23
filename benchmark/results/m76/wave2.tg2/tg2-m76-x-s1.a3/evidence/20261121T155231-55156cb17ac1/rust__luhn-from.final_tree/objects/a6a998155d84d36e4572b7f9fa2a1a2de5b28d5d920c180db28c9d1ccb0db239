@@ -1,0 +1,41 @@
+pub struct Luhn {
+    digits: String,
+}
+
+/// Implement `From` for any type that can be converted to a `String`.
+/// This covers `&str`, `String`, and all unsigned integer types (and
+/// anything else that implements `ToString`).
+impl<T: ToString> From<T> for Luhn {
+    fn from(input: T) -> Self {
+        Luhn {
+            digits: input.to_string(),
+        }
+    }
+}
+
+impl Luhn {
+    pub fn is_valid(&self) -> bool {
+        let mut sum = 0u32;
+        let mut count = 0u32;
+
+        for c in self.digits.chars().rev() {
+            if c.is_whitespace() {
+                continue;
+            }
+            match c.to_digit(10) {
+                Some(d) => {
+                    count += 1;
+                    if count % 2 == 0 {
+                        let doubled = d * 2;
+                        sum += if doubled > 9 { doubled - 9 } else { doubled };
+                    } else {
+                        sum += d;
+                    }
+                }
+                None => return false,
+            }
+        }
+
+        count > 1 && sum % 10 == 0
+    }
+}

@@ -1,0 +1,45 @@
+const VOWELS: &[char] = &['a', 'e', 'i', 'o', 'u'];
+
+fn is_vowel(c: char) -> bool {
+    VOWELS.contains(&c)
+}
+
+fn translate_word(word: &str) -> String {
+    let chars: Vec<char> = word.chars().collect();
+
+    // Rule 1: word begins with a vowel, or starts with "xr" or "yt".
+    if is_vowel(chars[0]) || word.starts_with("xr") || word.starts_with("yt") {
+        return format!("{word}ay");
+    }
+
+    // Find the index at which the leading consonant cluster ends.
+    // Rules 2/3/4: stop at the first vowel, at a 'y' after the first
+    // letter (treated as a vowel), or just after a "qu" pair.
+    // Rules 2/3/4: scan past the leading consonant cluster. A "qu" pair
+    // moves with the cluster; a 'y' after the first letter acts as a vowel.
+    let mut split = 0;
+    while split < chars.len() {
+        if word[split..].starts_with("qu") {
+            split += 2;
+            continue;
+        }
+        if is_vowel(chars[split]) || (split > 0 && chars[split] == 'y') {
+            break;
+        }
+        split += 1;
+    }
+
+    let mut result = String::with_capacity(word.len() + 2);
+    result.push_str(&word[split..]);
+    result.push_str(&word[..split]);
+    result.push_str("ay");
+    result
+}
+
+pub fn translate(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(translate_word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}

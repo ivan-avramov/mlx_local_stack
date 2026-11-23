@@ -1,0 +1,63 @@
+// Each digit is a 3-column by 4-row grid of pipes, underscores, and spaces.
+// The fourth row of every digit is always blank.
+const DIGITS = {
+  0: [' _ ', '| |', '|_|', '   '],
+  1: ['   ', '  |', '  |', '   '],
+  2: [' _ ', ' _|', '|_ ', '   '],
+  3: [' _ ', ' _|', ' _|', '   '],
+  4: ['   ', '|_|', '  |', '   '],
+  5: [' _ ', '|_ ', ' _|', '   '],
+  6: [' _ ', '|_ ', '|_|', '   '],
+  7: [' _ ', '  |', '  |', '   '],
+  8: [' _ ', '|_|', '|_|', '   '],
+  9: [' _ ', '|_|', ' _|', '   '],
+};
+
+// Reverse lookup: pattern (four rows joined) -> digit.
+const PATTERNS = Object.entries(DIGITS).map(([digit, rows]) => ({
+  key: rows.join('\n'),
+  digit,
+}));
+
+const recognize = (pattern) => {
+  const match = PATTERNS.find((p) => p.key === pattern);
+  return match ? match.digit : '?';
+};
+
+export const convert = (input) => {
+  const lines = input.split('\n');
+
+  // A valid grid has a number of rows that is a multiple of 4 ...
+  if (lines.length % 4 !== 0) {
+    throw new Error('Input is the wrong size');
+  }
+
+  // ... a width that is a multiple of 3 ...
+  const width = lines[0].length;
+  if (width % 3 !== 0) {
+    throw new Error('Input is the wrong size');
+  }
+
+  // ... and every row must be the same width.
+  if (lines.some((line) => line.length !== width)) {
+    throw new Error('Input is the wrong size');
+  }
+
+  const numDigits = width / 3;
+  const numBlocks = lines.length / 4;
+
+  const results = [];
+  for (let block = 0; block < numBlocks; block++) {
+    let blockResult = '';
+    for (let digit = 0; digit < numDigits; digit++) {
+      const pattern = [];
+      for (let row = 0; row < 4; row++) {
+        pattern.push(lines[block * 4 + row].slice(digit * 3, digit * 3 + 3));
+      }
+      blockResult += recognize(pattern.join('\n'));
+    }
+    results.push(blockResult);
+  }
+
+  return results.join(',');
+};

@@ -1,0 +1,40 @@
+#include "perfect_numbers.h"
+
+#include <cmath>
+#include <stdexcept>
+
+namespace perfect_numbers {
+
+namespace {
+
+long long aliquot_sum(int number) {
+    long long sum = 1;  // 1 is a factor of every number greater than 1
+    for (long long i = 2; i <= std::sqrt(number); ++i) {
+        if (number % i == 0) {
+            sum += i;
+            long long other = number / i;
+            if (other != i) {
+                sum += other;
+            }
+        }
+    }
+    return sum;
+}
+
+}  // namespace
+
+classification classify(int number) {
+    if (number <= 0) {
+        throw std::domain_error("number must be a positive integer");
+    }
+    if (number == 1) {
+        return classification::deficient;
+    }
+    long long sum = aliquot_sum(number);
+    if (sum == number) {
+        return classification::perfect;
+    }
+    return sum > number ? classification::abundant : classification::deficient;
+}
+
+}  // namespace perfect_numbers

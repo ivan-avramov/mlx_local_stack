@@ -1,0 +1,33 @@
+#include "dnd_character.h"
+
+#include <algorithm>
+#include <random>
+
+namespace dnd_character {
+
+namespace {
+
+int roll_die() {
+    static std::mt19937 engine{std::random_device{}()};
+    static std::uniform_int_distribution<int> die{1, 6};
+    return die(engine);
+}
+
+}  // namespace
+
+int modifier(int score) {
+    // (score - 10) / 2, rounded down. C++ integer division truncates
+    // toward zero, so bias negative remainders by one to floor instead.
+    return (score - 10 + (score < 10 ? -1 : 0)) / 2;
+}
+
+int ability() {
+    int rolls[4];
+    for (int& roll : rolls) {
+        roll = roll_die();
+    }
+    std::sort(rolls, rolls + 4);
+    return rolls[1] + rolls[2] + rolls[3];  // discard the lowest die
+}
+
+}  // namespace dnd_character

@@ -1,0 +1,101 @@
+/// Given a list of poker hands, return a list of those hands which win.
+///
+/// Note the type signature: this function should return _the same_ reference to
+/// the winning hand(s) as were passed in, not reconstructed strings which happen to be equal.
+pub fn winning_hands<'a>(hands: &[&'a str]) -> Vec<&'a str> {
+    let scores: Vec<_> = hands.iter().map(|hand| score(hand)).collect();
+    let best = scores.iter().max().unwrap();
+    hands
+        .iter()
+        .zip(scores.iter())
+        .filter(|(_, s)| *s == best)
+        .map(|(hand, _)| *hand)
+        .collect()
+}
+
+/// Convert a rank string ("2".."10", "J", "Q", "K", "A") to a numeric value 2..=14.
+fn rank_of(rank: &str) -> u8 {
+    match rank {
+        "J" => 11,
+        "Q" => 12,
+        "K" => 13,
+        "A" => 14,
+        _ => rank.parse().expect("invalid rank"),
+    }
+}
+
+/// Score a hand as (category, tiebreakers).
+///
+/// Categories, highest first: straight flush, four of a kind, full house,
+/// flush, straight, three of a kind, two pair, one pair, high card.
+/// Tiebreakers are ranks in most-significant order, so tuple comparison
+/// (category, then tiebreakers) matches poker hand comparison.
+fn score(hand: &str) -> (u8, Vec<u8>) {
+    let mut ranks: Vec<u8> = Vec::with_capacity(5);
+    let mut suit = None;
+    let mut is_flush = true;
+    for card in hand.split_whitespace() {
+        let (rank, card_suit) = card.split_at(card.len() - 1);
+        ranks.push(rank_of(rank));
+        match suit {
+            None => suit = Some(card_suit),
+            Some(s) => is_flush = is_flush && s == card_suit,
+        }
+    }
+
+    // rank -> count, for ranks 2..=14
+    let mut counts = [0u8; 15];
+    for &r in &ranks {
+        counts[r as usize] += 1;
+    }
+
+    // Groups of (count, rank), ordered by count then rank, both descending.
+    let mut groups: Vec<(u8, u8)> = (2..=14)
+        .map(|r| (counts[r], r as u8))
+        .filter(|(c, _)| *c > 0)
+        .collect();
+    groups.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    // Straight detection: highest card of the straight, or 0 if none.
+    // An ace may top a straight (10-J-Q-K-A) or bottom one (A-2-3-4-5),
+    // but never sit in the middle (Q-K-A-2-3 is not a straight).
+    let mut straight_high = 0;
+    {
+        let mut unique = ranks.clone();
+        unique.sort_unstable();
+        unique.dedup();
+        if unique.len() == 5 {
+            if unique[4] - unique[0] == 4 {
+                straight_high = unique[4];
+            } else if unique == [2, 3, 4, 5, 14] {
+                straight_high = 5;
+            }
+        }
+    }
+
+    if straight_high > 0 {
+        if is_flush {
+            (8, vec![straight_high])
+        } else {
+            (4, vec![straight_high])
+        }
+    } else if is_flush {
+        let mut desc = ranks;
+        desc.sort_unstable_by(|a, b| b.cmp(a));
+        (5, desc)
+    } else if groups[0].0 == 4 {
+        (7, vec![groups[0].1, groups[1].1])
+    } else if groups[0].0 == 3 && groups[1].0 == 2 {
+        (6, vec![groups[0].1, groups[1].1])
+    } else if groups[0].0 == 3 {
+        (3, vec![groups[0].1, groups[1].1, groups[2].1])
+    } else if groups[0].0 == 2 && groups[1].0 == 2 {
+        (2, vec![groups[0].1, groups[1].1, groups[2].1])
+    } else if groups[0].0 == 2 {
+        (1, vec![groups[0].1, groups[1].1, groups[2].1, groups[3].1])
+    } else {
+        let mut desc = ranks;
+        desc.sort_unstable_by(|a, b| b.cmp(a));
+        (0, desc)
+    }
+}

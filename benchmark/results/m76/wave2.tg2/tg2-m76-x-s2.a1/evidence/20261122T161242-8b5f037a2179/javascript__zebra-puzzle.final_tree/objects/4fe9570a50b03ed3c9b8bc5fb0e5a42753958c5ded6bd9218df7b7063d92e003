@@ -1,0 +1,152 @@
+//
+// Zebra Puzzle solver.
+//
+// The puzzle is solved once, by backtracking over the five attributes
+// (nationality, color, pet, drink, hobby) of each of the five houses,
+// pruning with the given constraints as we go. The unique solution is
+// cached on the class so repeated instances are cheap.
+//
+
+const NATIONALITIES = ['Englishman', 'Spaniard', 'Ukrainian', 'Norwegian', 'Japanese'];
+const COLORS = ['Red', 'Green', 'Ivory', 'Yellow', 'Blue'];
+const PETS = ['Dog', 'Snail', 'Fox', 'Horse', 'Zebra'];
+const DRINKS = ['Coffee', 'Tea', 'Milk', 'Orange Juice', 'Water'];
+const HOBBIES = ['Dancing', 'Reading', 'Painter', 'Football', 'Chess'];
+
+export class ZebraPuzzle {
+  constructor() {
+    if (!ZebraPuzzle.solution) {
+      ZebraPuzzle.solution = solve();
+    }
+  }
+
+  waterDrinker() {
+    return ZebraPuzzle.solution.waterDrinker;
+  }
+
+  zebraOwner() {
+    return ZebraPuzzle.solution.zebraOwner;
+  }
+}
+
+function solve() {
+  // Each house is an index 0..4. We assign one attribute at a time,
+  // house by house, and reject partial assignments that violate a
+  // constraint that is already determined.
+  const houses = Array.from({ length: 5 }, () => ({
+    nationality: null,
+    color: null,
+    pet: null,
+    drink: null,
+    hobby: null,
+  }));
+
+  const attributes = ['nationality', 'color', 'pet', 'drink', 'hobby'];
+  const values = {
+    nationality: NATIONALITIES,
+    color: COLORS,
+    pet: PETS,
+    drink: DRINKS,
+    hobby: HOBBIES,
+  };
+
+  // Constraints come in two kinds: per-house checks (run whenever a
+  // house changes) and whole-puzzle checks (run on every assignment).
+  // Each constraint only rejects a house once both sides of the rule are
+  // determined and disagree; an unassigned (null) side is still allowed.
+  const houseConstraints = [
+    // 2. The Englishman lives in the red house.
+    (h) => h.nationality !== 'Englishman' || h.color === null || h.color === 'Red',
+    // 3. The Spaniard owns the dog.
+    (h) => h.nationality !== 'Spaniard' || h.pet === null || h.pet === 'Dog',
+    // 4. The person in the green house drinks coffee.
+    (h) => h.color !== 'Green' || h.drink === null || h.drink === 'Coffee',
+    // 5. The Ukrainian drinks tea.
+    (h) => h.nationality !== 'Ukrainian' || h.drink === null || h.drink === 'Tea',
+    // 7. The snail owner likes to go dancing.
+    (h) => h.pet !== 'Snail' || h.hobby === null || h.hobby === 'Dancing',
+    // 8. The person in the yellow house is a painter.
+    (h) => h.color !== 'Yellow' || h.hobby === null || h.hobby === 'Painter',
+    // 13. The person who plays football drinks orange juice.
+    (h) => h.hobby !== 'Football' || h.drink === null || h.drink === 'Orange Juice',
+    // 14. The Japanese person plays chess.
+    (h) => h.nationality !== 'Japanese' || h.hobby === null || h.hobby === 'Chess',
+  ];
+
+  const puzzleConstraints = [
+    // 6. The green house is immediately to the right of the ivory house.
+    (all) => {
+      const g = all.findIndex((h) => h.color === 'Green');
+      const i = all.findIndex((h) => h.color === 'Ivory');
+      if (g === -1 || i === -1) return true;
+      return g === i + 1;
+    },
+    // 9. The person in the middle house drinks milk.
+    (all) => all[2].drink === null || all[2].drink === 'Milk',
+    // 10. The Norwegian lives in the first house.
+    (all) => all[0].nationality === null || all[0].nationality === 'Norwegian',
+    // 11. The person who enjoys reading lives next to the person with the fox.
+    (all) => {
+      const r = all.findIndex((h) => h.hobby === 'Reading');
+      const f = all.findIndex((h) => h.pet === 'Fox');
+      if (r === -1 || f === -1) return true;
+      return Math.abs(r - f) === 1;
+    },
+    // 12. The painter's house is next to the house with the horse.
+    (all) => {
+      const p = all.findIndex((h) => h.hobby === 'Painter');
+      const h = all.findIndex((h) => h.pet === 'Horse');
+      if (p === -1 || h === -1) return true;
+      return Math.abs(p - h) === 1;
+    },
+    // 15. The Norwegian lives next to the blue house.
+    (all) => {
+      const n = all.findIndex((h) => h.nationality === 'Norwegian');
+      const b = all.findIndex((h) => h.color === 'Blue');
+      if (n === -1 || b === -1) return true;
+      return Math.abs(n - b) === 1;
+    },
+  ];
+
+  function consistent(houseIndex, attribute) {
+    // Each attribute takes a different value in every house.
+    const value = houses[houseIndex][attribute];
+    const unique = !houses.some(
+      (h, i) => i !== houseIndex && h[attribute] === value
+    );
+    return (
+      unique &&
+      houseConstraints.every((c) => c(houses[houseIndex])) &&
+      puzzleConstraints.every((c) => c(houses))
+    );
+  }
+
+  function backtrack(attributeIndex, houseIndex) {
+    if (attributeIndex === attributes.length) {
+      return true; // full assignment, all constraints held
+    }
+    const attribute = attributes[attributeIndex];
+    for (const value of values[attribute]) {
+      houses[houseIndex][attribute] = value;
+      if (consistent(houseIndex, attribute)) {
+        const nextHouse = houseIndex + 1;
+        if (nextHouse === 5) {
+          if (backtrack(attributeIndex + 1, 0)) return true;
+        } else if (backtrack(attributeIndex, nextHouse)) {
+          return true;
+        }
+      }
+      houses[houseIndex][attribute] = null;
+    }
+    return false;
+  }
+
+  if (!backtrack(0, 0)) {
+    throw new Error('The puzzle has no solution');
+  }
+
+  const waterDrinker = houses.find((h) => h.drink === 'Water').nationality;
+  const zebraOwner = houses.find((h) => h.pet === 'Zebra').nationality;
+
+  return { waterDrinker, zebraOwner };
+}

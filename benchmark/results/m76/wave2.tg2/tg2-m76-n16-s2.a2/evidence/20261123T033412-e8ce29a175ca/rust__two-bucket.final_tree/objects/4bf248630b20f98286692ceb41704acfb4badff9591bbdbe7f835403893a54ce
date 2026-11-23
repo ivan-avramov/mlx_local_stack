@@ -1,0 +1,93 @@
+use std::collections::{HashSet, VecDeque};
+
+#[derive(PartialEq, Eq, Debug)]
+pub enum Bucket {
+    One,
+    Two,
+}
+
+/// A struct to hold your results in.
+#[derive(PartialEq, Eq, Debug)]
+pub struct BucketStats {
+    /// The total number of "moves" it should take to reach the desired number of liters, including
+    /// the first fill.
+    pub moves: u8,
+    /// Which bucket should end up with the desired number of liters? (Either "one" or "two")
+    pub goal_bucket: Bucket,
+    /// How many liters are left in the other bucket?
+    pub other_bucket: u8,
+}
+
+/// Solve the bucket problem
+pub fn solve(
+    capacity_1: u8,
+    capacity_2: u8,
+    goal: u8,
+    start_bucket: &Bucket,
+) -> Option<BucketStats> {
+    // The goal must fit in at least one bucket.
+    if goal > capacity_1 && goal > capacity_2 {
+        return None;
+    }
+
+    let start = match start_bucket {
+        Bucket::One => (capacity_1, 0),
+        Bucket::Two => (0, capacity_2),
+    };
+
+    // Breadth-first search over (bucket_one, bucket_two) states.
+    let mut visited = HashSet::new();
+    visited.insert(start);
+    let mut queue = VecDeque::new();
+    queue.push_back((start, 1u8));
+
+    while let Some(((a, b), moves)) = queue.pop_front() {
+        // Check the goal after each action (the start state is the result of
+        // the first fill, so it counts as one move).
+        if a == goal {
+            return Some(BucketStats {
+                moves,
+                goal_bucket: Bucket::One,
+                other_bucket: b,
+            });
+        }
+        if b == goal {
+            return Some(BucketStats {
+                moves,
+                goal_bucket: Bucket::Two,
+                other_bucket: a,
+            });
+        }
+
+        for next in successors(a, b, capacity_1, capacity_2) {
+            // Rule 3: after an action, the starting bucket may not be empty
+            // while the other bucket is full.
+            let forbidden = match start_bucket {
+                Bucket::One => next == (0, capacity_2),
+                Bucket::Two => next == (capacity_1, 0),
+            };
+            if forbidden {
+                continue;
+            }
+            if visited.insert(next) {
+                queue.push_back((next, moves + 1));
+            }
+        }
+    }
+
+    None
+}
+
+/// All states reachable from `(a, b)` in a single action.
+fn successors(a: u8, b: u8, capacity_1: u8, capacity_2: u8) -> [(u8, u8); 6] {
+    let pour = a.min(capacity_2 - b);
+    let back_pour = b.min(capacity_1 - a);
+    [
+        (capacity_1, b), // fill bucket one
+        (a, capacity_2), // fill bucket two
+        (0, b),          // empty bucket one
+        (a, 0),          // empty bucket two
+        (a - pour, b + pour),           // pour one into two
+        (a + back_pour, b - back_pour), // pour two into one
+    ]
+}

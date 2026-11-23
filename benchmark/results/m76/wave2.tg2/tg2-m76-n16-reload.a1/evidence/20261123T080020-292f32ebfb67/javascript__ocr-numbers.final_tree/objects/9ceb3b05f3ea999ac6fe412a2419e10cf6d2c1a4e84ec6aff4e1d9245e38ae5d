@@ -1,0 +1,60 @@
+// The binary font represents each digit as a 3-column-wide, 4-row-tall cell.
+// The fourth row is always blank, so only the first three rows carry the glyph.
+const DIGITS = {
+  '0': [' _ ', '| |', '|_|'],
+  '1': ['   ', '  |', '  |'],
+  '2': [' _ ', ' _|', '|_ '],
+  '3': [' _ ', ' _|', ' _|'],
+  '4': ['   ', '|_|', '  |'],
+  '5': [' _ ', '|_ ', ' _|'],
+  '6': [' _ ', '|_ ', '|_|'],
+  '7': [' _ ', '  |', '  |'],
+  '8': [' _ ', '|_|', '|_|'],
+  '9': [' _ ', '|_|', ' _|'],
+};
+
+// Match a single 3x4 cell (array of 4 rows, each 3 chars) against the font.
+// Returns the digit as a string, or '?' when the glyph is not recognizable.
+function matchDigit(cell) {
+  const glyph = cell.slice(0, 3).join('\n');
+  for (const [digit, pattern] of Object.entries(DIGITS)) {
+    if (pattern.join('\n') === glyph) {
+      return digit;
+    }
+  }
+  return '?';
+}
+
+// Convert one 4-row line of digits into its string of characters.
+function convertRow(rowLines) {
+  const width = Math.max(...rowLines.map((line) => line.length));
+  if (width % 3 !== 0) {
+    throw new Error('Input width is not a multiple of three');
+  }
+
+  const padded = rowLines.map((line) => line + ' '.repeat(width - line.length));
+  const numDigits = width / 3;
+  let result = '';
+
+  for (let d = 0; d < numDigits; d += 1) {
+    const cell = padded.map((line) => line.substring(d * 3, d * 3 + 3));
+    result += matchDigit(cell);
+  }
+
+  return result;
+}
+
+export const convert = (input) => {
+  const lines = input.split('\n');
+
+  if (lines.length % 4 !== 0) {
+    throw new Error('Input height is not a multiple of four');
+  }
+
+  const results = [];
+  for (let i = 0; i < lines.length; i += 4) {
+    results.push(convertRow(lines.slice(i, i + 4)));
+  }
+
+  return results.join(',');
+};

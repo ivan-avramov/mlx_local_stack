@@ -1,0 +1,81 @@
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// Every name ever handed out, so that no two live robots can share one.
+static USED_NAMES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// The factory's random number generator, shared across all robots.
+static RNG: LazyLock<Mutex<Rng>> = LazyLock::new(|| Mutex::new(Rng::new()));
+
+/// A small xorshift64* PRNG, seeded from the system clock.
+struct Rng {
+    state: u64,
+}
+
+impl Rng {
+    fn new() -> Self {
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .map(|d| d.as_nanos() as u64)
+            .unwrap_or(0x9E3779B97F4A7C15);
+        // xorshift64* has a fixed point at 0; keep the state non-zero.
+        Self {
+            state: nanos | 1,
+        }
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        let mut x = self.state;
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        self.state = x;
+        x.wrapping_mul(0x2545F4914F6CDD1D)
+    }
+}
+
+pub struct Robot {
+    name: String,
+}
+
+impl Robot {
+    pub fn new() -> Self {
+        Self {
+            name: Self::generate_name(),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn reset_name(&mut self) {
+        self.name = Self::generate_name();
+    }
+
+    /// Draw random names until one that is not already taken.
+    fn generate_name() -> String {
+        let mut used = USED_NAMES.lock().unwrap();
+        let mut rng = RNG.lock().unwrap();
+        loop {
+            let name = random_name(&mut rng);
+            if used.insert(name.clone()) {
+                return name;
+            }
+        }
+    }
+}
+
+/// Two uppercase letters followed by three digits, e.g. `RX837`.
+fn random_name(rng: &mut Rng) -> String {
+    let mut s = String::with_capacity(5);
+    for _ in 0..2 {
+        s.push((b'A' + (rng.next_u64() % 26) as u8) as char);
+    }
+    for _ in 0..3 {
+        s.push((b'0' + (rng.next_u64() % 10) as u8) as char);
+    }
+    s
+}

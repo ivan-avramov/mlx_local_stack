@@ -1,0 +1,60 @@
+class CircularBuffer<T> {
+
+    private final T[] buffer;
+    private int readIndex;
+    private int writeIndex;
+    private int count;
+
+    @SuppressWarnings("unchecked")
+    CircularBuffer(final int size) {
+        buffer = (T[]) new Object[size];
+        readIndex = 0;
+        writeIndex = 0;
+        count = 0;
+    }
+
+    T read() throws BufferIOException {
+        if (count == 0) {
+            throw new BufferIOException("Tried to read from empty buffer");
+        }
+        return readOldest();
+    }
+
+    void write(T data) throws BufferIOException {
+        if (count == buffer.length) {
+            throw new BufferIOException("Tried to write to full buffer");
+        }
+        writeNewest(data);
+    }
+
+    void overwrite(T data) {
+        if (count == buffer.length) {
+            readOldest();
+        }
+        writeNewest(data);
+    }
+
+    void clear() {
+        for (int i = 0; i < buffer.length; i++) {
+            buffer[i] = null;
+        }
+        readIndex = 0;
+        writeIndex = 0;
+        count = 0;
+    }
+
+    private T readOldest() {
+        T data = buffer[readIndex];
+        buffer[readIndex] = null;
+        readIndex = (readIndex + 1) % buffer.length;
+        count--;
+        return data;
+    }
+
+    private void writeNewest(T data) {
+        buffer[writeIndex] = data;
+        writeIndex = (writeIndex + 1) % buffer.length;
+        count++;
+    }
+
+}

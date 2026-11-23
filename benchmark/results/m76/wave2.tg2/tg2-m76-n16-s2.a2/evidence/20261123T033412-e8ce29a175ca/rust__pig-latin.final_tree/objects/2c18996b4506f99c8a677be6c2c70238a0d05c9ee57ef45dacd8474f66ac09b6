@@ -1,0 +1,40 @@
+const VOWELS: &[char] = &['a', 'e', 'i', 'o', 'u'];
+
+pub fn translate(input: &str) -> String {
+    input
+        .split_whitespace()
+        .map(translate_word)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn translate_word(word: &str) -> String {
+    // Rule 1: word begins with a vowel, or starts with "xr" or "yt".
+    if word
+        .chars()
+        .next()
+        .map_or(false, |c| VOWELS.contains(&c))
+        || word.starts_with("xr")
+        || word.starts_with("yt")
+    {
+        return format!("{word}ay");
+    }
+
+    // Position of the first vowel; a "y" after at least one consonant
+    // also ends the consonant cluster (rule 4).
+    let first_vowel = word
+        .char_indices()
+        .skip(1)
+        .find(|(_, c)| VOWELS.contains(c) || *c == 'y')
+        .map(|(i, _)| i)
+        .unwrap_or(word.len());
+
+    // Rule 3: a "qu" inside the leading consonant cluster moves with it.
+    let split = word
+        .match_indices("qu")
+        .find(|(i, _)| *i < first_vowel)
+        .map(|(i, _)| i + 2)
+        .unwrap_or(first_vowel);
+
+    format!("{}{}ay", &word[split..], &word[..split])
+}

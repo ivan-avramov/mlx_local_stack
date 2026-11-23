@@ -1,0 +1,79 @@
+#include "parallel_letter_frequency.h"
+
+#include <array>
+#include <cctype>
+#include <thread>
+
+namespace parallel_letter_frequency {
+
+namespace {
+
+constexpr int num_letters = 26;
+
+std::array<int, num_letters> count_text(std::string_view text) {
+    std::array<int, num_letters> counts{};
+    for (char const c : text) {
+        auto const uc = static_cast<unsigned char>(c);
+        if (std::isalpha(uc)) {
+            ++counts[std::tolower(uc) - 'a'];
+        }
+    }
+    return counts;
+}
+
+std::array<int, num_letters> count_range(std::vector<std::string_view> const& texts,
+                                         std::size_t begin, std::size_t end) {
+    std::array<int, num_letters> counts{};
+    for (std::size_t i = begin; i < end; ++i) {
+        auto const local = count_text(texts[i]);
+        for (int k = 0; k < num_letters; ++k) {
+            counts[k] += local[k];
+        }
+    }
+    return counts;
+}
+
+} // namespace
+
+frequency_map frequency(std::vector<std::string_view> const& texts) {
+    std::size_t const n = texts.size();
+    std::size_t const num_threads =
+        std::max<std::size_t>(1, std::thread::hardware_concurrency());
+
+    std::array<int, num_letters> counts{};
+
+    if (num_threads == 1 || n <= num_threads) {
+        counts = count_range(texts, 0, n);
+    } else {
+        std::vector<std::array<int, num_letters>> partials(num_threads);
+        std::vector<std::thread> threads;
+        threads.reserve(num_threads);
+        for (std::size_t t = 0; t < num_threads; ++t) {
+            std::size_t const begin = t * n / num_threads;
+            std::size_t const end = (t + 1) * n / num_threads;
+            if (begin < end) {
+                threads.emplace_back([&partials, &texts, t, begin, end] {
+                    partials[t] = count_range(texts, begin, end);
+                });
+            }
+        }
+        for (auto& thread : threads) {
+            thread.join();
+        }
+        for (auto const& partial : partials) {
+            for (int k = 0; k < num_letters; ++k) {
+                counts[k] += partial[k];
+            }
+        }
+    }
+
+    frequency_map result;
+    for (int k = 0; k < num_letters; ++k) {
+        if (counts[k] > 0) {
+            result[static_cast<char>('a' + k)] = counts[k];
+        }
+    }
+    return result;
+}
+
+} // namespace parallel_letter_frequency

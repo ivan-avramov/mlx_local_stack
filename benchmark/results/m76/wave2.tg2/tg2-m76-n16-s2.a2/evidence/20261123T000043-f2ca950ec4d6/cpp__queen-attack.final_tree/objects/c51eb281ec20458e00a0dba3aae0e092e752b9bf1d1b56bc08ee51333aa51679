@@ -1,0 +1,57 @@
+#include "queen_attack.h"
+
+#include <cmath>
+#include <stdexcept>
+
+namespace queen_attack {
+
+namespace {
+
+constexpr int board_size = 8;
+
+}  // namespace
+
+chess_board::chess_board(std::pair<int, int> white, std::pair<int, int> black)
+    : white_(white), black_(black) {
+    validate_position(white_);
+    validate_position(black_);
+
+    if (white_ == black_) {
+        throw std::domain_error("queens cannot occupy the same square");
+    }
+}
+
+std::pair<int, int> chess_board::white() const {
+    return white_;
+}
+
+std::pair<int, int> chess_board::black() const {
+    return black_;
+}
+
+bool chess_board::can_attack() const {
+    const int white_col = white_.first;
+    const int white_row = white_.second;
+    const int black_col = black_.first;
+    const int black_row = black_.second;
+
+    if (white_col == black_col || white_row == black_row) {
+        return true;
+    }
+
+    const int col_diff = std::abs(white_col - black_col);
+    const int row_diff = std::abs(white_row - black_row);
+
+    return col_diff == row_diff;
+}
+
+void chess_board::validate_position(std::pair<int, int> position) {
+    const int column = position.first;
+    const int row = position.second;
+
+    if (column < 0 || column >= board_size || row < 0 || row >= board_size) {
+        throw std::domain_error("queen position is off the board");
+    }
+}
+
+}  // namespace queen_attack

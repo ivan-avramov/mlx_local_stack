@@ -1,0 +1,56 @@
+#include "kindergarten_garden.h"
+
+#include <stdexcept>
+
+namespace kindergarten_garden {
+
+namespace {
+
+const char* const kStudents[] = {
+    "Alice", "Bob", "Charlie", "David", "Eve", "Fred",
+    "Ginny", "Harriet", "Ileana", "Joseph", "Kincaid", "Larry"
+};
+
+Plants plant_from_char(char c) {
+  switch (c) {
+    case 'G': return Plants::grass;
+    case 'C': return Plants::clover;
+    case 'R': return Plants::radishes;
+    case 'V': return Plants::violets;
+    default:
+      throw std::invalid_argument("unknown plant character: " + std::string(1, c));
+  }
+}
+
+}  // namespace
+
+std::array<Plants, 4> plants(const std::string& garden, const std::string& student) {
+  const size_t newline = garden.find('\n');
+  if (newline == std::string::npos) {
+    throw std::invalid_argument("garden must have two rows separated by a newline");
+  }
+
+  const std::string first_row = garden.substr(0, newline);
+  const std::string second_row = garden.substr(newline + 1);
+
+  size_t index = static_cast<size_t>(-1);
+  for (size_t i = 0; i < sizeof(kStudents) / sizeof(kStudents[0]); ++i) {
+    if (student == kStudents[i]) {
+      index = i;
+      break;
+    }
+  }
+  if (index == static_cast<size_t>(-1)) {
+    throw std::invalid_argument("unknown student: " + student);
+  }
+
+  const size_t base = 2 * index;
+  return {
+      plant_from_char(first_row[base]),
+      plant_from_char(first_row[base + 1]),
+      plant_from_char(second_row[base]),
+      plant_from_char(second_row[base + 1])
+  };
+}
+
+}  // namespace kindergarten_garden

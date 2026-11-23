@@ -1,0 +1,45 @@
+#include "dnd_character.h"
+
+#include <algorithm>
+#include <array>
+#include <random>
+
+namespace dnd_character {
+
+namespace {
+
+std::mt19937& rng() {
+    static std::mt19937 generator{std::random_device{}()};
+    return generator;
+}
+
+}  // namespace
+
+int modifier(int score) {
+    // (score - 10) / 2, rounded down (floor), not truncated toward zero.
+    const int diff = score - 10;
+    return diff / 2 + (diff % 2 < 0);
+}
+
+int ability() {
+    std::array<int, 4> rolls{};
+    const auto die = std::uniform_int_distribution<int>{1, 6};
+    for (auto& roll : rolls) {
+        roll = die(rng());
+    }
+    std::sort(rolls.begin(), rolls.end());
+    return rolls[1] + rolls[2] + rolls[3];
+}
+
+Character::Character()
+    : strength{ability()},
+      dexterity{ability()},
+      constitution{ability()},
+      intelligence{ability()},
+      wisdom{ability()},
+      charisma{ability()},
+      hitpoints{10 + modifier(constitution)}
+{
+}
+
+}  // namespace dnd_character

@@ -1,0 +1,84 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = new Set();
+  }
+
+  setValue(value) {
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputCells = inputCells;
+    this.fn = fn;
+    this.value = this.compute();
+    this.callbacks = [];
+    this.dependents = new Set();
+    for (const input of inputCells) {
+      input.dependents.add(this);
+    }
+  }
+
+  compute() {
+    return this.fn(this.inputCells);
+  }
+
+  addCallback(callback) {
+    this.callbacks.push(callback);
+  }
+
+  removeCallback(callback) {
+    const index = this.callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.callbacks.splice(index, 1);
+    }
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+
+  call(cell) {
+    this.values.push(this.fn(cell));
+  }
+}
+
+function propagate(source) {
+  const dirty = new Set(source.dependents);
+  const queue = [...source.dependents];
+  const oldValues = new Map();
+
+  while (queue.length > 0) {
+    const cell = queue.shift();
+    dirty.delete(cell);
+    if (!oldValues.has(cell)) {
+      oldValues.set(cell, cell.value);
+    }
+    cell.value = cell.compute();
+    for (const dependent of cell.dependents) {
+      if (!dirty.has(dependent)) {
+        dirty.add(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+
+  for (const [cell, oldValue] of oldValues) {
+    if (cell.value !== oldValue) {
+      for (const callback of cell.callbacks) {
+        callback.call(cell);
+      }
+    }
+  }
+}

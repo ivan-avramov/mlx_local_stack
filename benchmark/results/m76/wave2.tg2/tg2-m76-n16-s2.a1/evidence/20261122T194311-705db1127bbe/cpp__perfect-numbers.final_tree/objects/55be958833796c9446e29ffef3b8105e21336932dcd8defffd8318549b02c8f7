@@ -1,0 +1,39 @@
+#include "perfect_numbers.h"
+
+#include <cmath>
+
+namespace perfect_numbers {
+
+namespace {
+
+long long aliquot_sum(long long number) {
+    long long sum = 1;
+    for (long long divisor = 2; divisor * divisor <= number; ++divisor) {
+        if (number % divisor == 0) {
+            sum += divisor;
+            long long complement = number / divisor;
+            if (complement != divisor) {
+                sum += complement;
+            }
+        }
+    }
+    return sum;
+}
+
+}  // namespace
+
+classification classify(long long number) {
+    if (number <= 0) {
+        throw std::domain_error("classify() expects a positive integer");
+    }
+    if (number == 1) {
+        return classification::deficient;
+    }
+    long long sum = aliquot_sum(number);
+    if (sum == number) {
+        return classification::perfect;
+    }
+    return sum > number ? classification::abundant : classification::deficient;
+}
+
+}  // namespace perfect_numbers

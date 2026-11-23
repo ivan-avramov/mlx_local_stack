@@ -1,0 +1,87 @@
+//
+// This is only a SKELETON file for the 'Zipper' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class Zipper {
+  constructor(focus, trail = []) {
+    this.focus = focus;
+    this.trail = trail;
+  }
+
+  static fromTree(tree) {
+    return new Zipper(tree, []);
+  }
+
+  toTree() {
+    let node = this.focus;
+    for (let i = this.trail.length - 1; i >= 0; i--) {
+      const { node: parent, direction } = this.trail[i];
+      node = {
+        value: parent.value,
+        left: direction === 'left' ? node : parent.left,
+        right: direction === 'right' ? node : parent.right,
+      };
+    }
+    return node;
+  }
+
+  value() {
+    return this.focus.value;
+  }
+
+  left() {
+    if (this.focus.left === null) {
+      return null;
+    }
+    return new Zipper(this.focus.left, [
+      ...this.trail,
+      { node: this.focus, direction: 'left' },
+    ]);
+  }
+
+  right() {
+    if (this.focus.right === null) {
+      return null;
+    }
+    return new Zipper(this.focus.right, [
+      ...this.trail,
+      { node: this.focus, direction: 'right' },
+    ]);
+  }
+
+  up() {
+    if (this.trail.length === 0) {
+      return null;
+    }
+    const trail = this.trail.slice(0, -1);
+    const { node: parent, direction } = this.trail[trail.length];
+    const node = {
+      value: parent.value,
+      left: direction === 'left' ? this.focus : parent.left,
+      right: direction === 'right' ? this.focus : parent.right,
+    };
+    return new Zipper(node, trail);
+  }
+
+  setValue(value) {
+    return new Zipper(
+      { value, left: this.focus.left, right: this.focus.right },
+      this.trail,
+    );
+  }
+
+  setLeft(tree) {
+    return new Zipper(
+      { value: this.focus.value, left: tree, right: this.focus.right },
+      this.trail,
+    );
+  }
+
+  setRight(tree) {
+    return new Zipper(
+      { value: this.focus.value, left: this.focus.left, right: tree },
+      this.trail,
+    );
+  }
+}

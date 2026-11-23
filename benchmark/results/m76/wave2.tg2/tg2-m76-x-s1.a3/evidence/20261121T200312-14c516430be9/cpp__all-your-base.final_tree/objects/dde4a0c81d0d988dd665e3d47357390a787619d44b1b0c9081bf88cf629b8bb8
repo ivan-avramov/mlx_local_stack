@@ -1,0 +1,77 @@
+#include "all_your_base.h"
+
+#include <algorithm>
+#include <stdexcept>
+
+namespace all_your_base {
+
+namespace {
+
+// Multiply a number, stored little-endian in base `out_base`, by `in_base`.
+void multiply(std::vector<unsigned int>& digits, unsigned int in_base,
+              unsigned int out_base) {
+    unsigned long long carry = 0;
+    for (auto& digit : digits) {
+        const unsigned long long t =
+            static_cast<unsigned long long>(digit) * in_base + carry;
+        digit = static_cast<unsigned int>(t % out_base);
+        carry = t / out_base;
+    }
+    while (carry > 0) {
+        digits.push_back(static_cast<unsigned int>(carry % out_base));
+        carry /= out_base;
+    }
+}
+
+// Add a single value (less than `in_base`) to a number stored little-endian
+// in base `out_base`.
+void add(std::vector<unsigned int>& digits, unsigned int value,
+         unsigned int out_base) {
+    unsigned long long carry = value;
+    for (auto& digit : digits) {
+        const unsigned long long t =
+            static_cast<unsigned long long>(digit) + carry;
+        digit = static_cast<unsigned int>(t % out_base);
+        carry = t / out_base;
+    }
+    while (carry > 0) {
+        digits.push_back(static_cast<unsigned int>(carry % out_base));
+        carry /= out_base;
+    }
+}
+
+}  // namespace
+
+std::vector<unsigned int> convert(unsigned int in_base,
+                                  const std::vector<unsigned int>& in_digits,
+                                  unsigned int out_base) {
+    if (in_base < 2 || out_base < 2) {
+        throw std::invalid_argument("base must be at least 2");
+    }
+    for (const auto digit : in_digits) {
+        if (digit >= in_base) {
+            throw std::invalid_argument("digit is not valid for input base");
+        }
+    }
+
+    // Horner's method, accumulating the value directly in the output base
+    // (little-endian) so no intermediate magnitude is ever materialized.
+    std::vector<unsigned int> out_digits{0};
+    for (const auto digit : in_digits) {
+        multiply(out_digits, in_base, out_base);
+        add(out_digits, digit, out_base);
+    }
+
+    // Strip leading zeros (trailing in little-endian order), then reverse
+    // to most-significant-first. Zero is represented as an empty sequence.
+    while (out_digits.size() > 1 && out_digits.back() == 0) {
+        out_digits.pop_back();
+    }
+    if (out_digits.size() == 1 && out_digits.front() == 0) {
+        out_digits.clear();
+    }
+    std::reverse(out_digits.begin(), out_digits.end());
+    return out_digits;
+}
+
+}  // namespace all_your_base

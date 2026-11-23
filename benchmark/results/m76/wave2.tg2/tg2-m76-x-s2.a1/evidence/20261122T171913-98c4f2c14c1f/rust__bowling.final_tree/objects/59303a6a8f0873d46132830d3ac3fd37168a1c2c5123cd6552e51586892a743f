@@ -1,0 +1,108 @@
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    NotEnoughPinsLeft,
+    GameComplete,
+}
+
+pub struct BowlingGame {
+    /// Every roll recorded so far, in order.
+    rolls: Vec<u16>,
+    /// The current frame index, 0-based. Frames 0..=8 are normal frames;
+    /// frame 9 is the special tenth frame.
+    frame: usize,
+    /// Pins knocked down in the current frame so far (always <= 10).
+    pins_down: u16,
+    /// Number of rolls made in the current frame (frames 1-9 only).
+    rolls_in_frame: usize,
+    /// Number of rolls made in the tenth frame (only meaningful once
+    /// `frame == 9`).
+    tenth_rolls: usize,
+    /// Whether the game is over.
+    completed: bool,
+}
+
+impl BowlingGame {
+    pub fn new() -> Self {
+        Self {
+            rolls: Vec::new(),
+            frame: 0,
+            pins_down: 0,
+            rolls_in_frame: 0,
+            tenth_rolls: 0,
+            completed: false,
+        }
+    }
+
+    pub fn roll(&mut self, pins: u16) -> Result<(), Error> {
+        if self.completed {
+            return Err(Error::GameComplete);
+        }
+
+        // A roll can never knock down more pins than are standing.
+        // Check `pins > 10` first so `pins_down + pins` cannot overflow.
+        if pins > 10 || self.pins_down + pins > 10 {
+            return Err(Error::NotEnoughPinsLeft);
+        }
+
+        self.pins_down += pins;
+        self.rolls.push(pins);
+
+        if self.frame < 9 {
+            // Frames 1-9: the frame ends when all ten pins are down
+            // (strike or spare) or after the frame's second roll (open frame).
+            self.rolls_in_frame += 1;
+            if self.pins_down == 10 || self.rolls_in_frame == 2 {
+                self.frame += 1;
+                self.pins_down = 0;
+                self.rolls_in_frame = 0;
+            }
+        } else {
+            // Frame 10: a strike or spare earns fill balls, and a strike
+            // resets the pins for the next fill ball.
+            self.tenth_rolls += 1;
+            if self.pins_down == 10 {
+                self.pins_down = 0;
+            }
+
+            // The tenth frame is complete after two rolls only if it is an
+            // open frame; a spare or strike always needs a third roll.
+            if self.tenth_rolls >= 3 {
+                self.completed = true;
+            } else if self.tenth_rolls == 2 {
+                let first = self.rolls[self.rolls.len() - 2];
+                let second = self.rolls[self.rolls.len() - 1];
+                if first < 10 && first + second < 10 {
+                    self.completed = true;
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn score(&self) -> Option<u16> {
+        if !self.completed {
+            return None;
+        }
+
+        let mut score = 0u16;
+        let mut i = 0;
+        for _ in 0..10 {
+            if self.rolls[i] == 10 {
+                // Strike: 10 plus the next two rolls.
+                score += 10 + self.rolls[i + 1] + self.rolls[i + 2];
+                i += 1;
+            } else if self.rolls[i] + self.rolls[i + 1] == 10 {
+                // Spare: 10 plus the next roll.
+                score += 10 + self.rolls[i + 2];
+                i += 2;
+            } else {
+                // Open frame: just the pins knocked down.
+                score += self.rolls[i] + self.rolls[i + 1];
+                i += 2;
+            }
+        }
+
+        Some(score)
+    }
+}

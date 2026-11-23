@@ -1,0 +1,108 @@
+#if !defined(BINARY_SEARCH_TREE_H)
+#define BINARY_SEARCH_TREE_H
+
+#include <cstddef>
+#include <memory>
+
+namespace binary_search_tree {
+
+template <typename T>
+class binary_tree;
+
+template <typename T>
+class binary_tree_iterator;
+
+// Forward iterator that visits the nodes of a binary_tree in in-order
+// (sorted) sequence.
+template <typename T>
+class binary_tree_iterator {
+public:
+    using difference_type = std::ptrdiff_t;
+    using value_type = const T;
+    using pointer = const T*;
+    using reference = const T&;
+    using iterator_category = std::forward_iterator_tag;
+
+    binary_tree_iterator() : node_(nullptr) {}
+
+    explicit binary_tree_iterator(const binary_tree<T>* node) : node_(node) {
+        advance_to_leftmost();
+    }
+
+    reference operator*() const { return node_->data(); }
+    pointer operator->() const { return &node_->data(); }
+
+    binary_tree_iterator& operator++() {
+        if (node_->right().get()) {
+            node_ = node_->right().get();
+            advance_to_leftmost();
+        } else {
+            while (node_->parent_ && node_ == node_->parent_->right().get()) {
+                node_ = node_->parent_;
+            }
+            node_ = node_->parent_;
+        }
+        return *this;
+    }
+
+    bool operator==(const binary_tree_iterator& other) const {
+        return node_ == other.node_;
+    }
+
+    bool operator!=(const binary_tree_iterator& other) const {
+        return node_ != other.node_;
+    }
+
+private:
+    void advance_to_leftmost() {
+        while (node_ && node_->left().get()) {
+            node_ = node_->left().get();
+        }
+    }
+
+    const binary_tree<T>* node_;
+};
+
+template <typename T>
+class binary_tree {
+public:
+    explicit binary_tree(const T& data) : data_(data) {}
+
+    const T& data() const { return data_; }
+
+    void insert(const T& value) {
+        if (value <= data_) {
+            if (!left_) {
+                left_ = std::make_unique<binary_tree<T>>(value);
+                left_->parent_ = this;
+            } else {
+                left_->insert(value);
+            }
+        } else {
+            if (!right_) {
+                right_ = std::make_unique<binary_tree<T>>(value);
+                right_->parent_ = this;
+            } else {
+                right_->insert(value);
+            }
+        }
+    }
+
+    const std::unique_ptr<binary_tree<T>>& left() const { return left_; }
+    const std::unique_ptr<binary_tree<T>>& right() const { return right_; }
+
+    binary_tree_iterator<T> begin() const { return binary_tree_iterator<T>(this); }
+    binary_tree_iterator<T> end() const { return binary_tree_iterator<T>(); }
+
+private:
+    T data_;
+    std::unique_ptr<binary_tree<T>> left_;
+    std::unique_ptr<binary_tree<T>> right_;
+    const binary_tree<T>* parent_ = nullptr;
+
+    friend class binary_tree_iterator<T>;
+};
+
+}  // namespace binary_search_tree
+
+#endif // BINARY_SEARCH_TREE_H

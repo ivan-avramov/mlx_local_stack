@@ -1,0 +1,138 @@
+#[derive(Debug, PartialEq, Eq)]
+pub enum Error {
+    NotEnoughPinsLeft,
+    GameComplete,
+}
+
+pub struct BowlingGame {
+    /// Every roll taken so far, in order.
+    rolls: Vec<u16>,
+    /// Index of the frame currently being played (0..=9).
+    frame: usize,
+    /// Number of rolls taken in the current frame (0..=3 in the tenth).
+    rolls_in_frame: usize,
+    /// Pins knocked down so far in the current frame.
+    frame_pins: u16,
+    /// Whether the game is finished.
+    done: bool,
+}
+
+impl BowlingGame {
+    pub fn new() -> Self {
+        Self {
+            rolls: Vec::new(),
+            frame: 0,
+            rolls_in_frame: 0,
+            frame_pins: 0,
+            done: false,
+        }
+    }
+
+    pub fn roll(&mut self, pins: u16) -> Result<(), Error> {
+        if self.done {
+            return Err(Error::GameComplete);
+        }
+
+        if self.frame < 9 {
+            // Frames 1-9: at most two rolls, and the frame's total may not
+            // exceed ten pins.
+            let allowed = if self.rolls_in_frame == 0 {
+                10
+            } else {
+                10 - self.frame_pins
+            };
+            if pins > allowed {
+                return Err(Error::NotEnoughPinsLeft);
+            }
+
+            self.rolls.push(pins);
+            self.frame_pins += pins;
+            self.rolls_in_frame += 1;
+
+            if self.rolls_in_frame == 2 || self.frame_pins == 10 {
+                // The frame is complete; move on.
+                self.frame += 1;
+                self.rolls_in_frame = 0;
+                self.frame_pins = 0;
+            }
+        } else {
+            // The tenth frame: a strike earns two fill balls, a spare earns
+            // one. Fill balls are free except that, after a strike, a
+            // non-strike fill ball bounds the next one.
+            // Copy the rolls already taken in the tenth frame.
+            let frame_rolls: Vec<u16> =
+                self.rolls[self.rolls.len() - self.rolls_in_frame..].to_vec();
+            let allowed = if frame_rolls.is_empty() {
+                10
+            } else if frame_rolls[0] == 10 {
+                // After a strike, a non-strike fill ball bounds the next one.
+                if frame_rolls.len() == 2 && frame_rolls[1] != 10 {
+                    10 - frame_rolls[1]
+                } else {
+                    10
+                }
+            } else if frame_rolls.len() == 1 {
+                10 - frame_rolls[0]
+            } else {
+                // A spare in the tenth frame grants one free fill ball.
+                10
+            };
+            if pins > allowed {
+                return Err(Error::NotEnoughPinsLeft);
+            }
+
+            self.rolls.push(pins);
+            self.frame_pins += pins;
+            self.rolls_in_frame += 1;
+
+            let complete = if frame_rolls.is_empty() {
+                false
+            } else if frame_rolls[0] == 10 {
+                self.rolls_in_frame == 3
+            } else if self.rolls_in_frame == 3 {
+                true
+            } else {
+                // Open tenth frame: the game ends as soon as it is over.
+                self.frame_pins < 10
+            };
+            if complete {
+                self.done = true;
+            }
+        }
+
+        Ok(())
+    }
+
+    pub fn score(&self) -> Option<u16> {
+        if !self.done {
+            return None;
+        }
+
+        let rolls = &self.rolls;
+        let mut total = 0;
+        let mut i = 0;
+
+        for frame in 0..10 {
+            if frame < 9 {
+                if rolls[i] == 10 {
+                    // Strike: 10 plus the next two rolls.
+                    total += 10 + rolls[i + 1] + rolls[i + 2];
+                    i += 1;
+                } else if rolls[i] + rolls[i + 1] == 10 {
+                    // Spare: 10 plus the next roll.
+                    total += 10 + rolls[i + 2];
+                    i += 2;
+                } else {
+                    total += rolls[i] + rolls[i + 1];
+                    i += 2;
+                }
+            } else {
+                // Tenth frame: the total pins knocked down, fill balls
+                // included.
+                total += rolls[i..].iter().sum::<u16>();
+            }
+        }
+
+        Some(total)
+    }
+}

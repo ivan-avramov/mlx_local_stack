@@ -1,0 +1,107 @@
+use std::borrow::Borrow;
+
+#[cfg(feature = "io")]
+use std::io::{Read, Write};
+
+/// A munger which XORs a key with some data
+#[derive(Clone)]
+pub struct Xorcism<'a> {
+    key: &'a [u8],
+    position: usize,
+}
+
+impl<'a> Xorcism<'a> {
+    /// Create a new Xorcism munger from a key
+    ///
+    /// Should accept anything which has a cheap conversion to a byte slice.
+    pub fn new<Key>(key: &'a Key) -> Xorcism<'a>
+    where
+        Key: ?Sized + AsRef<[u8]>,
+    {
+        Xorcism {
+            key: key.as_ref(),
+            position: 0,
+        }
+    }
+
+    /// XOR each byte of the input buffer with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    pub fn munge_in_place(&mut self, data: &mut [u8]) {
+        for byte in data.iter_mut() {
+            *byte ^= self.key[self.position];
+            self.position = (self.position + 1) % self.key.len();
+        }
+    }
+
+    /// XOR each byte of the data with a byte from the key.
+    ///
+    /// Note that this is stateful: repeated calls are likely to produce different results,
+    /// even with identical inputs.
+    ///
+    /// Should accept anything which has a cheap conversion to a byte iterator.
+    /// Shouldn't matter whether the byte iterator's values are owned or borrowed.
+    pub fn munge<Data>(&mut self, data: Data) -> impl Iterator<Item = u8>
+    where
+        Data: IntoIterator,
+        Data::Item: Borrow<u8>,
+    {
+        // The closure captures the `&mut self` reference, so the returned
+        // iterator advances (and mutates) the key position as it is consumed,
+        // and `self` is borrowed until the iterator is dropped.
+        data.into_iter().map(move |item| {
+            let key_byte = self.key[self.position];
+            self.position = (self.position + 1) % self.key.len();
+            *item.borrow() ^ key_byte
+        })
+    }
+
+    /// Wrap a `Read` so that bytes read through it are XORed with the key.
+    #[cfg(feature = "io")]
+    pub fn reader(self, r: impl Read) -> impl Read {
+        Reader { inner: r, xs: self }
+    }
+
+    /// Wrap a `Write` so that bytes written through it are XORed with the key.
+    #[cfg(feature = "io")]
+    pub fn writer(self, w: impl Write) -> impl Write {
+        Writer { inner: w, xs: self }
+    }
+}
+
+#[cfg(feature = "io")]
+struct Reader<'a, R: Read> {
+    inner: R,
+    xs: Xorcism<'a>,
+}
+
+#[cfg(feature = "io")]
+impl<'a, R: Read> Read for Reader<'a, R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.xs.munge_in_place(&mut buf[..n]);
+        Ok(n)
+    }
+}
+
+#[cfg(feature = "io")]
+struct Writer<'a, W: Write> {
+    inner: W,
+    xs: Xorcism<'a>,
+}
+
+#[cfg(feature = "io")]
+impl<'a, W: Write> Write for Writer<'a, W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        // `Write::write` only accepts a shared slice, so munge a copy.
+        let mut tmp = vec![0u8; buf.len()];
+        tmp.copy_from_slice(buf);
+        self.xs.munge_in_place(&mut tmp);
+        self.inner.write(&tmp)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}

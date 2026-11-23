@@ -1,0 +1,98 @@
+//
+// This is only a SKELETON file for the 'Rational Numbers' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+function gcd(a, b) {
+  a = Math.abs(a);
+  b = Math.abs(b);
+  while (b !== 0) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+function root(p, q) {
+  if (p === 0) {
+    return 0;
+  }
+  // Newton's method to compute the qth root of p, refining the
+  // Math.pow estimate until it converges to the nearest representable value.
+  let estimate = Math.pow(p, 1 / q);
+  for (let i = 0; i < 100; i += 1) {
+    const next = ((q - 1) * estimate + p / Math.pow(estimate, q - 1)) / q;
+    if (next === estimate) {
+      break;
+    }
+    estimate = next;
+  }
+  return estimate;
+}
+
+export class Rational {
+  constructor(numerator, denominator) {
+    const g = gcd(numerator, denominator);
+    let n = numerator / g;
+    let d = denominator / g;
+    // Standard form: denominator is always positive.
+    if (d < 0) {
+      n = -n;
+      d = -d;
+    }
+    this.numerator = n;
+    this.denominator = d;
+  }
+
+  add(other) {
+    return new Rational(
+      this.numerator * other.denominator + other.numerator * this.denominator,
+      this.denominator * other.denominator
+    );
+  }
+
+  sub(other) {
+    return new Rational(
+      this.numerator * other.denominator - other.numerator * this.denominator,
+      this.denominator * other.denominator
+    );
+  }
+
+  mul(other) {
+    return new Rational(
+      this.numerator * other.numerator,
+      this.denominator * other.denominator
+    );
+  }
+
+  div(other) {
+    return new Rational(
+      this.numerator * other.denominator,
+      this.denominator * other.numerator
+    );
+  }
+
+  abs() {
+    return new Rational(Math.abs(this.numerator), this.denominator);
+  }
+
+  exprational(power) {
+    if (power >= 0) {
+      return new Rational(this.numerator ** power, this.denominator ** power);
+    }
+    const m = -power;
+    return new Rational(this.denominator ** m, this.numerator ** m);
+  }
+
+  expreal(x) {
+    // x^(a/b) = root(x^a, b)
+    const power = Math.pow(x, this.numerator);
+    if (this.denominator === 1) {
+      return power;
+    }
+    return root(power, this.denominator);
+  }
+
+  reduce() {
+    return new Rational(this.numerator, this.denominator);
+  }
+}

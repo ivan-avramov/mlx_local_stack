@@ -1,0 +1,48 @@
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
+import java.util.List;
+
+class ChangeCalculator {
+
+    private final List<Integer> currencyCoins;
+
+    ChangeCalculator(List<Integer> currencyCoins) {
+        this.currencyCoins = new ArrayList<>(currencyCoins);
+    }
+
+    List<Integer> computeMostEfficientChange(int grandTotal) {
+        if (grandTotal < 0) {
+            throw new IllegalArgumentException("Negative totals are not allowed.");
+        }
+
+        int[] coinCounts = new int[grandTotal + 1];
+        int[] coinChoices = new int[grandTotal + 1];
+        Arrays.fill(coinCounts, Integer.MAX_VALUE);
+        coinCounts[0] = 0;
+
+        for (int total = 1; total <= grandTotal; total++) {
+            for (int coin : currencyCoins) {
+                if (coin <= total
+                        && coinCounts[total - coin] != Integer.MAX_VALUE
+                        && coinCounts[total - coin] + 1 < coinCounts[total]) {
+                    coinCounts[total] = coinCounts[total - coin] + 1;
+                    coinChoices[total] = coin;
+                }
+            }
+        }
+
+        if (coinCounts[grandTotal] == Integer.MAX_VALUE) {
+            throw new IllegalArgumentException(
+                    "The total " + grandTotal + " cannot be represented in the given currency.");
+        }
+
+        List<Integer> coins = new ArrayList<>();
+        for (int total = grandTotal; total > 0; total -= coinChoices[total]) {
+            coins.add(coinChoices[total]);
+        }
+        Collections.sort(coins);
+        return coins;
+    }
+
+}

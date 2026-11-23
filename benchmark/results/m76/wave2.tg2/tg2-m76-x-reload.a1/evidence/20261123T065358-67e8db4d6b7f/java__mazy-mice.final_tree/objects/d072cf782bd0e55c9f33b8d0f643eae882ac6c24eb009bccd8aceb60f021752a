@@ -1,0 +1,158 @@
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Random;
+
+public class MazeGenerator {
+
+    private static final int MIN_SIZE = 5;
+    private static final int MAX_SIZE = 100;
+
+    // Room-coordinate directions: up, right, down, left.
+    private static final int[] DR = {-1, 0, 1, 0};
+    private static final int[] DC = {0, 1, 0, -1};
+
+    public char[][] generatePerfectMaze(int rows, int columns) {
+        return buildMaze(rows, columns, new Random());
+    }
+
+    public char[][] generatePerfectMaze(int rows, int columns, int seed) {
+        return buildMaze(rows, columns, new Random(seed));
+    }
+
+    private char[][] buildMaze(int rows, int columns, Random random) {
+        validate(rows, columns);
+
+        // The character grid is (2*rows + 1) tall and (2*columns + 1) wide.
+        // Rooms sit at odd/odd positions; walls and intersections fill the rest.
+        char[][] grid = new char[2 * rows + 1][2 * columns + 1];
+        for (int r = 0; r < grid.length; r++) {
+            for (int c = 0; c < grid[r].length; c++) {
+                grid[r][c] = initialCell(r, c);
+            }
+        }
+
+        // Carve a spanning tree with iterative recursive-backtracking (DFS),
+        // which guarantees a perfect maze: one path between any two rooms and
+        // no isolated sections.
+        boolean[][] visited = new boolean[rows][columns];
+        int[] stackR = new int[rows * columns];
+        int[] stackC = new int[rows * columns];
+        int top = 0;
+        stackR[top] = 0;
+        stackC[top] = 0;
+        visited[0][0] = true;
+        top++;
+
+        while (top > 0) {
+            int r = stackR[top - 1];
+            int c = stackC[top - 1];
+
+            List<int[]> options = new ArrayList<>();
+            for (int d = 0; d < 4; d++) {
+                int nr = r + DR[d];
+                int nc = c + DC[d];
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < columns && !visited[nr][nc]) {
+                    options.add(new int[]{nr, nc, d});
+                }
+            }
+
+            if (options.isEmpty()) {
+                top--; // dead end: backtrack
+                continue;
+            }
+
+            int[] choice = options.get(random.nextInt(options.size()));
+            int nr = choice[0];
+            int nc = choice[1];
+            int d = choice[2];
+
+            // Remove the wall segment separating the current room from the chosen one.
+            grid[2 * r + 1 + DR[d]][2 * c + 1 + DC[d]] = ' ';
+
+            visited[nr][nc] = true;
+            stackR[top] = nr;
+            stackC[top] = nc;
+            top++;
+        }
+
+        // Open the entrance on the left edge and the exit on the right edge.
+        // Both land on an odd character row so they align with a room.
+        int entranceRow = 1 + 2 * random.nextInt(rows);
+        int exitRow = 1 + 2 * random.nextInt(rows);
+        grid[entranceRow][0] = '⇨';
+        grid[exitRow][2 * columns] = '⇨';
+
+        // Resolve every intersection (even/even) into the correct box-drawing glyph.
+        for (int i = 0; i <= 2 * rows; i += 2) {
+            for (int j = 0; j <= 2 * columns; j += 2) {
+                grid[i][j] = intersectionChar(grid, i, j, rows, columns);
+            }
+        }
+
+        return grid;
+    }
+
+    private void validate(int rows, int columns) {
+        if (rows < MIN_SIZE || rows > MAX_SIZE || columns < MIN_SIZE || columns > MAX_SIZE) {
+            throw new IllegalArgumentException(
+                    "rows and columns must each be between " + MIN_SIZE + " and " + MAX_SIZE);
+        }
+    }
+
+    private char initialCell(int r, int c) {
+        boolean rowOdd = (r & 1) == 1;
+        boolean colOdd = (c & 1) == 1;
+        if (rowOdd && colOdd) {
+            return ' '; // room
+        } else if (!rowOdd && !colOdd) {
+            return '┼'; // intersection, refined later
+        } else if (rowOdd) {
+            return '│'; // vertical wall
+        } else {
+            return '─'; // horizontal wall
+        }
+    }
+
+    private char intersectionChar(char[][] grid, int i, int j, int rows, int columns) {
+        boolean up = i - 1 >= 0 && isWall(grid[i - 1][j]);
+        boolean down = i + 1 <= 2 * rows && isWall(grid[i + 1][j]);
+        boolean left = j - 1 >= 0 && isWall(grid[i][j - 1]);
+        boolean right = j + 1 <= 2 * columns && isWall(grid[i][j + 1]);
+
+        if (up && down && left && right) {
+            return '┼';
+        } else if (up && down && left) {
+            return '┤';
+        } else if (up && down && right) {
+            return '├';
+        } else if (up && left && right) {
+            return '┴';
+        } else if (down && left && right) {
+            return '┬';
+        } else if (up && down) {
+            return '│';
+        } else if (left && right) {
+            return '─';
+        } else if (up && left) {
+            return '┘';
+        } else if (up && right) {
+            return '└';
+        } else if (down && left) {
+            return '┐';
+        } else if (down && right) {
+            return '┌';
+        } else if (up || down) {
+            return '│';
+        } else if (left || right) {
+            return '─';
+        } else {
+            return ' ';
+        }
+    }
+
+    private boolean isWall(char ch) {
+        // A segment is a wall unless it is an open passage (' ') or an
+        // entrance/exit opening ('⇨').
+        return ch != ' ' && ch != '⇨';
+    }
+}

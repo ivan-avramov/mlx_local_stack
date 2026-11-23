@@ -1,0 +1,95 @@
+//
+// This is only a SKELETON file for the 'Two Bucket' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class TwoBucket {
+  constructor(bucketOne, bucketTwo, goal, startBucket) {
+    this.bucketOne = bucketOne;
+    this.bucketTwo = bucketTwo;
+    this.goal = goal;
+    this.startBucket = startBucket;
+
+    if (
+      goal > Math.max(bucketOne, bucketTwo) ||
+      goal % this.gcd(bucketOne, bucketTwo) !== 0
+    ) {
+      throw new Error('No solution possible');
+    }
+  }
+
+  gcd(a, b) {
+    while (b !== 0) {
+      [a, b] = [b, a % b];
+    }
+    return a;
+  }
+
+  solve() {
+    const sizeOne = this.bucketOne;
+    const sizeTwo = this.bucketTwo;
+    const goal = this.goal;
+    const startBucket = this.startBucket;
+
+    // After any action the starting bucket may not be empty while the
+    // other bucket is full.
+    const isForbidden = (a, b) =>
+      startBucket === 'one' ? a === 0 && b === sizeTwo : a === sizeOne && b === 0;
+
+    const neighbors = (a, b) => {
+      const results = [];
+      if (a !== sizeOne) {
+        results.push([sizeOne, b]); // fill bucket one
+      }
+      if (b !== sizeTwo) {
+        results.push([a, sizeTwo]); // fill bucket two
+      }
+      if (a !== 0) {
+        results.push([0, b]); // empty bucket one
+      }
+      if (b !== 0) {
+        results.push([a, 0]); // empty bucket two
+      }
+      const pourOneToTwo = Math.min(a, sizeTwo - b);
+      if (pourOneToTwo > 0) {
+        results.push([a - pourOneToTwo, b + pourOneToTwo]);
+      }
+      const pourTwoToOne = Math.min(b, sizeOne - a);
+      if (pourTwoToOne > 0) {
+        results.push([a + pourTwoToOne, b - pourTwoToOne]);
+      }
+      return results;
+    };
+
+    // The first action is always filling the starting bucket.
+    const start = startBucket === 'one' ? [sizeOne, 0] : [0, sizeTwo];
+    let frontier = [start];
+    const visited = new Set([`${start[0]},${start[1]}`]);
+    let moves = 1;
+
+    while (frontier.length > 0) {
+      const next = [];
+      for (const [a, b] of frontier) {
+        if (a === goal || b === goal) {
+          return {
+            moves,
+            goalBucket: a === goal ? 'one' : 'two',
+            otherBucket: a === goal ? b : a,
+          };
+        }
+        for (const [na, nb] of neighbors(a, b)) {
+          const key = `${na},${nb}`;
+          if (isForbidden(na, nb) || visited.has(key)) {
+            continue;
+          }
+          visited.add(key);
+          next.push([na, nb]);
+        }
+      }
+      frontier = next;
+      moves += 1;
+    }
+
+    throw new Error('No solution possible');
+  }
+}

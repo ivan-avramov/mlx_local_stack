@@ -1,0 +1,111 @@
+class Zipper {
+    Zipper up;
+    Zipper left;
+    Zipper right;
+    int value;
+
+    Zipper(int val) {
+        this.value = val;
+    }
+
+    BinaryTree toTree() {
+        Zipper root = this;
+        while (root.up != null) {
+            root = root.up;
+        }
+        return new BinaryTree(root);
+    }
+
+    int getValue() {
+        return value;
+    }
+
+    Zipper setLeft(Zipper leftChild) {
+        this.left = leftChild;
+        if (leftChild != null) {
+            leftChild.up = this;
+        }
+        return this;
+    }
+
+    Zipper setRight(Zipper rightChild) {
+        this.right = rightChild;
+        if (rightChild != null) {
+            rightChild.up = this;
+        }
+        return this;
+    }
+
+    void setValue(int val) {
+        this.value = val;
+    }
+}
+
+class BinaryTree {
+    private final Zipper root;
+
+    BinaryTree(int value) {
+        this(new Zipper(value));
+    }
+
+    BinaryTree(Zipper root) {
+        this.root = root;
+    }
+
+    Zipper getRoot() {
+        return root;
+    }
+
+    String printTree() {
+        return printNode(root);
+    }
+
+    private String printNode(Zipper node) {
+        return "value: " + node.getValue()
+                + ", left: " + printChild(node.left)
+                + ", right: " + printChild(node.right);
+    }
+
+    private String printChild(Zipper child) {
+        if (child == null) {
+            return "null";
+        }
+        return "{ " + printNode(child) + " }";
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (this == o) {
+            return true;
+        }
+        if (!(o instanceof BinaryTree)) {
+            return false;
+        }
+        BinaryTree other = (BinaryTree) o;
+        return treesEqual(root, other.root);
+    }
+
+    @Override
+    public int hashCode() {
+        return treesHash(root);
+    }
+
+    private static boolean treesEqual(Zipper a, Zipper b) {
+        if (a == null) {
+            return b == null;
+        }
+        if (b == null) {
+            return false;
+        }
+        return a.getValue() == b.getValue()
+                && treesEqual(a.left, b.left)
+                && treesEqual(a.right, b.right);
+    }
+
+    private static int treesHash(Zipper node) {
+        if (node == null) {
+            return 0;
+        }
+        return 31 * (31 * node.getValue() + treesHash(node.left)) + treesHash(node.right);
+    }
+}

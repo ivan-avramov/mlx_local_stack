@@ -1,0 +1,91 @@
+//
+// Two Bucket exercise
+//
+
+function gcd(a, b) {
+  while (b !== 0) {
+    [a, b] = [b, a % b];
+  }
+  return a;
+}
+
+export class TwoBucket {
+  constructor(bucketOne, bucketTwo, goal, startBucket) {
+    this.bucketOne = bucketOne;
+    this.bucketTwo = bucketTwo;
+    this.goal = goal;
+    this.startBucket = startBucket;
+
+    const max = Math.max(bucketOne, bucketTwo);
+    if (goal > max || goal % gcd(bucketOne, bucketTwo) !== 0) {
+      throw new Error('No solution possible');
+    }
+  }
+
+  solve() {
+    const { bucketOne, bucketTwo, goal, startBucket } = this;
+
+    // The first action must be filling the starting bucket.
+    const start = startBucket === 'one' ? [bucketOne, 0] : [0, bucketTwo];
+
+    // A state is forbidden when the starting bucket is empty and the other is full.
+    const isForbidden = (a, b) =>
+      startBucket === 'one' ? a === 0 && b === bucketTwo : a === bucketOne && b === 0;
+
+    const isGoal = (a, b) => a === goal || b === goal;
+
+    const result = (moves, a, b) => ({
+      moves,
+      goalBucket: a === goal ? 'one' : 'two',
+      otherBucket: a === goal ? b : a,
+    });
+
+    if (isGoal(start[0], start[1])) {
+      return result(1, start[0], start[1]);
+    }
+
+    const successors = ([a, b]) => [
+      [bucketOne, b], // fill bucket one
+      [a, bucketTwo], // fill bucket two
+      [0, b], // empty bucket one
+      [a, 0], // empty bucket two
+      a > 0 && b < bucketTwo
+        ? [a - Math.min(a, bucketTwo - b), b + Math.min(a, bucketTwo - b)]
+        : null, // pour bucket one into bucket two
+      b > 0 && a < bucketOne
+        ? [a + Math.min(b, bucketOne - a), b - Math.min(b, bucketOne - a)]
+        : null, // pour bucket two into bucket one
+    ];
+
+    const seen = new Set([start.join(',')]);
+    let queue = [start];
+    let moves = 1;
+
+    while (queue.length > 0) {
+      moves += 1;
+      const next = [];
+
+      for (const state of queue) {
+        for (const s of successors(state)) {
+          if (s === null) {
+            continue;
+          }
+          const [a, b] = s;
+          const key = `${a},${b}`;
+          if (seen.has(key) || isForbidden(a, b)) {
+            continue;
+          }
+          if (isGoal(a, b)) {
+            return result(moves, a, b);
+          }
+          seen.add(key);
+          next.push(s);
+        }
+      }
+
+      queue = next;
+    }
+
+    throw new Error('No solution possible');
+  }
+}

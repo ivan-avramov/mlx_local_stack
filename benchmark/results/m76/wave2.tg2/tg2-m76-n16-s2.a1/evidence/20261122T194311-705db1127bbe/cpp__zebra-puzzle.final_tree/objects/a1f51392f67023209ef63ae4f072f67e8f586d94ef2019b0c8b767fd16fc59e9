@@ -1,0 +1,159 @@
+#include "zebra_puzzle.h"
+
+#include <string>
+
+namespace zebra_puzzle {
+
+namespace {
+
+// Attribute columns of the house grid.
+enum { NAT, COLOR, DRINK, PET, HOBBY, NUM_ATTRS };
+
+// Values within each attribute (index order).
+// Nationality
+enum { ENG, SPA, UKR, NOR, JAP };
+// Color
+enum { RED, GREEN, IVORY, YELLOW, BLUE };
+// Drink
+enum { COFFEE, TEA, MILK, OJ, WATER };
+// Pet
+enum { DOG, SNAIL, FOX, HORSE, ZEBRA };
+// Hobby
+enum { DANCING, READING, PAINTER, FOOTBALL, CHESS };
+
+const char* const nationalityNames[] = {
+    "Englishman", "Spaniard", "Ukrainian", "Norwegian", "Japanese"};
+
+constexpr int UNSET = -1;
+
+// Returns true if no constraint is definitely violated by the (possibly
+// partial) assignment. Constraints that cannot yet be evaluated are treated
+// as pending. In a complete assignment that passes this check, every
+// constraint is satisfied because each attribute is a full permutation.
+bool ok(const int grid[5][NUM_ATTRS]) {
+    // 2: The Englishman lives in the red house.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][NAT] == ENG && grid[h][COLOR] != UNSET && grid[h][COLOR] != RED)
+            return false;
+    // 3: The Spaniard owns the dog.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][NAT] == SPA && grid[h][PET] != UNSET && grid[h][PET] != DOG)
+            return false;
+    // 4: The person in the green house drinks coffee.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][COLOR] == GREEN && grid[h][DRINK] != UNSET && grid[h][DRINK] != COFFEE)
+            return false;
+    // 5: The Ukrainian drinks tea.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][NAT] == UKR && grid[h][DRINK] != UNSET && grid[h][DRINK] != TEA)
+            return false;
+    // 6: The green house is immediately to the right of the ivory house.
+    for (int h = 0; h < 5; ++h) {
+        if (grid[h][COLOR] == GREEN) {
+            if (h == 0) return false;
+            if (grid[h - 1][COLOR] != UNSET && grid[h - 1][COLOR] != IVORY) return false;
+        }
+        if (grid[h][COLOR] == IVORY) {
+            if (h == 4) return false;
+            if (grid[h + 1][COLOR] != UNSET && grid[h + 1][COLOR] != GREEN) return false;
+        }
+    }
+    // 7: The snail owner likes to go dancing.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][PET] == SNAIL && grid[h][HOBBY] != UNSET && grid[h][HOBBY] != DANCING)
+            return false;
+    // 8: The person in the yellow house is a painter.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][COLOR] == YELLOW && grid[h][HOBBY] != UNSET && grid[h][HOBBY] != PAINTER)
+            return false;
+    // 9: The person in the middle house drinks milk.
+    if (grid[2][DRINK] != UNSET && grid[2][DRINK] != MILK) return false;
+    // 10: The Norwegian lives in the first house.
+    if (grid[0][NAT] != UNSET && grid[0][NAT] != NOR) return false;
+    // 11: The person who enjoys reading lives next to the person with the fox.
+    for (int h = 0; h < 5; ++h) {
+        if (grid[h][HOBBY] == READING) {
+            bool hasFox = false;
+            bool allAssigned = true;
+            if (h > 0) {
+                if (grid[h - 1][PET] == FOX) hasFox = true;
+                else if (grid[h - 1][PET] == UNSET) allAssigned = false;
+            }
+            if (h < 4) {
+                if (grid[h + 1][PET] == FOX) hasFox = true;
+                else if (grid[h + 1][PET] == UNSET) allAssigned = false;
+            }
+            if (allAssigned && !hasFox) return false;
+        }
+    }
+    // 12: The painter's house is next to the house with the horse.
+    for (int h = 0; h < 5; ++h) {
+        if (grid[h][HOBBY] == PAINTER) {
+            bool hasHorse = false;
+            bool allAssigned = true;
+            if (h > 0) {
+                if (grid[h - 1][PET] == HORSE) hasHorse = true;
+                else if (grid[h - 1][PET] == UNSET) allAssigned = false;
+            }
+            if (h < 4) {
+                if (grid[h + 1][PET] == HORSE) hasHorse = true;
+                else if (grid[h + 1][PET] == UNSET) allAssigned = false;
+            }
+            if (allAssigned && !hasHorse) return false;
+        }
+    }
+    // 13: The person who plays football drinks orange juice.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][HOBBY] == FOOTBALL && grid[h][DRINK] != UNSET && grid[h][DRINK] != OJ)
+            return false;
+    // 14: The Japanese person plays chess.
+    for (int h = 0; h < 5; ++h)
+        if (grid[h][NAT] == JAP && grid[h][HOBBY] != UNSET && grid[h][HOBBY] != CHESS)
+            return false;
+    // 15: The Norwegian lives next to the blue house.
+    // The Norwegian is in house 0 (constraint 10), so house 1 must be blue.
+    if (grid[1][COLOR] != UNSET && grid[1][COLOR] != BLUE) return false;
+    return true;
+}
+
+// Assigns one attribute category (a permutation of 0..4 across the five
+// houses) at a time, pruning with ok() after every placement.
+bool solveCategory(int grid[5][NUM_ATTRS], int cat, int house, bool used[5]) {
+    if (house == 5) {
+        if (cat == NUM_ATTRS - 1) return true;  // complete assignment
+        bool usedNext[5] = {false, false, false, false, false};
+        return solveCategory(grid, cat + 1, 0, usedNext);
+    }
+    for (int v = 0; v < 5; ++v) {
+        if (used[v]) continue;
+        grid[house][cat] = v;
+        if (ok(grid)) {
+            used[v] = true;
+            if (solveCategory(grid, cat, house + 1, used)) return true;
+            used[v] = false;
+        }
+        grid[house][cat] = UNSET;
+    }
+    return false;
+}
+
+}  // namespace
+
+Solution solve() {
+    int grid[5][NUM_ATTRS];
+    for (int h = 0; h < 5; ++h)
+        for (int a = 0; a < NUM_ATTRS; ++a)
+            grid[h][a] = UNSET;
+
+    bool used[5] = {false, false, false, false, false};
+    solveCategory(grid, 0, 0, used);
+
+    Solution solution;
+    for (int h = 0; h < 5; ++h) {
+        if (grid[h][DRINK] == WATER) solution.drinksWater = nationalityNames[grid[h][NAT]];
+        if (grid[h][PET] == ZEBRA) solution.ownsZebra = nationalityNames[grid[h][NAT]];
+    }
+    return solution;
+}
+
+}  // namespace zebra_puzzle

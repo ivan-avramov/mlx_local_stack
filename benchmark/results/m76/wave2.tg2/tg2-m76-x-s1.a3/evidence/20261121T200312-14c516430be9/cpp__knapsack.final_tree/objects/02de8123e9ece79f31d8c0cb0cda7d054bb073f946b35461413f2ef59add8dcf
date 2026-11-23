@@ -1,0 +1,30 @@
+#include "knapsack.h"
+
+#include <algorithm>
+
+namespace knapsack
+{
+
+int maximum_value(int max_weight, const std::vector<Item>& items)
+{
+    // dp[w] is the greatest value achievable using at most weight w.
+    std::vector<int> dp(static_cast<size_t>(max_weight) + 1, 0);
+
+    for (const Item& item : items)
+    {
+        if (item.weight > max_weight)
+        {
+            continue;
+        }
+        // Iterate backwards so each item is used at most once.
+        for (int w = max_weight; w >= item.weight; --w)
+        {
+            dp[static_cast<size_t>(w)] = std::max(dp[static_cast<size_t>(w)],
+                                                  dp[static_cast<size_t>(w - item.weight)] + item.value);
+        }
+    }
+
+    return dp[static_cast<size_t>(max_weight)];
+}
+
+} // namespace knapsack

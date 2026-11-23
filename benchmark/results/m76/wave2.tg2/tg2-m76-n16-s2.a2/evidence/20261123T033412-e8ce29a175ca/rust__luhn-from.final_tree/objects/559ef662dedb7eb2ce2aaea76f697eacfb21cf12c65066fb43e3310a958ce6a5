@@ -1,0 +1,57 @@
+pub struct Luhn {
+    input: String,
+}
+
+impl Luhn {
+    pub fn is_valid(&self) -> bool {
+        // Collect the digit values, rejecting any character that is neither
+        // an ASCII digit nor whitespace.
+        let mut digits = Vec::new();
+        for c in self.input.chars() {
+            if c.is_ascii_digit() {
+                digits.push(c.to_digit(10).unwrap() as u32);
+            } else if !c.is_whitespace() {
+                return false;
+            }
+        }
+
+        // A number needs at least two digits to be valid.
+        if digits.len() < 2 {
+            return false;
+        }
+
+        // Starting from the rightmost digit, double every second digit.
+        // If doubling produces a value greater than 9, subtract 9.
+        let sum: u32 = digits
+            .iter()
+            .rev()
+            .enumerate()
+            .map(|(i, &d)| {
+                if i % 2 == 1 {
+                    let doubled = d * 2;
+                    if doubled > 9 {
+                        doubled - 9
+                    } else {
+                        doubled
+                    }
+                } else {
+                    d
+                }
+            })
+            .sum();
+
+        sum % 10 == 0
+    }
+}
+
+// Every type that can be rendered as a string (via `Display`) can be turned
+// into a `Luhn`. This single generic implementation covers `&str`, `String`,
+// and all of the unsigned integer types, and any future type that implements
+// `ToString`.
+impl<T: ToString> From<T> for Luhn {
+    fn from(input: T) -> Self {
+        Luhn {
+            input: input.to_string(),
+        }
+    }
+}

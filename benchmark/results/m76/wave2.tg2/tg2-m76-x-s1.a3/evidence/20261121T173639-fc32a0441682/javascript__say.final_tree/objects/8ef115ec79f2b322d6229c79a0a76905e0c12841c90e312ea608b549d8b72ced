@@ -1,0 +1,80 @@
+//
+// Spell out a number from 0 to 999,999,999,999 in English.
+//
+
+const belowTwenty = [
+  'zero',
+  'one',
+  'two',
+  'three',
+  'four',
+  'five',
+  'six',
+  'seven',
+  'eight',
+  'nine',
+  'ten',
+  'eleven',
+  'twelve',
+  'thirteen',
+  'fourteen',
+  'fifteen',
+  'sixteen',
+  'seventeen',
+  'eighteen',
+  'nineteen',
+];
+
+const tens = [
+  '',
+  '',
+  'twenty',
+  'thirty',
+  'forty',
+  'fifty',
+  'sixty',
+  'seventy',
+  'eighty',
+  'ninety',
+];
+
+const scales = ['', ' thousand', ' million', ' billion'];
+
+const twoDigits = (n) => {
+  if (n < 20) return belowTwenty[n];
+  const rest = n % 10;
+  return rest ? `${tens[Math.floor(n / 10)]}-${belowTwenty[rest]}` : tens[Math.floor(n / 10)];
+};
+
+const threeDigits = (n) => {
+  const parts = [];
+  if (n >= 100) {
+    parts.push(`${belowTwenty[Math.floor(n / 100)]} hundred`);
+    n %= 100;
+  }
+  if (n > 0) parts.push(twoDigits(n));
+  return parts.join(' ');
+};
+
+export const say = (n) => {
+  if (n < 0 || n > 999999999999) {
+    throw new Error('Number must be between 0 and 999,999,999,999.');
+  }
+
+  if (n === 0) return 'zero';
+
+  // Break the number into chunks of thousands, least significant first.
+  const chunks = [];
+  while (n > 0) {
+    chunks.unshift(n % 1000);
+    n = Math.floor(n / 1000);
+  }
+
+  return chunks
+    .map((chunk, i) => {
+      const scale = scales[chunks.length - 1 - i];
+      return chunk === 0 ? '' : `${threeDigits(chunk)}${scale}`;
+    })
+    .filter(Boolean)
+    .join(' ');
+};

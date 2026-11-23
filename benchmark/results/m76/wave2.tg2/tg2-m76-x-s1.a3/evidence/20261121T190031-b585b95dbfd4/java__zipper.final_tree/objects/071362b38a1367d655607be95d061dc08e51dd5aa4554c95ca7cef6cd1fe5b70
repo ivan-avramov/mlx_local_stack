@@ -1,0 +1,120 @@
+class Zipper {
+    Zipper up;
+    Zipper left;
+    Zipper right;
+    int value;
+
+    Zipper(int val) {
+        this.value = val;
+    }
+
+    BinaryTree toTree() {
+        Zipper root = this;
+        while (root.up != null) {
+            root = root.up;
+        }
+        return new BinaryTree(root);
+    }
+
+    int getValue() {
+        return value;
+    }
+
+    Zipper setLeft(Zipper leftChild) {
+        left = leftChild;
+        if (leftChild != null) {
+            leftChild.up = this;
+        }
+        rebuildUp();
+        return this;
+    }
+
+    Zipper setRight(Zipper rightChild) {
+        right = rightChild;
+        if (rightChild != null) {
+            rightChild.up = this;
+        }
+        rebuildUp();
+        return this;
+    }
+
+    void setValue(int val) {
+        value = val;
+        rebuildUp();
+    }
+
+    private void rebuildUp() {
+        Zipper current = this;
+        while (current.up != null) {
+            Zipper parent = current.up;
+            if (parent.left == current) {
+                parent.left = current;
+            } else if (parent.right == current) {
+                parent.right = current;
+            }
+            current = parent;
+        }
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof Zipper)) {
+            return false;
+        }
+        return toTree().printTree().equals(((Zipper) other).toTree().printTree());
+    }
+
+    @Override
+    public int hashCode() {
+        return toTree().printTree().hashCode();
+    }
+}
+
+class BinaryTree {
+    private final Zipper root;
+
+    BinaryTree(int value) {
+        this(new Zipper(value));
+    }
+
+    BinaryTree(Zipper root) {
+        this.root = root;
+    }
+
+    Zipper getRoot() {
+        return root;
+    }
+
+    String printTree() {
+        return print(root);
+    }
+
+    private static String print(Zipper zipper) {
+        return "value: " + zipper.value
+                + ", left: " + printChild(zipper.left)
+                + ", right: " + printChild(zipper.right);
+    }
+
+    private static String printChild(Zipper zipper) {
+        return zipper == null ? "null" : "{ " + print(zipper) + " }";
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof BinaryTree)) {
+            return false;
+        }
+        return printTree().equals(((BinaryTree) other).printTree());
+    }
+
+    @Override
+    public int hashCode() {
+        return printTree().hashCode();
+    }
+}

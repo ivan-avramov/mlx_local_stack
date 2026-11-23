@@ -1,0 +1,117 @@
+/// Given a list of poker hands, return a list of those hands which win.
+///
+/// Note the type signature: this function should return _the same_ reference to
+/// the winning hand(s) as were passed in, not reconstructed strings which happen to be equal.
+pub fn winning_hands<'a>(hands: &[&'a str]) -> Vec<&'a str> {
+    let scores: Vec<Vec<u8>> = hands.iter().map(|hand| score_hand(hand)).collect();
+
+    match scores.iter().max() {
+        Some(best) => hands
+            .iter()
+            .zip(scores.iter())
+            .filter(|(_, score)| *score == best)
+            .map(|(hand, _)| *hand)
+            .collect(),
+        None => Vec::new(),
+    }
+}
+
+/// Map a rank token ("2".."10", "J", "Q", "K", "A") to its numeric value.
+fn rank_value(rank: &str) -> u8 {
+    match rank {
+        "2" => 2,
+        "3" => 3,
+        "4" => 4,
+        "5" => 5,
+        "6" => 6,
+        "7" => 7,
+        "8" => 8,
+        "9" => 9,
+        "10" => 10,
+        "J" => 11,
+        "Q" => 12,
+        "K" => 13,
+        "A" => 14,
+        _ => 0,
+    }
+}
+
+/// Score a hand as a comparison vector: `[category, tiebreakers...]`.
+///
+/// Categories: 0 high card, 1 one pair, 2 two pair, 3 three of a kind,
+/// 4 straight, 5 flush, 6 full house, 7 four of a kind, 8 straight flush.
+///
+/// Tiebreakers are the relevant ranks in descending order, so a plain
+/// lexicographic comparison of the vectors implements poker hand ranking.
+fn score_hand(hand: &str) -> Vec<u8> {
+    let mut ranks: Vec<u8> = Vec::with_capacity(5);
+    let mut suits: Vec<char> = Vec::with_capacity(5);
+    for card in hand.split_whitespace() {
+        let suit = card.chars().last().unwrap();
+        let rank = &card[..card.len() - 1];
+        ranks.push(rank_value(rank));
+        suits.push(suit);
+    }
+
+    let flush = suits.iter().all(|s| *s == suits[0]);
+
+    let mut sorted = ranks.clone();
+    sorted.sort_unstable_by(|a, b| b.cmp(a)); // descending
+
+    // Top card of the straight, if the hand contains one.
+    // The ace-low wheel (A-2-3-4-5) scores as a 5-high straight.
+    let straight_top = if sorted.windows(2).all(|w| w[0] - w[1] == 1) {
+        Some(sorted[0])
+    } else if sorted == [14, 5, 4, 3, 2] {
+        Some(5)
+    } else {
+        None
+    };
+
+    // (rank, count) groups, sorted by count descending then rank descending.
+    let mut groups: Vec<(u8, usize)> = (2..=14)
+        .map(|r| (r, ranks.iter().filter(|x| **x == r).count()))
+        .filter(|(_, c)| *c > 0)
+        .collect();
+    groups.sort_by(|a, b| b.1.cmp(&a.1).then(b.0.cmp(&a.0)));
+
+    let mut score = Vec::with_capacity(6);
+    if let Some(top) = straight_top {
+        score.push(if flush { 8 } else { 4 });
+        score.push(top);
+    } else if flush {
+        score.push(5);
+        score.extend(sorted);
+    } else {
+        match groups[0].1 {
+            4 => {
+                // Four of a kind: quad then kicker.
+                score.extend_from_slice(&[7, groups[0].0, groups[1].0]);
+            }
+            3 => {
+                if groups.len() == 2 {
+                    // Full house: triplet then pair.
+                    score.extend_from_slice(&[6, groups[0].0, groups[1].0]);
+                } else {
+                    // Three of a kind: triplet then kickers.
+                    score.extend_from_slice(&[3, groups[0].0, groups[1].0, groups[2].0]);
+                }
+            }
+            2 => {
+                if groups.len() == 3 {
+                    // Two pair: high pair, low pair, kicker.
+                    score.extend_from_slice(&[2, groups[0].0, groups[1].0, groups[2].0]);
+                } else {
+                    // One pair: pair then kickers.
+                    score.extend_from_slice(&[1, groups[0].0, groups[1].0, groups[2].0, groups[3].0]);
+                }
+            }
+            _ => {
+                // High card: all five ranks.
+                score.push(0);
+                score.extend(sorted);
+            }
+        }
+    }
+    score
+}

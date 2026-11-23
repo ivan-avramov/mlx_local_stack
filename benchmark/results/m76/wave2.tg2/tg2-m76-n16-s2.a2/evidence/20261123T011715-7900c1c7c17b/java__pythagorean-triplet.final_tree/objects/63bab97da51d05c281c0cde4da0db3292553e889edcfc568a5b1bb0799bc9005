@@ -1,0 +1,90 @@
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Objects;
+
+class PythagoreanTriplet {
+
+    private final int a;
+    private final int b;
+    private final int c;
+
+    PythagoreanTriplet(int a, int b, int c) {
+        this.a = a;
+        this.b = b;
+        this.c = c;
+    }
+
+    int a() {
+        return a;
+    }
+
+    int b() {
+        return b;
+    }
+
+    int c() {
+        return c;
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (this == other) {
+            return true;
+        }
+        if (!(other instanceof PythagoreanTriplet)) {
+            return false;
+        }
+        PythagoreanTriplet that = (PythagoreanTriplet) other;
+        return a == that.a && b == that.b && c == that.c;
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(a, b, c);
+    }
+
+    static TripletListBuilder makeTripletsList() {
+        return new TripletListBuilder();
+    }
+
+    static class TripletListBuilder {
+
+        private int sum;
+        private int maxFactor = Integer.MAX_VALUE;
+
+        TripletListBuilder thatSumTo(int sum) {
+            this.sum = sum;
+            return this;
+        }
+
+        TripletListBuilder withFactorsLessThanOrEqualTo(int maxFactor) {
+            this.maxFactor = maxFactor;
+            return this;
+        }
+
+        List<PythagoreanTriplet> build() {
+            List<PythagoreanTriplet> triplets = new ArrayList<>();
+            for (int a = 1; a < sum / 3; a++) {
+                // From a^2 + b^2 = c^2 and a + b + c = sum, solving for b:
+                // b = sum * (sum - 2a) / (2 * (sum - a))
+                long numerator = (long) sum * (sum - 2L * a);
+                long denominator = 2L * (sum - a);
+                if (numerator % denominator != 0) {
+                    continue;
+                }
+                long b = numerator / denominator;
+                if (b <= a) {
+                    continue;
+                }
+                long c = sum - a - b;
+                if (c <= b || c > maxFactor) {
+                    continue;
+                }
+                triplets.add(new PythagoreanTriplet(a, (int) b, (int) c));
+            }
+            return triplets;
+        }
+
+    }
+
+}

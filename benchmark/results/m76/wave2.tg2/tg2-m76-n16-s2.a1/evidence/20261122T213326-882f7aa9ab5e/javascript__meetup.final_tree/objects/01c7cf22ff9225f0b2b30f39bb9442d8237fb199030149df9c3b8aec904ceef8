@@ -1,0 +1,49 @@
+const WEEKDAY_TO_INDEX = {
+  Sunday: 0,
+  Monday: 1,
+  Tuesday: 2,
+  Wednesday: 3,
+  Thursday: 4,
+  Friday: 5,
+  Saturday: 6,
+};
+
+const WEEK_OFFSETS = {
+  first: 0,
+  second: 1,
+  third: 2,
+  fourth: 3,
+};
+
+const daysInMonth = (year, month) =>
+  new Date(year, month, 0).getDate();
+
+export const meetup = (year, month, week, weekday) => {
+  const target = WEEKDAY_TO_INDEX[weekday];
+
+  if (week === 'teenth') {
+    for (let day = 13; day <= 19; day += 1) {
+      if (new Date(year, month - 1, day).getDay() === target) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  }
+
+  if (week === 'last') {
+    const lastDay = daysInMonth(year, month);
+    for (let day = lastDay; day >= lastDay - 6; day -= 1) {
+      if (new Date(year, month - 1, day).getDay() === target) {
+        return new Date(year, month - 1, day);
+      }
+    }
+  }
+
+  // first/second/third/fourth: find the first occurrence, then step by weeks
+  let day = 1;
+  while (new Date(year, month - 1, day).getDay() !== target) {
+    day += 1;
+  }
+  day += WEEK_OFFSETS[week] * 7;
+
+  return new Date(year, month - 1, day);
+};

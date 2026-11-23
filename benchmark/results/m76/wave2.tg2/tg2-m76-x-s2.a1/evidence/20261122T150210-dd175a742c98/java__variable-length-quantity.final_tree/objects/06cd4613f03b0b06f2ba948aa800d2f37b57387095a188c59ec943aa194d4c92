@@ -1,0 +1,50 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class VariableLengthQuantity {
+
+    private static final long CONTINUE_BIT = 0x80L;
+    private static final long VALUE_MASK = 0x7fL;
+
+    List<String> encode(List<Long> numbers) {
+        List<String> result = new ArrayList<>();
+        for (long number : numbers) {
+            List<Long> groups = new ArrayList<>();
+            do {
+                groups.add(number & VALUE_MASK);
+                number >>>= 7;
+            } while (number != 0);
+            for (int i = groups.size() - 1; i >= 0; i--) {
+                long byteValue = groups.get(i);
+                if (i > 0) {
+                    byteValue |= CONTINUE_BIT;
+                }
+                result.add(hex(byteValue));
+            }
+        }
+        return result;
+    }
+
+    List<String> decode(List<Long> bytes) {
+        List<String> result = new ArrayList<>();
+        long value = 0;
+        boolean inSequence = false;
+        for (long byteValue : bytes) {
+            value = (value << 7) | (byteValue & VALUE_MASK);
+            inSequence = true;
+            if ((byteValue & CONTINUE_BIT) == 0) {
+                result.add(hex(value));
+                value = 0;
+                inSequence = false;
+            }
+        }
+        if (inSequence) {
+            throw new IllegalArgumentException("Invalid variable-length quantity encoding");
+        }
+        return result;
+    }
+
+    private static String hex(long value) {
+        return "0x" + Long.toHexString(value);
+    }
+}

@@ -1,0 +1,86 @@
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.HashSet;
+import java.util.Set;
+
+class TwoBucket {
+
+    private final int totalMoves;
+    private final String finalBucket;
+    private final int otherBucket;
+
+    TwoBucket(int bucketOneCap, int bucketTwoCap, int desiredLiters, String startBucket) {
+        int[] result = solve(bucketOneCap, bucketTwoCap, desiredLiters, startBucket);
+        this.totalMoves = result[0];
+        this.finalBucket = result[1] == 0 ? "one" : "two";
+        this.otherBucket = result[1] == 0 ? result[3] : result[2];
+    }
+
+    private static int[] solve(int capOne, int capTwo, int goal, String startBucket) {
+        boolean startOne = startBucket.equals("one");
+
+        Deque<int[]> queue = new ArrayDeque<>();
+        Set<String> seen = new HashSet<>();
+
+        int a = startOne ? capOne : 0;
+        int b = startOne ? 0 : capTwo;
+        queue.add(new int[]{a, b, 1});
+        seen.add(key(a, b));
+
+        while (!queue.isEmpty()) {
+            int[] current = queue.poll();
+            int x = current[0];
+            int y = current[1];
+            int moves = current[2];
+
+            if (x == goal || y == goal) {
+                return new int[]{moves, x == goal ? 0 : 1, x, y};
+            }
+
+            for (int[] next : successors(x, y, capOne, capTwo)) {
+                if (forbidden(next[0], next[1], startOne, capOne, capTwo)) {
+                    continue;
+                }
+                if (!seen.add(key(next[0], next[1]))) {
+                    continue;
+                }
+                queue.add(new int[]{next[0], next[1], moves + 1});
+            }
+        }
+
+        throw new IllegalArgumentException("No solution exists");
+    }
+
+    private static int[][] successors(int x, int y, int capOne, int capTwo) {
+        int pourToTwo = Math.min(x, capTwo - y);
+        int pourToOne = Math.min(y, capOne - x);
+        return new int[][]{
+            {x - pourToTwo, y + pourToTwo},
+            {x + pourToOne, y - pourToOne},
+            {0, y},
+            {x, 0},
+            {capOne, y},
+            {x, capTwo}
+        };
+    }
+
+    private static boolean forbidden(int x, int y, boolean startOne, int capOne, int capTwo) {
+        return startOne ? (x == 0 && y == capTwo) : (y == 0 && x == capOne);
+    }
+
+    private static String key(int x, int y) {
+        return x + "," + y;
+    }
+
+    int getTotalMoves() {
+        return totalMoves;
+    }
+
+    String getFinalBucket() {
+        return finalBucket;
+    }
+
+    int getOtherBucket() {
+        return otherBucket;
+    }
+}

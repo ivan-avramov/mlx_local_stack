@@ -1,0 +1,106 @@
+#if !defined(BINARY_SEARCH_TREE_H)
+#define BINARY_SEARCH_TREE_H
+
+#include <cstddef>
+#include <memory>
+#include <vector>
+
+namespace binary_search_tree {
+
+template <typename T>
+class binary_tree {
+public:
+    binary_tree(T data) : data_(std::move(data)) {}
+
+    const T& data() const { return data_; }
+
+    void insert(const T& data) { insert(data, left_, right_); }
+    void insert(T&& data) { insert(std::move(data), left_, right_); }
+
+    std::unique_ptr<binary_tree<T>>& left() { return left_; }
+    std::unique_ptr<binary_tree<T>>& right() { return right_; }
+
+    class iterator {
+    public:
+        using value_type = T;
+        using difference_type = std::ptrdiff_t;
+        using reference = T&;
+        using pointer = T*;
+        using iterator_category = std::forward_iterator_tag;
+
+        iterator() = default;
+
+        iterator(binary_tree<T>* node) {
+            while (node != nullptr) {
+                stack_.push_back(node);
+                node = node->left_ ? node->left_.get() : nullptr;
+            }
+        }
+
+        reference operator*() const { return stack_.back()->data_; }
+        pointer operator->() const { return &stack_.back()->data_; }
+
+        iterator& operator++() {
+            binary_tree<T>* node = stack_.back();
+            stack_.pop_back();
+            node = node->right_ ? node->right_.get() : nullptr;
+            while (node != nullptr) {
+                stack_.push_back(node);
+                node = node->left_ ? node->left_.get() : nullptr;
+            }
+            return *this;
+        }
+
+        bool operator==(const iterator& other) const { return stack_ == other.stack_; }
+        bool operator!=(const iterator& other) const { return stack_ != other.stack_; }
+
+    private:
+        std::vector<binary_tree<T>*> stack_;
+    };
+
+    iterator begin() { return iterator(this); }
+    iterator end() { return iterator(); }
+
+private:
+    T data_;
+    std::unique_ptr<binary_tree<T>> left_;
+    std::unique_ptr<binary_tree<T>> right_;
+
+    void insert(const T& data, std::unique_ptr<binary_tree<T>>& l,
+                std::unique_ptr<binary_tree<T>>& r) {
+        if (data <= data_) {
+            if (l) {
+                l->insert(data);
+            } else {
+                l = std::make_unique<binary_tree<T>>(data);
+            }
+        } else {
+            if (r) {
+                r->insert(data);
+            } else {
+                r = std::make_unique<binary_tree<T>>(data);
+            }
+        }
+    }
+
+    void insert(T&& data, std::unique_ptr<binary_tree<T>>& l,
+                std::unique_ptr<binary_tree<T>>& r) {
+        if (data <= data_) {
+            if (l) {
+                l->insert(std::move(data));
+            } else {
+                l = std::make_unique<binary_tree<T>>(std::move(data));
+            }
+        } else {
+            if (r) {
+                r->insert(std::move(data));
+            } else {
+                r = std::make_unique<binary_tree<T>>(std::move(data));
+            }
+        }
+    }
+};
+
+}  // namespace binary_search_tree
+
+#endif // BINARY_SEARCH_TREE_H

@@ -1,0 +1,121 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class BowlingGame {
+
+    private static final int PINS_PER_FRAME = 10;
+    private static final int TOTAL_FRAMES = 10;
+
+    private final List<List<Integer>> frames = new ArrayList<>();
+
+    void roll(int pins) {
+        if (gameOver()) {
+            throw new IllegalStateException("Cannot roll after game is over");
+        }
+        if (pins < 0) {
+            throw new IllegalStateException("Negative roll is invalid");
+        }
+        if (pins > PINS_PER_FRAME) {
+            throw new IllegalStateException("Pin count exceeds pins on the lane");
+        }
+
+        List<Integer> frame = currentFrame();
+        boolean tenthFrame = frames.size() == TOTAL_FRAMES;
+
+        if (tenthFrame) {
+            validateTenthFrame(frame, pins);
+        } else {
+            if (frame.size() == 1 && frame.get(0) != PINS_PER_FRAME
+                    && frame.get(0) + pins > PINS_PER_FRAME) {
+                throw new IllegalStateException("Pin count exceeds pins on the lane");
+            }
+        }
+
+        frame.add(pins);
+    }
+
+    int score() {
+        if (!gameOver()) {
+            throw new IllegalStateException("Score cannot be taken until the end of the game");
+        }
+
+        List<Integer> rolls = new ArrayList<>();
+        for (List<Integer> frame : frames) {
+            rolls.addAll(frame);
+        }
+
+        int total = 0;
+        int i = 0;
+        for (int frame = 0; frame < TOTAL_FRAMES; frame++) {
+            if (frame == TOTAL_FRAMES - 1) {
+                while (i < rolls.size()) {
+                    total += rolls.get(i);
+                    i++;
+                }
+            } else if (rolls.get(i) == PINS_PER_FRAME) {
+                total += PINS_PER_FRAME + rolls.get(i + 1) + rolls.get(i + 2);
+                i += 1;
+            } else {
+                int first = rolls.get(i);
+                int second = rolls.get(i + 1);
+                if (first + second == PINS_PER_FRAME) {
+                    total += PINS_PER_FRAME + rolls.get(i + 2);
+                } else {
+                    total += first + second;
+                }
+                i += 2;
+            }
+        }
+        return total;
+    }
+
+    private boolean gameOver() {
+        return frames.size() == TOTAL_FRAMES
+                && isFrameComplete(frames.get(TOTAL_FRAMES - 1), true);
+    }
+
+    private List<Integer> currentFrame() {
+        if (frames.size() < TOTAL_FRAMES) {
+            if (!frames.isEmpty() && !isFrameComplete(frames.get(frames.size() - 1), false)) {
+                return frames.get(frames.size() - 1);
+            }
+            frames.add(new ArrayList<>());
+        }
+        return frames.get(frames.size() - 1);
+    }
+
+    private boolean isFrameComplete(List<Integer> frame, boolean tenthFrame) {
+        if (frame.isEmpty()) {
+            return false;
+        }
+        if (tenthFrame) {
+            if (frame.get(0) == PINS_PER_FRAME) {
+                return frame.size() == 3;
+            }
+            if (frame.size() < 2) {
+                return false;
+            }
+            int sum = frame.get(0) + frame.get(1);
+            return sum < PINS_PER_FRAME ? frame.size() == 2 : frame.size() == 3;
+        }
+        return frame.size() == 2 || (frame.size() == 1 && frame.get(0) == PINS_PER_FRAME);
+    }
+
+    private void validateTenthFrame(List<Integer> frame, int pins) {
+        int size = frame.size();
+        if (size == 1) {
+            if (frame.get(0) != PINS_PER_FRAME && frame.get(0) + pins > PINS_PER_FRAME) {
+                throw new IllegalStateException("Pin count exceeds pins on the lane");
+            }
+        } else if (size == 2) {
+            int first = frame.get(0);
+            int second = frame.get(1);
+            if (first == PINS_PER_FRAME && second != PINS_PER_FRAME
+                    && second + pins > PINS_PER_FRAME) {
+                throw new IllegalStateException("Pin count exceeds pins on the lane");
+            }
+        }
+        // If the frame is a spare (first + second == 10), the bonus roll is
+        // always at most 10 pins, so no extra check is needed.
+    }
+}

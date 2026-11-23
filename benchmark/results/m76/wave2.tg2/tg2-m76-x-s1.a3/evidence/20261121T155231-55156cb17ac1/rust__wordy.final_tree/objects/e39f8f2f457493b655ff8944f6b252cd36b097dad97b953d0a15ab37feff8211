@@ -1,0 +1,55 @@
+pub fn answer(command: &str) -> Option<i32> {
+    let body = command.strip_prefix("What is ")?;
+    let body = body.strip_suffix('?')?;
+    let mut tokens = body.split_whitespace();
+
+    let mut acc = parse_number(tokens.next()?)?;
+
+    while let Some(token) = tokens.next() {
+        match token {
+            "plus" => {
+                acc = acc.checked_add(parse_number(tokens.next()?)?)?;
+            }
+            "minus" => {
+                acc = acc.checked_sub(parse_number(tokens.next()?)?)?;
+            }
+            "multiplied" => {
+                if tokens.next() != Some("by") {
+                    return None;
+                }
+                acc = acc.checked_mul(parse_number(tokens.next()?)?)?;
+            }
+            "divided" => {
+                if tokens.next() != Some("by") {
+                    return None;
+                }
+                let rhs = parse_number(tokens.next()?)?;
+                acc = acc.checked_div(rhs)?;
+            }
+            #[cfg(feature = "exponentials")]
+            "raised" => {
+                if tokens.next() != Some("to") || tokens.next() != Some("the") {
+                    return None;
+                }
+                let exponent = parse_number(tokens.next()?)?;
+                if tokens.next() != Some("power") {
+                    return None;
+                }
+                acc = acc.checked_pow(exponent as u32)?;
+            }
+            _ => return None,
+        }
+    }
+
+    Some(acc)
+}
+
+/// Parses a token as an integer, ignoring any ordinal suffix
+/// (e.g. "5th", "2nd", "3rd", "1st").
+fn parse_number(token: &str) -> Option<i32> {
+    let digits: String = token
+        .chars()
+        .take_while(|c| c.is_ascii_digit() || *c == '-')
+        .collect();
+    digits.parse().ok()
+}

@@ -1,0 +1,58 @@
+#include "dnd_character.h"
+
+#include <random>
+
+namespace dnd_character {
+
+namespace {
+
+std::mt19937& engine() {
+    static std::random_device rd;
+    static std::mt19937 gen{rd()};
+    return gen;
+}
+
+}  // namespace
+
+int modifier(int score) {
+    int diff = score - 10;
+    int result = diff / 2;
+    // Round down (toward negative infinity) rather than truncating toward zero.
+    if (diff < 0 && diff % 2 != 0) {
+        --result;
+    }
+    return result;
+}
+
+int ability() {
+    std::uniform_int_distribution<int> die(1, 6);
+    int rolls[4];
+    for (int& roll : rolls) {
+        roll = die(engine());
+    }
+
+    int lowest = rolls[0];
+    for (int roll : rolls) {
+        if (roll < lowest) {
+            lowest = roll;
+        }
+    }
+
+    int total = 0;
+    for (int roll : rolls) {
+        total += roll;
+    }
+    return total - lowest;
+}
+
+Character::Character() {
+    strength = ability();
+    dexterity = ability();
+    constitution = ability();
+    intelligence = ability();
+    wisdom = ability();
+    charisma = ability();
+    hitpoints = 10 + modifier(constitution);
+}
+
+}  // namespace dnd_character

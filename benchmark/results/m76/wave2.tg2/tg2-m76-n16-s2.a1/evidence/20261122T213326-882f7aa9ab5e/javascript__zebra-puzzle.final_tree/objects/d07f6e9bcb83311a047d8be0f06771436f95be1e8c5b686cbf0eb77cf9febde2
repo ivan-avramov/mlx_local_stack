@@ -1,0 +1,162 @@
+//
+// This is only a SKELETON file for the 'Zebra Puzzle' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NATIONALITIES = ['Englishman', 'Spaniard', 'Ukrainian', 'Norwegian', 'Japanese'];
+const COLORS = ['Red', 'Ivory', 'Green', 'Yellow', 'Blue'];
+const PETS = ['Dog', 'Fox', 'Snail', 'Horse', 'Zebra'];
+const DRINKS = ['Coffee', 'Tea', 'Milk', 'Orange juice', 'Water'];
+const HOBBIES = ['Dancing', 'Reading', 'Painter', 'Football', 'Chess'];
+
+export class ZebraPuzzle {
+  constructor() {
+    this.solution = this.solve();
+  }
+
+  waterDrinker() {
+    return this.solution.waterDrinker;
+  }
+
+  zebraOwner() {
+    return this.solution.zebraOwner;
+  }
+
+  solve() {
+    const houses = [0, 1, 2, 3, 4].map(() => ({}));
+
+    // 10. The Norwegian lives in the first house.
+    houses[0].nationality = 'Norwegian';
+    // 9. The person in the middle house drinks milk.
+    houses[2].drink = 'Milk';
+
+    // A constraint that relates two attributes of the same house is violated
+    // when one side is assigned its triggering value and the other side is
+    // already assigned a different value than the constraint requires.
+    const conflict = (a, aIs, b, bMustBe) =>
+      a === aIs && b !== undefined && b !== bMustBe;
+
+    // The neighbors of house `h`, ignoring houses that do not exist.
+    const neighborsOf = (h) => [houses[h - 1], houses[h + 1]].filter(Boolean);
+
+    // Checks every constraint that can already be evaluated from the
+    // partially assigned houses. Returns false as soon as a constraint is
+    // definitely violated, which prunes the search tree early.
+    const isConsistent = () => {
+      for (let h = 0; h < 5; h++) {
+        const { nationality, color, pet, drink, hobby } = houses[h];
+
+        // 2. The Englishman lives in the red house.
+        if (conflict(nationality, 'Englishman', color, 'Red') ||
+            conflict(color, 'Red', nationality, 'Englishman')) return false;
+
+        // 3. The Spaniard owns the dog.
+        if (conflict(nationality, 'Spaniard', pet, 'Dog') ||
+            conflict(pet, 'Dog', nationality, 'Spaniard')) return false;
+
+        // 4. The person in the green house drinks coffee.
+        if (conflict(color, 'Green', drink, 'Coffee') ||
+            conflict(drink, 'Coffee', color, 'Green')) return false;
+
+        // 5. The Ukrainian drinks tea.
+        if (conflict(nationality, 'Ukrainian', drink, 'Tea') ||
+            conflict(drink, 'Tea', nationality, 'Ukrainian')) return false;
+
+        // 7. The snail owner likes to go dancing.
+        if (conflict(pet, 'Snail', hobby, 'Dancing') ||
+            conflict(hobby, 'Dancing', pet, 'Snail')) return false;
+
+        // 8. The person in the yellow house is a painter.
+        if (conflict(color, 'Yellow', hobby, 'Painter') ||
+            conflict(hobby, 'Painter', color, 'Yellow')) return false;
+
+        // 13. The person who plays football drinks orange juice.
+        if (conflict(hobby, 'Football', drink, 'Orange juice') ||
+            conflict(drink, 'Orange juice', hobby, 'Football')) return false;
+
+        // 14. The Japanese person plays chess.
+        if (conflict(nationality, 'Japanese', hobby, 'Chess') ||
+            conflict(hobby, 'Chess', nationality, 'Japanese')) return false;
+      }
+
+      // 6. The green house is immediately to the right of the ivory house.
+      for (let h = 0; h < 5; h++) {
+        const color = houses[h].color;
+        if (color === 'Ivory' && h === 4) return false;
+        if (color === 'Ivory' &&
+            houses[h + 1].color !== undefined && houses[h + 1].color !== 'Green') return false;
+        if (color === 'Green' && h === 0) return false;
+        if (color === 'Green' &&
+            houses[h - 1].color !== undefined && houses[h - 1].color !== 'Ivory') return false;
+      }
+
+      // 11. The person who enjoys reading lives next to the person with the fox.
+      for (let h = 0; h < 5; h++) {
+        if (houses[h].hobby === 'Reading' || houses[h].pet === 'Fox') {
+          const neighbors = neighborsOf(h);
+          const allAssigned = neighbors.every((n) => n.hobby !== undefined && n.pet !== undefined);
+          if (!allAssigned) continue;
+          const readingNextToFox = neighbors.some(
+            (n) => (n.hobby === 'Reading' && houses[h].pet === 'Fox') ||
+                   (n.pet === 'Fox' && houses[h].hobby === 'Reading'),
+          );
+          if (!readingNextToFox) return false;
+        }
+      }
+
+      // 12. The painter's house is next to the house with the horse.
+      for (let h = 0; h < 5; h++) {
+        if (houses[h].hobby === 'Painter' || houses[h].pet === 'Horse') {
+          const neighbors = neighborsOf(h);
+          const allAssigned = neighbors.every((n) => n.hobby !== undefined && n.pet !== undefined);
+          if (!allAssigned) continue;
+          const painterNextToHorse = neighbors.some(
+            (n) => (n.hobby === 'Painter' && houses[h].pet === 'Horse') ||
+                   (n.pet === 'Horse' && houses[h].hobby === 'Painter'),
+          );
+          if (!painterNextToHorse) return false;
+        }
+      }
+
+      // 15. The Norwegian (house 0) lives next to the blue house.
+      if (houses[1].color !== undefined && houses[1].color !== 'Blue') return false;
+
+      return true;
+    };
+
+    const categories = ['nationality', 'color', 'pet', 'drink', 'hobby'];
+    const values = [NATIONALITIES, COLORS, PETS, DRINKS, HOBBIES];
+
+    // Places the values of one category, one at a time, into the houses.
+    // Once every value of a category is placed, the next category starts.
+    const backtrack = (categoryIndex, valueIndex) => {
+      if (categoryIndex === categories.length) {
+        return isConsistent();
+      }
+
+      if (valueIndex === values[categoryIndex].length) {
+        return backtrack(categoryIndex + 1, 0);
+      }
+
+      const category = categories[categoryIndex];
+      const value = values[categoryIndex][valueIndex];
+
+      for (let index = 0; index < 5; index++) {
+        if (houses[index][category] !== undefined) continue;
+
+        houses[index][category] = value;
+        if (isConsistent() && backtrack(categoryIndex, valueIndex + 1)) return true;
+        houses[index][category] = undefined;
+      }
+
+      return false;
+    };
+
+    backtrack(0, 0);
+
+    const waterDrinker = houses.find((h) => h.drink === 'Water').nationality;
+    const zebraOwner = houses.find((h) => h.pet === 'Zebra').nationality;
+
+    return { waterDrinker, zebraOwner };
+  }
+}

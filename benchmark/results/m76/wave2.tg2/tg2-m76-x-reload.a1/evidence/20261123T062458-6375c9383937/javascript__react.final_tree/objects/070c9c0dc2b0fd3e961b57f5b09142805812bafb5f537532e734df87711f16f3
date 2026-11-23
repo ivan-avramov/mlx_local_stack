@@ -1,0 +1,115 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+// Recomputes all cells that transitively depend on `source`, in topological
+// (dependency) order, so every cell is recomputed after all of its inputs.
+// A cell's callbacks are invoked only when its value in the new stable state
+// differs from the previous stable state.
+function propagate(source) {
+  // Collect every cell that transitively depends on `source`.
+  const affected = new Set();
+  const stack = [...source.dependents];
+  while (stack.length > 0) {
+    const cell = stack.pop();
+    if (!affected.has(cell)) {
+      affected.add(cell);
+      for (const dependent of cell.dependents) {
+        stack.push(dependent);
+      }
+    }
+  }
+
+  // Count, for each affected cell, how many of its inputs still need to be
+  // recomputed first (Kahn's algorithm).
+  const pendingInputs = new Map();
+  for (const cell of affected) {
+    let count = 0;
+    for (const input of cell.inputCells) {
+      if (affected.has(input)) {
+        count++;
+      }
+    }
+    pendingInputs.set(cell, count);
+  }
+
+  const queue = [];
+  for (const cell of affected) {
+    if (pendingInputs.get(cell) === 0) {
+      queue.push(cell);
+    }
+  }
+
+  let head = 0;
+  while (head < queue.length) {
+    const cell = queue[head++];
+    const newValue = cell.fn(cell.inputCells);
+
+    if (newValue !== cell.value) {
+      cell.value = newValue;
+      for (const callback of cell.callbacks) {
+        callback.fire(cell);
+      }
+    }
+
+    for (const dependent of cell.dependents) {
+      if (affected.has(dependent)) {
+        const remaining = pendingInputs.get(dependent) - 1;
+        pendingInputs.set(dependent, remaining);
+        if (remaining === 0) {
+          queue.push(dependent);
+        }
+      }
+    }
+  }
+}
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = new Set();
+  }
+
+  setValue(value) {
+    if (this.value === value) {
+      return;
+    }
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputCells = inputCells;
+    this.fn = fn;
+    this.value = fn(inputCells);
+    this.callbacks = new Set();
+    this.dependents = new Set();
+
+    for (const inputCell of inputCells) {
+      inputCell.dependents.add(this);
+    }
+  }
+
+  addCallback(callback) {
+    this.callbacks.add(callback);
+  }
+
+  removeCallback(callback) {
+    this.callbacks.delete(callback);
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+
+  // Invoked by a ComputeCell when its value has changed in a new stable state.
+  fire(cell) {
+    this.values.push(this.fn(cell));
+  }
+}

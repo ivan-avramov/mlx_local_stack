@@ -1,0 +1,138 @@
+//! Generate musical scales from a tonic and a sequence of intervals.
+//!
+//! Scales are built by walking the twelve-pitch chromatic scale. Each interval
+//! advances a number of chromatic steps (semitones):
+//!
+//! * `m` — minor second (half step)  → 1 step
+//! * `M` — major second (whole step) → 2 steps
+//! * `A` — augmented second          → 3 steps
+//!
+//! Every pitch class has two spellings (e.g. `C#` / `Db`). Which spelling is
+//! used is decided by the tonic's key signature: keys that conventionally use
+//! sharps spell the in-between notes with sharps, keys that use flats spell
+//! them with flats.
+
+use std::fmt;
+
+/// Error returned when a tonic or interval string cannot be interpreted.
+#[derive(Debug)]
+pub struct Error;
+
+impl fmt::Display for Error {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "invalid tonic or interval")
+    }
+}
+
+impl std::error::Error for Error {}
+
+/// A generated scale.
+pub struct Scale {
+    notes: Vec<String>,
+}
+
+/// Natural (unaccidentaled) pitch class for each letter name, with `C = 0`.
+const NATURAL_PITCH: [i32; 7] = [0, 2, 4, 5, 7, 9, 11];
+
+/// The chromatic scale indexed by pitch class (0–11), spelled with sharps.
+const SHARP_CHROMATIC: [&str; 12] = [
+    "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
+];
+
+/// The chromatic scale indexed by pitch class (0–11), spelled with flats.
+const FLAT_CHROMATIC: [&str; 12] = [
+    "C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B",
+];
+
+impl Scale {
+    /// Construct a scale from `tonic` following the interval pattern in
+    /// `intervals`.
+    pub fn new(tonic: &str, intervals: &str) -> Result<Scale, Error> {
+        let (start, use_sharps) = parse_tonic(tonic)?;
+        let chromatic = if use_sharps {
+            &SHARP_CHROMATIC
+        } else {
+            &FLAT_CHROMATIC
+        };
+
+        let mut notes = Vec::new();
+        let mut index = start;
+        notes.push(chromatic[index].to_string());
+
+        for c in intervals.chars() {
+            let step = match c {
+                'm' => 1,
+                'M' => 2,
+                'A' => 3,
+                _ => return Err(Error),
+            };
+            index = (index + step) % 12;
+            notes.push(chromatic[index].to_string());
+        }
+
+        Ok(Scale { notes })
+    }
+
+    /// Construct the full chromatic scale starting at `tonic`.
+    pub fn chromatic(tonic: &str) -> Result<Scale, Error> {
+        Self::new(tonic, "mmmmmmmmmmmm")
+    }
+
+    /// Return the sequence of note names in the scale.
+    pub fn enumerate(&self) -> Vec<String> {
+        self.notes.clone()
+    }
+}
+
+/// Parse a tonic such as `"C"`, `"F#"`, `"bb"` or `"Eb"` into a pitch-class
+/// index (0–11) and a boolean indicating whether the scale should be spelled
+/// with sharps (`true`) or flats (`false`).
+fn parse_tonic(tonic: &str) -> Result<(usize, bool), Error> {
+    let mut chars = tonic.chars();
+    let letter = chars.next().ok_or(Error)?;
+    let is_minor = letter.is_ascii_lowercase();
+    let letter = letter.to_ascii_uppercase();
+
+    let letter_index = match letter {
+        'C' => 0,
+        'D' => 1,
+        'E' => 2,
+        'F' => 3,
+        'G' => 4,
+        'A' => 5,
+        'B' => 6,
+        _ => return Err(Error),
+    };
+
+    let accidental = chars.next();
+    if chars.next().is_some() {
+        return Err(Error);
+    }
+
+    let mut pitch = NATURAL_PITCH[letter_index];
+    let use_sharps = match accidental {
+        Some('#') => {
+            pitch += 1;
+            true
+        }
+        Some('b') => {
+            pitch -= 1;
+            false
+        }
+        None => {
+            // A natural tonic: the spelling follows the key signature.
+            // Uppercase letters denote major keys, lowercase denote minor.
+            if is_minor {
+                // Minor keys using flats: c, d, f, g. The rest use sharps.
+                !matches!(letter_index, 0 | 1 | 3 | 4)
+            } else {
+                // Major keys using flats: only F. The rest use sharps.
+                letter_index != 3
+            }
+        }
+        _ => return Err(Error),
+    };
+
+    let pitch = ((pitch % 12) + 12) % 12;
+    Ok((pitch as usize, use_sharps))
+}

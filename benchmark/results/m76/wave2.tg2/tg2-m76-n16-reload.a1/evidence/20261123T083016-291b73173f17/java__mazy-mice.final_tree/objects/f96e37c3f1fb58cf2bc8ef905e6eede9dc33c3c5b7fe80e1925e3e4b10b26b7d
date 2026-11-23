@@ -1,0 +1,187 @@
+import java.util.Arrays;
+import java.util.Random;
+
+public class MazeGenerator {
+
+    private static final int MIN_SIZE = 5;
+    private static final int MAX_SIZE = 100;
+
+    // Cell-space movement directions: {deltaRow, deltaColumn}
+    private static final int[][] DIRECTIONS = {
+            {-1, 0}, // north
+            {1, 0},  // south
+            {0, -1}, // west
+            {0, 1}   // east
+    };
+
+    public char[][] generatePerfectMaze(int rows, int columns) {
+        return generatePerfectMaze(rows, columns, new Random());
+    }
+
+    public char[][] generatePerfectMaze(int rows, int columns, int seed) {
+        return generatePerfectMaze(rows, columns, new Random(seed));
+    }
+
+    private char[][] generatePerfectMaze(int rows, int columns, Random random) {
+        if (rows < MIN_SIZE || rows > MAX_SIZE || columns < MIN_SIZE || columns > MAX_SIZE) {
+            throw new IllegalArgumentException(
+                    "rows and columns must be between " + MIN_SIZE + " and " + MAX_SIZE);
+        }
+
+        // wallH[hr][c] is the horizontal wall segment drawn at character position
+        // (2*hr, 2*c+1). hr ranges 0..rows (0 = top border, rows = bottom border).
+        boolean[][] wallH = new boolean[rows + 1][columns];
+        // wallV[r][vc] is the vertical wall segment drawn at character position
+        // (2*r+1, 2*vc). vc ranges 0..columns (0 = left border, columns = right border).
+        boolean[][] wallV = new boolean[rows][columns + 1];
+
+        for (boolean[] row : wallH) {
+            Arrays.fill(row, true);
+        }
+        for (boolean[] row : wallV) {
+            Arrays.fill(row, true);
+        }
+
+        carveMaze(rows, columns, wallH, wallV, random);
+
+        return drawMaze(rows, columns, wallH, wallV, random);
+    }
+
+    /**
+     * Carves a perfect maze (a spanning tree of the cell graph) using the
+     * recursive backtracker algorithm, implemented iteratively with an explicit
+     * stack so that large mazes do not overflow the call stack.
+     */
+    private void carveMaze(int rows, int columns, boolean[][] wallH, boolean[][] wallV, Random random) {
+        boolean[][] visited = new boolean[rows][columns];
+        int[] stack = new int[rows * columns];
+        int stackSize = 0;
+
+        int startCell = random.nextInt(rows * columns);
+        visited[startCell / columns][startCell % columns] = true;
+        stack[stackSize++] = startCell;
+
+        while (stackSize > 0) {
+            int current = stack[stackSize - 1];
+            int r = current / columns;
+            int c = current % columns;
+
+            int unvisitedCount = 0;
+            int[] candidates = new int[DIRECTIONS.length];
+            for (int d = 0; d < DIRECTIONS.length; d++) {
+                int nr = r + DIRECTIONS[d][0];
+                int nc = c + DIRECTIONS[d][1];
+                if (nr >= 0 && nr < rows && nc >= 0 && nc < columns && !visited[nr][nc]) {
+                    candidates[unvisitedCount++] = d;
+                }
+            }
+
+            if (unvisitedCount > 0) {
+                int d = candidates[random.nextInt(unvisitedCount)];
+                int nr = r + DIRECTIONS[d][0];
+                int nc = c + DIRECTIONS[d][1];
+                removeWall(wallH, wallV, r, c, nr, nc);
+                visited[nr][nc] = true;
+                stack[stackSize++] = nr * columns + nc;
+            } else {
+                stackSize--;
+            }
+        }
+    }
+
+    private void removeWall(boolean[][] wallH, boolean[][] wallV, int r, int c, int nr, int nc) {
+        if (nr == r - 1) {
+            wallH[r][c] = false;
+        } else if (nr == r + 1) {
+            wallH[r + 1][c] = false;
+        } else if (nc == c - 1) {
+            wallV[r][c] = false;
+        } else {
+            wallV[r][c + 1] = false;
+        }
+    }
+
+    private char[][] drawMaze(int rows, int columns, boolean[][] wallH, boolean[][] wallV, Random random) {
+        char[][] maze = new char[2 * rows + 1][2 * columns + 1];
+        for (char[] row : maze) {
+            Arrays.fill(row, ' ');
+        }
+
+        for (int i = 0; i <= rows; i++) {
+            for (int c = 0; c < columns; c++) {
+                if (wallH[i][c]) {
+                    maze[2 * i][2 * c + 1] = '─';
+                }
+            }
+        }
+        for (int r = 0; r < rows; r++) {
+            for (int vc = 0; vc <= columns; vc++) {
+                if (wallV[r][vc]) {
+                    maze[2 * r + 1][2 * vc] = '│';
+                }
+            }
+        }
+
+        // Overwrite every even/even position with the correct junction character.
+        for (int hr = 0; hr <= rows; hr++) {
+            for (int vc = 0; vc <= columns; vc++) {
+                boolean up = hr > 0 && wallV[hr - 1][vc];
+                boolean down = hr < rows && wallV[hr][vc];
+                boolean left = vc > 0 && wallH[hr][vc - 1];
+                boolean right = vc < columns && wallH[hr][vc];
+                maze[2 * hr][2 * vc] = junctionChar(up, down, left, right);
+            }
+        }
+
+        // Open the entrance on the left border and the exit on the right border.
+        int entranceRow = random.nextInt(rows);
+        int exitRow = random.nextInt(rows);
+        maze[2 * entranceRow + 1][0] = '⇨';
+        maze[2 * exitRow + 1][2 * columns] = '⇨';
+
+        return maze;
+    }
+
+    private char junctionChar(boolean up, boolean down, boolean left, boolean right) {
+        if (up && down && left && right) {
+            return '┼';
+        }
+        if (up && down && left) {
+            return '┤';
+        }
+        if (up && down && right) {
+            return '├';
+        }
+        if (up && left && right) {
+            return '┴';
+        }
+        if (down && left && right) {
+            return '┬';
+        }
+        if (up && down) {
+            return '│';
+        }
+        if (left && right) {
+            return '─';
+        }
+        if (up && left) {
+            return '┘';
+        }
+        if (up && right) {
+            return '└';
+        }
+        if (down && left) {
+            return '┐';
+        }
+        if (down && right) {
+            return '┌';
+        }
+        if (up || down) {
+            return '│';
+        }
+        if (left || right) {
+            return '─';
+        }
+        return ' ';
+    }
+}

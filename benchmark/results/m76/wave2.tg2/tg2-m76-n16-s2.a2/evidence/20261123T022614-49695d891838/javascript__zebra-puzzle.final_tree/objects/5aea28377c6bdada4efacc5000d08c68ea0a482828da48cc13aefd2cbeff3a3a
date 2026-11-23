@@ -1,0 +1,156 @@
+//
+// This is only a SKELETON file for the 'Zebra Puzzle' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+const NATIONALITIES = ['Englishman', 'Spaniard', 'Ukrainian', 'Norwegian', 'Japanese'];
+const COLORS = ['Red', 'Ivory', 'Green', 'Yellow', 'Blue'];
+const PETS = ['Dog', 'Fox', 'Snail', 'Horse', 'Zebra'];
+const DRINKS = ['Coffee', 'Tea', 'Milk', 'Orange juice', 'Water'];
+const HOBBIES = ['Dancing', 'Reading', 'Painter', 'Football', 'Chess'];
+
+export class ZebraPuzzle {
+  constructor() {
+    this.solution = this.solve();
+  }
+
+  waterDrinker() {
+    return this.solution.waterDrinker;
+  }
+
+  zebraOwner() {
+    return this.solution.zebraOwner;
+  }
+
+  solve() {
+    const houses = [0, 1, 2, 3, 4].map(() => ({}));
+
+    // 10. The Norwegian lives in the first house.
+    houses[0].nationality = 'Norwegian';
+    // 9. The person in the middle house drinks milk.
+    houses[2].drink = 'Milk';
+
+    const categories = ['nationality', 'color', 'pet', 'drink', 'hobby'];
+    const values = [NATIONALITIES, COLORS, PETS, DRINKS, HOBBIES];
+
+    // Checks every constraint, skipping any check whose attributes are not
+    // assigned yet. Returns true when nothing assigned so far violates a rule.
+    const satisfied = () => {
+      for (let h = 0; h < 5; h++) {
+        const house = houses[h];
+        const { nationality, color, pet, drink, hobby } = house;
+
+        // 2. The Englishman lives in the red house.
+        if (nationality === 'Englishman' && color !== undefined && color !== 'Red') return false;
+        if (color === 'Red' && nationality !== undefined && nationality !== 'Englishman') return false;
+
+        // 3. The Spaniard owns the dog.
+        if (nationality === 'Spaniard' && pet !== undefined && pet !== 'Dog') return false;
+        if (pet === 'Dog' && nationality !== undefined && nationality !== 'Spaniard') return false;
+
+        // 4. The person in the green house drinks coffee.
+        if (color === 'Green' && drink !== undefined && drink !== 'Coffee') return false;
+        if (drink === 'Coffee' && color !== undefined && color !== 'Green') return false;
+
+        // 5. The Ukrainian drinks tea.
+        if (nationality === 'Ukrainian' && drink !== undefined && drink !== 'Tea') return false;
+        if (drink === 'Tea' && nationality !== undefined && nationality !== 'Ukrainian') return false;
+
+        // 7. The snail owner likes to go dancing.
+        if (pet === 'Snail' && hobby !== undefined && hobby !== 'Dancing') return false;
+        if (hobby === 'Dancing' && pet !== undefined && pet !== 'Snail') return false;
+
+        // 8. The person in the yellow house is a painter.
+        if (color === 'Yellow' && hobby !== undefined && hobby !== 'Painter') return false;
+        if (hobby === 'Painter' && color !== undefined && color !== 'Yellow') return false;
+
+        // 13. The person who plays football drinks orange juice.
+        if (hobby === 'Football' && drink !== undefined && drink !== 'Orange juice') return false;
+        if (drink === 'Orange juice' && hobby !== undefined && hobby !== 'Football') return false;
+
+        // 14. The Japanese person plays chess.
+        if (nationality === 'Japanese' && hobby !== undefined && hobby !== 'Chess') return false;
+        if (hobby === 'Chess' && nationality !== undefined && nationality !== 'Japanese') return false;
+      }
+
+      // 6. The green house is immediately to the right of the ivory house.
+      const green = houses.findIndex((h) => h.color === 'Green');
+      const ivory = houses.findIndex((h) => h.color === 'Ivory');
+      if (green !== -1 && ivory !== -1 && green !== ivory + 1) return false;
+
+      // 11. The person who enjoys reading lives next to the person with the fox.
+      // A missing neighbor (edge house) counts as decided, via the sentinel.
+      const NONE = Symbol('no neighbor');
+      const attributeAt = (index, attribute) =>
+        index < 0 || index > 4 ? NONE : houses[index][attribute];
+      for (let h = 0; h < 5; h++) {
+        const neighborPets = [attributeAt(h - 1, 'pet'), attributeAt(h + 1, 'pet')];
+        const neighborHobbies = [attributeAt(h - 1, 'hobby'), attributeAt(h + 1, 'hobby')];
+        if (houses[h].hobby === 'Reading' && neighborPets.every((p) => p !== undefined) && !neighborPets.includes('Fox')) {
+          return false;
+        }
+        if (houses[h].pet === 'Fox' && neighborHobbies.every((hb) => hb !== undefined) && !neighborHobbies.includes('Reading')) {
+          return false;
+        }
+      }
+
+      // 12. The painter's house is next to the house with the horse.
+      for (let h = 0; h < 5; h++) {
+        const neighborPets = [attributeAt(h - 1, 'pet'), attributeAt(h + 1, 'pet')];
+        const neighborHobbies = [attributeAt(h - 1, 'hobby'), attributeAt(h + 1, 'hobby')];
+        if (houses[h].hobby === 'Painter' && neighborPets.every((p) => p !== undefined) && !neighborPets.includes('Horse')) {
+          return false;
+        }
+        if (houses[h].pet === 'Horse' && neighborHobbies.every((hb) => hb !== undefined) && !neighborHobbies.includes('Painter')) {
+          return false;
+        }
+      }
+
+      // 15. The Norwegian lives next to the blue house.
+      if (houses[0].nationality === 'Norwegian' && houses[1].color !== undefined && houses[1].color !== 'Blue') {
+        return false;
+      }
+
+      return true;
+    };
+
+    // Tries every permutation of `valuesLeft` across `unassignedHouses` for the
+    // current category, pruning branches that already violate a constraint.
+    const permute = (categoryIndex, valuesLeft, unassignedHouses, index) => {
+      if (index === valuesLeft.length) {
+        return backtrack(categoryIndex + 1);
+      }
+
+      const category = categories[categoryIndex];
+      for (const house of unassignedHouses) {
+        if (house[category] !== undefined) continue;
+        house[category] = valuesLeft[index];
+        if (satisfied() && permute(categoryIndex, valuesLeft, unassignedHouses, index + 1)) return true;
+        house[category] = undefined;
+      }
+
+      return false;
+    };
+
+    const backtrack = (categoryIndex) => {
+      if (categoryIndex === categories.length) {
+        return true;
+      }
+
+      const category = categories[categoryIndex];
+      const valuesLeft = values[categoryIndex].filter(
+        (value) => !houses.some((h) => h[category] === value)
+      );
+      const unassignedHouses = houses.filter((h) => h[category] === undefined);
+
+      return permute(categoryIndex, valuesLeft, unassignedHouses, 0);
+    };
+
+    backtrack(0);
+
+    const waterDrinker = houses.find((h) => h.drink === 'Water').nationality;
+    const zebraOwner = houses.find((h) => h.pet === 'Zebra').nationality;
+
+    return { waterDrinker, zebraOwner };
+  }
+}

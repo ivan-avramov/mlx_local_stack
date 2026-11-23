@@ -1,0 +1,113 @@
+/// Given a list of poker hands, return a list of those hands which win.
+///
+/// Note the type signature: this function should return _the same_ reference to
+/// the winning hand(s) as were passed in, not reconstructed strings which happen to be equal.
+pub fn winning_hands<'a>(hands: &[&'a str]) -> Vec<&'a str> {
+    let scores: Vec<Vec<u8>> = hands.iter().map(|hand| score(hand)).collect();
+    let best = scores.iter().max().expect("at least one hand");
+    hands
+        .iter()
+        .copied()
+        .zip(scores.iter())
+        .filter(|(_, s)| *s == best)
+        .map(|(hand, _)| hand)
+        .collect()
+}
+
+/// Numeric value of a rank token ("2".."10", "J", "Q", "K", "A") -> 2..=14.
+fn rank_value(rank: &str) -> u8 {
+    match rank {
+        "2" => 2,
+        "3" => 3,
+        "4" => 4,
+        "5" => 5,
+        "6" => 6,
+        "7" => 7,
+        "8" => 8,
+        "9" => 9,
+        "10" => 10,
+        "J" => 11,
+        "Q" => 12,
+        "K" => 13,
+        "A" => 14,
+        _ => panic!("invalid rank {rank:?}"),
+    }
+}
+
+/// Produce a comparable score for a hand: the category byte followed by the
+/// tie-breaking ranks in most-significant order.
+fn score(hand: &str) -> Vec<u8> {
+    let cards: Vec<&str> = hand.split_whitespace().collect();
+    assert_eq!(cards.len(), 5, "hand {hand:?} must have 5 cards");
+
+    let ranks: Vec<u8> = cards
+        .iter()
+        .map(|card| rank_value(&card[..card.len() - 1]))
+        .collect();
+
+    let suit = cards[0].as_bytes()[cards[0].len() - 1];
+    let flush = cards.iter().all(|card| card.as_bytes()[card.len() - 1] == suit);
+
+    // (count, rank) groups sorted by count descending, then rank descending.
+    let mut counts = [0u8; 13];
+    for &rank in &ranks {
+        counts[(rank - 2) as usize] += 1;
+    }
+    let mut groups: Vec<(u8, u8)> = (2..=14u8)
+        .map(|rank| (counts[(rank - 2) as usize], rank))
+        .filter(|(count, _)| *count > 0)
+        .collect();
+    groups.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
+
+    // Highest card of a straight, if the hand is one (ace-low straight scores 5).
+    let mut sorted = ranks.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    let straight_high = if sorted.len() == 5 {
+        if sorted[4] - sorted[0] == 4 {
+            Some(sorted[4])
+        } else if sorted == [2, 3, 4, 5, 14] {
+            Some(5)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let (category, mut rest) = match (straight_high, flush) {
+        (Some(high), true) => (8, vec![high]),
+        (Some(high), false) => (4, vec![high]),
+        (None, _) if groups[0].0 == 4 => (7, vec![groups[0].1, groups[1].1]),
+        (None, _) if groups[0].0 == 3 => {
+            if groups[1].0 == 2 {
+                (6, vec![groups[0].1, groups[1].1])
+            } else {
+                (3, vec![groups[0].1, groups[1].1, groups[2].1])
+            }
+        }
+        (None, true) => {
+            let mut ranks = ranks;
+            ranks.sort_unstable_by(|a, b| b.cmp(a));
+            (5, ranks)
+        }
+        (None, false) => {
+            if groups[0].0 == 2 {
+                if groups[1].0 == 2 {
+                    (2, vec![groups[0].1, groups[1].1, groups[2].1])
+                } else {
+                    (1, vec![groups[0].1, groups[1].1, groups[2].1, groups[3].1])
+                }
+            } else {
+                let mut ranks = ranks;
+                ranks.sort_unstable_by(|a, b| b.cmp(a));
+                (0, ranks)
+            }
+        }
+    };
+
+    let mut key = Vec::with_capacity(1 + rest.len());
+    key.push(category);
+    key.append(&mut rest);
+    key
+}

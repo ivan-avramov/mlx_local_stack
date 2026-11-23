@@ -1,0 +1,62 @@
+import java.util.HashMap;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
+
+class WordSearcher {
+
+    private static final int[][] DIRECTIONS = {
+            {1, 0}, {-1, 0}, {0, 1}, {0, -1},
+            {1, 1}, {1, -1}, {-1, 1}, {-1, -1}
+    };
+
+    Map<String, Optional<WordLocation>> search(final Set<String> words, final char[][] grid) {
+        final Map<String, Optional<WordLocation>> locations = new HashMap<>();
+
+        for (final String word : words) {
+            locations.put(word, findWord(word, grid));
+        }
+
+        return locations;
+    }
+
+    private Optional<WordLocation> findWord(final String word, final char[][] grid) {
+        final int rows = grid.length;
+        final int cols = rows > 0 ? grid[0].length : 0;
+
+        for (int row = 0; row < rows; row++) {
+            for (int col = 0; col < cols; col++) {
+                for (final int[] direction : DIRECTIONS) {
+                    final Optional<WordLocation> location =
+                            tryMatch(word, grid, row, col, direction[0], direction[1]);
+                    if (location.isPresent()) {
+                        return location;
+                    }
+                }
+            }
+        }
+
+        return Optional.empty();
+    }
+
+    private Optional<WordLocation> tryMatch(final String word, final char[][] grid,
+                                            final int row, final int col,
+                                            final int dx, final int dy) {
+        final int rows = grid.length;
+        final int cols = grid[0].length;
+
+        for (int i = 0; i < word.length(); i++) {
+            final int r = row + dy * i;
+            final int c = col + dx * i;
+
+            if (r < 0 || r >= rows || c < 0 || c >= cols || grid[r][c] != word.charAt(i)) {
+                return Optional.empty();
+            }
+        }
+
+        final Pair start = new Pair(col + 1, row + 1);
+        final Pair end = new Pair(col + dx * (word.length() - 1) + 1, row + dy * (word.length() - 1) + 1);
+
+        return Optional.of(new WordLocation(start, end));
+    }
+}

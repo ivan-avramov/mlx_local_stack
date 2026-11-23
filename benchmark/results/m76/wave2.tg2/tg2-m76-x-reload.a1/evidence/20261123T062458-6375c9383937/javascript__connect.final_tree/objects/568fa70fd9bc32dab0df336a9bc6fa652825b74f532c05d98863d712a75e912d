@@ -1,0 +1,79 @@
+//
+// This is only a SKELETON file for the 'Connect' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class Board {
+  constructor(data) {
+    // Each row is indented by its index and its cells are space separated.
+    // Trim the indentation and split into the individual cells.
+    this.grid = data.map((line) => line.trim().split(/\s+/));
+    this.rows = this.grid.length;
+    this.cols = this.grid[0].length;
+  }
+
+  winner() {
+    if (this._reachesEnd('X')) {
+      return 'X';
+    }
+    if (this._reachesEnd('O')) {
+      return 'O';
+    }
+    return '';
+  }
+
+  // Player X connects the left edge (column 0) to the right edge (last column).
+  // Player O connects the top edge (row 0) to the bottom edge (last row).
+  _reachesEnd(player) {
+    const isX = player === 'X';
+    const onEndEdge = (r, c) => (isX ? c === this.cols - 1 : r === this.rows - 1);
+
+    const startCells = [];
+    if (isX) {
+      for (let r = 0; r < this.rows; r += 1) startCells.push([r, 0]);
+    } else {
+      for (let c = 0; c < this.cols; c += 1) startCells.push([0, c]);
+    }
+
+    const visited = new Set();
+    const stack = [];
+    for (const [r, c] of startCells) {
+      if (this.grid[r][c] === player) {
+        visited.add(`${r},${c}`);
+        stack.push([r, c]);
+      }
+    }
+
+    while (stack.length > 0) {
+      const [r, c] = stack.pop();
+      if (onEndEdge(r, c)) {
+        return true;
+      }
+      for (const [nr, nc] of this._neighbors(r, c)) {
+        if (nr < 0 || nr >= this.rows || nc < 0 || nc >= this.cols) {
+          continue;
+        }
+        const key = `${nr},${nc}`;
+        if (visited.has(key) || this.grid[nr][nc] !== player) {
+          continue;
+        }
+        visited.add(key);
+        stack.push([nr, nc]);
+      }
+    }
+
+    return false;
+  }
+
+  // Hexagonal adjacency for the offset (parallelogram) board layout.
+  _neighbors(r, c) {
+    return [
+      [r, c - 1],
+      [r, c + 1],
+      [r - 1, c],
+      [r - 1, c + 1],
+      [r + 1, c - 1],
+      [r + 1, c],
+    ];
+  }
+}

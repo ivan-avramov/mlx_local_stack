@@ -1,0 +1,112 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = new Set();
+  }
+
+  setValue(value) {
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputCells = inputCells;
+    this.fn = fn;
+    this.value = this.compute();
+    this.callbacks = [];
+    this.dependents = new Set();
+    for (const input of inputCells) {
+      input.dependents.add(this);
+    }
+  }
+
+  compute() {
+    return this.fn(this.inputCells);
+  }
+
+  recompute() {
+    const newValue = this.compute();
+    const changed = newValue !== this.value;
+    this.value = newValue;
+    if (changed) {
+      for (const callback of this.callbacks) {
+        callback.call(this);
+      }
+    }
+  }
+
+  addCallback(callback) {
+    this.callbacks.push(callback);
+  }
+
+  removeCallback(callback) {
+    const index = this.callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.callbacks.splice(index, 1);
+    }
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+
+  call(cell) {
+    this.values.push(this.fn(cell));
+  }
+}
+
+function propagate(source) {
+  // Collect every compute cell affected by the change.
+  const dirty = new Set();
+  const stack = [...source.dependents];
+  while (stack.length > 0) {
+    const cell = stack.pop();
+    if (dirty.has(cell)) {
+      continue;
+    }
+    dirty.add(cell);
+    stack.push(...cell.dependents);
+  }
+
+  // Recompute in topological order: a cell is only recomputed once every
+  // dirty dependency of its own has already been recomputed.
+  const pending = new Map();
+  const ready = [];
+  for (const cell of dirty) {
+    let count = 0;
+    for (const dep of cell.inputCells) {
+      if (dirty.has(dep)) {
+        count += 1;
+      }
+    }
+    pending.set(cell, count);
+    if (count === 0) {
+      ready.push(cell);
+    }
+  }
+
+  while (ready.length > 0) {
+    const cell = ready.shift();
+    cell.recompute();
+    for (const dependent of cell.dependents) {
+      if (!dirty.has(dependent)) {
+        continue;
+      }
+      const remaining = pending.get(dependent) - 1;
+      pending.set(dependent, remaining);
+      if (remaining === 0) {
+        ready.push(dependent);
+      }
+    }
+  }
+}

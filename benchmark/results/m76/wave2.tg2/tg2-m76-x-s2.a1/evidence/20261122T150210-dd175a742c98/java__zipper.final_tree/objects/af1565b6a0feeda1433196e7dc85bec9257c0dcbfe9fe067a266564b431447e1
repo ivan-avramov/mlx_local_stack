@@ -1,0 +1,103 @@
+import java.util.Objects;
+
+class Zipper {
+    Zipper up;
+    Zipper left;
+    Zipper right;
+    int value;
+
+    Zipper(int val) {
+        this.value = val;
+    }
+
+    BinaryTree toTree() {
+        Zipper root = this;
+        while (root.up != null) {
+            root = root.up;
+        }
+        return new BinaryTree(root);
+    }
+
+    int getValue() {
+        return value;
+    }
+
+    Zipper setLeft(Zipper leftChild) {
+        this.left = leftChild;
+        if (leftChild != null) {
+            leftChild.up = this;
+        }
+        return this;
+    }
+
+    Zipper setRight(Zipper rightChild) {
+        this.right = rightChild;
+        if (rightChild != null) {
+            rightChild.up = this;
+        }
+        return this;
+    }
+
+    void setValue(int val) {
+        this.value = val;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof Zipper)) {
+            return false;
+        }
+        Zipper other = (Zipper) obj;
+        return value == other.value
+                && Objects.equals(left, other.left)
+                && Objects.equals(right, other.right);
+    }
+
+    @Override
+    public int hashCode() {
+        return Objects.hash(value, left, right);
+    }
+}
+
+class BinaryTree {
+    private final Zipper root;
+
+    BinaryTree(int value) {
+        this.root = new Zipper(value);
+    }
+
+    BinaryTree(Zipper root) {
+        this.root = root;
+    }
+
+    Zipper getRoot() {
+        return root;
+    }
+
+    String printTree() {
+        return print(root, false);
+    }
+
+    private String print(Zipper node, boolean child) {
+        if (node == null) {
+            return "null";
+        }
+        String body = "value: " + node.getValue()
+                + ", left: " + print(node.left, true)
+                + ", right: " + print(node.right, true);
+        return child ? "{ " + body + " }" : body;
+    }
+
+    @Override
+    public boolean equals(Object obj) {
+        if (!(obj instanceof BinaryTree)) {
+            return false;
+        }
+        return root.equals(((BinaryTree) obj).root);
+    }
+
+    @Override
+    public int hashCode() {
+        return root.hashCode();
+    }
+}

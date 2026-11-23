@@ -1,0 +1,90 @@
+//
+// This is only a SKELETON file for the 'React' exercise. It's been provided as a
+// convenience to get you started writing code faster.
+//
+
+export class InputCell {
+  constructor(value) {
+    this.value = value;
+    this.dependents = [];
+  }
+
+  setValue(value) {
+    this.value = value;
+    propagate(this);
+  }
+}
+
+export class ComputeCell {
+  constructor(inputCells, fn) {
+    this.inputs = inputCells;
+    this.fn = fn;
+    this.value = fn(inputCells);
+    this.callbacks = [];
+    this.dependents = [];
+
+    for (const input of inputCells) {
+      input.dependents.push(this);
+    }
+  }
+
+  addCallback(callback) {
+    this.callbacks.push(callback);
+  }
+
+  removeCallback(callback) {
+    const index = this.callbacks.indexOf(callback);
+    if (index !== -1) {
+      this.callbacks.splice(index, 1);
+    }
+  }
+}
+
+export class CallbackCell {
+  constructor(fn) {
+    this.fn = fn;
+    this.values = [];
+  }
+}
+
+function propagate(source) {
+  // Collect every compute cell that depends (transitively) on the source.
+  const affected = new Set();
+  const visited = new Set([source]);
+  const queue = [source];
+
+  while (queue.length > 0) {
+    const cell = queue.shift();
+    for (const dependent of cell.dependents) {
+      if (!visited.has(dependent)) {
+        visited.add(dependent);
+        affected.add(dependent);
+        queue.push(dependent);
+      }
+    }
+  }
+
+  // Recompute in topological order: a cell is recomputed only after every
+  // affected input has been, so each cell is computed exactly once.
+  const done = new Set([source]);
+  const pending = [...affected];
+  const ready = (cell) =>
+    cell.inputs.every((input) => done.has(input) || !affected.has(input));
+
+  while (pending.length > 0) {
+    const index = pending.findIndex(ready);
+    if (index === -1) {
+      break; // dependency cycle; leave the remaining cells stale
+    }
+    const [cell] = pending.splice(index, 1);
+    done.add(cell);
+
+    const previous = cell.value;
+    cell.value = cell.fn(cell.inputs);
+    if (cell.value !== previous) {
+      for (const callback of cell.callbacks) {
+        callback.values.push(callback.fn(cell));
+      }
+    }
+  }
+}

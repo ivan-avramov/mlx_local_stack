@@ -1,0 +1,96 @@
+import java.util.ArrayList;
+import java.util.List;
+
+class BowlingGame {
+
+    private static final int PINS_PER_FRAME = 10;
+    private static final int TOTAL_FRAMES = 10;
+
+    private final List<Integer> rolls = new ArrayList<>();
+    private int frame = 0;
+    private int rollsInFrame = 0;
+    private int pinsInFrame = 0;
+
+    void roll(int pins) {
+        if (pins < 0) {
+            throw new IllegalStateException("Negative roll is invalid");
+        }
+        if (pins > PINS_PER_FRAME) {
+            throw new IllegalStateException("Pin count exceeds pins on the lane");
+        }
+
+        if (frame == TOTAL_FRAMES - 1) {
+            rollTenthFrame(pins);
+        } else {
+            if (pinsInFrame + pins > PINS_PER_FRAME) {
+                throw new IllegalStateException("Pin count exceeds pins on the lane");
+            }
+            rolls.add(pins);
+            rollsInFrame++;
+            pinsInFrame += pins;
+            if (pins == PINS_PER_FRAME || rollsInFrame == 2) {
+                frame++;
+                rollsInFrame = 0;
+                pinsInFrame = 0;
+            }
+        }
+    }
+
+    private void rollTenthFrame(int pins) {
+        if (rollsInFrame >= 3) {
+            throw new IllegalStateException("Cannot roll after game is over");
+        }
+        if (rollsInFrame == 2) {
+            int ball1 = rolls.get(rolls.size() - 2);
+            int ball2 = rolls.get(rolls.size() - 1);
+            boolean earnedBonus = ball1 == PINS_PER_FRAME || ball1 + ball2 == PINS_PER_FRAME;
+            if (!earnedBonus) {
+                throw new IllegalStateException("Cannot roll after game is over");
+            }
+            if (ball1 == PINS_PER_FRAME && ball2 != PINS_PER_FRAME && ball2 + pins > PINS_PER_FRAME) {
+                throw new IllegalStateException("Pin count exceeds pins on the lane");
+            }
+        }
+        rolls.add(pins);
+        rollsInFrame++;
+        pinsInFrame += pins;
+    }
+
+    int score() {
+        if (!isGameComplete()) {
+            throw new IllegalStateException("Score cannot be taken until the end of the game");
+        }
+        int total = 0;
+        int rollIndex = 0;
+        for (int i = 0; i < TOTAL_FRAMES; i++) {
+            int first = rolls.get(rollIndex);
+            if (first == PINS_PER_FRAME) {
+                total += PINS_PER_FRAME + rolls.get(rollIndex + 1) + rolls.get(rollIndex + 2);
+                rollIndex++;
+            } else if (first + rolls.get(rollIndex + 1) == PINS_PER_FRAME) {
+                total += PINS_PER_FRAME + rolls.get(rollIndex + 2);
+                rollIndex += 2;
+            } else {
+                total += first + rolls.get(rollIndex + 1);
+                rollIndex += 2;
+            }
+        }
+        return total;
+    }
+
+    private boolean isGameComplete() {
+        if (frame < TOTAL_FRAMES - 1) {
+            return false;
+        }
+        if (rollsInFrame < 2) {
+            return false;
+        }
+        int tenthStart = rolls.size() - rollsInFrame;
+        int first = rolls.get(tenthStart);
+        int second = rolls.get(tenthStart + 1);
+        if (first == PINS_PER_FRAME || first + second == PINS_PER_FRAME) {
+            return rollsInFrame == 3;
+        }
+        return true;
+    }
+}

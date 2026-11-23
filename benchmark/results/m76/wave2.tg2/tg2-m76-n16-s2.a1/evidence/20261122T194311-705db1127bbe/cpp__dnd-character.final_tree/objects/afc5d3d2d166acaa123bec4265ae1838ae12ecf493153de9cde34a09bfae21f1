@@ -1,0 +1,41 @@
+#include "dnd_character.h"
+
+#include <algorithm>
+#include <array>
+#include <random>
+
+namespace dnd_character {
+
+namespace {
+
+std::mt19937& engine() {
+    static std::mt19937 engine{std::random_device{}()};
+    return engine;
+}
+
+int roll_die() {
+    static std::uniform_int_distribution<int> die(1, 6);
+    return die(engine());
+}
+
+}  // namespace
+
+int modifier(int score) {
+    int diff = score - 10;
+    return diff / 2 - (diff % 2 < 0 ? 1 : 0);
+}
+
+int ability() {
+    std::array<int, 4> rolls;
+    for (auto& roll : rolls) {
+        roll = roll_die();
+    }
+    auto min = std::min_element(rolls.begin(), rolls.end());
+    int total = 0;
+    for (int roll : rolls) {
+        total += roll;
+    }
+    return total - *min;
+}
+
+}  // namespace dnd_character

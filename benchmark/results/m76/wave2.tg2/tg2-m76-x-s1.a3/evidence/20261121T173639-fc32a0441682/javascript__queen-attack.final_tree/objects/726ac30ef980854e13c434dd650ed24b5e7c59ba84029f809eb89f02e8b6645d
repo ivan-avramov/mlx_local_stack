@@ -1,0 +1,50 @@
+const BOARD_SIZE = 8;
+const EMPTY = '_';
+
+export class QueenAttack {
+  constructor({
+    black: [blackRow, blackColumn] = [],
+    white: [whiteRow, whiteColumn] = [],
+  } = {}) {
+    this.white = [whiteRow, whiteColumn].every((v) => v === undefined)
+      ? [7, 3]
+      : [whiteRow, whiteColumn];
+    this.black = [blackRow, blackColumn].every((v) => v === undefined)
+      ? [0, 3]
+      : [blackRow, blackColumn];
+
+    for (const [row, column] of [this.white, this.black]) {
+      if (row < 0 || row >= BOARD_SIZE || column < 0 || column >= BOARD_SIZE) {
+        throw new Error('Queen must be placed on the board');
+      }
+    }
+
+    if (
+      this.white[0] === this.black[0] &&
+      this.white[1] === this.black[1]
+    ) {
+      throw new Error('Queens cannot share the same space');
+    }
+  }
+
+  toString() {
+    const grid = Array.from({ length: BOARD_SIZE }, () =>
+      Array(BOARD_SIZE).fill(EMPTY)
+    );
+    const [whiteRow, whiteColumn] = this.white;
+    const [blackRow, blackColumn] = this.black;
+    grid[whiteRow][whiteColumn] = 'W';
+    grid[blackRow][blackColumn] = 'B';
+    return grid.map((row) => row.join(' ')).join('\n');
+  }
+
+  get canAttack() {
+    const [whiteRow, whiteColumn] = this.white;
+    const [blackRow, blackColumn] = this.black;
+    return (
+      whiteRow === blackRow ||
+      whiteColumn === blackColumn ||
+      Math.abs(whiteRow - blackRow) === Math.abs(whiteColumn - blackColumn)
+    );
+  }
+}

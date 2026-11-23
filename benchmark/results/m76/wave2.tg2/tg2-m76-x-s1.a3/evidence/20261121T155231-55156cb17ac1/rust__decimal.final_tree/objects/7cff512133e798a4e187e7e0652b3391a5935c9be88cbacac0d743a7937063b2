@@ -1,0 +1,239 @@
+use std::cmp::Ordering;
+use std::ops::{Add, Mul, Sub};
+
+/// Type implementing arbitrary-precision decimal arithmetic.
+///
+/// A `Decimal` stores its value as a sign (`-1` or `1`), a sequence of
+/// decimal digits (most significant first) representing the absolute value,
+/// and a scale — the number of digits after the decimal point. The value is
+/// `sign * digits / 10^scale`. Zero is normalized to have no digits and a
+/// scale of 0, so there is no negative zero.
+#[derive(Clone, Debug)]
+pub struct Decimal {
+    sign: i8,
+    digits: Vec<u8>,
+    scale: usize,
+}
+
+impl Decimal {
+    /// Create a new decimal with a value of `input`, e.g. `"123.45"`,
+    /// `"-0.01"`, or `"+7"`. Returns `None` if the input is not a valid
+    /// decimal literal.
+    pub fn try_from(input: &str) -> Option<Decimal> {
+        let (sign, rest) = if let Some(rest) = input.strip_prefix('+') {
+            (1, rest)
+        } else if let Some(rest) = input.strip_prefix('-') {
+            (-1, rest)
+        } else {
+            (1, input)
+        };
+
+        let (int_part, frac_part) = match rest.find('.') {
+            Some(i) => (&rest[..i], &rest[i + 1..]),
+            None => (rest, ""),
+        };
+        if int_part.is_empty() && frac_part.is_empty() {
+            return None;
+        }
+
+        let scale = frac_part.len();
+        let mut digits: Vec<u8> = Vec::with_capacity(int_part.len() + frac_part.len());
+        for c in int_part.chars().chain(frac_part.chars()) {
+            if !c.is_ascii_digit() {
+                return None;
+            }
+            digits.push(c as u8 - b'0');
+        }
+
+        // Strip leading zeros; a value of zero has no digits and scale 0.
+        match digits.iter().position(|&d| d != 0) {
+            Some(i) => {
+                digits.drain(..i);
+            }
+            None => return Some(Decimal { sign: 1, digits: Vec::new(), scale: 0 }),
+        };
+        Some(Decimal { sign, digits, scale })
+    }
+
+    /// Number of digits to the left of the decimal point.
+    fn int_digits(&self) -> usize {
+        self.digits.len().saturating_sub(self.scale)
+    }
+
+    /// Return the digits with the decimal point positioned `max_scale`
+    /// places from the right, left- and right-padding with zeros so the
+    /// total length is `total`.
+    fn padded(&self, max_scale: usize, total: usize) -> Vec<u8> {
+        let mut out = vec![0u8; total];
+        let start = total - self.digits.len() - (max_scale - self.scale);
+        out[start..start + self.digits.len()].copy_from_slice(&self.digits);
+        out
+    }
+
+    /// Strip leading zeros and normalize zero to the canonical form.
+    fn normalize(mut digits: Vec<u8>, sign: i8, scale: usize) -> Decimal {
+        match digits.iter().position(|&d| d != 0) {
+            Some(i) => Decimal { sign, digits: digits.split_off(i), scale },
+            None => Decimal { sign: 1, digits: Vec::new(), scale: 0 },
+        }
+    }
+
+    /// Compare the absolute values of `a` and `b`.
+    fn cmp_magnitude(a: &Decimal, b: &Decimal) -> Ordering {
+        let max_scale = a.scale.max(b.scale);
+        let total = a.int_digits().max(b.int_digits()) + max_scale;
+        a.padded(max_scale, total).cmp(&b.padded(max_scale, total))
+    }
+
+    /// Add the absolute values of `a` and `b`. Returns the resulting digits
+    /// and the common scale.
+    fn add_magnitudes(a: &Decimal, b: &Decimal) -> (Vec<u8>, usize) {
+        let max_scale = a.scale.max(b.scale);
+        let total = a.int_digits().max(b.int_digits()) + max_scale;
+        let av = a.padded(max_scale, total);
+        let bv = b.padded(max_scale, total);
+
+        let mut result = vec![0u8; total];
+        let mut carry = 0i8;
+        for i in (0..total).rev() {
+            let s = av[i] as i8 + bv[i] as i8 + carry;
+            carry = if s >= 10 { 1 } else { 0 };
+            result[i] = (s % 10) as u8;
+        }
+        if carry == 1 {
+            result.insert(0, 1);
+        }
+        (result, max_scale)
+    }
+
+    /// Subtract the absolute value of `b` from the absolute value of `a`,
+    /// requiring `|a| >= |b|`. Returns the resulting digits and the common
+    /// scale.
+    fn sub_magnitudes(a: &Decimal, b: &Decimal) -> (Vec<u8>, usize) {
+        let max_scale = a.scale.max(b.scale);
+        let total = a.int_digits().max(b.int_digits()) + max_scale;
+        let av = a.padded(max_scale, total);
+        let bv = b.padded(max_scale, total);
+
+        let mut result = vec![0u8; total];
+        let mut borrow = 0i8;
+        for i in (0..total).rev() {
+            let s = av[i] as i8 - bv[i] as i8 - borrow;
+            if s < 0 {
+                borrow = 1;
+                result[i] = (s + 10) as u8;
+            } else {
+                borrow = 0;
+                result[i] = s as u8;
+            }
+        }
+        debug_assert_eq!(borrow, 0, "|a| must be >= |b|");
+        (result, max_scale)
+    }
+
+    /// Add or subtract `other`, digit by digit, with sign handling.
+    fn add_or_sub(&self, other: &Decimal, subtract: bool) -> Decimal {
+        let self_sign = self.sign;
+        let other_sign = if subtract { -other.sign } else { other.sign };
+
+        if self_sign == other_sign {
+            // Same sign: add the magnitudes, keep the sign.
+            let (digits, scale) = Self::add_magnitudes(self, other);
+            Self::normalize(digits, self_sign, scale)
+        } else {
+            // Opposite signs: subtract the smaller magnitude from the larger,
+            // keeping the sign of the larger.
+            let mag = Self::cmp_magnitude(self, other);
+            if mag == Ordering::Equal {
+                return Self::normalize(Vec::new(), 1, 0);
+            }
+            let (big, big_sign, small) = if mag == Ordering::Greater {
+                (self, self_sign, other)
+            } else {
+                (other, other_sign, self)
+            };
+            let (digits, scale) = Self::sub_magnitudes(big, small);
+            Self::normalize(digits, big_sign, scale)
+        }
+    }
+
+    /// Multiply the absolute values of `a` and `b` (schoolbook). Digits are
+    /// accumulated least-significant-first so carries propagate cleanly, then
+    /// the result is returned most-significant-first.
+    fn mul_magnitudes(a: &Decimal, b: &Decimal) -> Vec<u8> {
+        let av: Vec<u64> = a.digits.iter().rev().map(|&d| d as u64).collect();
+        let bv: Vec<u64> = b.digits.iter().rev().map(|&d| d as u64).collect();
+        let mut acc = vec![0u64; av.len() + bv.len()];
+        for (i, &x) in av.iter().enumerate() {
+            for (j, &y) in bv.iter().enumerate() {
+                acc[i + j] += x * y;
+            }
+        }
+        let mut digits = Vec::with_capacity(acc.len() + 1);
+        let mut carry = 0u64;
+        for v in acc.iter() {
+            let total = *v + carry;
+            carry = total / 10;
+            digits.push((total % 10) as u8);
+        }
+        while carry > 0 {
+            digits.push((carry % 10) as u8);
+            carry /= 10;
+        }
+        digits.reverse();
+        digits
+    }
+}
+
+impl PartialEq for Decimal {
+    fn eq(&self, other: &Self) -> bool {
+        self.cmp(other) == Ordering::Equal
+    }
+}
+
+impl Eq for Decimal {}
+
+impl PartialOrd for Decimal {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Decimal {
+    fn cmp(&self, other: &Self) -> Ordering {
+        if self.sign != other.sign {
+            return self.sign.cmp(&other.sign);
+        }
+        let mag = Self::cmp_magnitude(self, other);
+        if self.sign < 0 {
+            mag.reverse()
+        } else {
+            mag
+        }
+    }
+}
+
+impl Add for Decimal {
+    type Output = Decimal;
+    fn add(self, rhs: Decimal) -> Self::Output {
+        self.add_or_sub(&rhs, false)
+    }
+}
+
+impl Sub for Decimal {
+    type Output = Decimal;
+    fn sub(self, rhs: Decimal) -> Self::Output {
+        self.add_or_sub(&rhs, true)
+    }
+}
+
+impl Mul for Decimal {
+    type Output = Decimal;
+    fn mul(self, rhs: Decimal) -> Self::Output {
+        if self.digits.is_empty() || rhs.digits.is_empty() {
+            return Decimal { sign: 1, digits: Vec::new(), scale: 0 };
+        }
+        let digits = Self::mul_magnitudes(&self, &rhs);
+        Self::normalize(digits, self.sign * rhs.sign, self.scale + rhs.scale)
+    }
+}

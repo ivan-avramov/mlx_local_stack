@@ -1,0 +1,212 @@
+import java.util.Arrays;
+import java.util.Random;
+
+public class MazeGenerator {
+
+    private static final int MIN_SIZE = 5;
+    private static final int MAX_SIZE = 100;
+    private static final char EMPTY_CELL = ' ';
+    private static final char ENTRANCE_EXIT = '⇨';
+
+    public char[][] generatePerfectMaze(int rows, int columns) {
+        return generatePerfectMaze(rows, columns, new Random());
+    }
+
+    public char[][] generatePerfectMaze(int rows, int columns, int seed) {
+        return generatePerfectMaze(rows, columns, new Random(seed));
+    }
+
+    private char[][] generatePerfectMaze(int rows, int columns, Random random) {
+        validateDimensions(rows, columns);
+
+        // hWall[i][j]: wall between cell (i, j) and the cell below it (i + 1, j).
+        boolean[][] hWall = new boolean[rows - 1][columns];
+        // vWall[i][j]: wall between cell (i, j) and the cell to its right (i, j + 1).
+        boolean[][] vWall = new boolean[rows][columns - 1];
+        for (boolean[] row : hWall) {
+            Arrays.fill(row, true);
+        }
+        for (boolean[] row : vWall) {
+            Arrays.fill(row, true);
+        }
+
+        carveMaze(rows, columns, hWall, vWall, random);
+
+        return renderMaze(rows, columns, hWall, vWall);
+    }
+
+    private void validateDimensions(int rows, int columns) {
+        if (rows < MIN_SIZE || rows > MAX_SIZE || columns < MIN_SIZE || columns > MAX_SIZE) {
+            throw new IllegalArgumentException(
+                    "rows and columns must be between " + MIN_SIZE + " and " + MAX_SIZE);
+        }
+    }
+
+    /**
+     * Carves a perfect maze (a spanning tree of the cells) using the randomized
+     * depth-first search (recursive backtracker) algorithm.
+     */
+    private void carveMaze(int rows, int columns, boolean[][] hWall, boolean[][] vWall, Random random) {
+        boolean[][] visited = new boolean[rows][columns];
+        int[] stackI = new int[rows * columns];
+        int[] stackJ = new int[rows * columns];
+        int top = 0;
+
+        int i = random.nextInt(rows);
+        int j = random.nextInt(columns);
+        visited[i][j] = true;
+        stackI[top] = i;
+        stackJ[top] = j;
+        top++;
+
+        while (top > 0) {
+            i = stackI[top - 1];
+            j = stackJ[top - 1];
+
+            int[] neighborI = new int[4];
+            int[] neighborJ = new int[4];
+            int neighborCount = 0;
+            if (i > 0 && !visited[i - 1][j]) {
+                neighborI[neighborCount] = i - 1;
+                neighborJ[neighborCount] = j;
+                neighborCount++;
+            }
+            if (i < rows - 1 && !visited[i + 1][j]) {
+                neighborI[neighborCount] = i + 1;
+                neighborJ[neighborCount] = j;
+                neighborCount++;
+            }
+            if (j > 0 && !visited[i][j - 1]) {
+                neighborI[neighborCount] = i;
+                neighborJ[neighborCount] = j - 1;
+                neighborCount++;
+            }
+            if (j < columns - 1 && !visited[i][j + 1]) {
+                neighborI[neighborCount] = i;
+                neighborJ[neighborCount] = j + 1;
+                neighborCount++;
+            }
+
+            if (neighborCount == 0) {
+                top--;
+            } else {
+                int choice = random.nextInt(neighborCount);
+                int ni = neighborI[choice];
+                int nj = neighborJ[choice];
+                removeWall(hWall, vWall, i, j, ni, nj);
+                visited[ni][nj] = true;
+                stackI[top] = ni;
+                stackJ[top] = nj;
+                top++;
+            }
+        }
+    }
+
+    private void removeWall(boolean[][] hWall, boolean[][] vWall, int i, int j, int ni, int nj) {
+        if (ni == i - 1) {
+            hWall[i - 1][j] = false;
+        } else if (ni == i + 1) {
+            hWall[i][j] = false;
+        } else if (nj == j - 1) {
+            vWall[i][j - 1] = false;
+        } else {
+            vWall[i][j] = false;
+        }
+    }
+
+    private char[][] renderMaze(int rows, int columns, boolean[][] hWall, boolean[][] vWall) {
+        int height = 2 * rows + 1;
+        int width = 2 * columns + 1;
+        char[][] maze = new char[height][width];
+
+        for (int r = 0; r < height; r++) {
+            for (int c = 0; c < width; c++) {
+                if (isWall(r, c, height, width, hWall, vWall)) {
+                    boolean north = isWall(r - 1, c, height, width, hWall, vWall);
+                    boolean south = isWall(r + 1, c, height, width, hWall, vWall);
+                    boolean east = isWall(r, c + 1, height, width, hWall, vWall);
+                    boolean west = isWall(r, c - 1, height, width, hWall, vWall);
+                    maze[r][c] = boxChar(north, south, east, west);
+                } else {
+                    maze[r][c] = EMPTY_CELL;
+                }
+            }
+        }
+
+        maze[1][0] = ENTRANCE_EXIT;
+        maze[height - 2][width - 1] = ENTRANCE_EXIT;
+
+        return maze;
+    }
+
+    /**
+     * Reports whether a character-grid position is occupied by a wall.
+     * Cell positions (odd row, odd column) are never walls. Boundary positions
+     * are always walls. Internal positions are walls only when the corresponding
+     * maze wall is present.
+     */
+    private boolean isWall(int r, int c, int height, int width, boolean[][] hWall, boolean[][] vWall) {
+        if (r < 0 || r >= height || c < 0 || c >= width) {
+            return false;
+        }
+        if ((r & 1) == 1 && (c & 1) == 1) {
+            return false; // a cell
+        }
+        if (r == 0 || r == height - 1 || c == 0 || c == width - 1) {
+            return true; // boundary
+        }
+        if ((r & 1) == 0 && (c & 1) == 1) {
+            // horizontal wall segment between two vertically adjacent cells
+            return hWall[r / 2 - 1][(c - 1) / 2];
+        }
+        if ((r & 1) == 1 && (c & 1) == 0) {
+            // vertical wall segment between two horizontally adjacent cells
+            return vWall[(r - 1) / 2][(c - 2) / 2];
+        }
+        // junction where four cells meet: a wall whenever any surrounding segment is
+        return isWall(r - 1, c, height, width, hWall, vWall)
+                || isWall(r + 1, c, height, width, hWall, vWall)
+                || isWall(r, c - 1, height, width, hWall, vWall)
+                || isWall(r, c + 1, height, width, hWall, vWall);
+    }
+
+    private char boxChar(boolean north, boolean south, boolean east, boolean west) {
+        if (north && south && east && west) {
+            return '┼';
+        }
+        if (south && east && west) {
+            return '┬';
+        }
+        if (north && east && west) {
+            return '┴';
+        }
+        if (north && south && east) {
+            return '├';
+        }
+        if (north && south && west) {
+            return '┤';
+        }
+        if (south && east) {
+            return '┌';
+        }
+        if (south && west) {
+            return '┐';
+        }
+        if (north && east) {
+            return '└';
+        }
+        if (north && west) {
+            return '┘';
+        }
+        if (east && west) {
+            return '─';
+        }
+        if (north || south) {
+            return '│';
+        }
+        if (east || west) {
+            return '─';
+        }
+        return EMPTY_CELL;
+    }
+}

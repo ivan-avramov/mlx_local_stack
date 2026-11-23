@@ -1,0 +1,52 @@
+#include "robot_name.h"
+
+#include <mutex>
+#include <random>
+#include <string>
+#include <unordered_set>
+
+namespace robot_name {
+
+namespace {
+
+// Tracks every name ever handed out so that no two robots ever share one,
+// even after a reset.
+std::unordered_set<std::string> used_names;
+std::mutex used_names_mutex;
+
+std::mt19937& engine()
+{
+    static std::mt19937 rng{std::random_device{}()};
+    return rng;
+}
+
+std::string generate_name()
+{
+    std::uniform_int_distribution<int> letter(0, 25);
+    std::uniform_int_distribution<int> digit(0, 9);
+
+    std::lock_guard<std::mutex> lock(used_names_mutex);
+
+    std::string name;
+    do {
+        name = std::string(2, 'A');
+        name[0] = static_cast<char>('A' + letter(engine()));
+        name[1] = static_cast<char>('A' + letter(engine()));
+        name += static_cast<char>('0' + digit(engine()));
+        name += static_cast<char>('0' + digit(engine()));
+        name += static_cast<char>('0' + digit(engine()));
+    } while (used_names.count(name) != 0);
+
+    used_names.insert(name);
+    return name;
+}
+
+}  // namespace
+
+robot::robot() : _name(generate_name()) {}
+
+std::string robot::name() const { return _name; }
+
+void robot::reset() { _name = generate_name(); }
+
+}  // namespace robot_name

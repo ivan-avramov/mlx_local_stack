@@ -1,0 +1,94 @@
+//! Robot factory name management.
+//!
+//! Names have the form of two uppercase letters followed by three digits
+//! (e.g. `RX837`). Every live robot is guaranteed a unique name: a global
+//! registry tracks which names are currently assigned, and name generation
+//! retries until it finds an unused one.
+
+use std::collections::HashSet;
+use std::sync::{LazyLock, Mutex, OnceLock};
+use std::time::{SystemTime, UNIX_EPOCH};
+
+/// A small, dependency-free PRNG (splitmix64) used to generate names.
+struct SplitMix64(u64);
+
+impl SplitMix64 {
+    fn new(seed: u64) -> Self {
+        SplitMix64(seed)
+    }
+
+    fn next_u64(&mut self) -> u64 {
+        self.0 = self.0.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = self.0;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    }
+}
+
+/// Names currently assigned to robots.
+static USED_NAMES: LazyLock<Mutex<HashSet<String>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+
+/// Process-wide name generator.
+static RNG: OnceLock<Mutex<SplitMix64>> = OnceLock::new();
+
+fn rng() -> &'static Mutex<SplitMix64> {
+    RNG.get_or_init(|| Mutex::new(SplitMix64::new(entropy_seed())))
+}
+
+/// Mix together whatever entropy is cheaply available: the current time,
+/// the process id, and the address of a stack variable (ASLR).
+fn entropy_seed() -> u64 {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos() as u64;
+    let pid = u64::from(std::process::id());
+    let local = 0u64;
+    let stack = (&local as *const u64) as u64;
+    now ^ (pid << 32) ^ (stack >> 8)
+}
+
+/// Generate a random name not currently assigned to any robot.
+///
+/// `avoid` is an extra name to reject (the robot's old name on reset),
+/// so a reset always produces a name different from the previous one.
+fn take_unused_name(avoid: Option<&str>) -> String {
+    loop {
+        let name = {
+            let mut r = rng().lock().unwrap();
+            format!(
+                "{}{}{:03}",
+                (b'A' + (r.next_u64() % 26) as u8) as char,
+                (b'A' + (r.next_u64() % 26) as u8) as char,
+                r.next_u64() % 1000,
+            )
+        };
+        let mut used = USED_NAMES.lock().unwrap();
+        if Some(name.as_str()) != avoid && used.insert(name.clone()) {
+            return name;
+        }
+    }
+}
+
+pub struct Robot {
+    name: String,
+}
+
+impl Robot {
+    pub fn new() -> Self {
+        Robot {
+            name: take_unused_name(None),
+        }
+    }
+
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    pub fn reset_name(&mut self) {
+        USED_NAMES.lock().unwrap().remove(&self.name);
+        self.name = take_unused_name(Some(&self.name));
+    }
+}

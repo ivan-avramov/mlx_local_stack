@@ -1,0 +1,76 @@
+#include "parallel_letter_frequency.h"
+
+#include <algorithm>
+#include <cctype>
+#include <cstddef>
+#include <thread>
+
+namespace parallel_letter_frequency {
+
+namespace {
+
+// Builds a frequency table for a single text.
+std::map<char, int> count_text(const std::string_view& text) {
+    std::map<char, int> counts;
+    for (char c : text) {
+        // Cast to unsigned char so the value is a valid argument for the
+        // <cctype> classification/conversion functions.
+        const unsigned char uc = static_cast<unsigned char>(c);
+        if (std::isalpha(uc)) {
+            ++counts[static_cast<char>(std::tolower(uc))];
+        }
+    }
+    return counts;
+}
+
+}  // namespace
+
+std::map<char, int> frequency(const std::vector<std::string_view>& texts) {
+    const std::size_t n = texts.size();
+    if (n == 0) {
+        return {};
+    }
+
+    // Split the texts across one worker thread per hardware thread (or per
+    // text, whichever is smaller). Each worker accumulates into its own
+    // private table, so no synchronization is needed while counting.
+    std::size_t nthreads = std::thread::hardware_concurrency();
+    if (nthreads == 0) {
+        nthreads = 4;
+    }
+    nthreads = std::min(nthreads, n);
+
+    std::vector<std::map<char, int>> partials(nthreads);
+    std::vector<std::thread> threads;
+    threads.reserve(nthreads);
+
+    for (std::size_t t = 0; t < nthreads; ++t) {
+        // Each worker handles a contiguous range of texts; the last worker
+        // takes the remainder so every text is processed exactly once.
+        const std::size_t chunk = n / nthreads;
+        const std::size_t begin = t * chunk;
+        const std::size_t end = (t == nthreads - 1) ? n : (t + 1) * chunk;
+        threads.emplace_back([&texts, &partials, t, begin, end]() {
+            for (std::size_t i = begin; i < end; ++i) {
+                for (const auto& [ch, cnt] : count_text(texts[i])) {
+                    partials[t][ch] += cnt;
+                }
+            }
+        });
+    }
+
+    for (auto& th : threads) {
+        th.join();
+    }
+
+    // Merge the per-thread tables into the final result.
+    std::map<char, int> result;
+    for (const auto& partial : partials) {
+        for (const auto& [ch, cnt] : partial) {
+            result[ch] += cnt;
+        }
+    }
+    return result;
+}
+
+}  // namespace parallel_letter_frequency

@@ -1,0 +1,52 @@
+class CircularBuffer<T> {
+
+    private final Object[] buffer;
+    private int readPosition;
+    private int writePosition;
+    private int size;
+
+    CircularBuffer(final int capacity) {
+        buffer = new Object[capacity];
+    }
+
+    @SuppressWarnings("unchecked")
+    T read() throws BufferIOException {
+        if (size == 0) {
+            throw new BufferIOException("Tried to read from empty buffer");
+        }
+        T data = (T) buffer[readPosition];
+        buffer[readPosition] = null;
+        readPosition = (readPosition + 1) % buffer.length;
+        size--;
+        return data;
+    }
+
+    void write(T data) throws BufferIOException {
+        if (size == buffer.length) {
+            throw new BufferIOException("Tried to write to full buffer");
+        }
+        overwrite(data);
+    }
+
+    void overwrite(T data) {
+        if (size == buffer.length) {
+            // Buffer is full: drop the oldest element, i.e. the one at
+            // the read position, and advance the read position.
+            readPosition = (readPosition + 1) % buffer.length;
+        } else {
+            size++;
+        }
+        buffer[writePosition] = data;
+        writePosition = (writePosition + 1) % buffer.length;
+    }
+
+    void clear() {
+        for (int i = 0; i < buffer.length; i++) {
+            buffer[i] = null;
+        }
+        readPosition = 0;
+        writePosition = 0;
+        size = 0;
+    }
+
+}

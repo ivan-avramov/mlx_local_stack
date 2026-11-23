@@ -1,0 +1,89 @@
+use anyhow::Error;
+
+/// While using `&[&str]` to handle flags is convenient for exercise purposes,
+/// and resembles the output of [`std::env::args`], in real-world projects it is
+/// both more convenient and more idiomatic to contain runtime configuration in
+/// a dedicated struct. Therefore, we suggest that you do so in this exercise.
+///
+/// [`std::env::args`]: https://doc.rust-lang.org/std/env/fn.args.html
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Flags {
+    /// `-n`: prepend the line number and a colon to each matching line.
+    pub line_numbers: bool,
+    /// `-l`: output only the names of files containing at least one match.
+    pub file_names: bool,
+    /// `-i`: match using a case-insensitive comparison.
+    pub ignore_case: bool,
+    /// `-v`: invert the match, collecting lines that fail to match.
+    pub invert: bool,
+    /// `-x`: match only lines where the pattern matches the entire line.
+    pub whole_line: bool,
+}
+
+impl Flags {
+    pub fn new(flags: &[&str]) -> Self {
+        Self {
+            line_numbers: flags.iter().any(|f| *f == "-n"),
+            file_names: flags.iter().any(|f| *f == "-l"),
+            ignore_case: flags.iter().any(|f| *f == "-i"),
+            invert: flags.iter().any(|f| *f == "-v"),
+            whole_line: flags.iter().any(|f| *f == "-x"),
+        }
+    }
+}
+
+pub fn grep(pattern: &str, flags: &Flags, files: &[&str]) -> Result<Vec<String>, Error> {
+    let mut matches = Vec::new();
+
+    for file in files {
+        let content = std::fs::read_to_string(file)?;
+
+        // With `-l`, remember whether this file had any match so we can print
+        // its name once, without duplicating it for every matching line.
+        let mut file_has_match = false;
+
+        for (index, line) in content.lines().enumerate() {
+            let line_number = index + 1;
+            let matched = line_matches(line, pattern, flags);
+
+            if flags.invert != matched {
+                if flags.file_names {
+                    file_has_match = true;
+                } else {
+                    let mut output = String::new();
+                    if files.len() > 1 {
+                        output.push_str(file);
+                        output.push(':');
+                    }
+                    if flags.line_numbers {
+                        output.push_str(&line_number.to_string());
+                        output.push(':');
+                    }
+                    output.push_str(line);
+                    matches.push(output);
+                }
+            }
+        }
+
+        if flags.file_names && file_has_match {
+            matches.push(file.to_string());
+        }
+    }
+
+    Ok(matches)
+}
+
+/// Returns whether `line` matches `pattern`, honoring the `-i` and `-x` flags.
+fn line_matches(line: &str, pattern: &str, flags: &Flags) -> bool {
+    if flags.whole_line {
+        if flags.ignore_case {
+            line.eq_ignore_ascii_case(pattern)
+        } else {
+            line == pattern
+        }
+    } else if flags.ignore_case {
+        line.to_lowercase().contains(&pattern.to_lowercase())
+    } else {
+        line.contains(pattern)
+    }
+}

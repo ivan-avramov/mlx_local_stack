@@ -1,0 +1,60 @@
+#include "bank_account.h"
+
+#include <stdexcept>
+
+namespace Bankaccount {
+
+Bankaccount::Bankaccount() : balance_(0), opened_(false) {}
+
+void Bankaccount::open() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (opened_) {
+        throw std::runtime_error("Account is already open");
+    }
+    opened_ = true;
+    balance_ = 0;
+}
+
+void Bankaccount::close() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!opened_) {
+        throw std::runtime_error("Account is not open");
+    }
+    opened_ = false;
+    balance_ = 0;
+}
+
+int Bankaccount::balance() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!opened_) {
+        throw std::runtime_error("Account is not open");
+    }
+    return balance_;
+}
+
+void Bankaccount::deposit(int amount) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!opened_) {
+        throw std::runtime_error("Account is not open");
+    }
+    if (amount < 0) {
+        throw std::runtime_error("Cannot deposit a negative amount");
+    }
+    balance_ += amount;
+}
+
+void Bankaccount::withdraw(int amount) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    if (!opened_) {
+        throw std::runtime_error("Account is not open");
+    }
+    if (amount < 0) {
+        throw std::runtime_error("Cannot withdraw a negative amount");
+    }
+    if (amount > balance_) {
+        throw std::runtime_error("Cannot withdraw more than the balance");
+    }
+    balance_ -= amount;
+}
+
+}  // namespace Bankaccount

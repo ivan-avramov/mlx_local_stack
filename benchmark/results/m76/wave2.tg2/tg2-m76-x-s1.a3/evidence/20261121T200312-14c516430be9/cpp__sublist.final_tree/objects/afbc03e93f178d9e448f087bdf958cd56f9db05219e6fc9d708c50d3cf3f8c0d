@@ -1,0 +1,50 @@
+#include "sublist.h"
+
+#include <cstddef>
+#include <vector>
+
+namespace sublist {
+
+namespace {
+
+bool contains(const std::vector<int>& outer, const std::vector<int>& inner) {
+    if (inner.empty()) {
+        return true;
+    }
+    if (inner.size() > outer.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i + inner.size() <= outer.size(); ++i) {
+        bool matches = true;
+        for (std::size_t j = 0; j < inner.size(); ++j) {
+            if (outer[i + j] != inner[j]) {
+                matches = false;
+                break;
+            }
+        }
+        if (matches) {
+            return true;
+        }
+    }
+    return false;
+}
+
+}  // namespace
+
+List_comparison sublist(std::initializer_list<int> a, std::initializer_list<int> b) {
+    const std::vector<int> list_a(a);
+    const std::vector<int> list_b(b);
+
+    if (list_a == list_b) {
+        return List_comparison::equal;
+    }
+    if (contains(list_a, list_b)) {
+        return List_comparison::superlist;
+    }
+    if (contains(list_b, list_a)) {
+        return List_comparison::sublist;
+    }
+    return List_comparison::unequal;
+}
+
+}  // namespace sublist

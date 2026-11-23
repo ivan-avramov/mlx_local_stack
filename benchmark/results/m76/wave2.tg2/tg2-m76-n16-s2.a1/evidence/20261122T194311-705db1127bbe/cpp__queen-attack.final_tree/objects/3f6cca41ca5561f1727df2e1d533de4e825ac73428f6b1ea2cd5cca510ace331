@@ -1,0 +1,43 @@
+#include "queen_attack.h"
+
+#include <cstdlib>
+
+namespace queen_attack {
+
+namespace {
+constexpr int kBoardSize = 8;
+}
+
+chess_board::chess_board(std::pair<int, int> white, std::pair<int, int> black)
+    : white_(white), black_(black) {
+    validate_position(white_);
+    validate_position(black_);
+
+    if (white_ == black_) {
+        throw std::domain_error("queens must be placed on distinct squares");
+    }
+}
+
+std::pair<int, int> chess_board::white() const {
+    return white_;
+}
+
+std::pair<int, int> chess_board::black() const {
+    return black_;
+}
+
+bool chess_board::can_attack() const {
+    const int column_diff = std::abs(white_.first - black_.first);
+    const int row_diff = std::abs(white_.second - black_.second);
+
+    return column_diff == 0 || row_diff == 0 || column_diff == row_diff;
+}
+
+void chess_board::validate_position(std::pair<int, int> position) {
+    if (position.first < 0 || position.first >= kBoardSize ||
+        position.second < 0 || position.second >= kBoardSize) {
+        throw std::domain_error("queen position is off the board");
+    }
+}
+
+}  // namespace queen_attack
