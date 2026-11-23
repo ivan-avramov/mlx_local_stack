@@ -19,7 +19,7 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 1. **Stage 3b readout PROVISIONAL (S29-P23): A8 tg2 PASS** (−0.6 pp [−7.5, +6.2], loss bound 7.5 pp). Decider complete (8 legs VALID);
    evidence pushed (`evidence` `162f5a584`); `main` holds the data (`acaca05cc`), the rule 3.6 fix (`58625569a`, S29-P21, four-eyes
    record `docs/reviews/s29-a8-frozen-record/`), the goldens fix (`0cf54ef00`) and the readout (`3dcd2ba34`). The full gate runs on
-   the HEAD that carries this handoff; on PASS push `main` there once (C387); a FAIL → the operator. Next: the subjective panel
+   the HEAD with the README A8-superseded correction (S29-P27); on PASS push `main` there once (C387); a FAIL → the operator. Next: the subjective panel
    (C161: A2 completion + A8-s1 / A8-s2, two families, both orders), then the ship recommendation to the operator.
 2. **Run-time autonomy granted for session 29 (C383, widened by C388: the designer decides for the rest of session 29)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
