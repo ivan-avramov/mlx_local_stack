@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 from bench import tg2_grade as tg
-from bench.tests.test_tg2_grade import DOCKER_SKIP, POLYGLOT, _docker_env, tmp_path  # noqa: F401
+from bench.tests.test_tg2_grade import DOCKER_IMAGE_KWARGS, DOCKER_SKIP, POLYGLOT, _docker_env, tmp_path  # noqa: F401
 from bench.token_turn_gate import TransportAbort
 
 BENCH = Path(__file__).resolve().parents[2]
@@ -36,7 +36,8 @@ def test_recorded_variants_classify_as_recorded_and_the_rust_spin_becomes_a_time
     _docker_env()
     draw = json.loads((BENCH / "m65/tg2_draw.json").read_text())
     universe = json.loads((BENCH / "m65/tg2_universe.json").read_text())["items"]
-    guard, image_id, rows = tg.LocalDocker(), tg.pinned_image_id(), []
+    guard, rows = tg.LocalDocker(), []
+    image_kwargs = DOCKER_IMAGE_KWARGS or dict(image_id=tg.pinned_image_id())
     for lang in ("rust", "javascript", "java", "cpp"):
         item = draw["languages"][lang]["permutation"][0]
         slug = item.split("/", 1)[1]
@@ -62,9 +63,9 @@ def test_recorded_variants_classify_as_recorded_and_the_rust_spin_becomes_a_time
             try:
                 r = tg.grade_item(lang, tree, slug, private, prepared=entry["prepared"], solutions=entry["solutions"],
                                   prepared_cargo_toml=entry.get("prepared_cargo_toml"), extra_crates=(), guard=guard,
-                                  image_id=image_id, timeout=SPIN_TIMEOUT if var == "spin" else entry["timeout_s"],
+                                  timeout=SPIN_TIMEOUT if var == "spin" else entry["timeout_s"],
                                   keep=keep, seq=1, boundary="final",
-                                  final=True)
+                                  final=True, **image_kwargs)
                 res = dict(outcome=r.outcome, reason=r.reason, leaves=len(r.leaves), failing=r.failing(set(entry["leaves"])))
             except TransportAbort as exc:
                 res = dict(outcome="transport_abort", reason=str(exc)[:300])

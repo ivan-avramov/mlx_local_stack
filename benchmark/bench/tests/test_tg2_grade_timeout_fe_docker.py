@@ -102,7 +102,8 @@ def prepare(tmp_path, lang):
 
 def grade(tmp_path, ctx, lang, tree, **kw):
     return tg.grade_item(lang, tree, ctx["slug"], tmp_path / "private", prepared=ctx["prepared"], solutions=ctx["sols"],
-                         guard=ctx["guard"], prepared_cargo_toml=ctx["pct"], extra_crates=ctx["extra"], **kw)
+                         guard=ctx["guard"], prepared_cargo_toml=ctx["pct"], extra_crates=ctx["extra"],
+                         **base.DOCKER_IMAGE_KWARGS, **kw)
 
 
 def variant_tree(tmp_path, ctx, name):
@@ -209,7 +210,7 @@ def test_g4_a_compile_step_that_hangs_is_a_timeout_with_its_marker_read_back(tmp
     (tree / "build.rs").write_text("fn main() { loop { std::hint::spin_loop(); } }\n")
     started = time.monotonic()
     result = tg.grade("rust", tree, ctx["slug"], tmp_path / "private", prepared=ctx["prepared"], guard=ctx["guard"],
-                      timeout=SPIN_TIMEOUT["rust"], keep=tmp_path / "keep", seq=0, boundary=0)
+                      timeout=SPIN_TIMEOUT["rust"], keep=tmp_path / "keep", seq=0, boundary=0, **base.DOCKER_IMAGE_KWARGS)
     print("WALL g4 compile-hang: %.1fs" % (time.monotonic() - started))
     assert result.outcome == "timeout" and result.all_failed and result.passing == set()
     steps = [p["step"] for p in result.phases]

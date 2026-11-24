@@ -15,6 +15,7 @@ import pytest
 
 from bench import structured_grade as sg
 from bench import tg2_grade as tg
+from bench.tests.tg2_docker_image import configured_image
 from bench.token_turn_gate import TransportAbort
 
 IMG = "sha256:" + "ab" * 32
@@ -1963,22 +1964,25 @@ POLYGLOT = Path(os.environ.get("POLYGLOT_DIR") or Path(os.environ.get("STACK_WOR
 
 
 def _docker_skip_reason():
-    docker = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
-    if not Path(docker).exists():
-        return "docker CLI not available"
-    try:
-        pinned = tg.pinned_image_id()
-        out = subprocess.run([docker, "image", "inspect", "--format", "{{.Id}}", pinned], capture_output=True,
-                             text=True, timeout=30)
-    except (OSError, subprocess.TimeoutExpired, TransportAbort) as exc:
-        return "docker unavailable: %s" % exc
-    if out.returncode:
-        return "tg2-grader image %s is not built locally (run benchmark/m65/tg2_image/build.sh)" % tg.IMAGE_TAG
+    if DOCKER_IMAGE is None:
+        docker = shutil.which("docker") or str(Path.home() / ".orbstack/bin/docker")
+        if not Path(docker).exists():
+            return "docker CLI not available"
+        try:
+            pinned = tg.pinned_image_id()
+            out = subprocess.run([docker, "image", "inspect", "--format", "{{.Id}}", pinned], capture_output=True,
+                                 text=True, timeout=30)
+        except (OSError, subprocess.TimeoutExpired, TransportAbort) as exc:
+            return "docker unavailable: %s" % exc
+        if out.returncode:
+            return "tg2-grader image %s is not built locally (run benchmark/m65/tg2_image/build.sh)" % tg.IMAGE_TAG
     if not (POLYGLOT / "rust/exercises/practice").is_dir():
         return "polyglot corpus not found (set POLYGLOT_DIR / STACK_WORKDIR)"
     return None
 
 
+DOCKER_IMAGE = configured_image()
+DOCKER_IMAGE_KWARGS = dict(image_id=DOCKER_IMAGE, image_tag=DOCKER_IMAGE) if DOCKER_IMAGE else {}
 DOCKER_SKIP = _docker_skip_reason()
 ITEMS = [("rust", "gigasecond"), ("rust", "macros"), ("java", "affine-cipher"), ("java", "connect"),
          ("javascript", "affine-cipher"), ("javascript", "alphametics"), ("cpp", "gigasecond"),
@@ -2019,7 +2023,7 @@ def test_javascript_solution_calling_process_exit_is_a_model_failure_not_infrast
     (ref / "node_modules").mkdir()                                   # planted artefact: stripped before grading
     (ref / "node_modules/jest").mkdir()
     result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
-                           solutions=sols, guard=guard, timeout=300)
+                           solutions=sols, guard=guard, timeout=300, **DOCKER_IMAGE_KWARGS)
     assert result.stripped == ["node_modules"]
     assert result.outcome in ("crash", "parsed") and result.passing == set()
     assert result.failing({"x"}) >= 1
@@ -2033,13 +2037,13 @@ def test_suite_level_afterall_failure_is_a_counted_failure_in_the_real_runner(tm
     stub, prepared, sols = _item(tmp_path, "javascript", "affine-cipher", guard)
     ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
     clean = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
-                          guard=guard, timeout=300)
+                          guard=guard, timeout=300, **DOCKER_IMAGE_KWARGS)
     universe = set(clean.collected)
     assert clean.failing(universe) == 0
     body = (ref / "affine-cipher.js").read_text()
     (ref / "affine-cipher.js").write_text("afterAll(() => { throw new Error('teardown boom'); });\n" + body)
     bad = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
-                        guard=guard, timeout=300)
+                        guard=guard, timeout=300, **DOCKER_IMAGE_KWARGS)
     assert bad.outcome == "parsed" and bad.failing(universe) >= 1, (bad.outcome, bad.leaves)
 
 
@@ -2070,7 +2074,8 @@ def test_g23_hostile_report_replaced_by_the_solution_is_a_model_failure_in_the_r
             % ("%s; rm -f /report/jest.json; %s" % (wait, HOSTILE[kind])))
     (ref / "affine-cipher.js").write_text(hook + (ref / "affine-cipher.js").read_text())
     result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared,
-                           solutions=sols, guard=guard, timeout=300, keep=tmp_path / "keep", seq=0, boundary=0)
+                           solutions=sols, guard=guard, timeout=300, keep=tmp_path / "keep", seq=0, boundary=0,
+                           **DOCKER_IMAGE_KWARGS)
     out = (tmp_path / "keep/seq-0000/execute.stdout").read_text()
     assert "TG2_SYNC_OK" in out and "TG2_SYNC_FAILED" not in out, "report replacement was not synchronised"
     assert result.outcome == "crash" and result.reason == "runner_crash_after_start", (result.outcome, result.reason_detail)
@@ -2092,14 +2097,14 @@ def test_p363_a_killed_grader_leaves_listed_leftovers_that_block_grading_until_e
         sys.path.insert(0, %r)
         from bench import tg2_grade as tg
         tg._grade_steps = lambda *a, **k: os.kill(os.getpid(), signal.SIGKILL)
-        tg.grade("javascript", %r, "affine-cipher", %r)
-    """) % (str(bench_root), str(stub), str(tmp_path / "private"))
+        tg.grade("javascript", %r, "affine-cipher", %r, **%r)
+    """) % (str(bench_root), str(stub), str(tmp_path / "private"), DOCKER_IMAGE_KWARGS)
     proc = subprocess.run([sys.executable, "-c", script], env=dict(os.environ, PYTHONPATH=str(bench_root)), timeout=120)
     assert proc.returncode == -signal.SIGKILL
     leftovers = tg.list_leftovers(guard.run_grader, tmp_path / "private")
     assert leftovers["volumes"] and leftovers["containers"]                          # real orphaned state, listed
     with pytest.raises(TransportAbort, match="leftover"):                             # and it blocks the next grade
-        tg.grade("javascript", stub, "affine-cipher", tmp_path / "private", guard=guard)
+        tg.grade("javascript", stub, "affine-cipher", tmp_path / "private", guard=guard, **DOCKER_IMAGE_KWARGS)
     foreign = "mlxbench-tg2-foreign-" + __import__("uuid").uuid4().hex[:6]
     subprocess.run(["docker", "volume", "create", foreign], check=True, capture_output=True)
     try:
@@ -2143,7 +2148,8 @@ def test_p367_a_model_style_solution_using_a_current_crate_version_builds_and_pa
     _docker_env()
     guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'rand = "0.8"', _modern_source())
     result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
-                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600,
+                           **DOCKER_IMAGE_KWARGS)
     assert result.outcome == "parsed" and result.leaves and result.passing == result.collected, (result.outcome, result.reason_detail)
 
 
@@ -2153,13 +2159,15 @@ def test_p367_an_unlisted_crate_or_an_unsatisfiable_version_is_a_tamper_failure(
     _docker_env()
     guard, stub, ref, prepared, sols = _robot_variant(tmp_path, 'serde = "1"', _modern_source())
     result = tg.grade_item("rust", ref, "robot-name", tmp_path / "private", prepared=prepared, solutions=sols,
-                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600,
+                           **DOCKER_IMAGE_KWARGS)
     assert result.outcome == "tampered" and any("serde" in r for r in result.tamper_reasons)
     second = tmp_path / "second"
     second.mkdir()
     guard, stub, ref, prepared, sols = _robot_variant(second, 'regex = "99"', _modern_source())
     result = tg.grade_item("rust", ref, "robot-name", second / "private", prepared=prepared, solutions=sols,
-                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600)
+                           prepared_cargo_toml=(stub / "Cargo.toml").read_text(), guard=guard, timeout=600,
+                           **DOCKER_IMAGE_KWARGS)
     assert result.outcome == "tampered" and result.all_failed and any("regex" in r and "vendored" in r for r in result.tamper_reasons)
 
 
@@ -2172,7 +2180,7 @@ def test_tamper_is_caught_through_the_production_entry_point(tmp_path):
     ref = _ref_of(tmp_path, stub, "javascript", "affine-cipher")
     (ref / "Jest.Config.js").write_text("module.exports = { testEnvironment: 'node' };\n")
     result = tg.grade_item("javascript", ref, "affine-cipher", tmp_path / "private", prepared=prepared, solutions=sols,
-                           guard=guard, timeout=300)
+                           guard=guard, timeout=300, **DOCKER_IMAGE_KWARGS)
     assert result.outcome == "tampered" and result.all_failed and not guard.leftover()
 
 
@@ -2190,11 +2198,11 @@ def test_reference_all_pass_and_untouched_stub_fails_in_the_built_image(tmp_path
     pct = (stub / "Cargo.toml").read_text() if lang == "rust" else None
     good = tg.grade_item(lang, ref, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
                          prepared_cargo_toml=pct, extra_crates=tg2_trees.extra_crates(POLYGLOT, lang, slug), timeout=900,
-                         keep=tmp_path / "keep", seq=0, boundary=0, final=True)
+                         keep=tmp_path / "keep", seq=0, boundary=0, final=True, **DOCKER_IMAGE_KWARGS)
     assert good.outcome == "parsed", good.phases
     assert good.collected and good.passing == good.collected, sorted(good.collected - good.passing)
     base = tg.grade_item(lang, stub_copy, slug, tmp_path / "private", prepared=prepared, solutions=sols, guard=guard,
-                         prepared_cargo_toml=pct, timeout=900)
+                         prepared_cargo_toml=pct, timeout=900, **DOCKER_IMAGE_KWARGS)
     assert base.failing(good.collected) > 0, (base.outcome, base.passing)
     assert not guard.leftover()
 
@@ -2231,8 +2239,8 @@ def test_s5_matcher_agrees_with_real_cargo_resolving_offline_against_the_vendore
         "    out.append(r.returncode==0)\n"
         "print('RESULT'+json.dumps(out))\n")
     run = subprocess.run(["docker", "run", "--rm", "-i", "--pull=never", "--network", "none", "--entrypoint", "python3",
-                          tg.pinned_image_id(), "-c", script], input=json.dumps(cases), capture_output=True, text=True,
-                         timeout=600)
+                          DOCKER_IMAGE or tg.pinned_image_id(), "-c", script], input=json.dumps(cases),
+                         capture_output=True, text=True, timeout=600)
     assert run.returncode == 0, run.stderr[-2000:]
     cargo_ok = json.loads(run.stdout.rsplit("RESULT", 1)[1])
     vendored = tg.vendored_versions()

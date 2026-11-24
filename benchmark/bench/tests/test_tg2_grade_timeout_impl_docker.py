@@ -17,7 +17,7 @@ from pathlib import Path
 import pytest
 
 from bench import tg2_grade as tg
-from bench.tests.test_tg2_grade import DOCKER_SKIP, POLYGLOT, _docker_env, tmp_path  # noqa: F401
+from bench.tests.test_tg2_grade import DOCKER_IMAGE_KWARGS, DOCKER_SKIP, POLYGLOT, _docker_env, tmp_path  # noqa: F401
 from bench.token_turn_gate import TransportAbort  # noqa: F401
 
 FIXTURES = Path(__file__).parent / "fixtures" / "tg2_grade_timeout_impl"
@@ -95,8 +95,9 @@ def _grade(lang, tree, tmp_path, stub, prepared, sols, timeout, name):
     started = time.monotonic()
     result = tg.grade_item(lang, tree, ITEMS[lang], tmp_path / ("private-" + name), prepared=prepared, solutions=sols,
                            prepared_cargo_toml=(stub / "Cargo.toml").read_text() if lang == "rust" else None,
-                           extra_crates=tg2_trees.extra_crates(POLYGLOT, lang, ITEMS[lang]), guard=guard, image_id=None,
-                           timeout=timeout, keep=tmp_path / ("keep-" + name), seq=1, boundary=0, final=True)
+                           extra_crates=tg2_trees.extra_crates(POLYGLOT, lang, ITEMS[lang]), guard=guard,
+                           timeout=timeout, keep=tmp_path / ("keep-" + name), seq=1, boundary=0, final=True,
+                           **DOCKER_IMAGE_KWARGS)
     wall = round(time.monotonic() - started, 1)
     print("TG2_TIMING %s" % json.dumps(dict(lang=lang, case=name, timeout=timeout, wall_s=wall, outcome=result.outcome,
                                             phases={p["step"]: p["seconds"] for p in result.phases})))
@@ -150,7 +151,8 @@ def _plain_grade(lang, tree, tmp_path, prepared, timeout, name):
     started = time.monotonic()
     try:
         result = tg.grade(lang, tree, ITEMS[lang], tmp_path / ("private-" + name), prepared=prepared, guard=guard,
-                          timeout=timeout, keep=tmp_path / ("keep-" + name), seq=1, boundary=0, final=True)
+                          timeout=timeout, keep=tmp_path / ("keep-" + name), seq=1, boundary=0, final=True,
+                          **DOCKER_IMAGE_KWARGS)
         print("TG2_TIMING %s" % json.dumps(dict(lang=lang, case=name, timeout=timeout, outcome=result.outcome,
                                                 wall_s=round(time.monotonic() - started, 1),
                                                 phases={p["step"]: p["seconds"] for p in result.phases})))
