@@ -6,7 +6,7 @@ guardrails prevent wrong data or wasted time, not ceremony; GPU time is the bind
 (C353); all work on this box (C350); **intent over mechanism (S28-P5)**. Run-time autonomy (C374) was session 28's only — ask again. Label points
 `S29-P<n>`.
 
-Decisions: session 28 ruled C374–C382; session 29 C383–C392 (next **C393**).
+Decisions: session 28 ruled C374–C382; session 29 C383–C393 (next **C394**).
 
 ## Goal
 
