@@ -252,7 +252,7 @@ def test_the_real_pilot_pair_is_accepted_without_any_reason(real_doc):
 
 # (c) §7.3 / B11: the rebuilt tg2 prompt equals the first user message of every pilot export on the evidence ref (needs the polyglot
 # checkout and the evidence objects of the new-identity pilot)
-def test_the_real_pilot_exports_pass_the_prompt_check():
+def test_the_real_pilot_exports_pass_the_prompt_check(monkeypatch):
     from bench import p426_panel as P
 
     root = Path(os.environ.get("POLYGLOT_DIR") or str(Path(os.environ.get("STACK_WORKDIR", "")) / "polyglot-benchmark"))
@@ -267,6 +267,10 @@ def test_the_real_pilot_exports_pass_the_prompt_check():
     top_ref = (top, V.resolve_commit(top, ref.stdout.strip(), "--evidence-ref"))
     pinned = json.loads((W.BENCH / "m65" / "tg2_universe.json").read_text())["polyglot_sha"]
     corpus = P.a8_corpus(root, polyglot_sha=lambda r: pinned)
+    # S29 (changed): these recorded exports are of the pre-S29 tg2 identity; rebuild their prompt with its helper sentences
+    from bench import corpus_tg2
+    from bench.tests.test_s29c_impl_identity import PRE_S29_HINTS
+    monkeypatch.setattr(corpus_tg2, "HINTS", dict(PRE_S29_HINTS))
     reader = V.Reader(M76)
     ctx = dict(root=M76, prefix=V.KV_REPO_PREFIX, namespace=V.A8_NS)
     n = 0

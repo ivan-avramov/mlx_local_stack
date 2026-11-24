@@ -104,8 +104,12 @@ def test_prepare_pilot_item_matches_the_frozen_universe(lang, tmp_path):
     assert prepared.item_id == item and prepared.lang == lang and prepared.name == item.split("/", 1)[1]
     assert set(prepared.editable) == set(entry["solutions"])
     assert set(prepared.tests) == set(entry["tests"])
-    assert corpus.manifest(prepared.work) == entry["prepared"]
-    assert prepared.prepared == entry["prepared"]
+    # S29 T1 (changed): the frozen tree made testable — the same files; only test-side files (Rust #[ignore] lines, the C++
+    # EXERCISM_RUN_ALL_TESTS guard) differ from the universe's frozen `prepared`, never a solution
+    assert corpus.manifest(prepared.work) == prepared.prepared
+    assert set(prepared.prepared) == set(entry["prepared"])
+    rewritten = {r for r in entry["prepared"] if prepared.prepared[r] != entry["prepared"][r]}
+    assert rewritten <= set(entry["tests"]) and (bool(rewritten) == (lang in ("rust", "cpp")))
     assert not corpus.changed(prepared)                                       # an untouched stub is "unchanged" (it fails)
 
 

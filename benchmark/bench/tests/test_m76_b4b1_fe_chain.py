@@ -492,6 +492,8 @@ def test_carrier_is_tg1s_with_the_tg2_label():
                 yield from flat(v, p + (i,))
         else:
             yield p, o
+    # S29 T3 / T4 (changed): the lookup rules differ by design (`test_s29c_impl_carrier` pins them); the rest is tg1's
+    tg1, tg2 = ({k: v for k, v in d.items() if k != "permissions"} for d in (tg1, tg2))
     a, b = dict(flat(tg1)), dict(flat(tg2))
     assert set(a) == set(b)
     diff = {k: (a[k], b[k]) for k in a if a[k] != b[k]}

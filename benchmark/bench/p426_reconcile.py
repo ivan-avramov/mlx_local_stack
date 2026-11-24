@@ -27,7 +27,10 @@ SIGNAL_ORDERS = ("before_signal", "after_signal", "no_signal")
 # S27 §5.9 (closed table): failed checks that are the item's own ACCOUNTING (post-outcome: flagged, never rerun); every other
 # failed check — serial, session_backend, started_terminated, failed_lines / failed_line beyond the allowed variants,
 # worker_deltas, the hooks' preconditions / settle / metrics / parse / engagement / ready checks, anything unlisted — is INTEGRITY.
-ACCOUNTING_CHECKS = ("boundary_count", "unaccounted_count", "pairing")
+ACCOUNTING_CHECKS = ("boundary_count", "unaccounted_count", "pairing", "kill_trailing_failed")
+# S29 K1: the kill-boundary race whose trailing request never published its step (S29-P16): the item's own accounting
+K1_CHECK = "kill_trailing_failed"
+K1_SHAPE = "trailing_failed_at_kill"
 # P586: a client-aborted in-flight request (opencode's own 60-minute step cut, C154) with affirmative client provenance
 ABORT_MATCH_S = 5.0                 # |export abort time - the worker's failure / last-request time|
 TELEMETRY_GAP_S = 120.0             # the largest gap between two telemetry lines (and the close gap) of a live stream
@@ -415,6 +418,69 @@ def _open_step_at_signal(late, *, usage, C, F, S, lines, before, after):
                 failed_at=failed_at, in_flight_at_kill=late.get("in_flight_at_kill"))
 
 
+def _k1_bound(lines, session):
+    """S29 K1: the window's final `Request started` and `Request failed` are one request of the item's session -> the binding
+    facts | None (integrity). A `session` field on either line equals the item's. Both lines carry a `uid`: the two are equal
+    (Sol P9). Neither carries one (the fork's format): the single-session worker's serial in-flight evidence — the line before
+    the pair is the window's last `Request completed`, it names the item's session and leaves in_flight 0, the start shows
+    in_flight 1, the failure in_flight 0 (the parsed window holds only lifecycle lines, so nothing lies between them).
+    One uid without the other: None."""
+    if not (isinstance(session, str) and session) or len(lines) < 2:
+        return None
+    start, fail = lines[-2], lines[-1]
+    if not all(x.fields.get("session", session) == session for x in (start, fail)):
+        return None
+    uid_s, uid_f = start.fields.get("uid"), fail.fields.get("uid")
+    if uid_s is not None or uid_f is not None:
+        if not (isinstance(uid_s, str) and uid_s and uid_s == uid_f):
+            return None
+        return dict(binding="uid", request_uid=uid_s)
+    if len(lines) < 3:
+        return None
+    done = lines[-3]
+    if not (done.kind == "completed" and done.fields.get("session") == session
+            and all("in_flight" in x.fields for x in (done, start, fail))):
+        return None
+    if (_int(done, "in_flight"), _int(start, "in_flight"), _int(fail, "in_flight")) != (0, 1, 0):
+        return None
+    return dict(binding="serial_in_flight", request_uid=None, prior_completed_offset=done.offset)
+
+
+def _trailing_failed_at_kill(late, *, C, F, S, lines, session=None):
+    """S29 K1: the facts that a harness kill's one trailing failed request is the item's own (the client's next request, opened
+    between the pre-signal `/metrics` sample and the SIGTERM, whose step the stream never published — X2 without the step).
+    Recorded evidence only: the pre-signal sample read 0 in flight (`in_flight_at_kill` 0 and `worker_summary_before.in_flight`
+    0); from that sample to the post-kill one (`termination.worker_summary_before` -> `worker_summary_after`) the worker's
+    `requests_started` and `requests_failed` each +1 and `requests_completed` unchanged; the window's one failed line is its
+    last, STREAM_CLOSED, preceded by its own start (|S| == |C| + 1) and bound to it (`_k1_bound`); the worker's failure time is
+    at or after the signal. The worker may still queue / prefill / decode the dead request after its failure line (S29-P16: 842
+    prompt-delta tokens prefilled): its processing is recorded descriptive, never assumed absent. -> facts | None."""
+    if not isinstance(late, dict):
+        return None
+    sb, sa, sig_at = late.get("summary_before"), late.get("summary_after"), late.get("signal_at")
+    if not (_is_int(late.get("in_flight_at_kill")) and late["in_flight_at_kill"] == 0):
+        return None
+    if not (isinstance(sb, dict) and isinstance(sa, dict) and type(sig_at) in (int, float)):
+        return None
+    keys = ("requests_started", "requests_completed", "requests_failed", "in_flight")
+    if not all(_is_int(sb.get(k)) and _is_int(sa.get(k)) for k in keys) or sb["in_flight"] != 0:
+        return None
+    delta = {k: sa[k] - sb[k] for k in keys[:3]}
+    if delta != dict(requests_started=1, requests_completed=0, requests_failed=1):
+        return None
+    if not (len(F) == 1 and lines and lines[-1].kind == "failed" and STREAM_CLOSED in lines[-1].fields["error"]
+            and len(S) == len(C) + 1 and len(lines) >= 2 and lines[-2].kind == "started"):
+        return None
+    bound = _k1_bound(lines, session)
+    if bound is None:
+        return None
+    failed_at = _abort_time(sa, "failed")
+    if failed_at is None or failed_at < sig_at:
+        return None
+    return dict(shape=K1_SHAPE, worker_delta_at_kill=delta, in_flight_at_kill=0, signal_at=sig_at, failed_at=failed_at,
+                signal_offset=late.get("signal"), session=session, **bound, trailing_processing="descriptive")
+
+
 def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, inflight_possible, client_abort=None,
                late=None):
     """`kind` = 'completed' | 'kill' | 'dnf'; `expected` = the boundary request count the evidence states. `client_abort`
@@ -455,9 +521,17 @@ def _reconcile(*, usage, session, lines, before, after, kind, killed, expected, 
             # stream / signal / worker evidence shows the client opened that request before the SIGTERM
             anchored = (_open_step_at_signal(late, usage=usage, C=C, F=F, S=S, lines=lines, before=before, after=after)
                         if kind == "kill" and not inflight_possible else None)
+            k1 = (_trailing_failed_at_kill(late, C=C, F=F, S=S, lines=lines, session=session)
+                  if kind == "kill" and not inflight_possible and anchored is None else None)
             if anchored is not None:
                 late_record = anchored
-            check("inflight_evidence", inflight_possible or anchored is not None,
+            elif k1 is not None:
+                # S29 K1: the item's own accounting (recorded, tokens / latency descriptive), never an integrity fault
+                late_record = k1
+                check(K1_CHECK, False, f"S29 K1: one trailing failed request of the item's own session opened at the kill "
+                                       f"(worker delta {k1['worker_delta_at_kill']}, failed at {k1['failed_at']} >= signal "
+                                       f"{k1['signal_at']}); the item's accounting, its tokens / latency descriptive only")
+            check("inflight_evidence", inflight_possible or anchored is not None or k1 is not None,
                   "a trailing failed line, but the structured evidence says no request was in flight")
         last = lines[-1] if lines else None
         check("failed_line", last is not None and last.kind == "failed" and STREAM_CLOSED in last.fields["error"]

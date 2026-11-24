@@ -179,7 +179,7 @@ def test_provenance_passes_on_the_real_tg2_pilot_manifests():
         assert diffs and diffs <= V.KV_PROVENANCE_WHITELIST, sorted(diffs - V.KV_PROVENANCE_WHITELIST)
 
 
-def test_pilot_export_prompt_check():
+def test_pilot_export_prompt_check(monkeypatch):
     """§6.2 / §7.3: the rebuilt tg2 prompt equals the first user message of the HARVEST-bound pilot export (needs the polyglot
     checkout and the pilot export on the evidence ref)."""
     from bench import p426_panel as P
@@ -198,6 +198,10 @@ def test_pilot_export_prompt_check():
     reader = V.Reader(M76)
     pinned = json.loads((BENCH / "m65" / "tg2_universe.json").read_text())["polyglot_sha"]   # as the B4b-1 support does
     corpus = P.a8_corpus(root, polyglot_sha=lambda r: pinned)
+    # S29 (changed): these recorded exports are of the pre-S29 tg2 identity; rebuild their prompt with its helper sentences
+    from bench import corpus_tg2
+    from bench.tests.test_s29c_impl_identity import PRE_S29_HINTS
+    monkeypatch.setattr(corpus_tg2, "HINTS", dict(PRE_S29_HINTS))
     n = 0
     for arm in ("n16", "x"):
         att = V._a8_load_attempt(reader, f"tg2-m76-{arm}-pilot.a1", "pilot", arm)

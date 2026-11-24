@@ -235,6 +235,100 @@ def prepare_tree(corpus, lang, slug, dest):
     return Prepared(dest, rewrites)
 
 
+# S29 T1 (spec docs/specs/s29-tg2-testable.md): the testable workspace. Applied by `corpus_tg2.Tg2Corpus.prepare` AFTER the
+# prepared tree verified against the frozen universe (`prepare_tree` and `VERSION` are unchanged, so the universe, its freeze
+# and every start-tree consumer keep their bytes). Rust drops every `#[ignore]` line, C++ drops the `EXERCISM_RUN_ALL_TESTS`
+# guard (the `#if` line and its matching `#endif`); JS / Java were already rewritten by `prepare_tree`. The grader's own
+# enabling flags (`--include-ignored`, `-DEXERCISM_RUN_ALL_TESTS=ON`) are then no-ops: the standard local command runs the
+# graded suite.
+TESTABLE_VERSION = "s29-tg2-testable-v1"
+_RUST_IGNORE_LINE = re.compile(r"^[ \t]*#\[ignore\][ \t]*(?:\r?\n|\Z)", re.M)
+_RUST_IGNORE_ANY = re.compile(r"#!?\s*\[[^\]]*\bignore\b")
+_CPP_GUARD = re.compile(r"^[ \t]*#[ \t]*(?:if[ \t]+defined[ \t]*\(?[ \t]*EXERCISM_RUN_ALL_TESTS[ \t]*\)?|ifdef[ \t]+EXERCISM_RUN_ALL_TESTS)"
+                        r"[ \t]*(?://.*|/\*.*\*/[ \t]*)?$")
+_CPP_GUARD_WORD = re.compile(r"\bEXERCISM_RUN_ALL_TESTS\b")
+_CPP_DIRECTIVE = re.compile(r"^[ \t]*#[ \t]*(if|ifdef|ifndef|elif|else|endif)\b")
+_CPP_SOURCES = (".cpp", ".cc", ".h", ".hpp")
+
+
+def _test_side(tree, lang, solutions, suffixes):
+    """Sorted prepared files of `lang` source kind that are not solutions (the test side the transform may touch)."""
+    tree = Path(tree)
+    return sorted(rel for rel in (p.relative_to(tree).as_posix() for p in tree.rglob("*") if p.is_file())
+                  if rel.endswith(suffixes) and rel not in set(solutions) and not rel.startswith(".git/"))
+
+
+def _drop_cpp_guard(text, rel):
+    """(text, n): every `EXERCISM_RUN_ALL_TESTS` guard's `#if` line and its matching `#endif` removed. A guard with an `#else` /
+    `#elif` branch or without its `#endif` is a FreezeError (never guessed)."""
+    lines = text.splitlines(keepends=True)
+    drop, stack, n = set(), [], 0
+    for i, line in enumerate(lines):
+        if _CPP_GUARD.match(line.rstrip("\r\n")):
+            stack.append(("guard", i))
+            continue
+        m = _CPP_DIRECTIVE.match(line)
+        if not m:
+            continue
+        kind = m.group(1)
+        if kind in ("if", "ifdef", "ifndef"):
+            stack.append(("other", i))
+        elif kind in ("elif", "else"):
+            if stack and stack[-1][0] == "guard":
+                raise FreezeError("%s: the EXERCISM_RUN_ALL_TESTS guard at line %d has an #%s branch" % (rel, stack[-1][1] + 1, kind))
+        elif kind == "endif":
+            if not stack:
+                raise FreezeError("%s: unbalanced #endif at line %d" % (rel, i + 1))
+            what, start = stack.pop()
+            if what == "guard":
+                drop |= {start, i}
+                n += 1
+    if any(what == "guard" for what, _ in stack):
+        raise FreezeError("%s: an EXERCISM_RUN_ALL_TESTS guard without its #endif" % rel)
+    return "".join(line for i, line in enumerate(lines) if i not in drop), n
+
+
+def enable_full_suite(tree, lang, solutions):
+    """S29 T1: rewrite the prepared tree in place so that the language's standard test command runs every graded test.
+    Returns {test file: rewrites}. Only test-side files (never a solution, never a build file) are touched."""
+    tree = Path(tree)
+    rewrites = {}
+    if lang == "rust":
+        for rel in _test_side(tree, lang, solutions, (".rs",)):
+            path = tree / rel
+            text, n = _RUST_IGNORE_LINE.subn("", path.read_text())
+            if n:
+                path.write_text(text)
+                rewrites[rel] = n
+    elif lang == "cpp":
+        for rel in _test_side(tree, lang, solutions, _CPP_SOURCES):
+            path = tree / rel
+            original = path.read_text(errors="replace")
+            if not _CPP_GUARD_WORD.search(original):
+                continue                                  # e.g. test/catch.hpp: never parsed, never touched
+            text, n = _drop_cpp_guard(path.read_text(), rel)
+            if n:
+                path.write_text(text)
+                rewrites[rel] = n
+    elif lang not in ("javascript", "java"):
+        raise FreezeError("unsupported language %s" % lang)
+    return rewrites
+
+
+def full_suite_violations(tree, lang, solutions):
+    """Test-side files that still hold a form the standard test command would skip: Rust an `ignore` attribute, C++ an
+    `EXERCISM_RUN_ALL_TESTS` reference, JS `xtest` / `xit` / `xdescribe`, Java `@Disabled` (`tg2_grade.skip_form_violations`).
+    JS `test.skip` is an optional leaf (`tg2_grade.OPTIONAL_LEAVES`), skipped locally as it is graded."""
+    tree = Path(tree)
+    if lang == "rust":
+        return [rel for rel in _test_side(tree, lang, solutions, (".rs",)) if _RUST_IGNORE_ANY.search((tree / rel).read_text())]
+    if lang == "cpp":
+        return [rel for rel in _test_side(tree, lang, solutions, _CPP_SOURCES)
+                if _CPP_GUARD_WORD.search((tree / rel).read_text(errors="replace"))]
+    from bench import tg2_grade
+    return tg2_grade.skip_form_violations(tree, lang)
+
+
 def apply_reference(corpus, plan, tree):
     """Overlay the reference solution onto a prepared tree (in a fresh directory, never an in-place edit of a tree a
     container has mounted)."""

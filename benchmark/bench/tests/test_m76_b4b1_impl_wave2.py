@@ -627,7 +627,8 @@ class RecheckOps:
 def _seq(tmp_path, roots, ack=None):
     a = SimpleNamespace(cmd="run", lever="kv", corpus="tg2", arms=("n16", "x"), worktrees={"n16": tmp_path, "x": tmp_path},
                         out_base=str(tmp_path / "ob"), pause_file=None, record_dir=str(tmp_path / "ob" / "run"), rerun=[],
-                        rerun_reason=None, through=None, recheck_ack=ack)
+                        rerun_reason=None, through=None, recheck_ack=ack,
+                        recheck_ack_by="operator" if ack else None, recheck_ack_ruling="test ruling" if ack else None)   # S29 K2
     seq = W2.Sequencer(a, RecheckOps(roots), lambda: 0.0, lambda s: None, tmp_path)
     for arm in ("n16", "x"):
         seq.seq["legs"].append(dict(leg=f"tg2-m76-{arm}-s1", attempt=1, state="VALID"))

@@ -137,7 +137,9 @@ def test_grade_call_arguments(lang, tmp_path, monkeypatch):
     entry = S.entry_of(item)
     assert call["lang"] == lang and call["slug"] == item.split("/", 1)[1] and call["work"] == want_work
     assert call["private"] == private
-    assert call["prepared"] == entry["prepared"] and list(call["solutions"]) == list(entry["solutions"])
+    # S29 T1 (changed): the grader gets the testable tree's manifest (same files as the frozen `prepared`)
+    assert call["prepared"] == prepared.prepared and set(call["prepared"]) == set(entry["prepared"])
+    assert list(call["solutions"]) == list(entry["solutions"])
     assert call["prepared_cargo_toml"] == entry.get("prepared_cargo_toml")
     assert tuple(call["extra_crates"]) == ()
     assert (call["keep"], call["seq"], call["boundary"], call["final"], call["guard"], call["timeout"]) == (

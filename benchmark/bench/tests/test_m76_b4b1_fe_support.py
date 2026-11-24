@@ -43,12 +43,15 @@ POLYGLOT_SHA = "7e0611e77b54e2dea774cdc0aa00cf9f7ed6144f"                       
 LANGS = ("rust", "javascript", "java", "cpp")
 PILOT = {"rust": "rust/say", "javascript": "javascript/word-search", "java": "java/zipper", "cpp": "cpp/spiral-matrix"}
 SCAFFOLD = "opencode-v2-web-tg2"
-HELPER_TEXT = {                                   # spec §1 "Prompt (E1)": `H`, exactly one per language
+HELPER_TEXT = {                                   # spec §1 "Prompt (E1)": `H`, exactly one per language (S29 T2: + the command)
     "rust": "Helper modules may go under src/; you may add [dependencies] from the offline crates listed in OFFLINE_CRATES.md "
-            "to Cargo.toml.",
-    "java": "Helper classes may go only in the solution's package.",
-    "javascript": "Helper .js files may go beside the solution.",
-    "cpp": "Helper .h / .cpp files may go beside the solution.",
+            "to Cargo.toml. `cargo test` runs the full test suite your solution is graded on.",
+    "java": "Helper classes may go only in the solution's package. `./gradlew test` runs the full test suite your solution is "
+            "graded on.",
+    "javascript": "Helper .js files may go beside the solution. `npm install && npm test` runs the full test suite your solution "
+                  "is graded on.",
+    "cpp": "Helper .h / .cpp files may go beside the solution. `cmake -S . -B build && cmake --build build` builds and runs the "
+           "full test suite your solution is graded on.",
 }
 KINDS = ("stall", "loop", "alloc")
 

@@ -27,6 +27,7 @@ import socket
 import subprocess
 import sys
 import time
+import unicodedata
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -461,9 +462,10 @@ def waiver_evidence(run, kind, attempt, verify_verdict, wd, *, row_sha256=None, 
                 manifest_sha256=manifest_sha256, row_sha256=row_sha256), None
 
 
-def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
+def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None, runs=None):
     """One inject positive (§4): the run (one retry, only on a transport abort), its inject_verify verdict, and the entry's
-    `verdict` — `PASS`, `DECLINED` (loop / alloc, with `declined_evidence`) or the failure. Returns (entry, why-not-declined)."""
+    `verdict` — `PASS`, `DECLINED` (loop / alloc, with `declined_evidence`) or the failure. Returns (entry, why-not-declined).
+    `runs` (S29 acceptance 6): a list the retained run is appended to as (entry, run dir, attempt)."""
     verdict, res, n, ver = None, {}, 0, None
     for n in (1, 2):                                    # one retry per run, only on a transport abort
         res = dict(ops.positive_inject(lang, item, kind, seed=TG2_SESSION_SEED, attempt=n))
@@ -475,6 +477,8 @@ def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
         break
     entry = dict(language=lang, kind=kind, item=item, seed=TG2_SESSION_SEED, attempts=n, verdict=verdict,
                  row_sha256=res.get("row_sha256"), evidence_sha256=res.get("evidence_sha256"))
+    if runs is not None and ver is not None:
+        runs.append((entry, res["run"], n))
     why = None
     if ver is not None:
         entry.update(verify_verdict=ver["verdict"], verify_result=ver["result"], probe_rc=res.get("rc"))
@@ -512,6 +516,44 @@ def positive_entry(ops, wd, lang, item, kind, *, cancel_path_sha256=None):
     return entry, why
 
 
+def testable_record(worktree, wd, runs):
+    """S29 acceptance 6 (recorded, never a problem): `lookup` — every lookup probe of every deny class decided on the worktree's
+    tg2 carrier by opencode's matcher (`tg2_testable.lookup_record`); `full_suite` — per tg2 language, whether the agent ran the
+    language's full-suite command, read from the events of that language's positives sessions (each run's recorded row,
+    verified by its `row_sha256`). `runs` = [(entry, run dir, attempt)] in run order."""
+    from . import host_env as he
+    from . import tg2_materialize as mat
+    from . import tg2_testable as tt
+    try:
+        perms = tt.load_permissions(Path(worktree) / "benchmark/opencode_bench_v2_web_tg2.json")
+        lookup = tt.lookup_record(perms)
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        perms, lookup = [], dict(error=f"{type(exc).__name__}: {str(exc)[:200]}", all_denied=False, local_allowed=False)
+    iv = _inject_verify_module()
+    full = {}
+    for lang in TG2_LANGS:
+        calls, sources, ran = [], [], False
+        for entry, run, attempt in runs:
+            if entry.get("language") != lang:
+                continue
+            row, why = verified_row(run, entry.get("kind"), attempt, entry.get("row_sha256"))
+            if row is None:
+                sources.append(dict(kind=entry.get("kind"), read=False, why=why))
+                continue
+            try:
+                events = iv.load_events(iv.resolve(row.get("events_path", ""), wd))
+            except (OSError, ValueError):
+                sources.append(dict(kind=entry.get("kind"), read=False, why="the events file is unreadable"))
+                continue
+            rec = tt.full_suite_record(events, lang, perms)
+            sources.append(dict(kind=entry.get("kind"), read=True, calls=len(rec["calls"])))
+            calls += [dict(c, command=he.portable(str(c["command"]).replace(str(wd), "$STACK_WORKDIR")), kind=entry.get("kind"))
+                      for c in rec["calls"]]
+            ran = ran or rec["ran"]
+        full[lang] = dict(ran=ran, calls=calls, sources=sources, denied=sum(c["decision"] == "deny" for c in calls))
+    return dict(version=mat.TESTABLE_VERSION, lookup=lookup, full_suite=full)
+
+
 def cmd_positives(a, ops, wd, clock=time.time):
     """§3 "Positives record" (E6): per language the pilot item's stub graded FAIL and its reference PASS (`Tg2Corpus.grade`); on
     the reference arm, stall / loop / alloc on the pilot item at seed 1001 (12 `run_tg2_probe.py --tg2-inject` runs), each
@@ -536,7 +578,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
     st, ident = ops.worktree_state(worktree), ops.identity(worktree)
     if st.get("clean") is not True:
         raise fz.Refusal(f"the {arm} worktree is not clean")
-    problems, grades, injects = [], [], []
+    problems, grades, injects, runs = [], [], [], []
     cancel_sha = worktree_cancel_path_sha256(worktree)                         # C366 (a): recorded in each transfer
     probe = getattr(ops, "host_env", None)
     probe = probe if callable(probe) else None
@@ -554,7 +596,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
             # S27 §4.5 (C373): FIRST the deterministic interrupt positive on the pilot item (of the first tg2 language): the
             # harness stops it while the worker reports a generation in flight; the record is PASS only with its in-flight PASS
             lang0 = TG2_LANGS[0]
-            entry, why = positive_entry(ops, wd, lang0, plan[lang0], fz.INTERRUPT_KIND)
+            entry, why = positive_entry(ops, wd, lang0, plan[lang0], fz.INTERRUPT_KIND, runs=runs)
             if why:
                 entry["not_declined"] = he.portable(why)
             injects.append(entry)
@@ -562,7 +604,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
                 problems.append(f"{lang0} {fz.INTERRUPT_KIND}: {entry['verdict']}")
             for lang in TG2_LANGS:
                 for kind in fz.POSITIVE_KINDS:
-                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind, cancel_path_sha256=cancel_sha)
+                    entry, why = positive_entry(ops, wd, lang, plan[lang], kind, cancel_path_sha256=cancel_sha, runs=runs)
                     if why:
                         entry["not_declined"] = he.portable(why)        # why the run is not PASS / DECLINED (diagnostic)
                     injects.append(entry)
@@ -573,6 +615,10 @@ def cmd_positives(a, ops, wd, clock=time.time):
         problems.append(he.portable(f"exception: {type(exc).__name__}: {str(exc)[:300]}"))
     finally:
         env1 = json.loads(json.dumps(probe())) if probe else None  # also when no session opened
+    try:
+        testable = testable_record(worktree, wd, runs)                # S29 acceptance 6: recorded, never a problem
+    except Exception as exc:  # noqa: BLE001  (a record of the failure, the positives' verdict stays their own)
+        testable = dict(error=he.portable(f"{type(exc).__name__}: {str(exc)[:300]}"))
     host_changes = he.diff(env0, env1) if env0 is not None else []          # C384: recorded, never a problem
     if host_changes:
         print("host environment changed during the positives: " + "; ".join(host_changes), flush=True)
@@ -581,6 +627,7 @@ def cmd_positives(a, ops, wd, clock=time.time):
                draw_sha256=schedules.TG2_DRAW_SHA256, universe_sha256=schedules.TG2_UNIVERSE_SHA256,
                image_id=tg2_grade.pinned_image_id(), frozen_prompt_date=a.frozen_prompt_date, grades=grades, injects=injects,
                proofs={f"{e.get('language')}/{e.get('kind')}": fz.proof_of(e) for e in injects},      # S27 §4.5
+               testable=testable,
                problems=problems, host_env=env0, host_env_after=env1, host_env_changes=host_changes, verdict="PASS" if not problems else "FAIL",
                created=co.utc_stamp(clock()))
     try:
@@ -1608,8 +1655,9 @@ class Sequencer:
     def ensure_recheck(self, gate):
         """Re-check 1 (`s1`, after both s1 legs are harvested) / re-check 2 (`s2`, over s1 + s2): `m76_sim.recheck("A8", N16, X)`
         on the strict rows, its record sealed into `<out-base>/run/recheck-<gate>.json` and its sha256 in `sequence.json`
-        (`rechecks.<gate>`). Re-check 1 outside (or `operator_review`) stops with rc 5 until `--recheck-ack <that sha256>`;
-        re-check 2 never stops (B4b-2 labels its verdict). A resume re-verifies the sealed record, never re-runs it (change
+        (`rechecks.<gate>`). Re-check 1 outside (or `operator_review`) stops with rc 5 until `--recheck-ack <that sha256>`
+        with `--recheck-ack-by` and `--recheck-ack-ruling` (S29 K2: `ack` records actor and ruling; a recorded ack without
+        them is kept as recorded and accepted); re-check 2 never stops (B4b-2 labels its verdict). A resume re-verifies the sealed record, never re-runs it (change
         review L3): a record without its sealed file stops (the operator decides); a sealed file without a record (a stop
         between the seal and the save) is re-verified and recorded from the file; only when neither exists is it computed."""
         import tempfile
@@ -1648,14 +1696,17 @@ class Sequencer:
             return
         ack = getattr(self.a, "recheck_ack", None)
         if rec.get("ack"):
-            return
+            return                                       # S29 K2: a recorded ack (with or without an actor) stays as recorded
         if ack == rec["sha256"]:
-            rec["ack"] = dict(sha256=ack, at=co.utc_stamp(self.clock()))
+            actor, ruling = recheck_ack_actor(self.a)    # S29 K2: no actor / ruling refuses before anything is recorded
+            rec["ack"] = dict(sha256=ack, at=co.utc_stamp(self.clock()), actor=actor, ruling=ruling)
             self.save()
-            self.log(f"RE-CHECK {gate}: outside, acknowledged by the operator ({ack[:16]})")
+            state = "outside" if not rec["inside"] else "operator review"
+            self.log(f"RE-CHECK {gate}: {state}, acknowledged by the {actor} under {ruling} ({ack[:16]})")
             return
         raise Stop(5, f"STOP: re-check {gate} is outside the committed grid or needs operator review ({path.name}, sha256 "
-                      f"{rec['sha256']}); resume with --recheck-ack <that sha256>")
+                      f"{rec['sha256']}); resume with --recheck-ack <that sha256> --recheck-ack-by operator|designer "
+                      "--recheck-ack-ruling <ruling>")
 
     def recheck_attempts(self, gate):
         """Per arm the selected (VALID, harvested) attempts of the gate's sessions, as `recheck_rows` names them."""
@@ -2142,7 +2193,11 @@ def parse_args(argv):
                        help="M76 B4b-1 (lever kv): tg2 = the tg2 legs (run / rehearsal; no make-up)")
         if name == "run":
             p.add_argument("--recheck-ack", default=None, metavar="SHA256",
-                           help="M76 B4b-1: the sealed re-check 1 record's sha256 the operator acknowledges (resume after rc 5)")
+                           help="M76 B4b-1: the sealed re-check 1 record's sha256 acknowledged (resume after rc 5)")
+            p.add_argument("--recheck-ack-by", default=None, choices=RECHECK_ACK_ACTORS,
+                           help="S29 K2: who acknowledges (required with --recheck-ack)")
+            p.add_argument("--recheck-ack-ruling", default=None, metavar="RULING",
+                           help="S29 K2: the ruling the acknowledgement rests on, e.g. C383 (required with --recheck-ack)")
         p.add_argument("--worktree-off", default=None, help="lever mtp (required)")
         p.add_argument("--worktree-on", default=None, help="lever mtp (required)")
         p.add_argument("--lever", default="mtp", choices=("mtp", "kv"), help="M76 B3: kv = a KV pair, both MTP ON")
@@ -2219,7 +2274,45 @@ def check_positives_args(a):
     a.worktrees = trees
 
 
+RECHECK_ACK_ACTORS = ("operator", "designer")
+
+
+def recheck_ack_actor(a):
+    """S29 K2: `(actor, ruling)` of a re-check acknowledgement; refused unless both are given (actor operator / designer, ruling
+    non-empty). Never defaults an actor."""
+    actor, ruling = getattr(a, "recheck_ack_by", None), getattr(a, "recheck_ack_ruling", None)
+    if actor not in RECHECK_ACK_ACTORS or not isinstance(ruling, str) or not ruling.strip():
+        raise fz.Refusal("--recheck-ack needs --recheck-ack-by operator|designer and --recheck-ack-ruling <ruling> "
+                         "(an acknowledgement names who gave it and on what ruling)")
+    if any(unicodedata.category(c)[0] == "C" or unicodedata.category(c) in ("Zl", "Zp") for c in ruling):
+        raise fz.Refusal("--recheck-ack-ruling carries a line break or control character (the ruling is one log line)")
+    return actor, ruling.strip()
+
+
+def _recorded_ack(a):
+    """S29 K2 (fix 1): True when `sequence.json` under `--out-base` already records an acknowledgement of `--recheck-ack`'s sha256
+    for the gate whose sealed record has that sha256 (the legacy S29-P13 resume); False when it cannot be read."""
+    try:
+        rechecks = read_sequence(a.out_base).get("rechecks")
+    except (OSError, ValueError, TypeError, AttributeError):
+        return False
+    return isinstance(rechecks, dict) and any(
+        isinstance(rec, dict) and rec.get("sha256") == a.recheck_ack and isinstance(rec.get("ack"), dict)
+        and rec["ack"].get("sha256") == a.recheck_ack for rec in rechecks.values())
+
+
+def _check_recheck_ack_args(a):
+    """S29 K2: `--recheck-ack`, `--recheck-ack-by` and `--recheck-ack-ruling` come together or not at all; `--recheck-ack` alone
+    only resumes an acknowledgement `sequence.json` already records for that gate."""
+    given = [getattr(a, k, None) is not None for k in ("recheck_ack", "recheck_ack_by", "recheck_ack_ruling")]
+    if any(given) and not given[0]:
+        raise fz.Refusal("--recheck-ack-by / --recheck-ack-ruling need --recheck-ack <sha256>")
+    if given[0] and not (given == [True, False, False] and _recorded_ack(a)):
+        recheck_ack_actor(a)
+
+
 def check_args(a, wd):
+    _check_recheck_ack_args(a)
     _check_lever_args(a)
     kv = a.lever == "kv"
     tg2 = getattr(a, "corpus", "tg1") == "tg2"

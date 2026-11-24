@@ -46,6 +46,15 @@ RUBRICS = {
         "has been removed. "
         'Reply with ONLY a JSON object: {"choice": "A"|"B"|"tie", "rationale": "<one paragraph>"}. No prose outside the JSON.'
     ),
+    # S29 V1: the KV vision rubric (member A3). The M76 vision packets carry no captions, so it judges against the image only;
+    # `vision` above stays verbatim: the frozen stage-3 A3 record was bound to it.
+    "kv-vision": (
+        "You are judging two descriptions of the SAME image (the image file is named in the prompt; look at it). Judge ONLY "
+        "against the image itself: accuracy (nothing described that is not in the image), coverage of what matters in the "
+        "image, and precision. Penalize hallucinated objects, attributes or text heavily. Ignore length except where it "
+        "hurts precision. The descriptions are labeled A and B; all identifying information has been removed. "
+        'Reply with ONLY a JSON object: {"choice": "A"|"B"|"tie", "rationale": "<one paragraph>"}. No prose outside the JSON.'
+    ),
     "code": (
         "You are judging two solutions to the same programming task; BOTH pass the task's tests. Judge ONLY code quality: "
         "clarity and readability, idiomatic use of the language, appropriate structure and naming, robustness beyond the "
@@ -1228,7 +1237,12 @@ KV_PANEL_VERSION = "m76-b3-panel"
 KV_LEAK_PATTERNS = (r"p426", r"caslca/", r"\bm76\b", r"\btq4", r"kv_bits", r"m72_", r"\bn16\b")
 KV_WAVE1_MEMBERS = ("A1", "A2", "A3", "A4", "A5")
 KV_MEMBER_KIND = {"A1": "math500", "A2": "cjudge", "A3": "vision", "A4": "reasoning", "A5": "longctx"}
-KV_MEMBER_RUBRIC = {"A1": "reasoning", "A2": "cjudge", "A3": "vision", "A4": "reasoning", "A5": "reasoning"}
+KV_MEMBER_RUBRIC = {"A1": "reasoning", "A2": "cjudge", "A3": "kv-vision", "A4": "reasoning", "A5": "reasoning"}
+# S29 V1: (rubric, rubric_sha256, FROZEN.json sha256): only the exact frozen record named by its FROZEN.json sha256 (stage-3 A3 at
+# f8851c108) keeps verifying with the rubric it was bound to before the member's rubric changed; any other record binds
+# `kv_rubric(member)`.
+KV_FROZEN_RUBRICS = {"A3": (("vision", "5987d169d9084cc3b980be1069e17697d60b84e02dbc7fcae8d0d2aed0ea97b8",
+                             "9ff014b5f52a7d25e1ef24d70f2e51933353b54fed8a0d279be33409944e7d06"),)}
 KV_TEXT_FIELD = dict(TEXT_FIELD, longctx="content")
 KV_MODEL_LABEL = "entry"            # the pair-key prefix; never the registry name
 KV_A5_RULE = ("chain-4 items both strict (exact AND converged at the row's own resolved budget); retrieval items are excluded: a "
@@ -1628,12 +1642,20 @@ def kv_check_frozen(out_dir):
     rows = _read_manifest(out)
     if sorted(files) != _kv_frozen_set(out, rows):
         raise _refusal(f"panel {out.name}: the frozen file set != README + manifest + the manifest packets / attachments")
-    _kv_check_manifest(doc, rows, out.name)
+    _kv_check_manifest(doc, rows, out.name, _sha(out / FROZEN_NAME))
     _kv_check_inputs(doc, rows, out, out.name)
     return doc
 
 
-def _kv_check_manifest(doc, rows, name):
+def _kv_rubric_ok(member, rubric, sha, frozen_sha=None):
+    """The member's current rubric with its current sha, or (S29 V1) the (rubric, sha) that exact frozen record (`frozen_sha`, the
+    sha256 of its FROZEN.json) was bound to; the recorded sha must also be the sha of that rubric's text here."""
+    if rubric not in RUBRICS or sha != rubric_sha(rubric):
+        return False
+    return rubric == kv_rubric(member) or (rubric, sha, frozen_sha) in KV_FROZEN_RUBRICS.get(member, ())
+
+
+def _kv_check_manifest(doc, rows, name, frozen_sha=None):
     def bad(msg):
         return _refusal(f"panel {name}: {FROZEN_NAME} and manifest.jsonl disagree: {msg}")
 
@@ -1645,7 +1667,7 @@ def _kv_check_manifest(doc, rows, name):
         ref, test = check_kv_pair(*(doc.get("pair") or ()))
     except (TypeError, ValueError):
         raise bad(f"pair {doc.get('pair')!r}") from None
-    if doc.get("member") != name or doc.get("rubric") != kv_rubric(name) or doc.get("rubric_sha256") != rubric_sha(doc["rubric"]):
+    if doc.get("member") != name or not _kv_rubric_ok(name, doc.get("rubric"), doc.get("rubric_sha256"), frozen_sha):
         raise bad("member / rubric is not this member's")
     if not re.fullmatch(r"[0-9a-f]{64}", str(doc.get("b8_sha256"))):
         raise bad("no B8 sha256")

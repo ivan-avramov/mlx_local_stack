@@ -29,7 +29,7 @@ def test_kv_tunes_and_build():
 
 def test_kv_members_are_the_plans_sessions():
     assert P.kv_members() == ("A1", "A2", "A3", "A4", "A5", "A7-s1", "A7-s2", "A7-s3")
-    assert P.kv_rubric("A5") == "reasoning" and P.kv_rubric("A7-s3") == "code" and P.kv_rubric("A3") == "vision"
+    assert P.kv_rubric("A5") == "reasoning" and P.kv_rubric("A7-s3") == "code" and P.kv_rubric("A3") == "kv-vision"   # S29 V1
 
 
 def test_kv_pairs_are_blind_and_balanced():

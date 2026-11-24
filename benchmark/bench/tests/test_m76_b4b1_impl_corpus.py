@@ -24,12 +24,15 @@ UNIVERSE = json.loads((BENCH / "m65/tg2_universe.json").read_text())
 DRAW = json.loads((BENCH / "m65/tg2_draw.json").read_text())
 LANGS = ("rust", "javascript", "java", "cpp")
 PILOT = {lang: DRAW["languages"][lang]["permutation"][0] for lang in LANGS}
-HINTS = {
+HINTS = {                                   # S29 T2 (changed): each helper sentence names the full-suite command
     "rust": "Helper modules may go under src/; you may add [dependencies] from the offline crates listed in OFFLINE_CRATES.md "
-            "to Cargo.toml.",
-    "java": "Helper classes may go only in the solution's package.",
-    "javascript": "Helper .js files may go beside the solution.",
-    "cpp": "Helper .h / .cpp files may go beside the solution.",
+            "to Cargo.toml. `cargo test` runs the full test suite your solution is graded on.",
+    "java": "Helper classes may go only in the solution's package. `./gradlew test` runs the full test suite your solution is "
+            "graded on.",
+    "javascript": "Helper .js files may go beside the solution. `npm install && npm test` runs the full test suite your solution "
+                  "is graded on.",
+    "cpp": "Helper .h / .cpp files may go beside the solution. `cmake -S . -B build && cmake --build build` builds and runs the "
+           "full test suite your solution is graded on.",
 }
 
 
@@ -153,9 +156,11 @@ def test_prepare_is_the_frozen_universe_item(corpus, scratch):
     prepared = corpus.prepare(item, scratch / "say")
     entry = UNIVERSE["items"][item]
     assert prepared.item_id == item and prepared.lang == "rust" and prepared.name == "say"
-    assert sg.manifest(prepared.work) == entry["prepared"] == prepared.prepared
+    # S29 T1 (changed): the frozen tree verified, then made testable — only the rewritten test file differs from `prepared`
+    assert sg.manifest(prepared.work) == prepared.prepared and set(prepared.prepared) == set(entry["prepared"])
+    assert {r for r in entry["prepared"] if prepared.prepared[r] != entry["prepared"][r]} == {"tests/say.rs"}
     assert prepared.editable == tuple(entry["solutions"]) and prepared.tests == tuple(entry["tests"])
-    assert prepared.protected == sg.protected_manifest(entry["prepared"], entry["solutions"])
+    assert prepared.protected == sg.protected_manifest(prepared.prepared, entry["solutions"])
     assert prepared.entry["baseline_failing"] == entry["baseline_failing"] and prepared.entry["leaves"] == entry["leaves"]
     assert not corpus.changed(prepared)
     (prepared.work / "src/lib.rs").write_text("pub fn encode(n: u64) -> String { String::new() }\n")
@@ -317,7 +322,7 @@ def test_the_grade_call_and_its_arguments(corpus, scratch, monkeypatch):
         assert snap.path.resolve().is_relative_to((private.parent / "grading-snap").resolve())
         out = corpus.grade(snap, prepared, private, guard, scratch / "keep", 3, 4, True)
     assert out.passed
-    assert seen == dict(lang="rust", work=snap.path, slug="say", private=private, prepared=entry["prepared"],
+    assert seen == dict(lang="rust", work=snap.path, slug="say", private=private, prepared=prepared.prepared,   # S29: testable
                         solutions=entry["solutions"], prepared_cargo_toml=entry["prepared_cargo_toml"], extra_crates=(),
                         keep=scratch / "keep", seq=3, boundary=4, final=True, guard=guard, timeout=entry["timeout_s"])
 

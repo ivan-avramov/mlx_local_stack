@@ -73,8 +73,10 @@ def test_the_tg2_carrier_is_generated_and_equals_tg1s():
     from configgen import targets
     names = {t[0]: t for t in targets.BENCH_TARGETS}
     assert names["opencode-bench-v2-web-tg2"][2] == "benchmark/opencode_bench_v2_web_tg2.json"
-    assert (REPO / "benchmark/opencode_bench_v2_web_tg2.json").read_bytes() == \
-        (REPO / "benchmark/opencode_bench_v2_web_tg1.json").read_bytes()
+    # S29 T3 / T4 (changed): tg1's carrier except its lookup rules (`test_s29c_impl_carrier` pins the difference)
+    tg1 = json.loads((REPO / "benchmark/opencode_bench_v2_web_tg1.json").read_text())
+    tg2 = json.loads((REPO / "benchmark/opencode_bench_v2_web_tg2.json").read_text())
+    assert {k: v for k, v in tg1.items() if k != "permissions"} == {k: v for k, v in tg2.items() if k != "permissions"}
     from bench import modelnames
     assert "benchmark/opencode_bench_v2_web_tg2.json" in modelnames.GENERATED_PATHS
 

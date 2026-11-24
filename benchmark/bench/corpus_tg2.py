@@ -7,7 +7,12 @@ The work tree is read through ONE normalised view (`view_manifest`, H2): `tg2_gr
 (`tg2_grade`'s compile step deletes and regenerates every lock, and its tamper check ignores a lock's content) — so the
 language's own build / test commands neither tamper the item nor break the snapshot. `manifest`, `snapshot`, the tamper check
 and `final_tree` all use that view; the snapshot is a copy of exactly the view's files in `<run>/grading-snap/` (G1: never
-inside `grading-private`, which `tg2_grade` refuses as a work tree's parent)."""
+inside `grading-private`, which `tg2_grade` refuses as a work tree's parent).
+
+S29 (spec docs/specs/s29-tg2-testable.md): the prepared tree is the frozen one made TESTABLE (`tg2_materialize.enable_full_suite`,
+checked by its facts after the frozen check), so the language's standard test command (`FULL_SUITE_COMMANDS`, named in the
+prompt's helper sentence) runs the graded suite; the item's `prepared` / `protected` manifests are the testable tree's, and the
+identity binds the workspace (`workspace_identity`)."""
 from __future__ import annotations
 
 import hashlib
@@ -34,14 +39,34 @@ LANGS = ("rust", "javascript", "java", "cpp")
 # Every scored outcome `tg2_grade` emits besides `parsed` / `tampered`: every leaf fails (a statement about the model's tree).
 SCORED_ALL_FAILED = ("compile_failure", "timeout", "oom", "mem_kill", "crash", "storage_cap", "output_cap")
 GRADER_TIMEOUT_SLACK_S = 300
-# E1: the per-language helper sentence the prompt ends with.
+# S29 T1 / T2: the standard command that runs the full graded suite in the prepared (testable) workspace, per language.
+FULL_SUITE_COMMANDS = {
+    "rust": "cargo test",
+    "java": "./gradlew test",
+    "javascript": "npm install && npm test",
+    "cpp": "cmake -S . -B build && cmake --build build",
+}
+# E1: the per-language helper sentence the prompt ends with (S29 T2: it names the full-suite command).
 HINTS = {
     "rust": "Helper modules may go under src/; you may add [dependencies] from the offline crates listed in OFFLINE_CRATES.md "
-            "to Cargo.toml.",
-    "java": "Helper classes may go only in the solution's package.",
-    "javascript": "Helper .js files may go beside the solution.",
-    "cpp": "Helper .h / .cpp files may go beside the solution.",
+            "to Cargo.toml. `cargo test` runs the full test suite your solution is graded on.",
+    "java": "Helper classes may go only in the solution's package. `./gradlew test` runs the full test suite your solution is "
+            "graded on.",
+    "javascript": "Helper .js files may go beside the solution. `npm install && npm test` runs the full test suite your solution "
+                  "is graded on.",
+    "cpp": "Helper .h / .cpp files may go beside the solution. `cmake -S . -B build && cmake --build build` builds and runs the "
+           "full test suite your solution is graded on.",
 }
+assert all(FULL_SUITE_COMMANDS[lang] in HINTS[lang] for lang in LANGS)
+
+
+def workspace_identity():
+    """S29 I1: the testable workspace the tg2 identity binds (with the carrier, bound by its own sha): the preparation
+    version and the exact helper sentences of the prompt."""
+    from . import tg2_materialize as mat
+    hints = json.dumps(HINTS, sort_keys=True, separators=(",", ":")).encode()
+    return dict(testable=mat.TESTABLE_VERSION, hints_sha256=_sha_bytes(hints),
+                full_suite_commands=dict(sorted(FULL_SUITE_COMMANDS.items())))
 INJECT_ADDENDA = corpus_tg1.INJECT_ADDENDA          # tg1's three texts, byte-equal (tested)
 inject_addendum_sha256 = corpus_tg1.inject_addendum_sha256
 
@@ -262,17 +287,43 @@ class Tg2Corpus(Corpus):
             mat.prepare_tree(self._root(), lang, name, work)
         except mat.FreezeError as exc:
             raise TransportAbort(f"tg2 prepare: {exc}") from None
-        core._git_init_scratch(work)
-        core._freeze_mtimes(work)
         if sg.manifest(work) != entry["prepared"]:
             raise TransportAbort("prepared exercise differs from frozen universe")
+        testable = self._make_testable(work, entry, lang)
+        core._git_init_scratch(work)
+        core._freeze_mtimes(work)
+        if sg.manifest(work) != testable:
+            raise TransportAbort("tg2 prepare: the testable workspace changed while it was prepared")
         solutions = tuple(entry["solutions"])
         prepared = PreparedItem(item_id=item, lang=lang, name=name, work=work, entry=entry, editable=solutions,
                                 baseline={rel: _sha(work / rel) for rel in solutions},
-                                protected=sg.protected_manifest(entry["prepared"], entry["solutions"]),
-                                prepared=entry["prepared"], tests=tuple(entry["tests"]))
+                                protected=sg.protected_manifest(testable, entry["solutions"]),
+                                prepared=testable, tests=tuple(entry["tests"]))
         self._works[str(work)] = (prepared.prepared, lang)      # `manifest(work)` (the core's change detector) reads its view
         return prepared
+
+    @staticmethod
+    def _make_testable(work, entry, lang):
+        """S29 T1: `tg2_materialize.enable_full_suite` on the verified frozen tree, checked by its facts: only protected test-side
+        files changed (never a solution, a build file or the file set), exactly the files the rewrite reports, and no skip form
+        is left (`full_suite_violations`). -> the testable manifest (the item's `prepared` / `protected` from here on)."""
+        from . import tg2_materialize as mat
+        frozen = entry["prepared"]
+        try:
+            rewrites = mat.enable_full_suite(work, lang, entry["solutions"])
+            left = mat.full_suite_violations(work, lang, entry["solutions"])
+        except (mat.FreezeError, OSError, UnicodeError) as exc:
+            raise TransportAbort(f"tg2 prepare: the testable workspace cannot be made ({type(exc).__name__}: {exc})") from None
+        testable = sg.manifest(work)
+        changed = sorted(rel for rel in testable if testable[rel] != frozen.get(rel))
+        build = {"cargo.toml", "cmakelists.txt", "build.gradle", "package.json"}
+        bad = [rel for rel in changed if rel in entry["solutions"] or posixpath.basename(rel).casefold() in build
+               or rel not in sg.protected_manifest(frozen, entry["solutions"])]
+        if set(testable) != set(frozen) or changed != sorted(rewrites) or bad:
+            raise TransportAbort(f"tg2 prepare: the testable rewrite touched {bad or changed} (reported {sorted(rewrites)})")
+        if left:
+            raise TransportAbort(f"tg2 prepare: the testable workspace still skips tests in {left}")
+        return testable
 
     def spec_text(self, lang, name):
         """`.docs/instructions.md`, then (blank line) `.docs/instructions.append.md` when present, from the SOURCE exercise (the
@@ -439,5 +490,5 @@ class Tg2Corpus(Corpus):
         self._loaded()
         return dict(corpus_id=self.corpus_id, universe_sha256=self.universe_sha256, draw_sha256=self.draw_sha256(),
                     grader_version=tg.VERSION, grader_timeout_s=self.grader_timeouts(), image=tg.pinned_image_id(),
-                    excluded=sorted(self.excluded))
+                    excluded=sorted(self.excluded), workspace=workspace_identity())
 
