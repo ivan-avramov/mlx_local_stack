@@ -18,8 +18,8 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 1. **Stage 3b readout PROVISIONAL (S29-P23): A8 tg2 PASS** (−0.6 pp [−7.5, +6.2], loss bound 7.5 pp). Decider complete (8 legs VALID);
    evidence pushed (`evidence` `162f5a584`); `main` holds the data (`acaca05cc`), the rule 3.6 fix (`58625569a`, S29-P21, four-eyes
-   record `docs/reviews/s29-a8-frozen-record/`), the goldens fix (`0cf54ef00`) and the readout (`3dcd2ba34`). The full gate runs on
-   the HEAD with the README A8-superseded correction (S29-P27); on PASS push `main` there once (C387); a FAIL → the operator. Next: the subjective panel
+   record `docs/reviews/s29-a8-frozen-record/`), the goldens fix (`0cf54ef00`) and the readout (`3dcd2ba34`). Gate PASS on `7ec91f97c`
+   (receipt `…-18038ff7e402`); PUSHED `main` `14eca7b44..7ec91f97c` (C387, used). Next: the subjective panel
    (C161: A2 completion + A8-s1 / A8-s2, two families, both orders), then the ship recommendation to the operator.
 2. **Run-time autonomy granted for session 29 (C383, widened by C388: the designer decides for the rest of session 29)**; ask again next session: reruns of a leg INVALID before any item, holds,
    continue / pause calls under C353.
@@ -51,7 +51,7 @@ recommendation (an UNDECIDED A8 reads by C379 (2), pre-registered).
 
 - `$STACK_WORKDIR/worktrees/m76-g2-{n16,x}`: the NEW tg2 arms (@ `72e5626a5` / `026ef4557`) — keep until the A8 readout. Old arms are
   branches `archive/m76-g2-{n16,x}-old-identity`.
-- `$STACK_WORKDIR/fe-s29b/`, `fe-s29/`: S29 four-eyes builds — records harvested to `docs/reviews/s29-*`; remove.
+- `$STACK_WORKDIR/fe-s29c/`: the PLAN M85 phase 1 four-eyes build (harness fix) — harvest to `docs/reviews/s29-tg2-testable/`, then remove.
 - `$STACK_WORKDIR/fe-s27/`, `fe-b4b2/`: four-eyes build copies — records harvested to `docs/reviews/s27-robustness/` and
   `docs/reviews/m76-b4b2/four-eyes/`; remove.
 - `m76-w2-{n16,x}`, `m76-q-{n16,x}`, `m76-f45-*`: keep until the stage 4 decision.
