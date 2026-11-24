@@ -325,8 +325,9 @@ def cli(module, args, home):
 def real_run(tmp_path_factory):
     out = tmp_path_factory.mktemp("r4")
     before = sha_file(M76 / "B8.json")
-    proc = cli("bench.p426_verify", ["all", "--lever", "kv", "--pair", "n16,x", "--results-root", M76, "--rows-root", RESULTS,
-                                     "--repo", REPO, "--out", out / "B8.json"], out)
+    proc = cli("bench.tests.m76_b4b2_frozen_cli",
+               ["all", "--lever", "kv", "--pair", "n16,x", "--results-root", M76, "--rows-root", RESULTS,
+                "--repo", REPO, "--out", out / "B8.json"], out)
     return out, proc, before
 
 
